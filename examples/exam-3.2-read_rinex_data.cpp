@@ -39,7 +39,7 @@ int main() {
     //--------------------
 
     // Replace with your actual RINEX file path
-    string dirPath = "D:\\documents\\Source\\gnssLab-2.2\\data\\Zero-baseline\\";
+    string dirPath = R"(D:\documents\Source\gnssLab-2.2\data\Zero-baseline\)";
 //    string dirPath = "D:\\documents\\Source\\gnssLab-2.1\\data\\";
 
     // rover obs file name

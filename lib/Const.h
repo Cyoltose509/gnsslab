@@ -45,6 +45,7 @@ const double REL_CONST_BDS = -4.442807309e-10;
 
 /// Add this offset to convert Modified Julian Date to Julian Date.
 const double MJD_TO_JD = 2400000.5;
+constexpr double MJD_TO_JD2020 = -58849.5;
 /// 'Julian day' offset from MJD
 const long MJD_JDAY = 2400001L;
 /// Modified Julian Date of UNIX epoch (Jan. 1, 1970).
@@ -59,6 +60,8 @@ const long FULLWEEK = 604800L;
 const long SEC_PER_DAY = 86400L;
 /// Days per second.
 const double DAY_PER_SEC = 1.0 / SEC_PER_DAY;
+
+
 
 /// Milliseconds in a second.
 const long MS_PER_SEC = 1000L;
@@ -81,6 +84,8 @@ const double RadiusEarth = 6378137.0;
 const double GPS_EPOCH_JD = 2444244.5;
 /// Modified Julian Date of GPS epoch (Jan. 6, 1980).
 const long GPS_EPOCH_MJD = 44244L;
+/// Modified Julian Date of BDT epoch (Jan. 6, 1980).
+const long BDT_EPOCH_MJD =53736;
 /// Weeks per GPS Epoch
 const long GPS_WEEK_PER_EPOCH = 1024L;
 

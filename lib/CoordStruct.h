@@ -142,7 +142,7 @@ public:
     XYZ(const Eigen::Vector3d& vec) : Eigen::Vector3d(vec)
     {};
     // 带参数的构造函数
-    XYZ(double x_, double y_, double z_) : Eigen::Vector3d(x_, y_, z_)
+    XYZ(const double x_, const double y_, const double z_) : Eigen::Vector3d(x_, y_, z_)
     {};
     double X() const
     { return this->x(); }
@@ -171,10 +171,22 @@ public:
     // 默认构造函数
     BLH(const Eigen::Vector3d& vec) : Eigen::Vector3d(vec) {}
     // 带参数的构造函数
-    BLH(double B_, double L_, double H_) : Eigen::Vector3d(B_, L_, H_) {}
+    BLH(const double B_, const double L_, const double H_) : Eigen::Vector3d(B_, L_, H_) {}
     double B() const { return this->x(); }
     double L() const { return this->y(); }
     double H() const { return this->z(); }
+};
+
+class ENU : public Eigen::Vector3d {
+public:
+    ENU() : Eigen::Vector3d(0.0, 0.0, 0.0) {}
+    // 默认构造函数
+    ENU(const Eigen::Vector3d& vec) : Eigen::Vector3d(vec) {}
+    // 带参数的构造函数
+    ENU(const double E_, const double N_, const double U_) : Eigen::Vector3d(E_, N_, U_) {}
+    double E() const { return this->x(); }
+    double N() const { return this->y(); }
+    double U() const { return this->z(); }
 };
 
 

@@ -31,7 +31,6 @@ using namespace std;
 
 class TimeSystem {
 public:
-
     // list of time systems supported by this class
     enum SystemType {
         Unknown = 0,
@@ -87,9 +86,7 @@ public:
 
     // string for enum sys, 1 vs 1
     static const std::string sys_strings[];
-
 }; // end class TimeSystem
-
 
 
 inline std::ostream &operator<<(std::ostream &os, TimeSystem &ts) {
@@ -104,7 +101,6 @@ inline std::ostream &operator<<(std::ostream &os, TimeSystem &ts) {
  */
 class CommonTime {
 public:
-
     CommonTime() {
         m_day = 0;
         m_sod = 0.0;
@@ -120,30 +116,31 @@ public:
     }
 
     CommonTime(const CommonTime &right)
-            : m_day(right.m_day), m_sod(right.m_sod), m_timeSystem(right.m_timeSystem) {}
+        : m_day(right.m_day), m_sod(right.m_sod), m_timeSystem(right.m_timeSystem) {
+    }
 
     // Destructor.
-    virtual ~CommonTime() {}
+    virtual ~CommonTime() {
+    }
 
     void set(
-            long day,
-            double sod = 0.0,
-            TimeSystem timeSystem = TimeSystem::GPS
+        long day,
+        double sod = 0.0,
+        TimeSystem timeSystem = TimeSystem::GPS
     ) {
         m_day = day;
         m_sod = sod;
         m_timeSystem = timeSystem;
     };
 
-    void setTimeSystem(const TimeSystem& timeSystem)
-    {
+    void setTimeSystem(const TimeSystem &timeSystem) {
         m_timeSystem = timeSystem;
     }
 
     void get(
-            long &day,
-            double &sod,
-            TimeSystem &timeSystem) const {
+        long &day,
+        double &sod,
+        TimeSystem &timeSystem) const {
         day = m_day;
         sod = m_sod;
         timeSystem = m_timeSystem;
@@ -162,7 +159,7 @@ public:
             throw (ir);
         }
 
-        return (SEC_PER_DAY * static_cast<double>( m_day - right.m_day  ) +
+        return (SEC_PER_DAY * static_cast<double>(m_day - right.m_day) +
                 m_sod - right.m_sod);
     }
 
@@ -170,9 +167,8 @@ public:
         return CommonTime(*this).addSeconds(sec);
     }
 
-    CommonTime& operator+=( double sec )
-    {
-        addSeconds( sec );
+    CommonTime &operator+=(double sec) {
+        addSeconds(sec);
         return *this;
     }
 
@@ -182,9 +178,8 @@ public:
         return tempTime;
     }
 
-    CommonTime& operator-=(double seconds)
-    {
-        addSeconds( -seconds );
+    CommonTime &operator-=(double seconds) {
+        addSeconds(-seconds);
         return *this;
     };
 
@@ -192,7 +187,7 @@ public:
         long days = 0;
 
         if (abs(seconds) >= SEC_PER_DAY) {
-            days = static_cast<long>( seconds * DAY_PER_SEC );
+            days = static_cast<long>(seconds * DAY_PER_SEC);
             seconds -= days * SEC_PER_DAY;
         }
         add(days, seconds);
@@ -223,9 +218,9 @@ public:
     std::string toString() const {
         ostringstream oss;
         oss << setfill('0')
-            << setw(7) << m_day << " "
-            << fixed << setprecision(15) << setw(17) << m_sod
-            << " " << m_timeSystem.toString();
+                << setw(7) << m_day << " "
+                << fixed << setprecision(15) << setw(17) << m_sod
+                << " " << m_timeSystem.toString();
         return oss.str();
     }
 
@@ -246,9 +241,9 @@ public:
     bool operator<(const CommonTime &right) const {
         if (m_timeSystem != right.m_timeSystem) {
             InvalidRequest ir(
-                    "CommonTime objects not in same time system, cannot be compared: "
-                    + m_timeSystem.toString() +
-                    " != " + right.m_timeSystem.toString());
+                "CommonTime objects not in same time system, cannot be compared: "
+                + m_timeSystem.toString() +
+                " != " + right.m_timeSystem.toString());
 
             throw (ir);
         }
@@ -275,10 +270,9 @@ public:
         return !operator<(right);
     }
 
-    long m_day{};     // Modified Julian Day
-    double m_sod{};    // seconds-of-day
+    long m_day{}; // Modified Julian Day
+    double m_sod{}; // seconds-of-day
     TimeSystem m_timeSystem;
-
 }; // end class CommonTime
 
 // 'julian day' of earliest epoch expressible by CommonTime; 1/1/4713 B.C.
@@ -298,7 +292,6 @@ inline std::ostream &operator<<(std::ostream &os, const CommonTime &ct) {
 // -----------------------------------
 class CivilTime {
 public:
-
     CivilTime(int yr = 0,
               int mo = 0,
               int dy = 0,
@@ -306,7 +299,7 @@ public:
               int mn = 0,
               double s = 0.0,
               TimeSystem ts = TimeSystem::GPS)
-            : year(yr), month(mo), day(dy), hour(hr), minute(mn), second(s) {
+        : year(yr), month(mo), day(dy), hour(hr), minute(mn), second(s) {
         timeSys = ts;
     }
 
@@ -314,8 +307,8 @@ public:
      * Copy Constructor.
      */
     CivilTime(const CivilTime &right)
-            : year(right.year), month(right.month), day(right.day),
-              hour(right.hour), minute(right.minute), second(right.second) {
+        : year(right.year), month(right.month), day(right.day),
+          hour(right.hour), minute(right.minute), second(right.second) {
         timeSys = right.timeSys;
     }
 
@@ -326,18 +319,19 @@ public:
     std::string toString() const {
         std::ostringstream oss;
         oss << setw(4) << year << "/"
-            << setw(2) << month << "/"
-            << setw(2) << day << " "
-            << setw(2) << hour << ":"
-            << setw(2) << minute << ":"
-            << setw(2) << second << " "
-            << timeSys.toString();
+                << setw(2) << month << "/"
+                << setw(2) << day << " "
+                << setw(2) << hour << ":"
+                << setw(2) << minute << ":"
+                << setw(2) << second << " "
+                << timeSys.toString();
 
         return oss.str();
     };
 
     /// Virtual Destructor.
-    virtual ~CivilTime() {}
+    virtual ~CivilTime() {
+    }
 
     int year;
     int month;
@@ -356,25 +350,25 @@ inline std::ostream &operator<<(std::ostream &s, const CivilTime &cit) {
 
 class JulianDate {
 public:
-
     JulianDate(long double j = 0., TimeSystem ts = TimeSystem::GPS)
-            : jd(j) { timeSystem = ts; }
+        : jd(j) { timeSystem = ts; }
 
     JulianDate(const JulianDate &right)
-            : jd(right.jd) { timeSystem = right.timeSystem; }
+        : jd(right.jd) { timeSystem = right.timeSystem; }
 
     JulianDate &operator=(const JulianDate &right);
 
     string toString() {
         std::ostringstream oss;
         oss << fixed << setw(16) << jd << ":"
-            << timeSystem.toString();
+                << timeSystem.toString();
 
         return oss.str();
     }
 
     /// Virtual Destructor.
-    virtual ~JulianDate() {}
+    virtual ~JulianDate() {
+    }
 
     void reset();
 
@@ -387,7 +381,6 @@ public:
     long double jd;
 
     TimeSystem timeSystem;
-
 };
 
 inline std::ostream &operator<<(std::ostream &s, JulianDate &jd) {
@@ -408,22 +401,23 @@ public:
     }
 
     YDSTime(const YDSTime &right)
-            : year(right.year), doy(right.doy), sod(right.sod) { timeSystem = right.timeSystem; }
+        : year(right.year), doy(right.doy), sod(right.sod) { timeSystem = right.timeSystem; }
 
     YDSTime &operator=(const YDSTime &right);
 
-    std::string  toString() const {
+    std::string toString() const {
         std::ostringstream oss;
         oss << setw(4) << year << " "
-            << setw(3) << doy << " "
-            << setw(14) << sod << " "
-            << timeSystem.toString() << " ";
+                << setw(3) << doy << " "
+                << setw(14) << sod << " "
+                << timeSystem.toString() << " ";
 
         return oss.str();
     };
 
     // Virtual Destructor.
-    virtual ~YDSTime() {}
+    virtual ~YDSTime() {
+    }
 
     virtual void reset();
 
@@ -440,66 +434,113 @@ public:
 };
 
 inline std::ostream &operator<<(std::ostream &s, const YDSTime &yt) {
-    s << yt. toString();
+    s << yt.toString();
     return s;
 };
 
-class MJD
-{
+class MJD {
 public:
-
-    MJD( long double m = 0.,
-         TimeSystem ts = TimeSystem::GPS )
-            : mjd( m )
-    { timeSystem = ts; }
+    MJD(long double m = 0.,
+        TimeSystem ts = TimeSystem::GPS)
+        : mjd(m) { timeSystem = ts; }
 
 
-    MJD( const MJD& right )
-            : mjd( right.mjd )
-    { timeSystem = right.timeSystem; }
+    MJD(const MJD &right)
+        : mjd(right.mjd) { timeSystem = right.timeSystem; }
 
 
-    MJD& operator=( const MJD& right );
+    MJD &operator=(const MJD &right);
 
     /// Virtual Destructor.
-    virtual ~MJD()
-    {}
+    virtual ~MJD() {
+    }
 
     void reset();
 
-    std::string toString()
-    {
+    std::string toString() {
         std::ostringstream oss;
         oss << setw(8) << mjd
-            << timeSystem.toString();
+                << timeSystem.toString();
 
         return oss.str();
     };
 
-    bool operator==(const MJD& right) const;
-    bool operator!=(const MJD& right) const;
-    bool operator<(const MJD& right) const;
-    bool operator>(const MJD& right) const;
-    bool operator<=(const MJD& right) const;
-    bool operator>=(const MJD& right) const;
+    bool operator==(const MJD &right) const;
+
+    bool operator!=(const MJD &right) const;
+
+    bool operator<(const MJD &right) const;
+
+    bool operator>(const MJD &right) const;
+
+    bool operator<=(const MJD &right) const;
+
+    bool operator>=(const MJD &right) const;
 
     long double mjd;
     TimeSystem timeSystem;
 };
 
-inline std::ostream& operator<<( std::ostream& s, MJD& mjd)
-{
+inline std::ostream &operator<<(std::ostream &s, MJD &mjd) {
     s << mjd.toString();
     return s;
 }
 
+class JD2020 {
+public:
+    JD2020(long double m = 0.,
+        TimeSystem ts = TimeSystem::GPS)
+        : jd(m) { timeSystem = ts; }
+
+
+    JD2020(const JD2020 &right)
+        : jd(right.jd) { timeSystem = right.timeSystem; }
+
+
+    JD2020 &operator=(const JD2020 &right);
+
+    /// Virtual Destructor.
+    virtual ~JD2020() {
+    }
+
+    void reset();
+
+    std::string toString() {
+        std::ostringstream oss;
+        oss << setw(8) << jd
+                << timeSystem.toString();
+
+        return oss.str();
+    };
+
+    bool operator==(const JD2020 &right) const;
+
+    bool operator!=(const JD2020 &right) const;
+
+    bool operator<(const JD2020 &right) const;
+
+    bool operator>(const JD2020 &right) const;
+
+    bool operator<=(const JD2020 &right) const;
+
+    bool operator>=(const JD2020 &right) const;
+
+    long double jd;
+    TimeSystem timeSystem;
+};
+
+inline std::ostream &operator<<(std::ostream &s, JD2020 &jd) {
+    s << jd.toString();
+    return s;
+}
+
+
+
 
 /// This class encapsulates the "Full Week and Seconds-of-week"
 /// time representation.
-class WeekSecond
-{
+class WeekSecond {
 public:
-
     /**
      * Default Constructor.
      * All elements are initialized to zero.
@@ -507,27 +548,25 @@ public:
     WeekSecond(unsigned int w = 0,
                double s = 0.,
                TimeSystem ts = TimeSystem::GPS)
-            : week(w), sow(s)
-    { timeSystem = ts; }
+        : week(w), sow(s) { timeSystem = ts; }
 
     /**
      * Copy Constructor.
      * @param right a reference to the WeekSecond object to copy
      */
-    WeekSecond( const WeekSecond& right )
-            : week( right.week ), sow( right.sow )
-    { timeSystem = right.timeSystem; }
+    WeekSecond(const WeekSecond &right)
+        : week(right.week), sow(right.sow) { timeSystem = right.timeSystem; }
 
     /**
      * Assignment Operator.
      * @param right a const reference to the WeekSecond to copy
      * @return a reference to this WeekSecond
      */
-    WeekSecond& operator=( const WeekSecond& right );
+    WeekSecond &operator=(const WeekSecond &right);
 
     /// Virtual Destructor.
-    virtual ~WeekSecond()
-    {}
+    virtual ~WeekSecond() {
+    }
 
     // Return the number of bits in the bitmask used to get the ModWeek from the
     // full week.
@@ -542,13 +581,11 @@ public:
 
     // Return the maximum Nbit-week-number minus 1, i.e. the week number at
     // which rollover occurs.
-    virtual int rollover(void) const
-    { return bitmask()+1; }
+    virtual int rollover(void) const { return bitmask() + 1; }
 
     virtual long MJDEpoch(void) const = 0;
 
-    inline virtual unsigned int getDayOfWeek() const
-    {
+    inline virtual unsigned int getDayOfWeek() const {
         return static_cast<unsigned int>(sow) / SEC_PER_DAY;
     }
 
@@ -562,59 +599,57 @@ public:
     /// All comparison operators are const and return true on success
     /// and false on failure.
     //@{
-    bool operator==( const WeekSecond& right ) const;
-    bool operator!=( const WeekSecond& right ) const;
-    bool operator<( const WeekSecond& right ) const;
-    bool operator>( const WeekSecond& right ) const;
-    bool operator<=( const WeekSecond& right ) const;
-    bool operator>=( const WeekSecond& right ) const;
+    bool operator==(const WeekSecond &right) const;
 
-    inline virtual void setEpoch(unsigned int e)
-    {
+    bool operator!=(const WeekSecond &right) const;
+
+    bool operator<(const WeekSecond &right) const;
+
+    bool operator>(const WeekSecond &right) const;
+
+    bool operator<=(const WeekSecond &right) const;
+
+    bool operator>=(const WeekSecond &right) const;
+
+    inline virtual void setEpoch(unsigned int e) {
         week &= bitmask();
         week |= e << Nbits();
     }
 
-    inline virtual void setModWeek(unsigned int w)
-    {
+    inline virtual void setModWeek(unsigned int w) {
         week &= ~bitmask();
         week |= w & bitmask();
     }
 
     inline virtual void setEpochModWeek(unsigned int e,
-                                        unsigned int w)
-    {
+                                        unsigned int w) {
         setEpoch(e);
         setModWeek(w);
     }
-    inline virtual unsigned int getWeek() const
-    {
+
+    inline virtual unsigned int getWeek() const {
         return week;
     }
 
-    inline virtual unsigned int getModWeek() const
-    {
+    inline virtual unsigned int getModWeek() const {
         return (week & bitmask());
     }
 
-    inline virtual unsigned int getEpoch() const
-    {
+    inline virtual unsigned int getEpoch() const {
         return (week >> Nbits());
     }
 
-    inline virtual void getEpochModWeek(unsigned int& e,
-                                        unsigned int& w) const
-    {
+    inline virtual void getEpochModWeek(unsigned int &e,
+                                        unsigned int &w) const {
         e = getEpoch();
         w = getModWeek();
     }
 
-    std::string  toString()
-    {
+    std::string toString() {
         std::ostringstream oss;
         oss << setw(4) << week
-            << setw(10) << sow
-            << timeSystem. toString();
+                << setw(10) << sow
+                << timeSystem.toString();
 
         return oss.str();
     }
@@ -625,9 +660,8 @@ public:
     TimeSystem timeSystem;
 };
 
-inline std::ostream& operator<<( std::ostream& s,  WeekSecond& ws )
-{
-    s << ws. toString();
+inline std::ostream &operator<<(std::ostream &s, WeekSecond &ws) {
+    s << ws.toString();
     return s;
 }
 
@@ -636,72 +670,121 @@ inline std::ostream& operator<<( std::ostream& s,  WeekSecond& ws )
 /// WeekSecond
 /// The GPS week is specified by 10-bit ModWeek, rollover at
 /// 1024, bitmask 0x3FF and epoch GPS_EPOCH_MJD
-class GPSWeekSecond : public WeekSecond
-{
+class GPSWeekSecond : public WeekSecond {
 public:
-
     /// Constructor.
     GPSWeekSecond(unsigned int w = 0,
                   double s = 0.,
                   TimeSystem ts = TimeSystem::GPS)
-            : WeekSecond(w,s)
-    { timeSystem = ts; }
+        : WeekSecond(w, s) { timeSystem = ts; }
 
     /// Constructor from CommonTime
 
     /// Destructor.
-    ~GPSWeekSecond() {}
+    ~GPSWeekSecond() {
+    }
 
     /// Return the number of bits in the bitmask used to get the
     /// ModWeek from the full week.
-    int Nbits(void) const
-    {
-        static const int n=10;
+    int Nbits(void) const {
+        static const int n = 10;
         return n;
     }
 
     /// Return the bitmask used to get the ModWeek from the full week.
-    int bitmask(void) const
-    {
-        static const int bm=0x3FF;
+    int bitmask(void) const {
+        static const int bm = 0x3FF;
         return bm;
     }
 
     /// Return the Modified Julian Date (MJD) of epoch for this system.
-    long MJDEpoch(void) const
-    {
-        static const long e=GPS_EPOCH_MJD;
+    long MJDEpoch(void) const {
+        static const long e = GPS_EPOCH_MJD;
         return e;
     }
 
-    inline bool operator==( const GPSWeekSecond& right ) const
-    {
-        return WeekSecond::operator==( right );
-    }
-    inline bool operator!=( const GPSWeekSecond& right ) const
-    {
-        return WeekSecond::operator!=( right );
-    }
-    inline bool operator<( const GPSWeekSecond& right ) const
-    {
-        return WeekSecond::operator<( right );
-    }
-    inline bool operator>( const GPSWeekSecond& right ) const
-    {
-        return WeekSecond::operator>( right );
-    }
-    inline bool operator<=( const GPSWeekSecond& right ) const
-    {
-        return WeekSecond::operator<=( right );
-    }
-    inline bool operator>=( const GPSWeekSecond& right ) const
-    {
-        return WeekSecond::operator>=( right );
+    inline bool operator==(const GPSWeekSecond &right) const {
+        return WeekSecond::operator==(right);
     }
 
+    inline bool operator!=(const GPSWeekSecond &right) const {
+        return WeekSecond::operator!=(right);
+    }
 
+    inline bool operator<(const GPSWeekSecond &right) const {
+        return WeekSecond::operator<(right);
+    }
+
+    inline bool operator>(const GPSWeekSecond &right) const {
+        return WeekSecond::operator>(right);
+    }
+
+    inline bool operator<=(const GPSWeekSecond &right) const {
+        return WeekSecond::operator<=(right);
+    }
+
+    inline bool operator>=(const GPSWeekSecond &right) const {
+        return WeekSecond::operator>=(right);
+    }
 }; // end class GPSWeekSecond
 
+class BDTWeekSecond : public WeekSecond {
+public:
+    /// Constructor.
+    BDTWeekSecond(unsigned int w = 0,
+                  double s = 0.,
+                  TimeSystem ts = TimeSystem::BDT)
+        : WeekSecond(w, s) { timeSystem = ts; }
+
+    /// Constructor from CommonTime
+
+    /// Destructor.
+    ~BDTWeekSecond() {
+    }
+
+    /// Return the number of bits in the bitmask used to get the
+    /// ModWeek from the full week.
+    int Nbits(void) const {
+        static const int n = 10;
+        return n;
+    }
+
+    /// Return the bitmask used to get the ModWeek from the full week.
+    int bitmask(void) const {
+        static const int bm = 0x3FF;
+        return bm;
+    }
+
+    /// Return the Modified Julian Date (MJD) of epoch for this system.
+    long MJDEpoch(void) const {
+        static const long e = BDT_EPOCH_MJD;
+        return e;
+    }
+
+    inline bool operator==(const BDTWeekSecond &right) const {
+        return WeekSecond::operator==(right);
+    }
+
+    inline bool operator!=(const BDTWeekSecond &right) const {
+        return WeekSecond::operator!=(right);
+    }
+
+    inline bool operator<(const BDTWeekSecond &right) const {
+        return WeekSecond::operator<(right);
+    }
+
+    inline bool operator>(const BDTWeekSecond &right) const {
+        return WeekSecond::operator>(right);
+    }
+
+    inline bool operator<=(const BDTWeekSecond &right) const {
+        return WeekSecond::operator<=(right);
+    }
+
+    inline bool operator>=(const BDTWeekSecond &right) const {
+        return WeekSecond::operator>=(right);
+    }
+}; // end class GPSWeekSecond
 
 
 #endif //TimeStruct_H

@@ -27,7 +27,6 @@ using namespace std;
 
 // 在给定的历史记录中查找跳秒
 double getLeapSeconds(const CommonTime &ct) {
-
     std::map<double, double> leapData;
 
     // mjd;
@@ -82,9 +81,8 @@ double getLeapSeconds(const CommonTime &ct) {
 
 // 时间系统转换
 CommonTime convertTimeSystem(
-        const CommonTime &in_time,
-        const TimeSystem &targetSys) {
-
+    const CommonTime &in_time,
+    const TimeSystem &targetSys) {
     TimeSystem inTS = in_time.m_timeSystem;
 
     double dt(0.0);
@@ -93,28 +91,30 @@ CommonTime convertTimeSystem(
     if (inTS == targetSys)
         return in_time;
 
-    if (inTS == TimeSystem::GPS)         // GAL -> TAI
+    if (inTS == TimeSystem::GPS) // GAL -> TAI
         dt = 19.;
-    else if (inTS == TimeSystem::UTC)    // GLO -> TAI
+    else if (inTS == TimeSystem::UTC) // GLO -> TAI
         dt = getLeapSeconds(in_time);
-    else if (inTS == TimeSystem::BDT)    // BDT -> TAI         // RINEX 3.02 seems to say this
+    else if (inTS == TimeSystem::BDT) // BDT -> TAI         // RINEX 3.02 seems to say this
         dt = 33.;
-    else if (inTS == TimeSystem::TAI)    // TAI -> TAI
+    else if (inTS == TimeSystem::TAI) // TAI -> TAI
         dt = 0.;
-    else {                              // other
+    else {
+        // other
         InvalidRequest e("Invalid input TimeSystem " + inTS.toString());
         throw (e);
     }
 
-    if (targetSys == TimeSystem::GPS)        // TAI -> GAL
+    if (targetSys == TimeSystem::GPS) // TAI -> GAL
         dt -= 19.;
-    else if (targetSys == TimeSystem::UTC)   // TAI -> GLO
+    else if (targetSys == TimeSystem::UTC) // TAI -> GLO
         dt -= getLeapSeconds(in_time);
-    else if (targetSys == TimeSystem::BDT)   // TAI -> BDT
+    else if (targetSys == TimeSystem::BDT) // TAI -> BDT
         dt -= 33.;
-    else if (targetSys == TimeSystem::TAI)   // TAI
+    else if (targetSys == TimeSystem::TAI) // TAI
         dt -= 0.;
-    else {                              // other
+    else {
+        // other
         InvalidRequest e("Invalid output TimeSystem " + targetSys.toString());
         throw (e);
     }
@@ -138,7 +138,6 @@ void convertJD2YMD(double jd,
 }
 
 double convertYMD2JD(int yy, int mm, int dd) {
-
     if (mm <= 2) {
         mm += 12;
         yy -= 1;
@@ -147,7 +146,6 @@ double convertYMD2JD(int yy, int mm, int dd) {
     double B = 2 - floor(yy / 100) + floor(yy / 400);
     double jd_double = floor(365.25 * (yy + 4716)) + floor(30.6001 * (mm + 1)) + B + dd - 1524.5;
     return jd_double;
-
 }
 
 void convertSOD2HMS(double sod,
@@ -162,14 +160,13 @@ void convertSOD2HMS(double sod,
         sod -= static_cast<unsigned long>(sod / SEC_PER_DAY) * SEC_PER_DAY;
     }
 
-    double temp;               // variable to hold the integer part of sod
-    sod = modf(sod, &temp);    // sod holds the fraction, temp the integer
+    double temp; // variable to hold the integer part of sod
+    sod = modf(sod, &temp); // sod holds the fraction, temp the integer
     long seconds = static_cast<long>(temp); // get temp into a real integer
 
     hh = seconds / 3600;
     mm = (seconds % 3600) / 60;
     sec = double(seconds % 60) + sod;
-
 }
 
 double convertHMS2SOD(int hh,
@@ -267,47 +264,72 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct) {
     if (debugYDS)
         cout << "year:" << ydst.year << "month:" << month << "day:" << day;
 
-    ydst.doy = jday - convertYMD2JD(ydst.year, 1, 1) + 1 ;
+    ydst.doy = jday - convertYMD2JD(ydst.year, 1, 1) + 1;
     return ydst;
 }
 
-void MJD2CommonTime(MJD& mjd, CommonTime& ct)
-{
-    try
-    {
-
+void MJD2CommonTime(MJD &mjd, CommonTime &ct) {
+    try {
         long double mday = (mjd.mjd);
         // tmp now holds the partial days
-        double sod =  mday - static_cast<long>(mday);
+        double sod = mday - static_cast<long>(mday);
         // convert tmp to seconds of day
         sod *= SEC_PER_DAY;
 
         ct.set(mday,
                sod,
-                mjd.timeSystem);
-    }
-    catch (InvalidRequest& ip)
-    {
+               mjd.timeSystem);
+    } catch (InvalidRequest &ip) {
         InvalidRequest ir(ip);
         throw(ip);
     }
 }
 
-void CommonTime2MJD(const CommonTime& ct, MJD& mjd )
-{
+void CommonTime2MJD(const CommonTime &ct, MJD &mjd) {
     long mday;
     double sod;
     double fsod;
     ct.get(mday, sod, mjd.timeSystem);
-    mjd.mjd = static_cast<long double>(mday ) + static_cast<long double>(sod) * DAY_PER_SEC;
+    mjd.mjd = static_cast<long double>(mday) + static_cast<long double>(sod) * DAY_PER_SEC;
 }
 
-void CommonTime2WeekSecond(const CommonTime& ct, WeekSecond& wk )
-{
+void CommonTime2JD2020(const CommonTime &ct, JD2020 &jd) {
+    long mday;
+    double sod;
+    ct.get(mday, sod, jd.timeSystem);
+    jd.jd = static_cast<long double>(mday) + static_cast<long double>(sod) * DAY_PER_SEC + MJD_TO_JD2020;
+}
+
+void JD20202CommonTime(const JD2020 &jd, CommonTime &ct) {
+    try {
+        long double mday = (jd.jd);
+        // tmp now holds the partial days
+        double sod = mday - static_cast<long>(mday);
+        // convert tmp to seconds of day
+        sod *= SEC_PER_DAY - MJD_TO_JD2020;
+
+        ct.set(mday,
+               sod,
+               jd.timeSystem);
+    } catch (InvalidRequest &ip) {
+        InvalidRequest ir(ip);
+        throw(ip);
+    }
+}
+
+void MJD2JD2020(const MJD &mjd, JD2020 &jd) {
+    jd.jd = mjd.mjd + MJD_TO_JD2020;
+}
+
+void JD20202MJD(const JD2020 &jd, MJD &mjd) {
+    mjd.mjd = jd.jd - MJD_TO_JD2020;
+}
+
+
+void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk) {
     MJD mjd;
-    CommonTime2MJD(ct,mjd );
-    if (mjd.mjd < wk.MJDEpoch())
-    {
+    CommonTime2MJD(ct, mjd);
+    if (mjd.mjd < wk.MJDEpoch()) {
         InvalidRequest ir("Unable to convert to Week/Second - before Epoch.");
         throw(ir);
     }
@@ -322,13 +344,11 @@ void CommonTime2WeekSecond(const CommonTime& ct, WeekSecond& wk )
     // find out what the day of week is
     mday %= 7;
 
-    wk.sow = static_cast<double>(mday * SEC_PER_DAY + sod) ;
+    wk.sow = static_cast<double>(mday * SEC_PER_DAY + sod);
 }
 
-void WeekSecond2CommonTime(WeekSecond& wk, CommonTime& ct)
-{
-    try
-    {
+void WeekSecond2CommonTime(WeekSecond &wk, CommonTime &ct) {
+    try {
         //int dow = static_cast<int>( sow * DAY_PER_SEC );
         // Appears to have rounding issues on 32-bit platforms
 
@@ -336,10 +356,8 @@ void WeekSecond2CommonTime(WeekSecond& wk, CommonTime& ct)
         // NB this assumes MJDEpoch is an integer - what if epoch H:M:S != 0:0:0 ?
         long mday = wk.MJDEpoch() + (7 * wk.week) + dow;
         double sod(wk.sow - SEC_PER_DAY * dow);
-        ct.set(mday,sod,wk.timeSystem);
-    }
-    catch (InvalidRequest& ip)
-    {
+        ct.set(mday, sod, wk.timeSystem);
+    } catch (InvalidRequest &ip) {
         throw(ip);
     }
 }

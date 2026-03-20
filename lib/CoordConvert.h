@@ -27,32 +27,32 @@
 // 坐标转换函数
 inline BLH xyz2blh(const XYZ &xyz, const ReferenceFrame &frame) {
     // 获取椭球参数
-    double a = frame.getA();
-    double e2 = frame.getE2();
+   const  double a = frame.getA();
+    const double e2 = frame.getE2();
     // 计算水平距离 rho（即 sqrt(x^2 + y^2)）
-    double rho = sqrt(xyz.X() * xyz.X() + xyz.Y() * xyz.Y());
+    const double rho = sqrt(xyz.X() * xyz.X() + xyz.Y() * xyz.Y());
 
     // 定义阈值，用于判断是否在极点
-    const double eps = 1.0e-13;
+    constexpr double eps = 1.0e-13;
 
     // 判断是否在极点
     if (rho < eps) {
         // 在极点，根据 z 的符号判断是南极还是北极
-        double B = (xyz.Z() > 0) ? M_PI / 2 : -M_PI / 2;  // 北极为 +90°，南极为 -90°
-        double L = 0.0;  // 经度在极点无定义，通常设为 0
-        double H = fabs(xyz.Z()) - a * sqrt(1 - e2);  // 高度计算
+        double B = xyz.Z() > 0 ? M_PI / 2 : -M_PI / 2; // 北极为 +90°，南极为 -90°
+        double L = 0.0; // 经度在极点无定义，通常设为 0
+        double H = fabs(xyz.Z()) - a * sqrt(1 - e2); // 高度计算
 
-        return BLH(B, L, H);
+        return {B, L, H};
     }
 
     // 不在极点，正常计算
     double B0 = atan2(xyz.Z(), rho);
 
     // 迭代计算大地纬度 B
-    const int maxIterations = 100;
     int iterationCount = 0;
     double B1, N;
     do {
+        constexpr int maxIterations = 100;
         N = a / sqrt(1 - e2 * sin(B0) * sin(B0));
         B1 = atan2(xyz.Z() + e2 * N * sin(B0), rho);
 
@@ -73,54 +73,79 @@ inline BLH xyz2blh(const XYZ &xyz, const ReferenceFrame &frame) {
     double H = rho / cos(B1) - N;
 
     // 返回大地坐标
-    return BLH(B1, L, H);
+    return {B1, L, H};
+}
+
+
+inline Eigen::Matrix3d computeRotationMatrix(const double B, const double L) {
+    const double sinB = std::sin(B);
+    const double cosB = std::cos(B);
+    const double sinL = std::sin(L);
+    const double cosL = std::cos(L);
+
+    Eigen::Matrix3d R;
+    R << -sinL,            cosL,           0.0,
+         -sinB * cosL,     -sinB * sinL,   cosB,
+          cosB * cosL,      cosB * sinL,   sinB;
+
+    return R;
+}
+
+inline ENU xyz2enu(const XYZ &xyz, const XYZ& refXYZ, const ReferenceFrame &frame) {
+    const auto diffXYZ= xyz - refXYZ;
+    const auto refBLH = xyz2blh(refXYZ, frame);
+    const Eigen::Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
+    return {R * diffXYZ};
+}
+
+inline XYZ enu2xyz(const ENU& enu, const XYZ& refXYZ, const ReferenceFrame &frame) {
+    const auto refBLH = xyz2blh(refXYZ, frame);
+    auto R = computeRotationMatrix(refBLH.B(), refBLH.L());
+    const auto diffXYZ = R.transpose() * enu;
+    XYZ resXYZ;
+    resXYZ << refXYZ.X() + diffXYZ.x(),
+               refXYZ.Y() + diffXYZ.y(),
+               refXYZ.Z() + diffXYZ.z();
+    return resXYZ;
 }
 
 // computes the elevation of the input (Target) position as seen from ref Position, using a Geodetic
 // (i.e. ellipsoidal) system.
 // @return the elevation in degrees
-inline double elevation(const XYZ& refXYZ, const XYZ& targetXYZ)
-noexcept(false)
-{
-    BLH refBLH;
-    WGS84 wgs84;
-    refBLH = xyz2blh(refXYZ, wgs84);
+inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
+    noexcept(false) {
+    const WGS84 wgs84;
+    BLH refBLH = xyz2blh(refXYZ, wgs84);
 
-    if(debug)
+    if (debug)
         cout << "refBLH:" << refBLH.transpose() << endl;
 
-    double lat = refBLH.B();
-    double lon = refBLH.L();
-
-    double localUp;
-    double cosUp;
-
-    Eigen::Vector3d z;
+    const double lat = refBLH.B();
+    const double lon = refBLH.L();
 
     // Let's get the slant vector, 这里需要修改接口
-    z = targetXYZ - refXYZ;
+    const auto z = targetXYZ - refXYZ;
 
-    if (z.norm()<=1e-4) // if the positions are within .1 millimeter
+    if (z.norm() <= 1e-4) // if the positions are within .1 millimeter
     {
-        InvalidRequest e("Positions are within .1 millimeter");
-        throw(e);
+        throw InvalidRequest("Positions are within .1 millimeter");
     }
 
     // Compute k vector in local North-East-Up (NEU) system
-    Eigen::Vector3d kVector(::cos(lat)*::cos(lon), ::cos(lat)*::sin(lon), ::sin(lat));
+    const Eigen::Vector3d kVector(::cos(lat) * ::cos(lon), ::cos(lat) * ::sin(lon), ::sin(lat));
 
     // Take advantage of dot method to get Up coordinate in local NEU system
-    localUp = z.dot(kVector);
+    const double localUp = z.dot(kVector);
 
     // Let's get cos(z), being z the angle with respect to local vertical (Up);
-    cosUp = localUp/z.norm();
+    const double cosUp = localUp / z.norm();
 
-    if(debug)
+    if (debug)
         cout << "cosUp:" << cosUp << endl;
 
-    double elev = 90.0 - ((::acos(cosUp))*RAD_TO_DEG);
-    if(debug)
-        cout << "elev:"<<  elev << endl;
+    const double elev = 90.0 - ::acos(cosUp) * RAD_TO_DEG;
+    if (debug)
+        cout << "elev:" << elev << endl;
 
     return elev;
 }
@@ -131,56 +156,47 @@ noexcept(false)
 // @param Target the Position which is observed to have the
 //        computed azimuth, as seen from this Position.
 // @return the azimuth in degrees
-inline double azimuth(const XYZ& refXYZ, const XYZ& targetXYZ)
-noexcept(false)
-{
-    WGS84 wgs84;
-    BLH refBLH = xyz2blh(refXYZ,wgs84);;
+inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ)
+    noexcept(false) {
+    const WGS84 wgs84;
+    const BLH refBLH = xyz2blh(refXYZ, wgs84);
 
-    double latRad = refBLH.B();
-    double lonRad = refBLH.L();
+    const double latRad = refBLH.B();
+    const double lonRad = refBLH.L();
 
-    double localN, localE;
-
-    Eigen::Vector3d z;
     // Let's get the slant vector
-    z = targetXYZ - refXYZ;
+    const Eigen::Vector3d z = targetXYZ - refXYZ;
 
-    if (z.norm()<=1e-4) // if the positions are within .1 millimeter
+    if (z.norm() <= 1e-4) // if the positions are within .1 millimeter
     {
-        GeometryException ge("azimuthGeodetic::Positions are within .1 millimeter");
-        throw(ge);
+        throw GeometryException("azimuthGeodetic::Positions are within .1 millimeter");
     }
 
     // Compute i vector in local North-East-Up (NEU) system
-    Eigen::Vector3d iVector(-::sin(latRad)*::cos(lonRad),
-                            -::sin(latRad)*::sin(lonRad),
+    const Eigen::Vector3d iVector(-::sin(latRad) * ::cos(lonRad),
+                            -::sin(latRad) * ::sin(lonRad),
                             ::cos(latRad));
 
     // Compute j vector in local North-East-Up (NEU) system
-    Eigen::Vector3d jVector(-::sin(lonRad),
+    const Eigen::Vector3d jVector(-::sin(lonRad),
                             ::cos(lonRad),
                             0);
 
     // Now, let's use dot product to get localN and localE unitary vectors
-    localN = (z.dot(iVector))/z.norm();
-    localE = (z.dot(jVector))/z.norm();
+    const double localN = z.dot(iVector) / z.norm();
+    const double localE = z.dot(jVector) / z.norm();
 
     // Let's test if computing azimuth has any sense
-    double test = fabs(localN) + fabs(localE);
+    const double test = fabs(localN) + fabs(localE);
 
     // Warning: If elevation is very close to 90 degrees, we will return azimuth = 0.0
     if (test < 1.0e-16) return 0.0;
 
-    double alpha = ((::atan2(localE, localN)) * RAD_TO_DEG);
-    if (alpha < 0.0)
-    {
+    const double alpha = ::atan2(localE, localN) * RAD_TO_DEG;
+    if (alpha < 0.0) {
         return alpha + 360.0;
     }
-    else
-    {
-        return alpha;
-    }
+    return alpha;
 }
 
 #endif //GNSSLAB_COORDCONVERT_H

@@ -23,8 +23,8 @@ double getLeapSeconds(const CommonTime &ct);
 
 // 时间系统转换
 CommonTime convertTimeSystem(
-        const CommonTime &in_time,
-        const TimeSystem &targetSys);
+    const CommonTime &in_time,
+    const TimeSystem &targetSys);
 
 /**
  * convert from "Julian day" (= JD + 0.5)to calendar day.
@@ -59,12 +59,29 @@ double convertHMS2SOD(int hh,
                       double sec);
 
 CommonTime CivilTime2CommonTime(const CivilTime &civilt);
+
 CivilTime CommonTime2CivilTime(const CommonTime &ct);
+
 CommonTime JulianDate2CommonTime(JulianDate &jd);
+
 JulianDate CommonTime2JulianDate(CommonTime &ct);
-void CommonTime2MJD(const CommonTime& ct, MJD& mjd );
-void MJD2CommonTime(MJD& mjd, CommonTime& ct);
+
+void CommonTime2MJD(const CommonTime &ct, MJD &mjd);
+
+void MJD2CommonTime(MJD &mjd, CommonTime &ct);
+
+void CommonTime2JD2020(const CommonTime &ct, JD2020 &jd);
+
+void JD20202CommonTime(JD2020 &jd, CommonTime &ct);
+
+void MJD2JD2020(MJD &mjd, JD2020 &jd);
+
+void JD20202MJD(JD2020 &jd, MJD &mjd);
+
 CommonTime YDSTime2CommonTime(YDSTime &ydst);
+
 YDSTime CommonTime2YDSTime(const CommonTime &ct);
-void CommonTime2WeekSecond(const CommonTime& ct, WeekSecond& wk);
-void WeekSecond2CommonTime(WeekSecond& wk, CommonTime& ct);
+
+void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk);
+
+void WeekSecond2CommonTime(WeekSecond &wk, CommonTime &ct);

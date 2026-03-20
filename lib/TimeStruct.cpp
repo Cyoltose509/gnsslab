@@ -21,15 +21,15 @@
 #include <math.h>
 
 const string TimeSystem::sys_strings[count] = {
-        "Unknown",
-        "GPS", // GPS system time
-        "GLO", // glonass system time
-        "GAL", // Galileo system time
-        "BDT", // BDS system time
-        "QZS", // qzss time
-        "UTC", // utc
-        "TAI",
-        "TT"
+    "Unknown",
+    "GPS", // GPS system time
+    "GLO", // glonass system time
+    "GAL", // Galileo system time
+    "BDT", // BDS system time
+    "QZS", // qzss time
+    "UTC", // utc
+    "TAI",
+    "TT"
 };
 
 CivilTime &CivilTime::operator=(const CivilTime &right) {
@@ -71,7 +71,6 @@ void JulianDate::reset() {
 }
 
 bool JulianDate::operator==(const JulianDate &right) const {
-
     if (timeSystem != right.timeSystem)
         return false;
 
@@ -170,7 +169,7 @@ bool MJD::operator==(const MJD &right) const {
     if (timeSystem != right.timeSystem)
         return false;
 
-    if (fabs(mjd - right.mjd) < 4.*std::numeric_limits<double>::epsilon()) {
+    if (fabs(mjd - right.mjd) < 4. * std::numeric_limits<double>::epsilon()) {
         return true;
     }
     return false;
@@ -203,6 +202,58 @@ bool MJD::operator<=(const MJD &right) const {
 }
 
 bool MJD::operator>=(const MJD &right) const {
+    return (!operator<(right));
+}
+
+JD2020 &JD2020::operator=(const JD2020 &right) {
+    jd = right.jd;
+    timeSystem = right.timeSystem;
+    return *this;
+}
+
+void JD2020::reset() {
+    jd = 0.0;
+    timeSystem = TimeSystem::GPS;
+}
+
+bool JD2020::operator==(const JD2020 &right) const {
+    /// Any (wildcard) type exception allowed, otherwise must be same time systems
+    if (timeSystem != right.timeSystem)
+        return false;
+
+    if (fabs(jd - right.jd) < 4. * std::numeric_limits<double>::epsilon()) {
+        return true;
+    }
+    return false;
+}
+
+bool JD2020::operator!=(const JD2020 &right) const {
+    return (!operator==(right));
+}
+
+bool JD2020::operator<(const JD2020 &right) const {
+    /// Any (wildcard) type exception allowed, otherwise must be same time systems
+    if (timeSystem != right.timeSystem) {
+        InvalidRequest ir("CommonTime objects not in same time system, cannot be compared");
+        throw(ir);
+    }
+
+    if (jd < right.jd) {
+        return true;
+    }
+    return false;
+}
+
+bool JD2020::operator>(const JD2020 &right) const {
+    return (!operator<=(right));
+}
+
+bool JD2020::operator<=(const JD2020 &right) const {
+    return (operator<(right) ||
+            operator==(right));
+}
+
+bool JD2020::operator>=(const JD2020 &right) const {
     return (!operator<(right));
 }
 
@@ -255,43 +306,3 @@ bool WeekSecond::operator<=(const WeekSecond &right) const {
 bool WeekSecond::operator>=(const WeekSecond &right) const {
     return (!operator<(right));
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
