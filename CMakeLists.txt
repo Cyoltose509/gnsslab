@@ -29,6 +29,10 @@ set(DIR_LIB_SRCS
         lib/TimeStruct.h
         lib/OEM7Reader.cpp
         lib/OEM7Reader.h
+        lib/GnssStruct.h
+        lib/GnssStruct.cpp
+        lib/NavEphGPS.h
+        lib/NavEphGPS.cpp
 )
 # 根据源文件创建库文件
 add_library( gnss SHARED ${DIR_LIB_SRCS} )

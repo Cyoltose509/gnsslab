@@ -1,24 +1,5 @@
-/**
- * Copyright:
- *  This software is licensed under the Mulan Permissive Software License, Version 2 (MulanPSL-2.0).
- *  You may obtain a copy of the License at:http://license.coscl.org.cn/MulanPSL2
- *  As stipulated by the MulanPSL-2.0, you are granted the following freedoms:
- *      To copy, use, and modify the software;
- *      To use the software for commercial purposes;
- *      To redistribute the software.
- *
- * Author: Shoujian Zhang，shjzhang@sgg.whu.edu.cn， 2024-10-10
- *
- * References:
- * 1. Sanz Subirana, J., Juan Zornoza, J. M., & Hernández-Pajares, M. (2013).
- *    GNSS data processing: Volume I: Fundamentals and algorithms. ESA Communications.
- * 2. Eckel, Bruce. Thinking in C++. 2nd ed., Prentice Hall, 2000.
- */
+#pragma  once
 
-#ifndef TimeStruct_H
-#define TimeStruct_H
-
-#include <sys/time.h>
 #include "Exception.h"
 #include <limits>
 #include <iomanip>
@@ -54,7 +35,7 @@ public:
     }
 
     // Constructor
-    TimeSystem(const std::string& str) {
+    TimeSystem(const std::string &str) {
         for (int i = 0; i < count; i++) {
             if (sys_strings[i] == str) {
                 system = static_cast<SystemType>(i);
@@ -106,9 +87,9 @@ public:
         m_timeSystem = TimeSystem::GPS;
     }
 
-    CommonTime(long day,
-               double sod = 0.0,
-               TimeSystem timeSystem = TimeSystem::GPS) {
+    explicit CommonTime(long day,
+                        double sod = 0.0,
+                        TimeSystem timeSystem = TimeSystem::GPS) {
         m_day = day;
         m_sod = sod;
         m_timeSystem = timeSystem;
@@ -133,10 +114,7 @@ public:
         m_timeSystem = timeSystem;
     }
 
-    void get(
-        long &day,
-        double &sod,
-        TimeSystem &timeSystem) const {
+    void get(long &day, double &sod, TimeSystem &timeSystem) const {
         day = m_day;
         sod = m_sod;
         timeSystem = m_timeSystem;
@@ -480,7 +458,7 @@ inline std::ostream &operator<<(std::ostream &s, MJD &mjd) {
 class JD2020 {
 public:
     JD2020(long double m = 0.,
-        TimeSystem ts = TimeSystem::GPS)
+           TimeSystem ts = TimeSystem::GPS)
         : jd(m) { timeSystem = ts; }
 
 
@@ -524,8 +502,6 @@ inline std::ostream &operator<<(std::ostream &s, JD2020 &jd) {
     s << jd.toString();
     return s;
 }
-
-
 
 
 /// This class encapsulates the "Full Week and Seconds-of-week"
@@ -603,12 +579,12 @@ public:
 
     double diff(const WeekSecond &right) const;
 
-    inline virtual void setEpoch(unsigned int e) {
+    virtual void setEpoch(unsigned int e) {
         week &= bitmask();
         week |= e << Nbits();
     }
 
-    inline virtual void setModWeek(unsigned int w) {
+    virtual void setModWeek(unsigned int w) {
         week &= ~bitmask();
         week |= w & bitmask();
     }
@@ -678,20 +654,17 @@ public:
     /// Return the number of bits in the bitmask used to get the
     /// ModWeek from the full week.
     int Nbits() const override {
-        static const int n = 10;
-        return n;
+        return 10;
     }
 
     /// Return the bitmask used to get the ModWeek from the full week.
     int bitmask() const override {
-        static const int bm = 0x3FF;
-        return bm;
+        return 0x3FF;
     }
 
     /// Return the Modified Julian Date (MJD) of epoch for this system.
     long MJDEpoch() const override {
-        static const long e = GPS_EPOCH_MJD;
-        return e;
+        return GPS_EPOCH_MJD;
     }
 
     bool operator==(const GPSWeekSecond &right) const {
@@ -735,20 +708,17 @@ public:
     /// Return the number of bits in the bitmask used to get the
     /// ModWeek from the full week.
     int Nbits() const override {
-        static const int n = 10;
-        return n;
+        return 13;
     }
 
     /// Return the bitmask used to get the ModWeek from the full week.
     int bitmask() const override {
-        static const int bm = 0x3FF;
-        return bm;
+        return 0x1FFF;
     }
 
     /// Return the Modified Julian Date (MJD) of epoch for this system.
     long MJDEpoch() const override {
-        static const long e = BDT_EPOCH_MJD;
-        return e;
+        return BDT_EPOCH_MJD;
     }
 
     bool operator==(const BDTWeekSecond &right) const {
@@ -775,6 +745,3 @@ public:
         return WeekSecond::operator>=(right);
     }
 }; // end class GPSWeekSecond
-
-
-#endif //TimeStruct_H

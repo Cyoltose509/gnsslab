@@ -22,9 +22,7 @@
 double getLeapSeconds(const CommonTime &ct);
 
 // 时间系统转换
-CommonTime convertTimeSystem(
-    const CommonTime &in_time,
-    const TimeSystem &targetSys);
+void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys);
 
 /**
  * convert from "Julian day" (= JD + 0.5)to calendar day.

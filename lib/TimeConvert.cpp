@@ -1,19 +1,3 @@
-/**
- * Copyright:
- *  This software is licensed under the Mulan Permissive Software License, Version 2 (MulanPSL-2.0).
- *  You may obtain a copy of the License at:http://license.coscl.org.cn/MulanPSL2
- *  As stipulated by the MulanPSL-2.0, you are granted the following freedoms:
- *      To copy, use, and modify the software;
- *      To use the software for commercial purposes;
- *      To redistribute the software.
- *
- * Author: Shoujian Zhang，shjzhang@sgg.whu.edu.cn， 2024-10-10
- *
- * References:
- * 1. Sanz Subirana, J., Juan Zornoza, J. M., & Hernández-Pajares, M. (2013).
- *    GNSS data processing: Volume I: Fundamentals and algorithms. ESA Communications.
- * 2. Eckel, Bruce. Thinking in C++. 2nd ed., Prentice Hall, 2000.
- */
 #include <cmath>
 #include <map>
 #include "TimeConvert.h"
@@ -80,16 +64,12 @@ double getLeapSeconds(const CommonTime &ct) {
 }
 
 // 时间系统转换
-CommonTime convertTimeSystem(
-    const CommonTime &in_time,
-    const TimeSystem &targetSys) {
+void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys) {
     const TimeSystem inTS = in_time.m_timeSystem;
-
     double dt(0.0);
-
-    // identity
+    in_time.m_timeSystem = targetSys;
     if (inTS == targetSys)
-        return in_time;
+        return;
 
     if (inTS == TimeSystem::GPS) // GAL -> TAI
         dt = 19.;
@@ -119,7 +99,7 @@ CommonTime convertTimeSystem(
         throw (e);
     }
 
-    return in_time + dt;
+    in_time += dt;
 }
 
 //
@@ -261,8 +241,6 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct) {
 
     int month, day;
     convertJD2YMD(jday, ydst.year, month, day);
-    if (debugYDS)
-        cout << "year:" << ydst.year << "month:" << month << "day:" << day;
 
     ydst.doy = jday - convertYMD2JD(ydst.year, 1, 1) + 1;
     return ydst;
@@ -276,7 +254,7 @@ void MJD2CommonTime(MJD &mjd, CommonTime &ct) {
         // convert tmp to seconds of day
         sod *= SEC_PER_DAY;
 
-        ct.set(static_cast<long>(mday),sod,mjd.timeSystem);
+        ct.set(static_cast<long>(mday), sod, mjd.timeSystem);
     } catch (InvalidRequest &ip) {
         throw(ip);
     }
@@ -303,7 +281,7 @@ void JD20202CommonTime(const JD2020 &jd, CommonTime &ct) {
         double sod = mday - static_cast<long>(mday);
         // convert tmp to seconds of day
         sod *= SEC_PER_DAY - MJD_TO_JD2020;
-        ct.set(mday,sod,jd.timeSystem);
+        ct.set(mday, sod, jd.timeSystem);
     } catch (InvalidRequest &ip) {
         throw(ip);
     }
@@ -329,6 +307,7 @@ void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk) {
     long mday;
     double sod;
     ct.get(mday, sod, wk.timeSystem);
+
     // find the number of days since the beginning of the Epoch
     mday -= wk.MJDEpoch();
     // find out how many weeks that is

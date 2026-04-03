@@ -4,7 +4,6 @@
 
 struct RangeDataStatus {
     int track, plock, parity, clock, sys, type, halfc;
-
 };
 
 
@@ -20,21 +19,24 @@ struct RangeData {
 
 
 class OEM7Reader {
-private:
     std::string file;
     std::ifstream ifs;
     vector<unsigned char> buf;
     vector<unsigned char> body;
     vector<double> vals;
+
 public:
     struct Header {
         int type;
         int week;
-        int BodyLength;
+        int length;
     } header = {};
-    size_t readBytes(size_t n);
+
+    size_t readBytes(size_t n, vector<unsigned char> &chars);
 
     GPSEphem readGPSEphem() const;
+
+    BDSEphem readBDSEphem() const;
 
     bool crcExam();
 
@@ -42,9 +44,7 @@ public:
 
     int readRange() const;
 
-    Header& readHeaderData();
+    Header &readHeaderData();
+
     void readOne();
-
-
-
 };

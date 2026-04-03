@@ -32,16 +32,7 @@ const string TimeSystem::sys_strings[count] = {
     "TT"
 };
 
-CivilTime &CivilTime::operator=(const CivilTime &right) {
-    year = right.year;
-    month = right.month;
-    day = right.day;
-    hour = right.hour;
-    minute = right.minute;
-    second = right.second;
-    timeSys = right.timeSys;
-    return *this;
-}
+CivilTime &CivilTime::operator=(const CivilTime &right) = default;
 
 bool CivilTime::operator==(const CivilTime &right) const {
     if (timeSys != right.timeSys)
@@ -59,11 +50,7 @@ bool CivilTime::operator==(const CivilTime &right) const {
 }
 
 //=============================
-JulianDate &JulianDate::operator=(const JulianDate &right) {
-    jd = right.jd;
-    timeSystem = right.timeSystem;
-    return *this;
-}
+JulianDate &JulianDate::operator=(const JulianDate &right) = default;
 
 void JulianDate::reset() {
     jd = 0.0;
@@ -81,13 +68,12 @@ bool JulianDate::operator==(const JulianDate &right) const {
 }
 
 bool JulianDate::operator!=(const JulianDate &right) const {
-    return (!operator==(right));
+    return !operator==(right);
 }
 
 bool JulianDate::operator<(const JulianDate &right) const {
     if (timeSystem != right.timeSystem) {
-        InvalidRequest ir("CommonTime objects not in same time system, cannot be compared");
-        throw (ir);
+        throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
     }
 
     if (jd < right.jd) {
@@ -98,13 +84,7 @@ bool JulianDate::operator<(const JulianDate &right) const {
 
 //==================================
 
-YDSTime &YDSTime::operator=(const YDSTime &right) {
-    year = right.year;
-    doy = right.doy;
-    sod = right.sod;
-    timeSystem = right.timeSystem;
-    return *this;
-}
+YDSTime &YDSTime::operator=(const YDSTime &right) = default;
 
 void YDSTime::reset() {
     year = doy = 0;
@@ -258,12 +238,7 @@ bool JD2020::operator>=(const JD2020 &right) const {
 }
 
 
-WeekSecond &WeekSecond::operator=(const WeekSecond &right) {
-    week = right.week;
-    timeSystem = right.timeSystem;
-    sow = right.sow;
-    return *this;
-}
+WeekSecond &WeekSecond::operator=(const WeekSecond &right) = default;
 
 
 void WeekSecond::reset() {
