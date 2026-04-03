@@ -18,7 +18,7 @@
 #include "TimeStruct.h"
 #include "Exception.h"
 #include <limits>
-#include <math.h>
+#include <cmath>
 
 const string TimeSystem::sys_strings[count] = {
     "Unknown",
@@ -305,4 +305,14 @@ bool WeekSecond::operator<=(const WeekSecond &right) const {
 
 bool WeekSecond::operator>=(const WeekSecond &right) const {
     return (!operator<(right));
+}
+
+double WeekSecond::diff(const WeekSecond &right) const {
+    if (timeSystem != right.timeSystem) {
+        throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
+    }
+    double sec = (week - right.week) * FULLWEEK + (sow - right.sow);
+    if (sec > HALFWEEK) sec -= FULLWEEK;
+    if (sec < -HALFWEEK) sec += FULLWEEK;
+    return sec;
 }

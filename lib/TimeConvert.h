@@ -84,4 +84,4 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct);
 
 void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk);
 
-void WeekSecond2CommonTime(WeekSecond &wk, CommonTime &ct);
+void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct);

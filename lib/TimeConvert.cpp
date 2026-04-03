@@ -68,10 +68,10 @@ double getLeapSeconds(const CommonTime &ct) {
         throw (e);
     }
 
-    double leapSec;
+    double leapSec = 0;
 
     //  循环所有的跳秒记录
-    for (auto ld: leapData) {
+    for (const auto ld: leapData) {
         if (ld.first <= mjd_ct)
             leapSec = ld.second;
     }
@@ -83,7 +83,7 @@ double getLeapSeconds(const CommonTime &ct) {
 CommonTime convertTimeSystem(
     const CommonTime &in_time,
     const TimeSystem &targetSys) {
-    TimeSystem inTS = in_time.m_timeSystem;
+    const TimeSystem inTS = in_time.m_timeSystem;
 
     double dt(0.0);
 
@@ -127,11 +127,11 @@ void convertJD2YMD(double jd,
                    int &iyear,
                    int &imonth,
                    int &iday) {
-    double a = std::floor(jd + 0.5);
-    double b = a + 1537;
-    double c = std::floor((b - 122.1) / 365.25);
-    double d = std::floor(365.25 * c);
-    double e = std::floor((b - d) / 30.6001);
+    const double a = std::floor(jd + 0.5);
+    const double b = a + 1537;
+    const double c = std::floor((b - 122.1) / 365.25);
+    const double d = std::floor(365.25 * c);
+    const double e = std::floor((b - d) / 30.6001);
     iday = b - d - std::floor(30.6001 * e) + (jd + 0.5) - std::floor(jd + 0.5);
     imonth = e - 1 - 12. * std::floor(e / 14);
     iyear = c - 4715 - std::floor((7 + imonth) / 10);
@@ -254,7 +254,7 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct) {
     long mjday;
     double secDay;
     ct.get(mjday, secDay, ydst.timeSystem);
-    ydst.sod = static_cast<double>(secDay);
+    ydst.sod = secDay;
 
     double jday;
     jday = mjday + MJD_TO_JD;
@@ -270,17 +270,14 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct) {
 
 void MJD2CommonTime(MJD &mjd, CommonTime &ct) {
     try {
-        long double mday = (mjd.mjd);
+        const auto mday = static_cast<double>(mjd.mjd);
         // tmp now holds the partial days
         double sod = mday - static_cast<long>(mday);
         // convert tmp to seconds of day
         sod *= SEC_PER_DAY;
 
-        ct.set(mday,
-               sod,
-               mjd.timeSystem);
+        ct.set(static_cast<long>(mday),sod,mjd.timeSystem);
     } catch (InvalidRequest &ip) {
-        InvalidRequest ir(ip);
         throw(ip);
     }
 }
@@ -288,7 +285,6 @@ void MJD2CommonTime(MJD &mjd, CommonTime &ct) {
 void CommonTime2MJD(const CommonTime &ct, MJD &mjd) {
     long mday;
     double sod;
-    double fsod;
     ct.get(mday, sod, mjd.timeSystem);
     mjd.mjd = static_cast<long double>(mday) + static_cast<long double>(sod) * DAY_PER_SEC;
 }
@@ -302,17 +298,13 @@ void CommonTime2JD2020(const CommonTime &ct, JD2020 &jd) {
 
 void JD20202CommonTime(const JD2020 &jd, CommonTime &ct) {
     try {
-        long double mday = (jd.jd);
+        const double mday = jd.jd;
         // tmp now holds the partial days
         double sod = mday - static_cast<long>(mday);
         // convert tmp to seconds of day
         sod *= SEC_PER_DAY - MJD_TO_JD2020;
-
-        ct.set(mday,
-               sod,
-               jd.timeSystem);
+        ct.set(mday,sod,jd.timeSystem);
     } catch (InvalidRequest &ip) {
-        InvalidRequest ir(ip);
         throw(ip);
     }
 }
@@ -344,18 +336,18 @@ void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk) {
     // find out what the day of week is
     mday %= 7;
 
-    wk.sow = static_cast<double>(mday * SEC_PER_DAY + sod);
+    wk.sow = mday * SEC_PER_DAY + sod;
 }
 
-void WeekSecond2CommonTime(WeekSecond &wk, CommonTime &ct) {
+void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct) {
     try {
         //int dow = static_cast<int>( sow * DAY_PER_SEC );
         // Appears to have rounding issues on 32-bit platforms
 
-        int dow = static_cast<int>(wk.sow / SEC_PER_DAY);
+        const int dow = static_cast<int>(wk.sow / SEC_PER_DAY);
         // NB this assumes MJDEpoch is an integer - what if epoch H:M:S != 0:0:0 ?
-        long mday = wk.MJDEpoch() + (7 * wk.week) + dow;
-        double sod(wk.sow - SEC_PER_DAY * dow);
+        const long mday = wk.MJDEpoch() + (7 * wk.week) + dow;
+        const double sod(wk.sow - SEC_PER_DAY * dow);
         ct.set(mday, sod, wk.timeSystem);
     } catch (InvalidRequest &ip) {
         throw(ip);
