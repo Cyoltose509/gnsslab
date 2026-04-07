@@ -66,76 +66,62 @@ double getLeapSeconds(const CommonTime &ct) {
 // 时间系统转换
 void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys) {
     const TimeSystem inTS = in_time.m_timeSystem;
-    double dt(0.0);
+    double dt = 0;
     in_time.m_timeSystem = targetSys;
     if (inTS == targetSys)
         return;
-
     if (inTS == TimeSystem::GPS) // GAL -> TAI
-        dt = 19.;
+        dt = 19;
     else if (inTS == TimeSystem::UTC) // GLO -> TAI
-        dt = getLeapSeconds(in_time);
-    else if (inTS == TimeSystem::BDT) // BDT -> TAI         // RINEX 3.02 seems to say this
-        dt = 33.;
+        dt = getLeapSeconds(in_time + dt - getLeapSeconds(in_time));
+    else if (inTS == TimeSystem::BDT) // BDT -> TAI
+        dt = 33;
     else if (inTS == TimeSystem::TAI) // TAI -> TAI
-        dt = 0.;
+        dt = 0;
     else {
-        // other
-        InvalidRequest e("Invalid input TimeSystem " + inTS.toString());
-        throw (e);
+        throw InvalidRequest("Invalid input TimeSystem " + inTS.toString());
     }
-
     if (targetSys == TimeSystem::GPS) // TAI -> GAL
-        dt -= 19.;
-    else if (targetSys == TimeSystem::UTC) // TAI -> GLO
-        dt -= getLeapSeconds(in_time);
-    else if (targetSys == TimeSystem::BDT) // TAI -> BDT
-        dt -= 33.;
+        dt -= 19;
+    else if (targetSys == TimeSystem::UTC) {
+        dt -= getLeapSeconds(in_time + dt - getLeapSeconds(in_time));
+    } else if (targetSys == TimeSystem::BDT) // TAI -> BDT
+        dt -= 33;
     else if (targetSys == TimeSystem::TAI) // TAI
-        dt -= 0.;
+        dt -= 0;
     else {
-        // other
-        InvalidRequest e("Invalid output TimeSystem " + targetSys.toString());
-        throw (e);
+        throw InvalidRequest("Invalid output TimeSystem " + targetSys.toString());
     }
-
     in_time += dt;
 }
 
 //
-void convertJD2YMD(double jd,
-                   int &iyear,
-                   int &imonth,
-                   int &iday) {
+void convertJD2YMD(const double jd, int &iyear, int &imonth, int &iday) {
     const double a = std::floor(jd + 0.5);
     const double b = a + 1537;
     const double c = std::floor((b - 122.1) / 365.25);
     const double d = std::floor(365.25 * c);
     const double e = std::floor((b - d) / 30.6001);
-    iday = b - d - std::floor(30.6001 * e) + (jd + 0.5) - std::floor(jd + 0.5);
-    imonth = e - 1 - 12. * std::floor(e / 14);
-    iyear = c - 4715 - std::floor((7 + imonth) / 10);
+    iday = static_cast<int>(b) - d - std::floor(30.6001 * e) + (jd + 0.5) - std::floor(jd + 0.5);
+    imonth = static_cast<int>(e) - 1 - 12. * std::floor(e / 14);
+    iyear = static_cast<int>(c) - 4715 - std::floor((7 + imonth) / 10);
 }
 
-double convertYMD2JD(int yy, int mm, int dd) {
-    if (mm <= 2) {
-        mm += 12;
-        yy -= 1;
+double convertYMD2JD(int iyear, int imonth, int iday) {
+    if (imonth <= 2) {
+        imonth += 12;
+        iyear -= 1;
     }
 
-    double B = 2 - floor(yy / 100) + floor(yy / 400);
-    double jd_double = floor(365.25 * (yy + 4716)) + floor(30.6001 * (mm + 1)) + B + dd - 1524.5;
+    double B = 2 - floor(iyear / 100) + floor(iyear / 400);
+    const double jd_double = floor(365.25 * (iyear + 4716)) + floor(30.6001 * (imonth + 1)) + B + iday - 1524.5;
     return jd_double;
 }
 
-void convertSOD2HMS(double sod,
-                    int &hh,
-                    int &mm,
-                    double &sec) {
+void convertSOD2HMS(double sod, int &hh, int &mm, double &sec) {
     // Get us to within one day.
     if (sod < 0) {
-        sod += (1 +
-                static_cast<unsigned long>(sod / SEC_PER_DAY)) * SEC_PER_DAY;
+        sod += (1 + static_cast<unsigned long>(sod / SEC_PER_DAY)) * SEC_PER_DAY;
     } else if (sod >= SEC_PER_DAY) {
         sod -= static_cast<unsigned long>(sod / SEC_PER_DAY) * SEC_PER_DAY;
     }
@@ -146,7 +132,7 @@ void convertSOD2HMS(double sod,
 
     hh = seconds / 3600;
     mm = (seconds % 3600) / 60;
-    sec = double(seconds % 60) + sod;
+    sec = static_cast<double>(seconds % 60) + sod;
 }
 
 double convertHMS2SOD(int hh,
@@ -155,19 +141,19 @@ double convertHMS2SOD(int hh,
     return (sec + 60. * (mm + 60. * hh));
 }
 
-CommonTime CivilTime2CommonTime(const CivilTime &civilt) {
+CommonTime CivilTime2CommonTime(const CivilTime &civil_t) {
     CommonTime ct;
     // get the julian day
-    double jday = convertYMD2JD(civilt.year, civilt.month, civilt.day);
+    double jday = convertYMD2JD(civil_t.year, civil_t.month, civil_t.day);
 
     // convert jday to mjd day.
-    int mjd_day = jday - MJD_TO_JD;
+    int mjd_day = static_cast<int>(round(jday)) - MJD_TO_JD; //NOLINT
 
     // get the second of day
-    double sod = convertHMS2SOD(civilt.hour, civilt.minute, civilt.second);
+    const double sod = convertHMS2SOD(civil_t.hour, civil_t.minute, civil_t.second);
 
     // mjd_day + sod
-    ct.set(mjd_day, sod, civilt.timeSys);
+    ct.set(mjd_day, sod, civil_t.timeSys);
 
     return ct;
 }
@@ -202,9 +188,7 @@ CommonTime JulianDate2CommonTime(JulianDate &jd) {
 
     long double sod = (temp_jd - std::floor(temp_jd)) * SEC_PER_DAY;
 
-    ct.set(mjd_day,
-           static_cast<double>(sod),
-           jd.timeSystem);
+    ct.set(mjd_day, static_cast<double>(sod), jd.timeSystem);
     return ct;
 }
 
@@ -215,8 +199,7 @@ JulianDate CommonTime2JulianDate(CommonTime &ct) {
     ct.get(mjd_day, sod, jd.timeSystem);
 
     double jday = mjd_day + MJD_TO_JD;
-    jd.jd = static_cast<long double>(jday) +
-            (static_cast<long double>(sod)) * DAY_PER_SEC;
+    jd.jd = static_cast<long double>(jday) + (static_cast<long double>(sod)) * DAY_PER_SEC;
 
     return jd;
 };
@@ -224,7 +207,7 @@ JulianDate CommonTime2JulianDate(CommonTime &ct) {
 
 CommonTime YDSTime2CommonTime(YDSTime &ydst) {
     CommonTime ct;
-    long jday = convertYMD2JD(ydst.year, 1, 1) + ydst.doy - 1;
+    auto jday = static_cast<long>(convertYMD2JD(ydst.year, 1, 1) + ydst.doy - 1);
     ct.set(jday, ydst.sod, ydst.timeSystem);
     return ct;
 }
@@ -247,17 +230,13 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct) {
 }
 
 void MJD2CommonTime(MJD &mjd, CommonTime &ct) {
-    try {
-        const auto mday = static_cast<double>(mjd.mjd);
-        // tmp now holds the partial days
-        double sod = mday - static_cast<long>(mday);
-        // convert tmp to seconds of day
-        sod *= SEC_PER_DAY;
+    const auto mday = static_cast<double>(mjd.mjd);
+    // tmp now holds the partial days
+    double sod = mday - static_cast<long>(mday);
+    // convert tmp to seconds of day
+    sod *= SEC_PER_DAY;
 
-        ct.set(static_cast<long>(mday), sod, mjd.timeSystem);
-    } catch (InvalidRequest &ip) {
-        throw(ip);
-    }
+    ct.set(static_cast<long>(mday), sod, mjd.timeSystem);
 }
 
 void CommonTime2MJD(const CommonTime &ct, MJD &mjd) {
@@ -275,16 +254,12 @@ void CommonTime2JD2020(const CommonTime &ct, JD2020 &jd) {
 }
 
 void JD20202CommonTime(const JD2020 &jd, CommonTime &ct) {
-    try {
-        const double mday = jd.jd;
-        // tmp now holds the partial days
-        double sod = mday - static_cast<long>(mday);
-        // convert tmp to seconds of day
-        sod *= SEC_PER_DAY - MJD_TO_JD2020;
-        ct.set(mday, sod, jd.timeSystem);
-    } catch (InvalidRequest &ip) {
-        throw(ip);
-    }
+    const auto mday = static_cast<double>(jd.jd);
+    // tmp now holds the partial days
+    double sod = mday - static_cast<long>(mday);
+    // convert tmp to seconds of day
+    sod *= SEC_PER_DAY - MJD_TO_JD2020;
+    ct.set(static_cast<long>(mday), sod, jd.timeSystem);
 }
 
 void MJD2JD2020(const MJD &mjd, JD2020 &jd) {
@@ -300,8 +275,7 @@ void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk) {
     MJD mjd;
     CommonTime2MJD(ct, mjd);
     if (mjd.mjd < wk.MJDEpoch()) {
-        InvalidRequest ir("Unable to convert to Week/Second - before Epoch.");
-        throw(ir);
+        throw InvalidRequest("Unable to convert to Week/Second - before Epoch.");
     }
 
     long mday;
@@ -319,16 +293,12 @@ void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk) {
 }
 
 void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct) {
-    try {
-        //int dow = static_cast<int>( sow * DAY_PER_SEC );
-        // Appears to have rounding issues on 32-bit platforms
+    //int dow = static_cast<int>( sow * DAY_PER_SEC );
+    // Appears to have rounding issues on 32-bit platforms
 
-        const int dow = static_cast<int>(wk.sow / SEC_PER_DAY);
-        // NB this assumes MJDEpoch is an integer - what if epoch H:M:S != 0:0:0 ?
-        const long mday = wk.MJDEpoch() + 7 * wk.week + dow;
-        const double sod(wk.sow - SEC_PER_DAY * dow);
-        ct.set(mday, sod, wk.timeSystem);
-    } catch (InvalidRequest &ip) {
-        throw(ip);
-    }
+    const int dow = static_cast<int>(wk.sow / SEC_PER_DAY);
+    // NB this assumes MJDEpoch is an integer - what if epoch H:M:S != 0:0:0 ?
+    const long mday = wk.MJDEpoch() + 7 * wk.week + dow;
+    const double sod(wk.sow - SEC_PER_DAY * dow);
+    ct.set(mday, sod, wk.timeSystem);
 }

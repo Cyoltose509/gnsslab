@@ -258,10 +258,11 @@ inline double c_Ek(const double E0, const double e) {
     return E;
 }
 
-PVT Ephemeris::svPVT(const WeekSecond &ws) const {
+PVT Ephemeris::svPVT(CommonTime t) {
+    convertTimeSystem(t, timeSystem);
     PVT sv;
-    double tk = ws-getWeekSecond();
-    double A = RootA * RootA; //计算轨道长半径
+    const double tk = t - getCommonTime();
+    const double A = RootA * RootA; //计算轨道长半径
     double n0 = sqrt(refFrame.GM / pow(A, 3)); //平均角速度0.000145859rad/s
     double nA = n0 + dn; //改正平均角速度
     double Mk = M0 + nA * tk;
@@ -305,4 +306,3 @@ PVT Ephemeris::svPVT(const WeekSecond &ws) const {
     sv.relcorr = -2.0 * sqrt(refFrame.GM) / (C_MPS * C_MPS) * e * sqrt(A) * sin(Ek);
     return sv;
 }
-

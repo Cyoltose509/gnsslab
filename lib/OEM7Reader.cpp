@@ -15,12 +15,6 @@
 #define ID_BDSEPHEMRIS  1696
 #define POLYCRC32 0xEDB88320u
 
-#define A0 26559710//参考轨道长半径(m)
-#define u_B 3.986004418e14
-#define u_G 3.9860050e14//地球引力常数
-#define OMEe_dt_G 7.2921151467e-5
-#define OMEe_dt_B 7.2921150e-5//地球自转速率
-using namespace std;
 
 static unsigned short U2(const unsigned char *p) {
     unsigned short u;
@@ -64,15 +58,6 @@ RangeDataStatus GetStatus(const int stat) {
     return res;
 }
 
-void PrintData(const RangeData &data) {
-    cout << "PRN: " << data.PRN << endl;
-    cout << "Pseudorange: " << data.psr << " m" << endl;
-    cout << "Pseudorange Std Dev: " << data.psr_std << " m" << endl;
-    cout << "Carrier Phase: " << data.adr << " cycles" << endl;
-    cout << "Carrier Phase Std Dev: " << data.adr_std << " cycles" << endl;
-    cout << "Doppler Shift: " << data.doppler << " Hz" << endl;
-}
-
 int OEM7Reader::readRange() const {
     int off = 28;
     const int num = I4(&buf[off]);
@@ -104,7 +89,7 @@ OEM7Reader::Header &OEM7Reader::readHeaderData() {
     return header;
 }
 
-int crc32(const unsigned char *buff, const int len) {
+inline int crc32(const unsigned char *buff, const int len) {
     unsigned int crc = 0;
     for (int i = 0; i < len; i++) {
         crc ^= buff[i];
@@ -280,145 +265,7 @@ BDSEphem OEM7Reader::readBDSEphem() const {
     return res;
 }
 
-// 解 Kepler 方程：求偏近点角 E，使用牛顿迭代
-//迭代法求偏近点角Ek
-double C_Ek(const double E0, const double e) {
-    double E = E0;
-    double E_1;
-    do {
-        E_1 = E;
-        E = E0 + e * sin(E_1);
-    } while (E_1 != E);
-    return E;
-}
-
-vector<double> GPS_P(const GPSEphem &data, double tk) {
-    double A = data.RootA * data.RootA; //计算轨道长半径
-    double n0 = sqrt(u_G / pow(A, 3)); //平均角速度0.000145859rad/s
-    double toe = data.toe; //星历参考时刻
-    double delta_n = data.dn; //平均角速度修正值
-    double nA = n0 + delta_n; //改正平均角速度
-    double e = data.e; //偏心率
-    double M0 = data.M0; //参考时刻平近点角
-    double Mk = M0 + nA * tk;
-    double Ek = C_Ek(Mk, e);
-    double vk = 2 * atan(sqrt((1 + e) / (1 - e)) * tan(Ek / 2)); //计算真近点角
-    double omega = data.omega; //近地点角距
-    double phi = vk + omega; //卫星与升交点间地心夹角
-    double Cus = data.cus, Crs = data.crs, Cis = data.cis, Cuc = data.cuc, Crc = data.crc, Cic = data.cic; //卫星各周期震动的正弦项振幅
-    double s2 = sin(2 * phi), c2 = cos(2 * phi);
-    double Qu = Cus * s2 + Cuc * c2, Qr = Crs * s2 + Crc * c2, Qi = Cis * s2 + Cic * c2; //短周期摄动项
-    double uk = phi + Qu, rk = A * (1 - e * cos(Ek)) + Qr, i0 = data.i0; //短周期摄动改正，ik的值不确定
-    double ik = i0 + Qi + data.idot * tk;
-    double x0 = rk * cos(uk), y0 = rk * sin(uk);
-    double OME_dt = data.Omegadot, OMEk = data.Omega0 - OMEe_dt_G * toe + (OME_dt - OMEe_dt_G) * tk; //计算升交点经度
-    double xk = x0 * cos(OMEk) - y0 * cos(ik) * sin(OMEk);
-    double yk = x0 * sin(OMEk) + y0 * cos(ik) * cos(OMEk);
-    double zk = y0 * sin(ik);
-    vector<double> res{xk * 0.001, yk * 0.001, zk * 0.001};
-    double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
-    double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
-    double rdot = A * e * sin(Ek) * Edot + 2 * (Crs * c2 - Crc * s2) * phidot; //轨道半径速率
-    double ukdot = phidot + 2 * phidot * (Cus * c2 - Cuc * s2);
-    double OMEkdot = OME_dt - OMEe_dt_G; //升交点速率
-    double ikdot = 2 * phidot * (Cis * c2 - Cic * s2) + data.idot;
-    double x0dot = rdot * cos(uk) - rk * ukdot * sin(uk);
-    double y0dot = rdot * sin(uk) + rk * ukdot * cos(uk); //轨道平面内速度分量
-    double cosik = cos(ik), sinik = sin(ik);
-    double xkdot = x0dot * cos(OMEk) - x0 * sin(OMEk) * OMEkdot
-                   - (y0dot * cosik * sin(OMEk) + y0 * (-sinik * ikdot) * sin(OMEk) + y0 * cosik * cos(OMEk) * OMEkdot);
-    double ykdot = x0dot * sin(OMEk) + x0 * cos(OMEk) * OMEkdot
-                   + (y0dot * cosik * cos(OMEk) + y0 * (-sinik * ikdot) * cos(OMEk) - y0 * cosik * sin(OMEk) * OMEkdot);
-    double zkdot = y0dot * sinik + y0 * cosik * ikdot;
-    res.push_back(xkdot);
-    res.push_back(ykdot);
-    res.push_back(zkdot);
-    // ====== 时间 ======
-    double dt = tk + data.toe - data.toc; // 钟差参考时间
-
-    // 周跳修正
-    if (dt > 302400) dt -= 604800;
-    if (dt < -302400) dt += 604800;
-
-    // ====== 钟差（秒）======
-    double clk = data.a0 + data.a1 * dt + data.a2 * dt * dt;
-
-    // 转 μs
-    res.push_back(clk * 1e6);
-
-    // 钟漂（秒/秒)
-    double clk_vel = data.a1 + 2 * data.a2 * dt;
-
-    // 转 μs/s
-    res.push_back(clk_vel * 1e6);
-    return res;
-}
-
-vector<double> BDS_P(const BDSEphem &data, double tk) {
-    double A = data.RootA * data.RootA; //计算轨道长半径
-    double n0 = sqrt(u_B / pow(A, 3)); //平均角速度
-    double toe = data.toe; //星历参考时刻
-    double delta_n = data.dn; //平均角速度修正值
-    double nA = n0 + delta_n; //改正平均角速度
-    double e = data.e; //偏心率
-    double M0 = data.M0; //参考时刻平近点角
-    double Mk = M0 + nA * tk;
-    double Ek = C_Ek(Mk, e);
-    double vk = 2 * atan(sqrt((1 + e) / (1 - e)) * tan(Ek / 2)); //计算真近点角
-    double omega = data.omega; //近地点角距
-    double phi = vk + omega; //卫星与升交点间地心夹角
-    double Cus = data.cus, Crs = data.crs, Cis = data.cis, Cuc = data.cuc, Crc = data.crc, Cic = data.cic; //卫星各周期震动的正弦项振幅
-    double s2 = sin(2 * phi), c2 = cos(2 * phi);
-    double Qu = Cus * s2 + Cuc * c2, Qr = Crs * s2 + Crc * c2, Qi = Cis * s2 + Cic * c2; //短周期摄动项
-    double uk = phi + Qu, rk = A * (1 - e * cos(Ek)) + Qr, i0 = data.i0; //短周期摄动改正，ik的值不确定
-    double ik = i0 + Qi + data.idot * tk;
-    double x0 = rk * cos(uk), y0 = rk * sin(uk);
-    double OME_dt = data.Omegadot, OMEk = data.Omega0 - OMEe_dt_B * toe + (OME_dt - OMEe_dt_B) * tk; //计算升交点经度
-    double xk = x0 * cos(OMEk) - y0 * cos(ik) * sin(OMEk);
-    double yk = x0 * sin(OMEk) + y0 * cos(ik) * cos(OMEk);
-    double zk = y0 * sin(ik);
-    vector<double> res{xk * 0.001, yk * 0.001, zk * 0.001};
-    double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
-    double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
-    double rdot = A * e * sin(Ek) * Edot + 2 * (Crs * c2 - Crc * s2) * phidot; //轨道半径速率
-    double ukdot = phidot + 2 * phidot * (Cus * c2 - Cuc * s2);
-    double OMEkdot = OME_dt - OMEe_dt_G; //升交点速率
-    double ikdot = 2 * phidot * (Cis * c2 - Cic * s2) + data.idot;
-    double x0dot = rdot * cos(uk) - rk * ukdot * sin(uk);
-    double y0dot = rdot * sin(uk) + rk * ukdot * cos(uk); //轨道平面内速度分量
-    double cosik = cos(ik), sinik = sin(ik);
-    double xkdot = x0dot * cos(OMEk) - x0 * sin(OMEk) * OMEkdot
-                   - (y0dot * cosik * sin(OMEk) + y0 * (-sinik * ikdot) * sin(OMEk) + y0 * cosik * cos(OMEk) * OMEkdot);
-    double ykdot = x0dot * sin(OMEk) + x0 * cos(OMEk) * OMEkdot
-                   + (y0dot * cosik * cos(OMEk) + y0 * (-sinik * ikdot) * cos(OMEk) - y0 * cosik * sin(OMEk) * OMEkdot);
-    double zkdot = y0dot * sinik + y0 * cosik * ikdot;
-    res.push_back(xkdot);
-    res.push_back(ykdot);
-    res.push_back(zkdot);
-    // ====== 时间 ======
-    double dt = tk + data.toe - data.toc; // 钟差参考时间
-
-    // 周跳修正
-    if (dt > 302400) dt -= 604800;
-    if (dt < -302400) dt += 604800;
-    // ====== 钟差（秒）======
-    double clk = data.a0 + data.a1 * dt + data.a2 * dt * dt;
-
-
-    // 转 μs
-    res.push_back(clk * 1e6);
-
-    // 钟漂（秒/秒）
-    double clk_vel = data.a1 + 2 * data.a2 * dt;
-
-    // 转 μs/s
-    res.push_back(clk_vel * 1e6);
-    return res;
-}
-
 std::unique_ptr<Ephemeris> OEM7Reader::readOne() {
-
-
     readBytes(28, buf); //读取消息头
     readHeaderData();
     // 读取消息主体，并将它们放在buf的消息头数据之后
@@ -437,37 +284,9 @@ std::unique_ptr<Ephemeris> OEM7Reader::readOne() {
             break;
         case ID_GPSEPHEM: {
             return std::make_unique<GPSEphem>(readGPSEphem());
-            // auto pvt = GPSData.svPVT(GWS);
-            // cout << GPSData.name() << " "
-            //         << std::fixed << std::setprecision(6)
-            //         << pvt.p[0] * 0.001 << " " << pvt.p[1] * 0.001 << " " << pvt.p[2] * 0.001 << " "
-            //         << std::fixed << std::setprecision(3)
-            //         << pvt.v[0] << " " << pvt.v[1] << " " << pvt.v[2] << " "
-            //         << std::fixed << std::setprecision(6)
-            //         << pvt.clkbias * 1e6 << " " << pvt.clkdrift * 1e6 << endl;
-            // tk = GWS-GPSData.getWeekSecond();
-            // if (tk < 10000) {
-            //     cout << "G" << GPSData.PRN << " ";
-            //     const vector<double> R = GPS_P(GPSData, tk);
-            //     for (const auto i: R)
-            //         cout << std::fixed << std::setprecision(6) << i << " ";
-            //     cout << endl;
-            // }
-            break;
         }
         case ID_BDSEPHEMRIS: {
             return std::make_unique<BDSEphem>(readBDSEphem());
-
-            // const auto BDSData = readBDSEphem();
-            // auto pvt = BDSData.svPVT(BWS);
-            // cout << BDSData.name() << " "
-            //         << std::fixed << std::setprecision(6)
-            //         << pvt.p[0] * 0.001 << " " << pvt.p[1] * 0.001 << " " << pvt.p[2] * 0.001 << " "
-            //         << std::fixed << std::setprecision(3)
-            //         << pvt.v[0] << " " << pvt.v[1] << " " << pvt.v[2] << " "
-            //         << std::fixed << std::setprecision(6)
-            //         << pvt.clkbias * 1e6 << " " << pvt.clkdrift * 1e6 << endl;
-            break;
         }
         default:
             break;
