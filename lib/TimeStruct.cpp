@@ -31,6 +31,17 @@ const string TimeSystem::sys_strings[count] = {
     "TAI",
     "TT"
 };
+const TimeSystem::epoch_params TimeSystem::EPOCH_PARAM[count] = {
+    {0, 0, 0},
+    {10, 0x3FF, GPS_EPOCH_MJD},
+    {0, 0, 0},
+    {0, 0, 0},
+    {13, 0x1FFF, BDT_EPOCH_MJD},
+    {0, 0, 0},
+    {0, 0, 0},
+    {0, 0, 0},
+    {0, 0, 0},
+};
 
 CivilTime &CivilTime::operator=(const CivilTime &right) = default;
 
@@ -282,7 +293,7 @@ bool WeekSecond::operator>=(const WeekSecond &right) const {
     return (!operator<(right));
 }
 
-double WeekSecond::diff(const WeekSecond &right) const {
+double WeekSecond::operator-(const WeekSecond &right) const {
     if (timeSystem != right.timeSystem) {
         throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
     }

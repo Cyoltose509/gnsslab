@@ -143,33 +143,60 @@ struct Ephemeris {
     double URA{}; // 用户测距精度
 
     unsigned int week{};
-
+    char type{};
+    TimeSystem time_system{};
     // 虚析构函数：为了安全地通过基类指针删除子类对象
     virtual ~Ephemeris() = default;
 
+    virtual WeekSecond getWeekSecond() const = 0;
+
+    string name() const {
+        string s;
+        s.reserve(4);
+        s += type;
+        s += std::to_string(PRN);
+        return s;
+    }
+
+    PVT svPVT(const WeekSecond &ws) const;
+
+    const ReferenceFrame &refFrame;
+
+    explicit Ephemeris(const ReferenceFrame &frame) : refFrame(frame) {
+    }
 };
 
 // GPS 星历：特有 IODE, TGD, AS 等
 struct GPSEphem : Ephemeris {
-    unsigned int IODE;
-    unsigned int IODC;
-    double tgd; // GPS 群时延
+    GPSEphem() : Ephemeris(Frame::GPS) {
+        type='G';
+        time_system=TimeSystem::GPS;
+    }
+
+    unsigned int IODE{};
+    unsigned int IODC{};
+    double tgd{}; // GPS 群时延
     // ... 其他 GPS 特有字段
 
 
     // GPS 特有的方法
-    GPSWeekSecond getWeekSecond() const { return {week, toe}; }
+    WeekSecond getWeekSecond() const override { return {week, toe, TimeSystem::GPS}; }
 };
 
 // 北斗星历：特有 AODE, TGD1, TGD2 等
 struct BDSEphem : Ephemeris {
-    unsigned int AODE;
-    unsigned int AODC;
-    double tgd1; // B1/B1C 群时延
-    double tgd2; // B2/B2a 群时延
+    BDSEphem() : Ephemeris(Frame::WGS84) {
+        type='C';
+        time_system=TimeSystem::BDT;
+    }
+
+    unsigned int AODE{};
+    unsigned int AODC{};
+    double tgd1{}; // B1/B1C 群时延
+    double tgd2{}; // B2/B2a 群时延
     // ... 其他北斗特有字段
 
 
     // 北斗特有的方法
-    BDTWeekSecond getWeekSecond() const { return {week, toe}; }
+    WeekSecond getWeekSecond() const override { return {week, toe, TimeSystem::BDT}; }
 };

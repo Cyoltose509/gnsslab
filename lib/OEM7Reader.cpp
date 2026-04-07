@@ -27,21 +27,25 @@ static unsigned short U2(const unsigned char *p) {
     memcpy(&u, p, 2);
     return u;
 }
+
 static unsigned int U4(const unsigned char *p) {
     unsigned int u;
     memcpy(&u, p, 4);
     return u;
 }
+
 static int I4(const unsigned char *p) {
     int i;
     memcpy(&i, p, 4);
     return i;
 }
+
 static float R4(const unsigned char *p) {
     float r;
     memcpy(&r, p, 4);
     return r;
 }
+
 static double R8(const unsigned char *p) {
     double r;
     memcpy(&r, p, 8);
@@ -59,6 +63,7 @@ RangeDataStatus GetStatus(const int stat) {
     res.halfc = (stat >> 28) & 1;
     return res;
 }
+
 void PrintData(const RangeData &data) {
     cout << "PRN: " << data.PRN << endl;
     cout << "Pseudorange: " << data.psr << " m" << endl;
@@ -67,6 +72,7 @@ void PrintData(const RangeData &data) {
     cout << "Carrier Phase Std Dev: " << data.adr_std << " cycles" << endl;
     cout << "Doppler Shift: " << data.doppler << " Hz" << endl;
 }
+
 int OEM7Reader::readRange() const {
     int off = 28;
     const int num = I4(&buf[off]);
@@ -97,6 +103,7 @@ OEM7Reader::Header &OEM7Reader::readHeaderData() {
     header.length = U2(&buf[8]);
     return header;
 }
+
 int crc32(const unsigned char *buff, const int len) {
     unsigned int crc = 0;
     for (int i = 0; i < len; i++) {
@@ -110,6 +117,7 @@ int crc32(const unsigned char *buff, const int len) {
     }
     return static_cast<int>(crc);
 }
+
 bool OEM7Reader::crcExam() {
     vector<unsigned char> crc(4);
     ifs.read(reinterpret_cast<char *>(crc.data()), 4);
@@ -130,6 +138,7 @@ bool OEM7Reader::open(const std::string &filename) {
     }
     return false;
 }
+
 size_t OEM7Reader::readBytes(const size_t n, vector<unsigned char> &chars) {
     chars.resize(n);
     ifs.read(reinterpret_cast<char *>(chars.data()), static_cast<std::streamsize>(n));
@@ -137,6 +146,7 @@ size_t OEM7Reader::readBytes(const size_t n, vector<unsigned char> &chars) {
     if (got < n) chars.resize(got);
     return got;
 }
+
 GPSEphem OEM7Reader::readGPSEphem() const {
     GPSEphem res{};
     int off = 28;
@@ -152,7 +162,7 @@ GPSEphem OEM7Reader::readGPSEphem() const {
     off += 4;
     res.week = U4(&buf[off]);
     off += 4;
-//    res.z_week = U4(&buf[off]);
+    //    res.z_week = U4(&buf[off]);
     off += 4;
     res.toe = R8(&buf[off]);
     off += 8;
@@ -186,8 +196,8 @@ GPSEphem OEM7Reader::readGPSEphem() const {
     off += 8;
     res.Omegadot = R8(&buf[off]);
     off += 8;
-    res.IODC = R8(&buf[off]);
-    off += 8;
+    res.IODC = U4(&buf[off]);
+    off += 4;
     res.toc = R8(&buf[off]);
     off += 8;
     res.tgd = R8(&buf[off]);
@@ -198,15 +208,16 @@ GPSEphem OEM7Reader::readGPSEphem() const {
     off += 8;
     res.a2 = R8(&buf[off]);
     off += 8;
-   // unsigned int asv = U4(&buf[off]);
+    // unsigned int asv = U4(&buf[off]);
     off += 4;
-   // res.AS = (asv != 0);
-  //  res.N = R8(&buf[off]);
+    // res.AS = (asv != 0);
+    //  res.N = R8(&buf[off]);
     off += 8;
     res.URA = R8(&buf[off]);
     off += 8;
     return res;
 }
+
 BDSEphem OEM7Reader::readBDSEphem() const {
     BDSEphem res = {};
     int off = 28;
@@ -304,7 +315,7 @@ vector<double> GPS_P(const GPSEphem &data, double tk) {
     double xk = x0 * cos(OMEk) - y0 * cos(ik) * sin(OMEk);
     double yk = x0 * sin(OMEk) + y0 * cos(ik) * cos(OMEk);
     double zk = y0 * sin(ik);
-    vector<double> res{xk, yk, zk};
+    vector<double> res{xk * 0.001, yk * 0.001, zk * 0.001};
     double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
     double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
     double rdot = A * e * sin(Ek) * Edot + 2 * (Crs * c2 - Crc * s2) * phidot; //轨道半径速率
@@ -322,6 +333,24 @@ vector<double> GPS_P(const GPSEphem &data, double tk) {
     res.push_back(xkdot);
     res.push_back(ykdot);
     res.push_back(zkdot);
+    // ====== 时间 ======
+    double dt = tk + data.toe - data.toc; // 钟差参考时间
+
+    // 周跳修正
+    if (dt > 302400) dt -= 604800;
+    if (dt < -302400) dt += 604800;
+
+    // ====== 钟差（秒）======
+    double clk = data.a0 + data.a1 * dt + data.a2 * dt * dt;
+
+    // 转 μs
+    res.push_back(clk * 1e6);
+
+    // 钟漂（秒/秒)
+    double clk_vel = data.a1 + 2 * data.a2 * dt;
+
+    // 转 μs/s
+    res.push_back(clk_vel * 1e6);
     return res;
 }
 
@@ -348,7 +377,7 @@ vector<double> BDS_P(const BDSEphem &data, double tk) {
     double xk = x0 * cos(OMEk) - y0 * cos(ik) * sin(OMEk);
     double yk = x0 * sin(OMEk) + y0 * cos(ik) * cos(OMEk);
     double zk = y0 * sin(ik);
-    vector<double> res{xk, yk, zk};
+    vector<double> res{xk * 0.001, yk * 0.001, zk * 0.001};
     double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
     double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
     double rdot = A * e * sin(Ek) * Edot + 2 * (Crs * c2 - Crc * s2) * phidot; //轨道半径速率
@@ -366,16 +395,29 @@ vector<double> BDS_P(const BDSEphem &data, double tk) {
     res.push_back(xkdot);
     res.push_back(ykdot);
     res.push_back(zkdot);
+    // ====== 时间 ======
+    double dt = tk + data.toe - data.toc; // 钟差参考时间
+
+    // 周跳修正
+    if (dt > 302400) dt -= 604800;
+    if (dt < -302400) dt += 604800;
+    // ====== 钟差（秒）======
+    double clk = data.a0 + data.a1 * dt + data.a2 * dt * dt;
+
+
+    // 转 μs
+    res.push_back(clk * 1e6);
+
+    // 钟漂（秒/秒）
+    double clk_vel = data.a1 + 2 * data.a2 * dt;
+
+    // 转 μs/s
+    res.push_back(clk_vel * 1e6);
     return res;
 }
 
-void OEM7Reader::readOne() {
-    GPSWeekSecond GWS{};
-    BDTWeekSecond BWS{};
-    auto CommonTime = CivilTime2CommonTime(CivilTime(2021, 11, 14, 7, 25, 0.00001788));
-    CommonTime2WeekSecond(CommonTime, GWS);
-    convertTimeSystem(CommonTime, BWS.timeSystem);
-    CommonTime2WeekSecond(CommonTime, BWS);
+std::unique_ptr<Ephemeris> OEM7Reader::readOne() {
+
 
     readBytes(28, buf); //读取消息头
     readHeaderData();
@@ -383,7 +425,6 @@ void OEM7Reader::readOne() {
     const auto body_length = readBytes(header.length, body);
     buf.resize(28 + body_length);
     memcpy(buf.data() + 28, body.data(), body_length);
-    double tk;
 
     if (!crcExam()) {
         throw InvalidRequest("CRCExam wrong");
@@ -395,55 +436,65 @@ void OEM7Reader::readOne() {
         case ID_RANGECMP:
             break;
         case ID_GPSEPHEM: {
-            const auto GPSData = readGPSEphem();
-            tk = GWS.diff(GPSData.getWeekSecond());
-            if (tk < 10000) {
-                cout << "G" << GPSData.PRN << " ";
-                vector<double> R = GPS_P(GPSData, tk);
-                for (double i: R)
-                    cout << std::fixed << std::setprecision(3) << i << " ";
-                cout << endl;
-            }
+            return std::make_unique<GPSEphem>(readGPSEphem());
+            // auto pvt = GPSData.svPVT(GWS);
+            // cout << GPSData.name() << " "
+            //         << std::fixed << std::setprecision(6)
+            //         << pvt.p[0] * 0.001 << " " << pvt.p[1] * 0.001 << " " << pvt.p[2] * 0.001 << " "
+            //         << std::fixed << std::setprecision(3)
+            //         << pvt.v[0] << " " << pvt.v[1] << " " << pvt.v[2] << " "
+            //         << std::fixed << std::setprecision(6)
+            //         << pvt.clkbias * 1e6 << " " << pvt.clkdrift * 1e6 << endl;
+            // tk = GWS-GPSData.getWeekSecond();
+            // if (tk < 10000) {
+            //     cout << "G" << GPSData.PRN << " ";
+            //     const vector<double> R = GPS_P(GPSData, tk);
+            //     for (const auto i: R)
+            //         cout << std::fixed << std::setprecision(6) << i << " ";
+            //     cout << endl;
+            // }
             break;
         }
         case ID_BDSEPHEMRIS: {
-            const auto BDSData = readBDSEphem();
-            tk = BWS.diff(BDSData.getWeekSecond());
-            if (tk < 10000) {
-                cout << "C" << BDSData.PRN << " ";
-                vector<double> R = BDS_P(BDSData, tk);
-                for (double i: R)
-                    cout << std::fixed << std::setprecision(3) << i << " ";
-                cout << endl;
-            }
+            return std::make_unique<BDSEphem>(readBDSEphem());
+
+            // const auto BDSData = readBDSEphem();
+            // auto pvt = BDSData.svPVT(BWS);
+            // cout << BDSData.name() << " "
+            //         << std::fixed << std::setprecision(6)
+            //         << pvt.p[0] * 0.001 << " " << pvt.p[1] * 0.001 << " " << pvt.p[2] * 0.001 << " "
+            //         << std::fixed << std::setprecision(3)
+            //         << pvt.v[0] << " " << pvt.v[1] << " " << pvt.v[2] << " "
+            //         << std::fixed << std::setprecision(6)
+            //         << pvt.clkbias * 1e6 << " " << pvt.clkdrift * 1e6 << endl;
             break;
         }
         default:
             break;
     }
+    return nullptr;
 }
 
 
-void outputNav(ofstream &navfile, BDSEphem BDSData) {
-    BDTWeekSecond ws(BDSData.week, BDSData.toe);
+void outputNav(ofstream &nav_file, const BDSEphem &BDSData) {
+    const WeekSecond ws(BDSData.week, BDSData.toe, TimeSystem::BDT);
     CommonTime ct;
     WeekSecond2CommonTime(ws, ct);
     const auto civil = CommonTime2CivilTime(ct);
-    navfile << "C" << setw(2) << setfill('0') << BDSData.PRN << ' ' << civil.year << ' ' << setw(2) << civil.month << ' '
+    nav_file << "C" << setw(2) << setfill('0') << BDSData.PRN << ' ' << civil.year << ' ' << setw(2) << civil.month << ' '
             << setw(2) << civil.day << ' ' << setw(2) << civil.hour << ' ' << setw(2) << civil.minute << ' ' << setw(2) << civil.second;
-    navfile << setfill(' ');
+    nav_file << setfill(' ');
     cout << ws.week << " " << ws.sow << endl;
-    navfile << scientific << uppercase << setprecision(12);
-    double spare = 0;
-    navfile << ' ' << BDSData.a0 << ' ' << BDSData.a1 << ' ' << BDSData.a2 <<
-            '\n';
-    navfile << ' ' << static_cast<double>(BDSData.AODE) << ' ' << BDSData.crs << ' ' << BDSData.dn << ' ' << BDSData.M0 << '\n';
-    navfile << ' ' << BDSData.cuc << ' ' << BDSData.e << ' ' << BDSData.cus << ' ' << BDSData.RootA << '\n';
-    navfile << ' ' << BDSData.toe << ' ' << BDSData.cic << ' ' << BDSData.Omega0 << ' ' << BDSData.cis << '\n';
-    navfile << ' ' << BDSData.i0 << ' ' << BDSData.crc << ' ' << BDSData.omega << ' ' << BDSData.Omegadot << '\n';
-    navfile << ' ' << BDSData.idot << ' ' << spare << ' ' << static_cast<double>(BDSData.week) << ' ' << spare << '\n';
-    navfile << ' ' << BDSData.URA << ' ' << static_cast<double>(BDSData.health) << ' ' << BDSData.tgd1 << ' ' << BDSData.tgd2 << '\n';
-    navfile << ' ' << static_cast<double>(BDSData.toc) << ' ' << static_cast<double>(BDSData.AODC) << '\n';
+    nav_file << scientific << uppercase << setprecision(12);
+    constexpr double spare = 0;
+    nav_file << ' ' << BDSData.a0 << ' ' << BDSData.a1 << ' ' << BDSData.a2 << '\n';
+    nav_file << ' ' << static_cast<double>(BDSData.AODE) << ' ' << BDSData.crs << ' ' << BDSData.dn << ' ' << BDSData.M0 << '\n';
+    nav_file << ' ' << BDSData.cuc << ' ' << BDSData.e << ' ' << BDSData.cus << ' ' << BDSData.RootA << '\n';
+    nav_file << ' ' << BDSData.toe << ' ' << BDSData.cic << ' ' << BDSData.Omega0 << ' ' << BDSData.cis << '\n';
+    nav_file << ' ' << BDSData.i0 << ' ' << BDSData.crc << ' ' << BDSData.omega << ' ' << BDSData.Omegadot << '\n';
+    nav_file << ' ' << BDSData.idot << ' ' << spare << ' ' << static_cast<double>(BDSData.week) << ' ' << spare << '\n';
+    nav_file << ' ' << BDSData.URA << ' ' << static_cast<double>(BDSData.health) << ' ' << BDSData.tgd1 << ' ' << BDSData.tgd2 << '\n';
+    nav_file << ' ' << BDSData.toc << ' ' << static_cast<double>(BDSData.AODC) << '\n';
 
-    navfile << defaultfloat << nouppercase << setprecision(6);
+    nav_file << defaultfloat << nouppercase << setprecision(6);
 }

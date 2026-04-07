@@ -60,12 +60,19 @@ public:
 
         return oss.str();
     };
-
+    struct epoch_params {
+        int Nbits;
+        int bitmask;
+        long MJDEpoch;
+    };
+    const epoch_params& getParams() const {
+        return EPOCH_PARAM[static_cast<int>(system)];
+    }
     // time system
     SystemType system;
-
     // string for enum sys, 1 vs 1
     static const std::string sys_strings[];
+    static const epoch_params EPOCH_PARAM[];
 }; // end class TimeSystem
 
 
@@ -124,30 +131,29 @@ public:
 
     double operator-(const CommonTime &right) const {
         if (m_timeSystem != right.m_timeSystem) {
-            InvalidRequest ir("CommonTime objects not in same time system, cannot be differenced");
-            throw (ir);
+            throw InvalidRequest("CommonTime objects not in same time system, cannot be different");
         }
 
         return (SEC_PER_DAY * static_cast<double>(m_day - right.m_day) +
                 m_sod - right.m_sod);
     }
 
-    CommonTime operator+(double sec) const {
+    CommonTime operator+(const double sec) const {
         return CommonTime(*this).addSeconds(sec);
     }
 
-    CommonTime &operator+=(double sec) {
+    CommonTime &operator+=(const double sec) {
         addSeconds(sec);
         return *this;
     }
 
-    CommonTime operator-(double sec) const {
+    CommonTime operator-(const double sec) const {
         CommonTime tempTime = (*this);
         tempTime.addSeconds(-sec);
         return tempTime;
     }
 
-    CommonTime &operator-=(double seconds) {
+    CommonTime &operator-=(const double seconds) {
         addSeconds(-seconds);
         return *this;
     };
@@ -503,53 +509,40 @@ inline std::ostream &operator<<(std::ostream &s, JD2020 &jd) {
     return s;
 }
 
+struct WeekSecondParameter {
+    int Nbits;
+    int bitmask;
+    long MJDEpoch;
+};
+constexpr  WeekSecondParameter GPSWeekSecondParameter = { 10, 0x3FF, GPS_EPOCH_MJD };
+constexpr  WeekSecondParameter BDTWeekSecondParameter = { 13, 0x1FFF, BDT_EPOCH_MJD };
+
 
 /// This class encapsulates the "Full Week and Seconds-of-week"
 /// time representation.
 class WeekSecond {
 public:
-    /**
-     * Default Constructor.
-     * All elements are initialized to zero.
-     */
-    WeekSecond(unsigned int w = 0,
-               double s = 0.,
-               TimeSystem ts = TimeSystem::GPS)
-        : week(w), sow(s) { timeSystem = ts; }
-
-    /**
-     * Copy Constructor.
-     * @param right a reference to the WeekSecond object to copy
-     */
-    WeekSecond(const WeekSecond &right)
-        : week(right.week), sow(right.sow) { timeSystem = right.timeSystem; }
-
-    /**
-     * Assignment Operator.
-     * @param right a const reference to the WeekSecond to copy
-     * @return a reference to this WeekSecond
-     */
+    WeekSecond(const unsigned int w = 0, const double s = 0, const TimeSystem ts = TimeSystem::GPS) : week(w), sow(s) {
+        timeSystem = ts;
+    }
     WeekSecond &operator=(const WeekSecond &right);
 
     /// Virtual Destructor.
     virtual ~WeekSecond() = default;
 
-    // Return the number of bits in the bitmask used to get the ModWeek from the
-    // full week.
-    // This is pure virtual and must be implemented in the derived class;
-    // e.g. GPSWeek::Nbits(void) { static const int n=10; return n; }
-    virtual int Nbits() const = 0;
+    int Nbits() const {
+        return timeSystem.getParams().Nbits;
+    }
 
-    // Return the bitmask used to get the ModWeek from the full week.
-    // This is pure virtual and must be implemented in the derived class;
-    // e.g. GPSWeek::bitmask(void) { static const int bm=0x3FF; return bm; }
-    virtual int bitmask() const = 0;
+    int bitmask() const {
+        return timeSystem.getParams().bitmask;
+    }
+    long MJDEpoch() const {
+        return timeSystem.getParams().MJDEpoch;
+    }
 
-    // Return the maximum Nbit-week-number minus 1, i.e. the week number at
-    // which rollover occurs.
     virtual int rollover() const { return bitmask() + 1; }
 
-    virtual long MJDEpoch() const = 0;
 
     virtual unsigned int getDayOfWeek() const {
         return static_cast<unsigned int>(sow) / SEC_PER_DAY;
@@ -577,38 +570,39 @@ public:
 
     bool operator>=(const WeekSecond &right) const;
 
-    double diff(const WeekSecond &right) const;
+    double operator-(const WeekSecond &right) const;
 
-    virtual void setEpoch(unsigned int e) {
+
+    virtual void setEpoch(const unsigned int e) {
         week &= bitmask();
         week |= e << Nbits();
     }
 
-    virtual void setModWeek(unsigned int w) {
+    virtual void setModWeek(const unsigned int w) {
         week &= ~bitmask();
         week |= w & bitmask();
     }
 
-    inline virtual void setEpochModWeek(unsigned int e,
-                                        unsigned int w) {
+    virtual void setEpochModWeek(const unsigned int e,
+                                 const unsigned int w) {
         setEpoch(e);
         setModWeek(w);
     }
 
-    inline virtual unsigned int getWeek() const {
+    virtual unsigned int getWeek() const {
         return week;
     }
 
-    inline virtual unsigned int getModWeek() const {
+    virtual unsigned int getModWeek() const {
         return (week & bitmask());
     }
 
-    inline virtual unsigned int getEpoch() const {
+    virtual unsigned int getEpoch() const {
         return (week >> Nbits());
     }
 
-    inline virtual void getEpochModWeek(unsigned int &e,
-                                        unsigned int &w) const {
+    virtual void getEpochModWeek(unsigned int &e,
+                                 unsigned int &w) const {
         e = getEpoch();
         w = getModWeek();
     }
@@ -623,7 +617,7 @@ public:
     }
 
     //@}
-    int week;
+    unsigned int week;
     double sow;
     TimeSystem timeSystem;
 };
@@ -632,116 +626,3 @@ inline std::ostream &operator<<(std::ostream &s, WeekSecond &ws) {
     s << ws.toString();
     return s;
 }
-
-
-/// This class handles GPS Week and Seconds-of-week. It inherits
-/// WeekSecond
-/// The GPS week is specified by 10-bit ModWeek, rollover at
-/// 1024, bitmask 0x3FF and epoch GPS_EPOCH_MJD
-class GPSWeekSecond : public WeekSecond {
-public:
-    /// Constructor.
-    GPSWeekSecond(unsigned int w = 0,
-                  double s = 0.,
-                  TimeSystem ts = TimeSystem::GPS)
-        : WeekSecond(w, s) { timeSystem = ts; }
-
-    /// Constructor from CommonTime
-
-    /// Destructor.
-    ~GPSWeekSecond() override = default;
-
-    /// Return the number of bits in the bitmask used to get the
-    /// ModWeek from the full week.
-    int Nbits() const override {
-        return 10;
-    }
-
-    /// Return the bitmask used to get the ModWeek from the full week.
-    int bitmask() const override {
-        return 0x3FF;
-    }
-
-    /// Return the Modified Julian Date (MJD) of epoch for this system.
-    long MJDEpoch() const override {
-        return GPS_EPOCH_MJD;
-    }
-
-    bool operator==(const GPSWeekSecond &right) const {
-        return WeekSecond::operator==(right);
-    }
-
-    bool operator!=(const GPSWeekSecond &right) const {
-        return WeekSecond::operator!=(right);
-    }
-
-    bool operator<(const GPSWeekSecond &right) const {
-        return WeekSecond::operator<(right);
-    }
-
-    bool operator>(const GPSWeekSecond &right) const {
-        return WeekSecond::operator>(right);
-    }
-
-    bool operator<=(const GPSWeekSecond &right) const {
-        return WeekSecond::operator<=(right);
-    }
-
-    bool operator>=(const GPSWeekSecond &right) const {
-        return WeekSecond::operator>=(right);
-    }
-}; // end class GPSWeekSecond
-
-class BDTWeekSecond : public WeekSecond {
-public:
-    /// Constructor.
-    BDTWeekSecond(const unsigned int w = 0,
-                  const double s = 0.,
-                  const TimeSystem ts = TimeSystem::BDT)
-        : WeekSecond(w, s) { timeSystem = ts; }
-
-    /// Constructor from CommonTime
-
-    /// Destructor.
-    ~BDTWeekSecond() override = default;
-
-    /// Return the number of bits in the bitmask used to get the
-    /// ModWeek from the full week.
-    int Nbits() const override {
-        return 13;
-    }
-
-    /// Return the bitmask used to get the ModWeek from the full week.
-    int bitmask() const override {
-        return 0x1FFF;
-    }
-
-    /// Return the Modified Julian Date (MJD) of epoch for this system.
-    long MJDEpoch() const override {
-        return BDT_EPOCH_MJD;
-    }
-
-    bool operator==(const BDTWeekSecond &right) const {
-        return WeekSecond::operator==(right);
-    }
-
-    bool operator!=(const BDTWeekSecond &right) const {
-        return WeekSecond::operator!=(right);
-    }
-
-    bool operator<(const BDTWeekSecond &right) const {
-        return WeekSecond::operator<(right);
-    }
-
-    bool operator>(const BDTWeekSecond &right) const {
-        return WeekSecond::operator>(right);
-    }
-
-    bool operator<=(const BDTWeekSecond &right) const {
-        return WeekSecond::operator<=(right);
-    }
-
-    bool operator>=(const BDTWeekSecond &right) const {
-        return WeekSecond::operator>=(right);
-    }
-}; // end class GPSWeekSecond

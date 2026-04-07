@@ -325,7 +325,7 @@ void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct) {
 
         const int dow = static_cast<int>(wk.sow / SEC_PER_DAY);
         // NB this assumes MJDEpoch is an integer - what if epoch H:M:S != 0:0:0 ?
-        const long mday = wk.MJDEpoch() + (7 * wk.week) + dow;
+        const long mday = wk.MJDEpoch() + 7 * wk.week + dow;
         const double sod(wk.sow - SEC_PER_DAY * dow);
         ct.set(mday, sod, wk.timeSystem);
     } catch (InvalidRequest &ip) {

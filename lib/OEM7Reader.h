@@ -1,6 +1,8 @@
 #pragma once
 #include <fstream>
 #include <string>
+#include <vector>
+#include <NavEphGPS.h>
 
 struct RangeDataStatus {
     int track, plock, parity, clock, sys, type, halfc;
@@ -46,5 +48,5 @@ public:
 
     Header &readHeaderData();
 
-    void readOne();
+    std::unique_ptr<Ephemeris> readOne();
 };

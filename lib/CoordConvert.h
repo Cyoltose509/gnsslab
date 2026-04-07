@@ -27,8 +27,8 @@
 // 坐标转换函数
 inline BLH xyz2blh(const XYZ &xyz, const ReferenceFrame &frame) {
     // 获取椭球参数
-   const  double a = frame.getA();
-    const double e2 = frame.getE2();
+   const  double a = frame.A;
+    const double e2 = frame.E2;
     // 计算水平距离 rho（即 sqrt(x^2 + y^2)）
     const double rho = sqrt(xyz.X() * xyz.X() + xyz.Y() * xyz.Y());
 
@@ -114,8 +114,7 @@ inline XYZ enu2xyz(const ENU& enu, const XYZ& refXYZ, const ReferenceFrame &fram
 // @return the elevation in degrees
 inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
     noexcept(false) {
-    const WGS84 wgs84;
-    BLH refBLH = xyz2blh(refXYZ, wgs84);
+    BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
 
     if (debug)
         cout << "refBLH:" << refBLH.transpose() << endl;
@@ -158,8 +157,7 @@ inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
 // @return the azimuth in degrees
 inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ)
     noexcept(false) {
-    const WGS84 wgs84;
-    const BLH refBLH = xyz2blh(refXYZ, wgs84);
+    const BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
 
     const double latRad = refBLH.B();
     const double lonRad = refBLH.L();

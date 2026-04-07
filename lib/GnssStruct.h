@@ -152,14 +152,14 @@ typedef std::map<SatID, std::map<CommonTime, double>> SatEpochValueMap;
 class PVT {
 public:
     /// Default constructor
-    PVT() : x(0., 0., 0.), v(0., 0., 0.),
+    PVT() : p(0., 0., 0.), v(0., 0., 0.),
             clkbias(0.), clkdrift(0.) {};
 
     /// Destructor.
     virtual ~PVT() = default;
 
     /// access the position, ECEF Cartesian in meters
-    Eigen::Vector3d getPos() const noexcept { return x; }
+    Eigen::Vector3d getPos() const noexcept { return p; }
 
     /// access the velocity in m/s
     Eigen::Vector3d getVel() const noexcept { return v; }
@@ -175,7 +175,7 @@ public:
 
     // member data
 
-    Eigen::Vector3d x;   ///< Sat position ECEF Cartesian (X,Y,Z) meters
+    Eigen::Vector3d p;   ///< Sat position ECEF Cartesian (X,Y,Z) meters
     Eigen::Vector3d v;   ///< satellite velocity in ECEF Cartesian, meters/second
     double clkbias;      ///< Sat clock correction in seconds
     double clkdrift;     ///< satellite clock drift in seconds/second
@@ -185,14 +185,14 @@ public:
 }; // end class Xvt
 
 // Output operator for Xvt
-inline std::ostream &operator<<(std::ostream &os, PVT &xvt)
+inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
 noexcept {
-    os << setprecision(10) << "x:" << xvt.x.transpose() << endl;
-    os << "v:" << xvt.v.transpose() << endl;
-    os << "clk bias:" << xvt.clkbias << endl;
-    os << "clk drift:" << xvt.clkdrift << endl;
-    os << "relcorr:" << xvt.relcorr << endl;
-    for(const auto& tv: xvt.typeTGDData)
+    os << setprecision(10) << "p:" << pvt.p.transpose() << endl;
+    os << "v:" << pvt.v.transpose() << endl;
+    os << "clk bias:" << pvt.clkbias << endl;
+    os << "clk drift:" << pvt.clkdrift << endl;
+    os << "relcorr:" << pvt.relcorr << endl;
+    for(const auto& tv: pvt.typeTGDData)
         os << tv.first << "tgd:" << tv.second << endl;
     return os;
 }
