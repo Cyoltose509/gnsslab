@@ -31,7 +31,9 @@ public:
     struct Header {
         int type;
         int week;
+        int ms;
         int length;
+        int hlen;
     } header = {};
 
     size_t readBytes(size_t n, vector<unsigned char> &chars);
@@ -44,9 +46,12 @@ public:
 
     bool open(const std::string &filename);
 
-    int readRange() const;
+    ObsData readRange() const;
 
-    Header &readHeaderData();
+    void readHeaderData();
 
     std::unique_ptr<Ephemeris> readOne();
+
+    ObsData lastObs;
+    bool hasObs = false;
 };

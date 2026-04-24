@@ -58,35 +58,55 @@ RangeDataStatus GetStatus(const int stat) {
     return res;
 }
 
-int OEM7Reader::readRange() const {
+ObsData OEM7Reader::readRange() const {
+    ObsData obs;
+    const WeekSecond ws(header.week, header.ms * 0.001, TimeSystem::GPS);
+    WeekSecond2CommonTime(ws, obs.epoch);
+
     int off = 28;
     const int num = I4(&buf[off]);
     off += 4;
     for (int i = 0; i < num; i++) {
-        RangeData data{};
         const int status = I4(&buf[off + 40]);
         const RangeDataStatus Status = GetStatus(status);
-        if (!((Status.sys == 0 || Status.sys == 4) && (Status.type == 0 || Status.type == 9))) {
+
+        int freqIdx = -1;
+        if (Status.sys == 0) { // GPS
+            if (Status.type == 0) freqIdx = 1;      // L1C/A -> Freq 1
+            else if (Status.type == 9) freqIdx = 2; // L2P(Y) -> Freq 2
+        } else if (Status.sys == 4) { // BDS
+            if (Status.type == 0 || Status.type == 4) freqIdx = 2; // B1I -> Freq 2 in Const.h
+            else if (Status.type == 2 || Status.type == 6) freqIdx = 6; // B3I -> Freq 6 in Const.h
+        }
+
+        if (freqIdx == -1) {
+            off += 44;
             continue;
         }
-        data.status = Status;
-        data.PRN = U2(&buf[off + 0]);
-        data.psr = R8(&buf[off + 4]);
-        data.adr_std = R4(&buf[off + 12]);
-        data.adr = R8(&buf[off + 16]);
-        data.adr_std = R4(&buf[off + 24]);
-        data.doppler = R4(&buf[off + 28]);
+
+        SatID sat;
+        sat.system = (Status.sys == 0) ? "G" : "C";
+        sat.id = U2(&buf[off + 0]);
+
+        double psr = R8(&buf[off + 4]);
+        double doppler = R4(&buf[off + 28]);
+
+        // Use freqIdx as part of the key to distinguish observations
+        string obsType = "C" + to_string(freqIdx);
+        string dopType = "D" + to_string(freqIdx);
+
+        obs.satTypeValueData[sat][obsType] = psr;
+        obs.satTypeValueData[sat][dopType] = doppler;
+
         off += 44;
     }
-    return num;
+    return obs;
 }
 
-
-OEM7Reader::Header &OEM7Reader::readHeaderData() {
+void OEM7Reader::readHeaderData() {
     header.type = U2(&buf[4]);
     header.week = U2(&buf[14]);
     header.length = U2(&buf[8]);
-    return header;
 }
 
 inline int crc32(const unsigned char *buff, const int len) {
@@ -278,17 +298,19 @@ std::unique_ptr<Ephemeris> OEM7Reader::readOne() {
     }
     switch (header.type) {
         case ID_RANGE:
-            //readRange();
-            break;
-        case ID_RANGECMP:
+            lastObs = readRange(); // 注意：readRange 内部目前硬编码了 off=28
+            hasObs = true;
             break;
         case ID_GPSEPHEM: {
+            hasObs = false;
             return std::make_unique<GPSEphem>(readGPSEphem());
         }
         case ID_BDSEPHEMRIS: {
+            hasObs = false;
             return std::make_unique<BDSEphem>(readBDSEphem());
         }
         default:
+            hasObs = false;
             break;
     }
     return nullptr;

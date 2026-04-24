@@ -145,8 +145,6 @@ struct Ephemeris {
     unsigned int week{};
     char type{};
     TimeSystem timeSystem{};
-
-
     const WeekSecond &getWeekSecond() {
         ws.week = week;
         ws.sow = toe;
@@ -157,7 +155,6 @@ struct Ephemeris {
         WeekSecond2CommonTime(getWeekSecond(), ct);
         return ct;
     }
-
     string name() const {
         string s;
         s.reserve(4);
@@ -165,14 +162,10 @@ struct Ephemeris {
         s += std::to_string(PRN);
         return s;
     }
-
     PVT svPVT(CommonTime t);
-
     const ReferenceFrame &refFrame;
-
     explicit Ephemeris(const ReferenceFrame &frame) : refFrame(frame) {
     }
-
     virtual ~Ephemeris() = default;
 
 private:

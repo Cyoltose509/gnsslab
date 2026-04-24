@@ -22,7 +22,7 @@
 
 // 初始化静态成员
 const string Parameter::paraNameStrings[] = {
-        "Unknown", "dX", "dY", "dZ", "cdt", "ifb", "iono", "ambiguity"
+        "Unknown", "dX", "dY", "dZ", "cdt", "ifb", "iono", "ambiguity", "dVX", "dVY", "dVZ", "cdtr_dot"
 };
 
 bool Variable::operator<(const Variable &right) const {

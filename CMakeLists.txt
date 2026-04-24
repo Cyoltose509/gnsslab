@@ -33,10 +33,18 @@ set(DIR_LIB_SRCS
         lib/GnssStruct.cpp
         lib/NavEphGPS.h
         lib/NavEphGPS.cpp
+        lib/SolverLSQ.h
+        lib/SolverLSQ.cpp
 )
 # 根据源文件创建库文件
 add_library( gnss SHARED ${DIR_LIB_SRCS} )
 
 # 创建可执行程序
-add_executable(main main/main.cpp)
-target_link_libraries(main gnss)
+add_executable(ome7_read main/ome7_read.cpp)
+target_link_libraries(ome7_read gnss)
+
+add_executable(lsq main/lsq.cpp)
+target_link_libraries(lsq gnss)
+
+add_executable(spp_spv main/spp_spv.cpp)
+target_link_libraries(spp_spv gnss)

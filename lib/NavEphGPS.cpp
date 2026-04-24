@@ -110,8 +110,7 @@ double NavEphGPS::svRelativity(const CommonTime &t) const {
 }
 
 double NavEphGPS::svURA(const CommonTime &t) const {
-    double ephURA = URA;
-    return ephURA;
+    return URA;
 }
 
 PVT NavEphGPS::svPVT(const CommonTime &t) const {
@@ -119,10 +118,10 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
     auto ell = Frame::GPS;
 
     ///Semi-major axis
-    double A = sqrt_A * sqrt_A;
+    const double A = sqrt_A * sqrt_A;
 
     ///Computed mean motion (rad/sec)
-    double n0 = std::sqrt(ell.GM / (A * A * A));
+    const double n0 = std::sqrt(ell.GM / (A * A * A));
 
     ///Time from ephemeris reference epoch
     double tk = t - ctToe;
@@ -130,21 +129,21 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
     if (tk < -302400) tk = tk + 604800;
 
     ///Corrected mean motion
-    double n = n0 + Delta_n;
+   const  double n = n0 + Delta_n;
 
     ///Mean anomaly
     double Mk = M0 + n * tk;
 
     ///Kepler's Equation for Eccentric Anomaly
     ///solved by iteration
-    double twoPI = 2.0e0 * PI;
+    constexpr double twoPI = 2.0e0 * PI;
     Mk = fmod(Mk, twoPI);
     double Ek = Mk + ecc * ::sin(Mk);
     int loop_cnt = 1;
-    double F, G, delea;
+    double delea;
     do {
-        F = Mk - (Ek - ecc * ::sin(Ek));
-        G = 1.0 - ecc * ::cos(Ek);
+        const double F = Mk - (Ek - ecc * ::sin(Ek));
+        const double G = 1.0 - ecc * ::cos(Ek);
         delea = F / G;
         Ek = Ek + delea;
         loop_cnt++;
@@ -156,85 +155,82 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
     sv.clkdrift = svClockDrift(t);
 
     ///True Anomaly
-    double q = std::sqrt(1.0 - ecc * ecc);
-    double sinEk = ::sin(Ek);
-    double cosEk = ::cos(Ek);
+    const double q = std::sqrt(1.0 - ecc * ecc);
+    const double sinEk = ::sin(Ek);
+    const double cosEk = ::cos(Ek);
 
-    double GSTA = q * sinEk;
-    double GCTA = cosEk - ecc;
-    double vk = atan2(GSTA, GCTA);
+    const double GSTA = q * sinEk;
+    const double GCTA = cosEk - ecc;
+    const double vk = atan2(GSTA, GCTA);
 
     ///Eccentric Anomaly
     //Ek = std::acos((ecc+ ::cos(vk))/(1+ecc* ::cos(vk)));
 
     ///Argument of Latitude
-    double phi_k = vk + omega;
-    double cos2phi_k = ::cos(2.0 * phi_k);
-    double sin2phi_k = ::sin(2.0 * phi_k);
+    const double phi_k = vk + omega;
+    const double cos2phi_k = ::cos(2.0 * phi_k);
+    const double sin2phi_k = ::sin(2.0 * phi_k);
+    const double duk = cos2phi_k * Cuc + sin2phi_k * Cus;
+    const double drk = cos2phi_k * Crc + sin2phi_k * Crs;
+    const double dik = cos2phi_k * Cic + sin2phi_k * Cis;
 
-    double duk = cos2phi_k * Cuc + sin2phi_k * Cus;
-    double drk = cos2phi_k * Crc + sin2phi_k * Crs;
-    double dik = cos2phi_k * Cic + sin2phi_k * Cis;
-
-    double uk = phi_k + duk;
-    double rk = A * (1.0 - ecc * cosEk) + drk;
-    double ik = i0 + dik + IDOT * tk;
+   const double uk = phi_k + duk;
+   const double rk = A * (1.0 - ecc * cosEk) + drk;
+   const double ik = i0 + dik + IDOT * tk;
 
     ///Positions in orbital plane.
-    double xip = rk * ::cos(uk);
-    double yip = rk * ::sin(uk);
+    const double xip = rk * ::cos(uk);
+    const double yip = rk * ::sin(uk);
 
     ///Corrected longitude of ascending node.
-    double OMEGA_k = OMEGA_0 + (OMEGA_DOT - ell.Omega) * tk - ell.Omega * Toe;
+    const double OMEGA_k = OMEGA_0 + (OMEGA_DOT - ell.Omega) * tk - ell.Omega * Toe;
 
     ///Earth-fixed coordinates.
-    double sinOMG_k = ::sin(OMEGA_k);
-    double cosOMG_k = ::cos(OMEGA_k);
-    double cosik = ::cos(ik);
-    double sinik = ::sin(ik);
+    const double sinOMG_k = ::sin(OMEGA_k);
+    const double cosOMG_k = ::cos(OMEGA_k);
+    const double cosik = ::cos(ik);
+    const double sinik = ::sin(ik);
 
-    double xef = xip * cosOMG_k - yip * cosik * sinOMG_k;
-    double yef = xip * sinOMG_k + yip * cosik * cosOMG_k;
-    double zef = yip * sinik;
+    const double xef = xip * cosOMG_k - yip * cosik * sinOMG_k;
+    const double yef = xip * sinOMG_k + yip * cosik * cosOMG_k;
+    const double zef = yip * sinik;
     sv.p[0] = xef;
     sv.p[1] = yef;
     sv.p[2] = zef;
 
     /// Compute velocity of rotation coordinates
-    double dek, dlk, div, domk, duv, drv, dxp, dyp;
-    dek = n * A / rk;
+    const double dek = n * A / rk;
 
     //=====
-    double dek2 = n / (1.0 - ecc * cosEk);
+    const double dek2 = n / (1.0 - ecc * cosEk);
 
     cout << "dek:" << dek << endl;
     cout << "dek2:" << dek2 << endl;
 
     //======
 
-    dlk = sqrt_A * q * std::sqrt(ell.GM) / (rk * rk);
+    const double dlk = sqrt_A * q * std::sqrt(ell.GM) / (rk * rk);
 
     //====
-    double dlk2;
-    dlk2 = q * dek2 / (1.0 - ecc * cosEk);
+    const double dlk2 = q * dek2 / (1.0 - ecc * cosEk);
     cout << "dlk:" << dlk << endl;
     cout << "dlk2:" << dlk2 << endl;
 
     //=====
 
-    div = IDOT - 2.0e0 * dlk * (Cic * sin2phi_k - Cis * cos2phi_k);
-    domk = OMEGA_DOT - ell.Omega;
-    duv = dlk * (1.e0 + 2.e0 * (Cus * cos2phi_k - Cuc * sin2phi_k));
-    drv = A * ecc * dek * sinEk - 2.e0 * dlk * (Crc * sin2phi_k - Crs * cos2phi_k);
-    dxp = drv * ::cos(uk) - rk * ::sin(uk) * duv;
-    dyp = drv * ::sin(uk) + rk * ::cos(uk) * duv;
+    const double div = IDOT - 2.0e0 * dlk * (Cic * sin2phi_k - Cis * cos2phi_k);
+    const double domk = OMEGA_DOT - ell.Omega;
+    const double duv = dlk * (1.e0 + 2.e0 * (Cus * cos2phi_k - Cuc * sin2phi_k));
+    const double drv = A * ecc * dek * sinEk - 2.e0 * dlk * (Crc * sin2phi_k - Crs * cos2phi_k);
+    const double dxp = drv * ::cos(uk) - rk * ::sin(uk) * duv;
+    const double dyp = drv * ::sin(uk) + rk * ::cos(uk) * duv;
 
     /// Calculate velocities
-    double vxef = dxp * cosOMG_k - xip * sinOMG_k * domk - dyp * cosik * sinOMG_k
+    const double vxef = dxp * cosOMG_k - xip * sinOMG_k * domk - dyp * cosik * sinOMG_k
                   + yip * (sinik * sinOMG_k * div - cosik * cosOMG_k * domk);
-    double vyef = dxp * sinOMG_k + xip * cosOMG_k * domk + dyp * cosik * cosOMG_k
+    const double vyef = dxp * sinOMG_k + xip * cosOMG_k * domk + dyp * cosik * cosOMG_k
                   - yip * (sinik * cosOMG_k * div + cosik * sinOMG_k * domk);
-    double vzef = dyp * sinik + yip * cosik * div;
+    const double vzef = dyp * sinik + yip * cosik * div;
 
     sv.v[0] = vxef;
     sv.v[1] = vyef;
@@ -263,38 +259,39 @@ PVT Ephemeris::svPVT(CommonTime t) {
     PVT sv;
     const double tk = t - getCommonTime();
     const double A = RootA * RootA; //计算轨道长半径
-    double n0 = sqrt(refFrame.GM / pow(A, 3)); //平均角速度0.000145859rad/s
-    double nA = n0 + dn; //改正平均角速度
-    double Mk = M0 + nA * tk;
-    double Ek = c_Ek(Mk, e);
-    double vk = 2 * atan(sqrt((1 + e) / (1 - e)) * tan(Ek / 2)); //计算真近点角
-    double phi = vk + omega; //卫星与升交点间地心夹角
-    double s2 = sin(2 * phi), c2 = cos(2 * phi);
-    double Qu = cus * s2 + cuc * c2, Qr = crs * s2 + crc * c2, Qi = cis * s2 + cic * c2; //短周期摄动项
-    double uk = phi + Qu, rk = A * (1 - e * cos(Ek)) + Qr; //短周期摄动改正，ik的值不确定
-    double ik = i0 + Qi + idot * tk;
-    double x0 = rk * cos(uk), y0 = rk * sin(uk);
-    double OMEk = Omega0 - refFrame.Omega * toe + (Omegadot - refFrame.Omega) * tk; //计算升交点经度
-    double xk = x0 * cos(OMEk) - y0 * cos(ik) * sin(OMEk);
-    double yk = x0 * sin(OMEk) + y0 * cos(ik) * cos(OMEk);
-    double zk = y0 * sin(ik);
+    const double n0 = sqrt(refFrame.GM / pow(A, 3)); //平均角速度0.000145859rad/s
+    const double nA = n0 + dn; //改正平均角速度
+    const double Mk = M0 + nA * tk;
+    const double Ek = c_Ek(Mk, e);
+    const double vk = 2 * atan(sqrt((1 + e) / (1 - e)) * tan(Ek / 2)); //计算真近点角
+    const double phi = vk + omega; //卫星与升交点间地心夹角
+    const double s2 = sin(2 * phi), c2 = cos(2 * phi);
+    const double Qu = cus * s2 + cuc * c2, Qr = crs * s2 + crc * c2, Qi = cis * s2 + cic * c2; //短周期摄动项
+    const double uk = phi + Qu, rk = A * (1 - e * cos(Ek)) + Qr; //短周期摄动改正，ik的值不确定
+    const double ik = i0 + Qi + idot * tk;
+    const double x0 = rk * cos(uk), y0 = rk * sin(uk);
+    const double OMEk = Omega0 - refFrame.Omega * toe + (Omegadot - refFrame.Omega) * tk; //计算升交点经度
+    const double sOMEk = sin(OMEk), cOMEk = cos(OMEk);
+    const double xk = x0 * cOMEk - y0 * cos(ik) * sOMEk;
+    const double yk = x0 * sOMEk + y0 * cos(ik) * cOMEk;
+    const double zk = y0 * sin(ik);
     sv.p[0] = xk;
     sv.p[1] = yk;
     sv.p[2] = zk;
-    double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
-    double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
-    double rdot = A * e * sin(Ek) * Edot + 2 * (crs * c2 - crc * s2) * phidot; //轨道半径速率
-    double ukdot = phidot + 2 * phidot * (cus * c2 - cuc * s2);
-    double OMEkdot = Omegadot - refFrame.Omega; //升交点速率
-    double ikdot = 2 * phidot * (cis * c2 - cic * s2) + idot;
-    double x0dot = rdot * cos(uk) - rk * ukdot * sin(uk);
-    double y0dot = rdot * sin(uk) + rk * ukdot * cos(uk); //轨道平面内速度分量
-    double cosik = cos(ik), sinik = sin(ik);
-    double xkdot = x0dot * cos(OMEk) - x0 * sin(OMEk) * OMEkdot
-                   - (y0dot * cosik * sin(OMEk) + y0 * (-sinik * ikdot) * sin(OMEk) + y0 * cosik * cos(OMEk) * OMEkdot);
-    double ykdot = x0dot * sin(OMEk) + x0 * cos(OMEk) * OMEkdot
-                   + (y0dot * cosik * cos(OMEk) + y0 * (-sinik * ikdot) * cos(OMEk) - y0 * cosik * sin(OMEk) * OMEkdot);
-    double zkdot = y0dot * sinik + y0 * cosik * ikdot;
+    const double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
+    const double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
+    const double rdot = A * e * sin(Ek) * Edot + 2 * (crs * c2 - crc * s2) * phidot; //轨道半径速率
+    const double ukdot = phidot + 2 * phidot * (cus * c2 - cuc * s2);
+    const double OMEkdot = Omegadot - refFrame.Omega; //升交点速率
+    const double ikdot = 2 * phidot * (cis * c2 - cic * s2) + idot;
+    const double x0dot = rdot * cos(uk) - rk * ukdot * sin(uk);
+    const double y0dot = rdot * sin(uk) + rk * ukdot * cos(uk); //轨道平面内速度分量
+    const double cosik = cos(ik), sinik = sin(ik);
+    const double xkdot = x0dot * cOMEk - x0 * sOMEk * OMEkdot
+                         - (y0dot * cosik * sOMEk + y0 * (-sinik * ikdot) * sOMEk + y0 * cosik * cOMEk * OMEkdot);
+    const double ykdot = x0dot * sOMEk + x0 * cOMEk * OMEkdot
+                         + (y0dot * cosik * cOMEk + y0 * (-sinik * ikdot) * cOMEk - y0 * cosik * sOMEk * OMEkdot);
+    const double zkdot = y0dot * sinik + y0 * cosik * ikdot;
     sv.v[0] = xkdot;
     sv.v[1] = ykdot;
     sv.v[2] = zkdot;
@@ -303,6 +300,7 @@ PVT Ephemeris::svPVT(CommonTime t) {
     if (dt < -302400) dt += 604800;
     sv.clkbias = a0 + a1 * dt + a2 * dt * dt;
     sv.clkdrift = a1 + 2 * a2 * dt;
-    sv.relcorr = -2.0 * sqrt(refFrame.GM) / (C_MPS * C_MPS) * e * sqrt(A) * sin(Ek);
+    sv.relcorr = -2.0 * sqrt(refFrame.GM) / (C_MPS * C_MPS) * e * RootA * sin(Ek);
     return sv;
 }
+
