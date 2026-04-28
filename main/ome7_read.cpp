@@ -21,7 +21,7 @@ int main() {
         if (data) {
             if (data->PRN >=5&&data->PRN <= 55) {
                 PVT pvt = data->svPVT(ct);
-                outFile << data->name() << " "
+                std::cout << data->name() << " "
                         << std::fixed << std::setprecision(6)
                         << pvt.p[0] * 0.001 << " " << pvt.p[1] * 0.001 << " " << pvt.p[2] * 0.001 << " "
                         << std::fixed << std::setprecision(3)
