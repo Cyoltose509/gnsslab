@@ -129,7 +129,7 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
     if (tk < -302400) tk = tk + 604800;
 
     ///Corrected mean motion
-   const  double n = n0 + Delta_n;
+    const double n = n0 + Delta_n;
 
     ///Mean anomaly
     double Mk = M0 + n * tk;
@@ -174,9 +174,9 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
     const double drk = cos2phi_k * Crc + sin2phi_k * Crs;
     const double dik = cos2phi_k * Cic + sin2phi_k * Cis;
 
-   const double uk = phi_k + duk;
-   const double rk = A * (1.0 - ecc * cosEk) + drk;
-   const double ik = i0 + dik + IDOT * tk;
+    const double uk = phi_k + duk;
+    const double rk = A * (1.0 - ecc * cosEk) + drk;
+    const double ik = i0 + dik + IDOT * tk;
 
     ///Positions in orbital plane.
     const double xip = rk * ::cos(uk);
@@ -227,9 +227,9 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
 
     /// Calculate velocities
     const double vxef = dxp * cosOMG_k - xip * sinOMG_k * domk - dyp * cosik * sinOMG_k
-                  + yip * (sinik * sinOMG_k * div - cosik * cosOMG_k * domk);
+                        + yip * (sinik * sinOMG_k * div - cosik * cosOMG_k * domk);
     const double vyef = dxp * sinOMG_k + xip * cosOMG_k * domk + dyp * cosik * cosOMG_k
-                  - yip * (sinik * cosOMG_k * div + cosik * sinOMG_k * domk);
+                        - yip * (sinik * cosOMG_k * div + cosik * sinOMG_k * domk);
     const double vzef = dyp * sinik + yip * cosik * div;
 
     sv.v[0] = vxef;
@@ -244,13 +244,15 @@ bool NavEphGPS::isValid(const CommonTime &ct) const {
     return true;
 }
 
-inline double c_Ek(const double E0, const double e) {
-    double E = E0;
-    double E_1;
+inline double c_Ek(const double M, const double e) {
+    double E = M;
+    double E_old;
+    int iter = 0;
     do {
-        E_1 = E;
-        E = E0 + e * sin(E_1);
-    } while (E_1 != E);
+        E_old = E;
+        E = M + e * sin(E_old);
+        if (iter++ > 100) break; 
+    } while (std::abs(E - E_old) > 1e-13);
     return E;
 }
 
@@ -270,14 +272,33 @@ PVT Ephemeris::svPVT(CommonTime t) {
     const double uk = phi + Qu, rk = A * (1 - e * cos(Ek)) + Qr; //短周期摄动改正，ik的值不确定
     const double ik = i0 + Qi + idot * tk;
     const double x0 = rk * cos(uk), y0 = rk * sin(uk);
-    const double OMEk = Omega0 - refFrame.Omega * toe + (Omegadot - refFrame.Omega) * tk; //计算升交点经度
-    const double sOMEk = sin(OMEk), cOMEk = cos(OMEk);
-    const double xk = x0 * cOMEk - y0 * cos(ik) * sOMEk;
-    const double yk = x0 * sOMEk + y0 * cos(ik) * cOMEk;
-    const double zk = y0 * sin(ik);
-    sv.p[0] = xk;
-    sv.p[1] = yk;
-    sv.p[2] = zk;
+
+    // 处理北斗 GEO 卫星 (PRN 1-5, 59-62)
+    double OMEk,sOMEk,cOMEk;
+    if (type == 'C' && ((PRN >= 1 && PRN <= 5) || (PRN >= 59 && PRN <= 62))) {
+        OMEk = Omega0 + Omegadot * tk - refFrame.Omega * toe;
+        sOMEk = sin(OMEk), cOMEk = cos(OMEk);
+        double cosik = cos(ik), sinik = sin(ik);
+        double xgk = x0 * cOMEk - y0 * cosik * sOMEk;
+        double ygk = x0 * sOMEk + y0 * cosik * cOMEk;
+        double zgk = y0 * sinik;
+
+        double I_5 = -5.0 * PI / 180.0;
+        double I_1 = refFrame.Omega * tk;
+        double cosI_1 = cos(I_1), sinI_1 = sin(I_1);
+        double cosI_5 = cos(I_5), sinI_5 = sin(I_5);
+
+        sv.p[0] = cosI_1 * xgk + sinI_1 * cosI_5 * ygk + sinI_1 * sinI_5 * zgk;
+        sv.p[1] = -sinI_1 * xgk + cosI_1 * cosI_5 * ygk + cosI_1 * sinI_5 * zgk;
+        sv.p[2] = -sinI_5 * ygk + cosI_5 * zgk;
+    } else {
+        OMEk = Omega0 - refFrame.Omega * toe + (Omegadot - refFrame.Omega) * tk; //计算升交点经度
+        sOMEk = sin(OMEk), cOMEk = cos(OMEk);
+        sv.p[0] = x0 * cOMEk - y0 * cos(ik) * sOMEk;
+        sv.p[1] = x0 * sOMEk + y0 * cos(ik) * cOMEk;
+        sv.p[2] = y0 * sin(ik);
+    }
+
     const double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
     const double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
     const double rdot = A * e * sin(Ek) * Edot + 2 * (crs * c2 - crc * s2) * phidot; //轨道半径速率
@@ -303,4 +324,3 @@ PVT Ephemeris::svPVT(CommonTime t) {
     sv.relcorr = -2.0 * sqrt(refFrame.GM) / (C_MPS * C_MPS) * e * RootA * sin(Ek);
     return sv;
 }
-
