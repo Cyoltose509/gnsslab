@@ -5,9 +5,6 @@
 
 using namespace Eigen;
 
-/*
- * 这个类通过定义通用方程系统，可以被用单点定位，rtk，精密单点定位或者其他最小二乘任务
- */
 class SolverLSQ {
 public:
 
@@ -25,8 +22,8 @@ public:
         return getSolution(type, currentUnkSet, state);
     }
 
-    Vector3d getdxyz() const{
-        return dxyz;
+    Vector3d getDXYZ() const{
+        return dXYZ;
     };
 
     /// Destructor.
@@ -36,7 +33,7 @@ private:
 
     VectorXd state;
     MatrixXd covMatrix;
-    Vector3d dxyz;
+    Vector3d dXYZ;
     VariableSet currentUnkSet;
 }; // End of class 'SolverLSQ'
 

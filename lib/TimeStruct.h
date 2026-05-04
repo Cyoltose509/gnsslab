@@ -495,8 +495,18 @@ public:
     WeekSecond(const unsigned int w = 0, const double s = 0, const TimeSystem ts = TimeSystem::GPS) : week(w), sow(s) { //NOLINT
         timeSystem = ts;
     }
+    WeekSecond(WeekSecond&& other) noexcept
+        : week(other.week), sow(other.sow) {}
 
-    WeekSecond &operator=(const WeekSecond &right);
+    WeekSecond& operator=(const WeekSecond& other) = default;
+
+    WeekSecond& operator=(WeekSecond&& other) noexcept {
+        if (this != &other) {
+            week = other.week;
+            sow = other.sow;
+        }
+        return *this;
+    }
 
     /// Virtual Destructor.
     virtual ~WeekSecond() = default;

@@ -249,7 +249,6 @@ bool JD2020::operator>=(const JD2020 &right) const {
 }
 
 
-WeekSecond &WeekSecond::operator=(const WeekSecond &right) = default;
 
 
 void WeekSecond::reset() {

@@ -1,6 +1,6 @@
-
 #pragma once
 
+#include <utility>
 #include <vector>
 #include <set>
 #include <map>
@@ -29,12 +29,13 @@ struct SatID {
     // int generation;
 
     // 构造函数
-    SatID() :  id(-1) {}
+    SatID() : id(-1) {
+    }
 
     // 从字符串构造函数
-    explicit SatID(const string& satStr) {
+    explicit SatID(const string &satStr) {
         system = satStr.substr(0, 1);
-        id = stoi(satStr.substr(1, 2));
+        id = stoi(satStr.substr(1));
     }
 
     // Overload the equality operator as a member function
@@ -64,13 +65,9 @@ struct SatID {
 
 typedef std::set<SatID> SatIDSet;
 
-// 为避免因多次包含头文件导致非inline函数多重定义错误，有两种解决方案：
-// 1. 将函数声明为 inline 并在头文件中定义，使得每个包含该头文件的源文件都有函数体副本但不会链接冲突。
-// 2. 在头文件中仅声明函数，在单独的源文件中定义函数，确保整个程序中只有一个函数定义，避免重复定义错误。
-// 全局重载的 << 运算符
 inline ostream &operator<<(ostream &os, const SatID &sat_id) {
     os << sat_id.system
-       << std::setw(2) << std::setfill('0') << sat_id.id;
+            << std::setw(2) << std::setfill('0') << sat_id.id;
     return os;
 }
 
@@ -83,9 +80,9 @@ inline ostream &operator<<(ostream &os, const SatID &sat_id) {
 //---------------
 struct RinexHeader {
     string station;
-    double version;              //< RINEX 3 version/type
-    XYZ antennaPosition;         //< APPROX POSITION XYZ
-    std::map<string, std::vector<string>> mapObsTypes;        //< SYS / # / OBS TYPES
+    double version; //< RINEX 3 version/type
+    XYZ antennaPosition; //< APPROX POSITION XYZ
+    std::map<string, std::vector<string> > mapObsTypes; //< SYS / # / OBS TYPES
     RinexHeader() : version(0) {
     }
 };
@@ -96,16 +93,17 @@ typedef std::map<string, double> TypeValueMap;
 inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueMap) {
     for (const auto &entry: typeValueMap) {
         os << "  Type: " << entry.first
-           << ", Value: " << std::fixed << std::setprecision(6) << entry.second << "\n";
+                << ", Value: " << std::fixed << std::setprecision(6) << entry.second << "\n";
     }
     return os;
 }
 
 typedef std::map<SatID, double> SatValueMap;
+
 inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap) {
     for (const auto &entry: satValueMap) {
         os << "  sat: " << entry.first
-           << ", Value: " << std::fixed << std::setprecision(6) << entry.second << "\n";
+                << ", Value: " << std::fixed << std::setprecision(6) << entry.second << "\n";
     }
     return os;
 }
@@ -125,11 +123,11 @@ struct ObsData {
     Eigen::Vector3d antennaPosition;
     string station;
     CommonTime epoch;
+    WeekSecond weekSecond;
     SatTypeValueMap satTypeValueData;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
-
     os << "Epoch: " << CommonTime2CivilTime(data.epoch) << "\n"; // 使用 CommonTime 的输出函数
 
     if (!data.satTypeValueData.empty()) {
@@ -142,7 +140,7 @@ inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
     return os;
 }
 
-typedef std::map<SatID, std::map<CommonTime, double>> SatEpochValueMap;
+typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 
 //-------------------
 // 星历相关数据结构
@@ -153,7 +151,8 @@ class PVT {
 public:
     /// Default constructor
     PVT() : p(0., 0., 0.), v(0., 0., 0.),
-            clkbias(0.), clkdrift(0.) {};
+            clkbias(0.), clkdrift(0.) {
+    }
 
     /// Destructor.
     virtual ~PVT() = default;
@@ -175,24 +174,23 @@ public:
 
     // member data
 
-    Eigen::Vector3d p;   ///< Sat position ECEF Cartesian (X,Y,Z) meters
-    Eigen::Vector3d v;   ///< satellite velocity in ECEF Cartesian, meters/second
-    double clkbias;      ///< Sat clock correction in seconds
-    double clkdrift;     ///< satellite clock drift in seconds/second
+    Eigen::Vector3d p; ///< Sat position ECEF Cartesian (X,Y,Z) meters
+    Eigen::Vector3d v; ///< satellite velocity in ECEF Cartesian, meters/second
+    double clkbias; ///< Sat clock correction in seconds
+    double clkdrift; ///< satellite clock drift in seconds/second
     double relcorr{};
     std::map<string, double> typeTGDData;
-
 }; // end class Xvt
 
 // Output operator for Xvt
 inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
-noexcept {
+    noexcept {
     os << setprecision(10) << "p:" << pvt.p.transpose() << endl;
     os << "v:" << pvt.v.transpose() << endl;
     os << "clk bias:" << pvt.clkbias << endl;
     os << "clk drift:" << pvt.clkdrift << endl;
     os << "relcorr:" << pvt.relcorr << endl;
-    for(const auto& tv: pvt.typeTGDData)
+    for (const auto &tv: pvt.typeTGDData)
         os << tv.first << "tgd:" << tv.second << endl;
     return os;
 }
@@ -202,14 +200,15 @@ noexcept {
 //---------------
 class Parameter {
 public:
-    enum ParameterName { // 显式指定底层类型为int
+    enum ParameterName {
+        // 显式指定底层类型为int
         Unknown = 0, dX, dY, dZ, cdt, ifb, iono, ambiguity, dVX, dVY, dVZ, cdtr_dot, count
     };
 
     Parameter() = default;
 
-    Parameter(ParameterName _name)
-            : paraName(_name) {}
+    Parameter(const ParameterName _name) : paraName(_name) { //NOLINT
+    }
 
     std::string toString() const {
         // 直接返回对应的字符串，假设调用方保证传入的颜色有效
@@ -217,10 +216,10 @@ public:
     }
 
     static ParameterName toParameterName(const std::string &nameStr) {
-        for (int i = static_cast<int>(ParameterName::Unknown); i < static_cast<int>(ParameterName::count); ++i) {
+        for (int i = Unknown; i < static_cast<int>(count); ++i) {
             if (paraNameStrings[i] == nameStr) return static_cast<ParameterName>(i);
         }
-        return ParameterName::Unknown;
+        return Unknown;
     }
 
     // Overload the equality operator as a member function
@@ -256,11 +255,12 @@ public:
     std::string obsType;
 
     // 默认构造函数
-    ObsID() : satSys(""), obsType("") {}
+    ObsID() = default;
 
     // 使用两个字符串参数的构造函数
-    ObsID(const std::string &sys, const std::string &type)
-            : satSys(sys), obsType(type) {}
+    ObsID(std::string sys, std::string type)
+        : satSys(std::move(sys)), obsType(std::move(type)) {
+    }
 
     // 重载相等运算符
     bool operator==(const ObsID &other) const {
@@ -280,7 +280,6 @@ public:
         ss << satSys << obsType;
         return ss.str();
     }
-
 };
 
 // 定义全局重载的 << 运算符
@@ -292,19 +291,17 @@ inline std::ostream &operator<<(std::ostream &os, const ObsID &obsid) {
 class Variable {
 public:
     // 默认构造函数
-    Variable() {};
+    Variable() = default;
 
     //  (dx, dy, dz, cdt)
-    Variable(std::string _station,
-             const Parameter _paraName)
-            : station(std::move(_station)), paraName(_paraName) {};
+    Variable(std::string _station, const Parameter _paraName)
+        : station(std::move(_station)), paraName(_paraName) {
+    }
 
     // isb, ion, ambiguity
-    Variable(const std::string _station,
-             const SatID _sat,
-             Parameter _paraName,
-             ObsID _obsid)
-            : station(_station), sat(_sat), obsID(_obsid), paraName(_paraName) {}
+    Variable(std::string _station, SatID _sat, const Parameter _paraName, ObsID _obsID)
+        : station(std::move(_station)), sat(std::move(_sat)), obsID(std::move(_obsID)), paraName(_paraName) {
+    }
 
     Variable &operator=(const Variable &right) {
         if (this != &right) {
@@ -317,7 +314,9 @@ public:
     }
 
     bool operator<(const Variable &right) const;
+
     bool operator==(const Variable &right);
+
     bool operator!=(const Variable &right);
 
     // Getter方法
@@ -330,18 +329,18 @@ public:
     std::string toString() const {
         std::stringstream ss;
         ss << "Variable{"
-           << "station=" << station << ", "
-           << "sat=" << sat << ", "
-           << "obsID=" << obsID << ", "
-           << "paraName=" << paraName
-           << "}";
+                << "station=" << station << ", "
+                << "sat=" << sat << ", "
+                << "obsID=" << obsID << ", "
+                << "paraName=" << paraName
+                << "}";
         return ss.str();
     }
 
     std::string station;
     SatID sat; // 如果 SatID 不是 string，请根据实际情况调整
     ObsID obsID;
-    Parameter paraName;
+    Parameter paraName{};
 };
 
 // 全局的 operator<< 函数
@@ -359,42 +358,40 @@ typedef std::map<Variable, int> VariableIntMap;
 //===========
 class EquID {
 public:
-    SatID sat;          // 卫星标识（假设 SatID 已定义）
+    SatID sat; // 卫星标识（假设 SatID 已定义）
     std::string obsType; // 观测类型
-//    std::string station; // 站点标识
+    //    std::string station; // 站点标识
 
     // 默认构造函数
-    EquID() : sat(), obsType("") {}
+    EquID() = default;
 
     // 带参数的构造函数（假设 SatID 可从字符串构造）
-    EquID(const SatID& sat, const std::string& type)
-            : sat(sat), obsType(type) {}
+    EquID(SatID sat, std::string type)
+        : sat(std::move(sat)), obsType(std::move(type)) {
+    }
 
     // 重载相等运算符
-    bool operator==(const EquID& other) const {
+    bool operator==(const EquID &other) const {
         return this->sat == other.sat &&
-               this->obsType == other.obsType ;
+               this->obsType == other.obsType;
     }
 
     // 重载小于运算符（用于排序）
-    bool operator<(const EquID& other) const {
+    bool operator<(const EquID &other) const {
         if (this->sat != other.sat) {
             return this->sat < other.sat;
         }
-        else {
-            return this->obsType < other.obsType;
-        }
+        return this->obsType < other.obsType;
     }
 
     std::string toString() const {
         std::stringstream ss;
         ss << "obs{"
-           << "sat=" << sat << ", "
-           << "obsType=" << obsType
-           << "}";
+                << "sat=" << sat << ", "
+                << "obsType=" << obsType
+                << "}";
         return ss.str();
     }
-
 };
 
 // 全局的 operator<< 函数
@@ -403,17 +400,14 @@ inline std::ostream &operator<<(std::ostream &os, const EquID &equID) {
     return os;
 }
 
-struct EquData
-{
-
+struct EquData {
     double prefit;
     std::map<Variable, double> varCoeffData;
     double weight;
 };
 
 // 所有观测方程数据，包括未知参数和每个方程的数据
-struct EquSys
-{
+struct EquSys {
     // 每个观测方程的未知参数和系数及先验残差
     string station;
     std::map<EquID, EquData> obsEquData;
@@ -421,8 +415,7 @@ struct EquSys
     VariableSet varSet;
 };
 
-struct Result
-{
+struct Result {
     Eigen::Vector3d xyz, xyzFixed;
     Eigen::Vector3d blh, blhFixed;
     double sigDx, sigDy, sigDz;
@@ -430,7 +423,3 @@ struct Result
     int numSats;
     double ratio;
 };
-
-
-
-

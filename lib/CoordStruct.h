@@ -8,12 +8,12 @@
 using namespace std;
 
 struct ReferenceFrame {
-    double A;       // 长半轴
-    double F;       // 扁率
-    double GM;      // 引力常数
-    double Omega;   // 地球自转角速度
-    double E2;
-    double J2;      // 可选
+    double a;       // 长半轴
+    double f;       // 扁率
+    double gm;      // 引力常数
+    double omega;   // 地球自转角速度
+    double e2;
+    double j2;      // 可选
 };
 namespace Frame {
     constexpr ReferenceFrame WGS84 {

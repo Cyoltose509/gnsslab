@@ -35,6 +35,8 @@ set(DIR_LIB_SRCS
         lib/NavEphGPS.cpp
         lib/SolverLSQ.h
         lib/SolverLSQ.cpp
+        lib/Ephemeris.cpp
+        lib/Ephemeris.h
 )
 # 根据源文件创建库文件
 add_library( gnss SHARED ${DIR_LIB_SRCS} )

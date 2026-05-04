@@ -4,13 +4,11 @@
 #include "Exception.h"
 #include <Eigen/Eigen>
 
-#define debug 0
-
 // 坐标转换函数
 inline BLH xyz2blh(const XYZ &xyz, const ReferenceFrame &frame) {
     // 获取椭球参数
-   const  double a = frame.A;
-    const double e2 = frame.E2;
+   const  double a = frame.a;
+    const double e2 = frame.e2;
     // 计算水平距离 rho（即 sqrt(x^2 + y^2)）
     const double rho = sqrt(xyz.X() * xyz.X() + xyz.Y() * xyz.Y());
 
@@ -94,12 +92,8 @@ inline XYZ enu2xyz(const ENU& enu, const XYZ& refXYZ, const ReferenceFrame &fram
 // computes the elevation of the input (Target) position as seen from ref Position, using a Geodetic
 // (i.e. ellipsoidal) system.
 // @return the elevation in degrees
-inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
-    noexcept(false) {
-    BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
-
-    if (debug)
-        cout << "refBLH:" << refBLH.transpose() << endl;
+inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ){
+    const BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
 
     const double lat = refBLH.B();
     const double lon = refBLH.L();
@@ -113,7 +107,7 @@ inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
     }
 
     // Compute k vector in local North-East-Up (NEU) system
-    const Eigen::Vector3d kVector(::cos(lat) * ::cos(lon), ::cos(lat) * ::sin(lon), ::sin(lat));
+    const Vector3d kVector(::cos(lat) * ::cos(lon), ::cos(lat) * ::sin(lon), ::sin(lat));
 
     // Take advantage of dot method to get Up coordinate in local NEU system
     const double localUp = z.dot(kVector);
@@ -121,12 +115,7 @@ inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
     // Let's get cos(z), being z the angle with respect to local vertical (Up);
     const double cosUp = localUp / z.norm();
 
-    if (debug)
-        cout << "cosUp:" << cosUp << endl;
-
     const double elev = 90.0 - ::acos(cosUp) * RAD_TO_DEG;
-    if (debug)
-        cout << "elev:" << elev << endl;
 
     return elev;
 }
@@ -137,15 +126,14 @@ inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ)
 // @param Target the Position which is observed to have the
 //        computed azimuth, as seen from this Position.
 // @return the azimuth in degrees
-inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ)
-    noexcept(false) {
+inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ){
     const BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
 
     const double latRad = refBLH.B();
     const double lonRad = refBLH.L();
 
     // Let's get the slant vector
-    const Eigen::Vector3d z = targetXYZ - refXYZ;
+    const Vector3d z = targetXYZ - refXYZ;
 
     if (z.norm() <= 1e-4) // if the positions are within .1 millimeter
     {
@@ -153,12 +141,12 @@ inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ)
     }
 
     // Compute i vector in local North-East-Up (NEU) system
-    const Eigen::Vector3d iVector(-::sin(latRad) * ::cos(lonRad),
+    const Vector3d iVector(-::sin(latRad) * ::cos(lonRad),
                             -::sin(latRad) * ::sin(lonRad),
                             ::cos(latRad));
 
     // Compute j vector in local North-East-Up (NEU) system
-    const Eigen::Vector3d jVector(-::sin(lonRad),
+    const Vector3d jVector(-::sin(lonRad),
                             ::cos(lonRad),
                             0);
 
