@@ -104,7 +104,7 @@ void SPPIFCode::solve(ObsData &obsData) {
             break;
 
         solverLsq.solve(equSys);
-        dxyz = solverLsq.getdxyz();
+        dxyz = solverLsq.getDXYZ();
 
         xyz += dxyz;
         cout << "iteration:" << iter
@@ -139,7 +139,7 @@ std::map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
         // compute satellite ephemeris at transmitting time
         // Scalar to hold temporal value
         double obs(0.0);
-        std::string_view codeType;
+        std::string codeType;
         if (sat.system == 'G') {
             codeType = "C1";
         }

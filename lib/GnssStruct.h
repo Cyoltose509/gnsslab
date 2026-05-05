@@ -91,7 +91,7 @@ struct RinexHeader {
 };
 
 
-typedef std::map<std::string_view, double> TypeValueMap;
+typedef std::map<std::string, double> TypeValueMap;
 
 inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueMap) {
     for (const auto &entry: typeValueMap) {

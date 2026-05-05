@@ -4,26 +4,26 @@
 
 #include "GnssStruct.h"
 #include "SolverLSQ.h"
-//#include "RinexNavStore.hpp"
+#include "RinexNavStore.h"
 #include <Eigen/Eigen>
 
 class SPPIFCode {
 public:
     SPPIFCode()
-    : isRover(true), sigIFCode(1.0), cutOffElev(10)
+    : cutOffElev(10), isRover(true), sigIFCode(1.0)
     {}
 
     void setStationAsBase()
     {
         isRover = false;
     }
-    //
-    // void setRinexNavStore(RinexNavStore* pStore)
-    // {
-    //     pEphStore = pStore;
-    // };
 
-    void setIFCodeTypes(std::map<string, std::pair<string, string>>& ifTypes)
+    void setRinexNavStore(RinexNavStore* pStore)
+    {
+        pEphStore = pStore;
+    };
+
+    void setIFCodeTypes(const std::map<char, std::pair<string, string>>& ifTypes)
     {
         ifCodeTypes = ifTypes;
     };
@@ -54,8 +54,7 @@ public:
         return equSys;
     };
 
-    SatID getDatumSat()
-    {
+    [[nodiscard]] SatID getDatumSat() const {
         double maxElev(0.0);
         SatID datumSat;
         for(auto se: satElevData)
@@ -106,7 +105,7 @@ protected:
 
     SolverLSQ  solverLsq;
 
-    //RinexNavStore* pEphStore;
+    RinexNavStore* pEphStore;
 
     std::map<char, std::pair<string, string>> ifCodeTypes{};
 

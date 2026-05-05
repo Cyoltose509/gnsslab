@@ -11,10 +11,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 
 # Eigen矩阵库的位置
-include_directories( ${PROJECT_SOURCE_DIR}/thirdparty/eigen-3.4.0/ )
+include_directories(${PROJECT_SOURCE_DIR}/thirdparty/eigen-3.4.0/)
 
 # 添加头文件的路径
-include_directories( ${PROJECT_SOURCE_DIR}/lib/ )
+include_directories(${PROJECT_SOURCE_DIR}/lib/)
 
 # 添加源文件名到变量中
 #aux_source_directory( ${PROJECT_SOURCE_DIR}/lib/ DIR_LIB_SRCS )
@@ -39,10 +39,12 @@ set(DIR_LIB_SRCS
         lib/Ephemeris.h
         lib/SPPIFCode.h
         lib/SPPIFCode.cpp
+        lib/RinexNavStore.h
+        lib/RinexNavStore.cpp
 )
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 # 根据源文件创建库文件
-add_library( gnss SHARED ${DIR_LIB_SRCS} )
+add_library(gnss SHARED ${DIR_LIB_SRCS})
 
 # 创建可执行程序
 add_executable(ome7_read main/ome7_read.cpp)

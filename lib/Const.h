@@ -195,8 +195,8 @@ inline double getGamma(const char sys,  const std::string_view type1, const std:
 }
 
 struct DualCode {
-    const std::string_view code1;
-    const std::string_view code2;
+    const char* code1;
+    const char* code2;
     bool valid;
 };
 
