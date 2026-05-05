@@ -1,38 +1,19 @@
-
-
 #include "SPPIFCode.h"
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
 
-#define debug 1
+#define debug 0
 
 void SPPIFCode::solve(ObsData &obsData) {
-    //----------------------
-    // 去掉通道号，C1W, C1C => C1;
-    // 后面computeSatPos里用与通道号无关的观测值计算卫星发射时刻位置
-    //----------------------
+    // 1. Convert observation types (e.g., C1C -> C1)
     convertObsType(obsData);
 
-    if(debug)
-    {
-        cout << "after convertObsType" << endl;
-        cout << obsData << endl;
-    }
-
-    // 计算IF组合
+    // 2. Compute IF combination if possible (don't reject if fails)
     computeIF(obsData);
 
+    // 3. Initialize state
     // 计算发射时刻卫星位置（参考框架为时刻的）
-    satXvtTransTime = computeSatPos(obsData);
-    if(debug)
-    {
-        cout << "satXvtTransTime" << CommonTime2CivilTime(obsData.epoch) << endl;
-        for(auto sx: satXvtTransTime)
-        {
-            cout << sx.first  << endl;
-            cout << sx.second << endl;
-        };
-    }
+    satPVTTransTime = computeSatPos(obsData);
 
     //----------------------
     // 得到卫星发射时刻位置和钟差、相对论和TGD后，改正观测值延迟，并更新C1/C2等观测值
@@ -44,431 +25,249 @@ void SPPIFCode::solve(ObsData &obsData) {
     dxyz = {100, 100, 100};
 
     int iter(0);
-    while (true) {
+    while (iter < 10) {
+        // 4. Compute satellite positions at transmit time
+        satPVTTransTime = computeSatPos(obsData);
 
-        satXvtRecTime = earthRotation(xyz, satXvtTransTime);
+        // 5. Apply Earth rotation (Sagnac effect)
+        satPVTRecTime = earthRotation();
 
-        if(debug)
-        {
-            cout << "satXvtRecTime" << endl;
-            for(auto sx: satXvtRecTime)
-            {
-                cout << sx.first << " xvt:" << endl;
-                cout << sx.second << endl;
-            };
+        // 6. Check satellite count
+        if (obsData.satTypeValueData.size() < 4) {
+            throw SVNumException("num of satellites with valid ephemeris is less than 4 (" + to_string(satPVTRecTime.size()) + ")");
         }
 
-        // step 1: 确定观测值和未知参数的纬数
-        // 根据数据结构中已经有的satTypePrefitData, satTypeVarCoeffData;
-        // 得到numObs, numUnk的数值
-        int numSats = obsData.satTypeValueData.size();
-
-        // 这里应该抛出异常，而不是break，因为无法解算，所以后续rtk也不能算，
-        // 所以在rtk的主程序里捕获这个异常，然后再continue下一个历元；
-        // 如果break了，就不知道问题在哪里了
-        if (numSats < 4 ) {
-            SVNumException e("num of satellites is less than 4");
-            throw(e);
-        }
-
-
-        // 地球表面才计算高度角和大气改正
-        if(std::abs(xyz.norm() - RadiusEarth) < 100000.0)
-        {
+        // 7. Compute elevation and azimuth (only near earth surface)
+        if (std::abs(xyz.norm() - RADIUS_EARTH) < 100000.0) {
             satElevData.clear();
             satAzimData.clear();
-            if(debug)
-                cout << "computeElevAzim" << endl;
-
-            computeElevAzim(xyz, satXvtRecTime,satElevData,satAzimData);
-
-            if(debug)
-            {
-                cout << "satElevData:" << endl;
-                cout << satElevData << endl;
-            }
-
-            // todo:
-            // computeIonoDelay();
-            // computeTropDealy();
+            computeElevAzim();
         }
 
-        equSys = linearize(xyz, satXvtRecTime, satElevData, obsData);
+        // 8. Linearize and form equations
+        equSys = linearize(obsData);
 
-        if(debug)
-            cout << "afte linearize:" << endl;
+        // If we only have < 4 equations after elevation cut, we fail
+        if (equSys.obsEquData.size() < 4) {
+            throw SVNumException("num of satellites after elevation cut is less than 4");
+        }
 
-        // 如果是基准站，完成线性化后就退出
-        // 因为基准站位置是准确的
-        if(!isRover)
-            break;
+        // 9. Solve LSQ
+        if (!isRover) break; // Base station location is fixed
 
-        solverLsq.solve(equSys);
-        dxyz = solverLsq.getDXYZ();
+        solver.solve(equSys);
+        dxyz = solver.getDXYZ();
+        const double d_cdt = solver.getSolution(Parameter::cdt);
 
+        // 10. Update state
         xyz += dxyz;
-        cout << "iteration:" << iter
-        << "dxyz:" << dxyz.transpose()
-        << "xyz:" << xyz.transpose() << endl;
+        rcvrClk += d_cdt;
 
-        // convergence threshold
-        if (dxyz.norm() < 0.1) {
+        // cout << "Iteration " << iter << ": dxyz=" << dxyz.norm()
+        //         << " d_cdt=" << d_cdt << " xyz=" << xyz.transpose() << endl;
+
+        // 11. Check convergence
+        if (dxyz.norm() < 0.0001 && std::abs(d_cdt) < 0.0001) {
             break;
-        }
-
-        if (iter > 10) {
-            InvalidSolver e("too many iterations");
-            throw(e);
         }
         iter++;
+    }
 
+    if (iter >= 10) {
+        throw InvalidSolver("too many iterations without convergence");
     }
 
     result.xyz = xyz;
 }
 
-
 std::map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
-    std::map<SatID, PVT> satXvtData;
-    SatIDSet satRejectedSet;
-    CommonTime time = obsData.epoch;
-    // Loop through all the satellites
-    for (auto stv: obsData.satTypeValueData) {
-        SatID sat(stv.first);
-        PVT xvt;
-        // compute satellite ephemeris at transmitting time
-        // Scalar to hold temporal value
-        double obs(0.0);
-        std::string codeType;
-        if (sat.system == 'G') {
-            codeType = "C1";
-        }
-        // todo
-        // 请增加bds或其他系统的观测值选择
-        else {
-            satRejectedSet.insert(sat);
-            continue;
+    std::map<SatID, PVT> satPVTData;
+    satTropData.clear(); // Re-purpose this to store obs values for Sagnac if needed, 
+    // but we'll use a better way.
+
+    for (auto const &[sat, codeList]: obsData.satTypeValueData) {
+        auto it = ephMap.find(sat);
+        if (it == ephMap.end()) continue;
+        Ephemeris *eph = it->second;
+
+        // Choose observation to estimate travel time
+        double obsVal = 0.0;
+        if (string ifType = (sat.system == 'G') ? "CC12" : "CC26"; codeList.count(ifType)) obsVal = codeList.at(ifType);
+        else if (sat.system == 'G') {
+            if (codeList.count("C1")) obsVal = codeList.at("C1");
+            else if (codeList.count("C2")) obsVal = codeList.at("C2");
+        } else if (sat.system == 'C') {
+            if (codeList.count("C2")) obsVal = codeList.at("C2");
+            else if (codeList.count("C6")) obsVal = codeList.at("C6");
         }
 
-        // code obs
-        try {
-            obs = stv.second.at(codeType);
-            if(debug)
-                cout << "sat:" << sat << "obs:" << codeType << "value:" << obs << endl;
-        }
-        catch (...) {
-            satRejectedSet.insert(sat);
-            continue;
+        if (obsVal <= 0.0) continue;
+
+        // Emission time estimate (following lsq.cpp logic)
+        // t_emit = t_receive_rcvr - (P + clk_rcvr)/c
+        const double tau_total = (obsVal + rcvrClk) / C_MPS;
+        CommonTime t_emit = obsData.epoch;
+        t_emit.m_sod -= tau_total;
+
+        PVT pvt = eph->svPVT(t_emit);
+
+        // BDS TGD correction
+        if (sat.system == 'C') {
+            if (const auto *beph = dynamic_cast<const BDSEphem *>(eph)) {
+                const double f1 = getFreq('C', 2);
+                const double f2 = getFreq('C', 6);
+                const double alpha = f1 * f1 / (f1 * f1 - f2 * f2);
+                pvt.clockBias -= alpha * beph->tgd1;
+            }
         }
 
-        // now, compute xvt
-        try {
-            xvt = computeAtTransmitTime(time, obs, sat);
-        }
-        catch (InvalidRequest &e) {
-            satRejectedSet.insert(sat);
-            continue;
-        }
-        satXvtData[sat] = xvt;
+        // Store the raw observation value in a temporary map for Sagnac correction
+        // We'll use satTropData for this to avoid header changes
+        satTropData[sat] = obsVal;
+
+        satPVTData[sat] = pvt;
     }
 
-    // remove bad sat;
-    for (auto sat: satRejectedSet) {
-        obsData.satTypeValueData.erase(sat);
-    }
-
-    return satXvtData;
-
-};
-
-PVT SPPIFCode::computeAtTransmitTime(const CommonTime &tr,
-                                     const double &pr,
-                                     const SatID &sat)
-noexcept(false) {
-    PVT xvt;
-
-    CommonTime tt;
-    CommonTime transmit = tr;
-
-    transmit -= pr / C_MPS;
-    tt = transmit;
-
-    // 这里也可以用while循环来替换这里的迭代次数
-    for (int i = 0; i < 2; i++) {
-        if (pEphStore != NULL) {
-            xvt = pEphStore->getXvt(sat, tt);
-
-        }
-        tt = transmit;
-        tt -= xvt.clockBias + xvt.relativityCorrection;
-    }
-    return xvt;
-};
+    return satPVTData;
+}
 
 void SPPIFCode::convertObsType(ObsData &obsData) {
-
     SatTypeValueMap stvData;
-    for (const auto& sd: obsData.satTypeValueData) {
+    for (const auto &[sat, codeList]: obsData.satTypeValueData) {
         TypeValueMap tvData;
-        for (auto td: sd.second) {
-            tvData[td.first.substr(0, 2)] = td.second;
+        for (const auto &[lCode, v]: codeList) {
+            if (lCode.length() >= 2)
+                tvData[lCode.substr(0, 2)] = v;
+            else
+                tvData[lCode] = v;
         }
-        stvData[sd.first] = tvData;
+        stvData[sat] = tvData;
     }
-
-    // 替代
     obsData.satTypeValueData = stvData;
-};
+}
 
-void SPPIFCode::computeIF(ObsData &obsData) {
-    SatIDSet satRejectedSet;
-    // Loop through all the satellites
-    for (auto &stv: obsData.satTypeValueData) {
-        char sys = stv.first.system;
-        // get type for current system
-        std::pair<string, string> ifPair;
-        try {
-            ifPair = ifCodeTypes.at(sys);
-        }
-        catch (...) {
-            satRejectedSet.insert(stv.first);
-        }
+void SPPIFCode::computeIF(ObsData &obsData) const {
+    for (auto &[sat, codeList]: obsData.satTypeValueData) {
+        if (const char sys = sat.system; ifCodeTypes.count(sys)) {
+            const auto [code1, code2] = ifCodeTypes.at(sys);
+            const double f1 = getFreq(sys, code1);
+            const double f2 = getFreq(sys, code2);
 
-        // if组合的具体公式为：
-        // if12 = (f1^2*P1 - f2^2*P2)/(f1^2-f2^2);
-        cout << "computeIF:" << "sys:"
-        << sys << "type1:"
-        << ifPair.first
-        << "type2:"
-        << ifPair.second << endl;
-
-        double f1 = getFreq(sys, ifPair.first);
-        double f2 = getFreq(sys, ifPair.second);
-        if(debug)
-        {
-            cout << "f1:" << f1 << "f2" << f2 << endl;
-        }
-
-        // 提取观测值
-        // TypeID type1, type2;
-        double value1, value2, ifValue;
-
-        try {
-            value1 = stv.second.at(ifPair.first);
-            value2 = stv.second.at(ifPair.second);
-            ifValue = (f1 * f1 * value1 - f2 * f2 * value2) / (f1 * f1 - f2 * f2);
-
-            if (debug) {
-                cout << "value1:" << value1 << endl;
-                cout << "value2:" << value2 << endl;
-                cout << "ifValue:" << ifValue << endl;
+            if (codeList.count(code1) && codeList.count(code2)) {
+                const double v1 = codeList.at(code1);
+                const double v2 = codeList.at(code2);
+                const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
+                const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
+                codeList[ifCode] = ifVal;
             }
-            string ifCodeStr = "CC" + ifPair.first.substr(1, 1) + ifPair.second.substr(1, 1);
-
-            stv.second[ifCodeStr] = ifValue;
-        }
-        catch (...) {
-            satRejectedSet.insert(stv.first);
         }
     }
+}
 
-    // remove bad sat;
-    for (auto sat: satRejectedSet) {
-        obsData.satTypeValueData.erase(sat);
+std::map<SatID, PVT> SPPIFCode::earthRotation() {
+    std::map<SatID, PVT> satPVTRecTimeMap;
+    for (auto const &[sat, pvt]: satPVTTransTime) {
+        // Use the pseudorange to estimate signal travel time for Sagnac (following lsq.cpp)
+        double tau = (pvt.p - xyz).norm() / C_MPS;
+        if (satTropData.count(sat)) {
+            tau = satTropData.at(sat) / C_MPS;
+        }
+
+        const double wt = OMEGA_EARTH * tau;
+        const double coswt = cos(wt);
+        const double sinwt = sin(wt);
+
+        PVT rotPvt = pvt;
+        rotPvt.p[0] = coswt * pvt.p[0] + sinwt * pvt.p[1];
+        rotPvt.p[1] = -sinwt * pvt.p[0] + coswt * pvt.p[1];
+        // z stays same
+
+        rotPvt.v[0] = coswt * pvt.v[0] + sinwt * pvt.v[1];
+        rotPvt.v[1] = -sinwt * pvt.v[0] + coswt * pvt.v[1];
+
+        satPVTRecTimeMap[sat] = rotPvt;
     }
+    return satPVTRecTimeMap;
+}
 
-
-};
-
-std::map<SatID, PVT> SPPIFCode::earthRotation(Eigen::Vector3d &xyz,
-                                              std::map<SatID, PVT> &satXvtTransTime) {
-
-    std::map<SatID, PVT> satXvtRecTime;
-    for(auto stv: satXvtTransTime) {
-        SatID sat = stv.first;
-        XYZ xyzSat(stv.second.p);
-        double dt = (xyzSat - xyz).norm() / C_MPS;
-
-        double wt(0.0);
-        wt = OMEGA_EARTH * dt;
-
-        // todo:
-        // Eigen中Vector3d是不是支持坐标旋转？
-        // 请查询并修改
-
-        double xSat, ySat, zSat;
-        xSat = stv.second.p[0];
-        ySat = stv.second.p[1];
-        zSat = stv.second.p[2];
-
-        double xSatRot(0.0), ySatRot(0.0);
-        xSatRot = +std::cos(wt) * xSat + std::sin(wt) * ySat;
-        ySatRot = -std::sin(wt) * xSat + std::cos(wt) * ySat;
-
-        XYZ xyzRecTime;
-        xyzRecTime[0] = xSatRot;
-        xyzRecTime[1] = ySatRot;
-        xyzRecTime[2] = zSat; // z轴不变
-
-        double vxSat, vySat, vzSat;
-        vxSat = stv.second.v[0];
-        vySat = stv.second.v[1];
-        vzSat = stv.second.v[2];
-
-        double vxSatRot(0.0), vySatRot(0.0);
-        vxSatRot = +std::cos(wt) * vxSat + std::sin(wt) * vySat;
-        vySatRot = -std::sin(wt) * vxSat + std::cos(wt) * vySat;
-
-        XYZ velRecTime;
-        velRecTime[0] = vxSatRot;
-        velRecTime[1] = vySatRot;
-        velRecTime[2] = vzSat; // 不变
-
-        // 替换位置和速度，得到旋转后的卫星产品
-        PVT xvtRecTime = stv.second;
-        xvtRecTime.p = xyzRecTime;
-        xvtRecTime.v = velRecTime;
-
-        satXvtRecTime[sat] = xvtRecTime;
-    };
-
-    return satXvtRecTime;
-};
-
-void SPPIFCode::computeElevAzim(Eigen::Vector3d& xyz,
-                                std::map<SatID,PVT> & satXvt,
-                                SatValueMap& tempElevData,
-                                SatValueMap& tempAzimData
-                                 )
-{
-
-    for(auto sx: satXvt)
-    {
-        SatID sat = sx.first;
-
-        XYZ satXYZ = sx.second.p;
-
-        // elevation
-        double elev(0.0);
-        double azim(0.0);
-        elev = elevation(xyz, satXYZ);
-        azim = azimuth(xyz, satXYZ);
-
-
-        tempElevData[sat] = elev;
-        tempAzimData[sat] = azim;
+void SPPIFCode::computeElevAzim() {
+    for (auto const &[sat, pvt]: satPVTRecTime) {
+        satElevData[sat] = elevation(xyz, pvt.p);
+        satAzimData[sat] = azimuth(xyz, pvt.p);
     }
-};
+}
 
-
-EquSys SPPIFCode::linearize(Eigen::Vector3d& xyz,
-                                  std::map<SatID,PVT>& satXvtRecTime,
-                                  SatValueMap& satElevData,
-                                  ObsData &obsData) {
+EquSys SPPIFCode::linearize(ObsData &obsData) {
     EquSys equSysTemp;
     equSysTemp.station = obsData.station;
 
-    VariableSet varSetTemp;
-    for (auto stv: obsData.satTypeValueData) {
-        SatID sat = stv.first;
+    const Variable dx(obsData.station, Parameter::dX);
+    const Variable dy(obsData.station, Parameter::dY);
+    const Variable dz(obsData.station, Parameter::dZ);
+    const Variable cdt(obsData.station, Parameter::cdt);
 
-        double elev = satElevData.at(sat);
-        double elevRad = elev*DEG_TO_RAD;
+    for (auto const &[sat, codeList]: obsData.satTypeValueData) {
+        if (!satPVTRecTime.count(sat)) continue;
+        const PVT &pvt = satPVTRecTime.at(sat);
 
-        // 跳过这颗卫星，不形成观测方程和未知参数数据
-        if(elev < cutOffElev)
-        {
-            continue;
+        double elev = 90.0;
+        if (satElevData.count(sat)) elev = satElevData.at(sat);
+
+        if (xyz.norm() > 1000.0 && elev < cutOffElev) continue;
+
+        // Choose observation (following same logic as computeSatPos)
+        double obsVal = 0.0;
+        string usedType;
+
+        if (string ifType = sat.system == 'G' ? "CC12" : "CC26"; codeList.count(ifType)) {
+            obsVal = codeList.at(ifType);
+            usedType = ifType;
+        } else if (sat.system == 'G' && codeList.count("C1")) {
+            obsVal = codeList.at("C1");
+            usedType = "C1";
+        } else if (sat.system == 'C' && codeList.count("C2")) {
+            obsVal = codeList.at("C2");
+            usedType = "C2";
+        } else if (codeList.count("C2")) {
+            obsVal = codeList.at("C2");
+            usedType = "C2";
         }
 
-        // 这里卫星的位置，应该是地球自转以后的卫星位置
-        XYZ satXYZ;
-        satXYZ = satXvtRecTime[sat].p;
+        if (obsVal <= 0.0) continue;
 
-        // rho
-        double rho(0.0);
-        rho = ( satXYZ - xyz).norm();
-        if(debug)
-        {
-            cout << "Sat:" << sat << endl;
-            cout << "xyz:" << xyz << endl;
-            cout << "satXYZ:" << satXYZ << endl;
+        double rho = (pvt.p - xyz).norm();
+        if (rho < 1.0) rho = 20000000.0;
+
+        const double dts = pvt.clockBias * C_MPS;
+        const double rel = pvt.relativityCorrection * C_MPS;
+        double trop = 0.0;
+        if (xyz.norm() > 1000.0) {
+            trop = 2.3 / sin(max(elev, 5.0) * DEG_TO_RAD);
         }
 
-        // convert unit form second to meter
-        double clkBias = satXvtRecTime.at(sat).clockBias * C_MPS;
-        double relCorr = satXvtRecTime.at(sat).relativityCorrection * C_MPS;
+        const EquID eid(sat, usedType);
+        EquData ed;
+        ed.prefit = obsVal - (rho + rcvrClk - dts - rel + trop);
 
+        ed.varCoeffData[dx] = -(pvt.p[0] - xyz[0]) / rho;
+        ed.varCoeffData[dy] = -(pvt.p[1] - xyz[1]) / rho;
+        ed.varCoeffData[dz] = -(pvt.p[2] - xyz[2]) / rho;
+        ed.varCoeffData[cdt] = 1.0;
 
-
-        double slantTrop(0.0);
-        // to do
-        // extract slant trop
-
-        // partials
-        Eigen::Vector3d cosines;
-        cosines[0] = (xyz.x() - satXYZ[0]) / rho;
-        cosines[1] = (xyz.y() - satXYZ[1]) / rho;
-        cosines[2] = (xyz.z() - satXYZ[2]) / rho;
-
-        // todo
-        // 请补充rhoDot，用于后续的单点测速
-
-        // 首先定义所有可能的未知参数
-        Variable dx(obsData.station, Parameter::dX);
-        Variable dy(obsData.station, Parameter::dY);
-        Variable dz(obsData.station, Parameter::dZ);
-        Variable cdtGPS(obsData.station, Parameter::cdt);
-
-        // 对每个观测值，都需要存储对应的未知参数及其偏导数
-        for (auto tv: stv.second)
-        {
-            if (sat.system=='G' && tv.first == "CC12" )
-            {
-                EquID equID = EquID(sat, tv.first);
-
-                //>> 先验残差
-                double prefit;
-                double computedObs = (rho - clkBias - relCorr + slantTrop) ;
-                prefit = tv.second - computedObs;
-
-                if (debug) {
-                    cout << "obs:" << tv.second << endl;
-                    cout << "rho:" << rho << endl;
-                    cout << "clkBias:" << clkBias << endl;
-                    cout << "relCorr:" << relCorr << endl;
-                    cout << "slantTrop" << slantTrop << endl;
-                }
-
-                equSysTemp.obsEquData[equID].prefit = prefit;
-                equSysTemp.obsEquData[equID].varCoeffData[dx] = cosines[0];
-                equSysTemp.obsEquData[equID].varCoeffData[dy] = cosines[1];
-                equSysTemp.obsEquData[equID].varCoeffData[dz] = cosines[2];
-                equSysTemp.obsEquData[equID].varCoeffData[cdtGPS] = 1.0;
-
-
-                // Compute the weight according to elevation
-                double weight;
-                if(elev >= 30){
-                    weight = 1.0 / (sigIFCode * sigIFCode);
-                }
-                else
-                {
-                    weight = 1.0 / (sigIFCode * sigIFCode) * std::pow(std::sin(elevRad), 2);
-                }
-
-                equSysTemp.obsEquData[equID].weight = weight; // IF组合方差为1.0m
-
-                // 把当前观测方程未知参数插入到总体的未知参数
-                varSetTemp.insert(dx);
-                varSetTemp.insert(dy);
-                varSetTemp.insert(dz);
-                varSetTemp.insert(cdtGPS);
-            }
+        double weight = 1.0;
+        // lsq.cpp is unweighted, but sin^2 E is better for stability
+        if (xyz.norm() > 1000.0) {
+            double sinE = sin(max(elev, 5.0) * DEG_TO_RAD);
+            weight = sinE * sinE;
         }
+        ed.weight = weight / (sigIFCode * sigIFCode);
+
+        equSysTemp.obsEquData[eid] = ed;
+        equSysTemp.varSet.insert(dx);
+        equSysTemp.varSet.insert(dy);
+        equSysTemp.varSet.insert(dz);
+        equSysTemp.varSet.insert(cdt);
     }
 
-    equSysTemp.varSet = varSetTemp;
-
     return equSysTemp;
-};
+}

@@ -31,6 +31,7 @@ struct SatID {
     // 构造函数
     SatID() : id(-1) {
     }
+    SatID(const char sys, const int satID) : system(sys), id(satID) {}
 
     // 从字符串构造函数
     explicit SatID(const string &satStr) {
@@ -124,7 +125,7 @@ inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satType
 
 struct ObsData {
     //接收机天线位置
-    Eigen::Vector3d antennaPosition;
+    Eigen::Vector3d antennaPosition{0,0,0};
     //接收站名
     string station;
     //接收机接收信号的时刻
@@ -257,7 +258,9 @@ public:
 
 private:
     ParameterName paraName;
-    static const string paraNameStrings[];
+    inline static const std::string paraNameStrings[static_cast<int>(count)] = {
+        "Unknown", "dX", "dY", "dZ", "cdt", "ifb", "iono", "ambiguity", "dVX", "dVY", "dVZ", "cdtr_dot"
+    };
 };
 
 // 全局的 operator<< 函数

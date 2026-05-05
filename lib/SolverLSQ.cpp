@@ -79,15 +79,13 @@ double SolverLSQ::getSolution(const Parameter &type,
     // Declare an varIterator for 'stateMap' and go to the first element
     auto varIt = currentUnkSet.begin();
     int index = 0;
-    while (varIt->getParaType() != type) {
-        // If the same type is not found, throw an exception
-        if (varIt == currentUnkSet.end()) {
-            throw InvalidRequest("SolverLSQ::Type not found in state vector.");
+    while (varIt != currentUnkSet.end()) {
+        if (varIt->getParaType() == type) {
+            return stateVec(index);
         }
         index++;
         ++varIt;
     }
 
-    // Else, return the corresponding value
-    return stateVec(index);
+    throw InvalidRequest("SolverLSQ::Type not found in state vector.");
 } // End of method 'SolverGeneral::getSolution()'

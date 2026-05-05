@@ -39,8 +39,6 @@ set(DIR_LIB_SRCS
         lib/Ephemeris.h
         lib/SPPIFCode.h
         lib/SPPIFCode.cpp
-        lib/RinexNavStore.h
-        lib/RinexNavStore.cpp
 )
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 # 根据源文件创建库文件
@@ -52,6 +50,9 @@ target_link_libraries(ome7_read gnss)
 
 add_executable(lsq main/lsq.cpp)
 target_link_libraries(lsq gnss)
+
+add_executable(lsq2 main/lsq2.cpp)
+target_link_libraries(lsq2 gnss)
 
 add_executable(spp_spv main/spp_spv.cpp)
 target_link_libraries(spp_spv gnss)

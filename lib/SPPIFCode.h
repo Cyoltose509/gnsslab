@@ -1,86 +1,67 @@
-
-
 #pragma once
 
 #include "GnssStruct.h"
 #include "SolverLSQ.h"
-#include "RinexNavStore.h"
+#include "Ephemeris.h"
 #include <Eigen/Eigen>
 
 class SPPIFCode {
 public:
     SPPIFCode()
-    : cutOffElev(10), isRover(true), sigIFCode(1.0)
-    {}
+        : cutOffElev(10), isRover(true), sigIFCode(1.0), result(), rcvrClk(0.0) {
+    }
 
-    void setStationAsBase()
-    {
+    void setStationAsBase() {
         isRover = false;
     }
 
-    void setRinexNavStore(RinexNavStore* pStore)
-    {
-        pEphStore = pStore;
+    void setEphemeris(const std::map<SatID, Ephemeris *> &ephs) {
+        ephMap = ephs;
     };
 
-    void setIFCodeTypes(const std::map<char, std::pair<string, string>>& ifTypes)
-    {
+    void setIFCodeTypes(const std::map<char, std::pair<string, string> > &ifTypes) {
         ifCodeTypes = ifTypes;
     };
 
     void solve(ObsData &obsData);
 
-    std::map<SatID,PVT> computeSatPos(ObsData &obsData);
-    PVT computeAtTransmitTime(const CommonTime& tr,
-                              const double& pr,
-                              const SatID& sat);
+    std::map<SatID, PVT> computeSatPos(ObsData &obsData);
 
-    void computeElevAzim(Vector3d& xyz,
-                          std::map<SatID,PVT> & satXvtTransTime,
-                          SatValueMap& tempElevData,
-                          SatValueMap& tempAzimData);
+    void computeElevAzim();
 
     static void convertObsType(ObsData &obsData);
-    void computeIF(ObsData &obsData);
-    std::map<SatID,PVT> earthRotation(Vector3d& xyz,
-                                      std::map<SatID,PVT> & satXvtTransTime);
-    EquSys linearize(Vector3d& xyz,
-                     std::map<SatID,PVT>& satXvtRecTime,
-                     SatValueMap& satElevData,
-                     ObsData& obsData);
 
-    EquSys getEquSys()
-    {
+    void computeIF(ObsData &obsData) const;
+
+    std::map<SatID, PVT> earthRotation();
+
+    EquSys linearize(ObsData &obsData);
+
+    EquSys getEquSys() {
         return equSys;
     };
 
     [[nodiscard]] SatID getDatumSat() const {
         double maxElev(0.0);
         SatID datumSat;
-        for(auto se: satElevData)
-        {
-            if(se.second>maxElev)
-            {
-                maxElev = se.second;
-                datumSat = se.first;
+        for (const auto [sat, elev]: satElevData) {
+            if (elev > maxElev) {
+                maxElev = elev;
+                datumSat = sat;
             }
         }
         return datumSat;
     };
 
-    SatValueMap getSatElevData()
-    {
+    SatValueMap getSatElevData() {
         return satElevData;
     }
 
-    Vector3d getXYZ()
-    {
+    Vector3d getXYZ() {
         return xyz;
     }
 
-    Result getResult();
-
-    ~SPPIFCode()= default;
+    ~SPPIFCode() = default;
 
     // 继承类需要访问这个成员
 protected:
@@ -95,22 +76,18 @@ protected:
 
     Vector3d xyz;
     Vector3d dxyz;
+    double rcvrClk; // Receiver clock bias in meters
 
-    std::map<SatID,PVT> satXvtTransTime{};
-    std::map<SatID,PVT> satXvtRecTime{};
+    std::map<SatID, PVT> satPVTTransTime{};
+    std::map<SatID, PVT> satPVTRecTime{};
 
-    SatValueMap  satElevData;
-    SatValueMap  satAzimData;
-    SatValueMap  satTropData;
+    SatValueMap satElevData;
+    SatValueMap satAzimData;
+    SatValueMap satTropData;
 
-    SolverLSQ  solverLsq;
+    SolverLSQ solver;
 
-    RinexNavStore* pEphStore;
+    std::map<SatID, Ephemeris *> ephMap;
 
-    std::map<char, std::pair<string, string>> ifCodeTypes{};
-
-    SatID datumSat;
-
+    std::map<char, std::pair<string, string> > ifCodeTypes{};
 };
-
-

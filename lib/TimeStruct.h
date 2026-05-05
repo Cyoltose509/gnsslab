@@ -73,8 +73,28 @@ public:
     // time system
     SystemType system;
     // string for enum sys, 1 vs 1
-    static const std::string sys_strings[];
-    static const epoch_params EPOCH_PARAM[];
+    inline static const std::string sys_strings[count] = {
+        "Unknown",
+        "GPS", // GPS system time
+        "GLO", // glonass system time
+        "GAL", // Galileo system time
+        "BDT", // BDS system time
+        "QZS", // qzss time
+        "UTC", // utc
+        "TAI",
+        "TT"
+    };
+    inline static const epoch_params EPOCH_PARAM[count] = {
+        {0, 0, 0},
+        {10, 0x3FF, GPS_EPOCH_MJD},
+        {0, 0, 0},
+        {0, 0, 0},
+        {13, 0x1FFF, BDT_EPOCH_MJD},
+        {0, 0, 0},
+        {0, 0, 0},
+        {0, 0, 0},
+        {0, 0, 0},
+    };
 }; // end class TimeSystem
 
 
@@ -82,12 +102,6 @@ inline std::ostream &operator<<(std::ostream &os, const TimeSystem &ts) {
     return os << ts.toString() << std::endl;
 }
 
-/**
- *  定义一个通用时间的目的是为了实现不同历法之间的快速转换；
- *  考虑到计算精度和计算方便，需要把时间分为day和second of day两个变量；
- *  这是因为，如果用一个second of day作为唯一变量，受到计算机存储字长的影响，
- *  在时间转换时，精度会下降，难以满足高精度需求。
- */
 class CommonTime {
 public:
     explicit CommonTime(const long day = 0, const double sod = 0.0, const TimeSystem timeSystem = TimeSystem::GPS) {
