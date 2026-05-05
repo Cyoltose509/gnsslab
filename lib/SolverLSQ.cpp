@@ -1,7 +1,6 @@
 
 
 #include "SolverLSQ.h"
-#include <fstream>
 
 using namespace std;
 
@@ -17,16 +16,16 @@ void SolverLSQ::solve(EquSys &equSys) {
     MatrixXd wMatrix = MatrixXd::Zero(numObs, numObs);
 
     int iobs = 0;
-    for (const auto &ed: equSys.obsEquData) {
-        prefit(iobs) = ed.second.prefit;
+    for (const auto &[id, data]: equSys.obsEquData) {
+        prefit(iobs) = data.prefit;
 
-        for (const auto &vc: ed.second.varCoeffData) {
+        for (const auto &[var, value]: data.varCoeffData) {
             // 从整体的X中搜索当前未知参数的位置
-            const int indexUnk = getIndex(currentUnkSet, vc.first);
+            const int indexUnk = getIndex(currentUnkSet, var);
             // 把偏导数插入到对应的h矩阵中
-            hMatrix(iobs, indexUnk) = vc.second;
+            hMatrix(iobs, indexUnk) = value;
         }
-        wMatrix(iobs, iobs) = ed.second.weight;
+        wMatrix(iobs, iobs) = data.weight;
 
         iobs++;
     }
@@ -64,7 +63,7 @@ void SolverLSQ::solve(EquSys &equSys) {
 
 int SolverLSQ::getIndex(const VariableSet &varSet, const Variable &thisVar) {
     int index(0);
-    for (auto var: varSet) {
+    for (const auto& var: varSet) {
         if (var == thisVar) {
             break;
         }

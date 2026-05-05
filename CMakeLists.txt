@@ -31,8 +31,6 @@ set(DIR_LIB_SRCS
         lib/OEM7Reader.h
         lib/GnssStruct.h
         lib/GnssStruct.cpp
-        lib/NavEphGPS.h
-        lib/NavEphGPS.cpp
         lib/SolverLSQ.h
         lib/SolverLSQ.cpp
         lib/Ephemeris.cpp

@@ -5,7 +5,6 @@
 #include <iomanip>
 #include <sstream>
 #include <cstdlib>
-#include <cmath>
 #include "Const.h"
 
 using namespace std;
@@ -54,7 +53,7 @@ public:
         return !operator==(right);
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << sys_strings[static_cast<int>(system)];
         return oss.str();
@@ -66,7 +65,7 @@ public:
         long MJDEpoch;
     };
 
-    const epoch_params &getParams() const {
+    [[nodiscard]] const epoch_params &getParams() const {
         return EPOCH_PARAM[static_cast<int>(system)];
     }
 
@@ -187,7 +186,7 @@ public:
         return true;
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         ostringstream oss;
         oss << setfill('0')
                 << setw(7) << m_day << " "
@@ -259,20 +258,17 @@ inline std::ostream &operator<<(std::ostream &os, const CommonTime &ct) {
 // -----------------------------------
 class CivilTime {
 public:
-    CivilTime(int yr = 0,
-              int mo = 0,
-              int dy = 0,
-              int hr = 0,
-              int mn = 0,
-              double s = 0.0,
-              TimeSystem ts = TimeSystem::GPS)
+    explicit CivilTime(const int yr = 0,
+                       const int mo = 0,
+                       const int dy = 0,
+                       const int hr = 0,
+                       const int mn = 0,
+                       const double s = 0.0,
+                       const TimeSystem ts = TimeSystem::GPS)
         : year(yr), month(mo), day(dy), hour(hr), minute(mn), second(s) {
         timeSys = ts;
     }
 
-    /**
-     * Copy Constructor.
-     */
     CivilTime(const CivilTime &right)
         : year(right.year), month(right.month), day(right.day),
           hour(right.hour), minute(right.minute), second(right.second) {
@@ -283,7 +279,7 @@ public:
 
     bool operator==(const CivilTime &right) const;
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(4) << year << "/"
                 << setw(2) << month << "/"
@@ -294,11 +290,10 @@ public:
                 << timeSys.toString();
 
         return oss.str();
-    };
+    }
 
     /// Virtual Destructor.
-    virtual ~CivilTime() {
-    }
+    virtual ~CivilTime() = default;
 
     int year;
     int month;
@@ -317,7 +312,7 @@ inline std::ostream &operator<<(std::ostream &s, const CivilTime &cit) {
 
 class JulianDate {
 public:
-    JulianDate(long double j = 0., TimeSystem ts = TimeSystem::GPS)
+    explicit JulianDate(const long double j = 0., const TimeSystem ts = TimeSystem::GPS)
         : jd(j) { timeSystem = ts; }
 
     JulianDate(const JulianDate &right)
@@ -325,7 +320,7 @@ public:
 
     JulianDate &operator=(const JulianDate &right);
 
-    string toString() {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << fixed << setw(16) << jd << ":"
                 << timeSystem.toString();
@@ -334,8 +329,7 @@ public:
     }
 
     /// Virtual Destructor.
-    virtual ~JulianDate() {
-    }
+    virtual ~JulianDate() = default;
 
     void reset();
 
@@ -350,7 +344,7 @@ public:
     TimeSystem timeSystem;
 };
 
-inline std::ostream &operator<<(std::ostream &s, JulianDate &jd) {
+inline std::ostream &operator<<(std::ostream &s, const JulianDate &jd) {
     s << jd.toString();
     return s;
 }
@@ -359,8 +353,8 @@ inline std::ostream &operator<<(std::ostream &s, JulianDate &jd) {
 // 方便用于输出单天解
 class YDSTime {
 public:
-    YDSTime(int y = 0, int d = 0, double s = 0.0,
-            TimeSystem ts = TimeSystem::GPS) {
+    explicit YDSTime(const int y = 0, const int d = 0, const double s = 0.0,
+                     const TimeSystem ts = TimeSystem::GPS) {
         year = y;
         doy = d;
         sod = s;
@@ -372,7 +366,7 @@ public:
 
     YDSTime &operator=(const YDSTime &right);
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(4) << year << " "
                 << setw(3) << doy << " "
@@ -380,11 +374,10 @@ public:
                 << timeSystem.toString() << " ";
 
         return oss.str();
-    };
+    }
 
     // Virtual Destructor.
-    virtual ~YDSTime() {
-    }
+    virtual ~YDSTime() = default;
 
     virtual void reset();
 
@@ -403,12 +396,12 @@ public:
 inline std::ostream &operator<<(std::ostream &s, const YDSTime &yt) {
     s << yt.toString();
     return s;
-};
+}
 
 class MJD {
 public:
-    MJD(long double m = 0.,
-        TimeSystem ts = TimeSystem::GPS)
+    explicit MJD(const long double m = 0.,
+                 const TimeSystem ts = TimeSystem::GPS)
         : mjd(m) { timeSystem = ts; }
 
 
@@ -419,18 +412,17 @@ public:
     MJD &operator=(const MJD &right);
 
     /// Virtual Destructor.
-    virtual ~MJD() {
-    }
+    virtual ~MJD() = default;
 
     void reset();
 
-    std::string toString() {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(8) << mjd
                 << timeSystem.toString();
 
         return oss.str();
-    };
+    }
 
     bool operator==(const MJD &right) const;
 
@@ -448,7 +440,7 @@ public:
     TimeSystem timeSystem;
 };
 
-inline std::ostream &operator<<(std::ostream &s, MJD &mjd) {
+inline std::ostream &operator<<(std::ostream &s, const MJD &mjd) {
     s << mjd.toString();
     return s;
 }
@@ -472,13 +464,13 @@ public:
 
     void reset();
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(8) << jd
                 << timeSystem.toString();
 
         return oss.str();
-    };
+    }
 
     bool operator==(const JD2020 &right) const;
 
@@ -496,7 +488,7 @@ public:
     TimeSystem timeSystem;
 };
 
-inline std::ostream &operator<<(std::ostream &s, JD2020 &jd) {
+inline std::ostream &operator<<(std::ostream &s, const JD2020 &jd) {
     s << jd.toString();
     return s;
 }
@@ -509,12 +501,14 @@ public:
     WeekSecond(const unsigned int w = 0, const double s = 0, const TimeSystem ts = TimeSystem::GPS) : week(w), sow(s) { //NOLINT
         timeSystem = ts;
     }
-    WeekSecond(WeekSecond&& other) noexcept
-        : week(other.week), sow(other.sow) {}
 
-    WeekSecond& operator=(const WeekSecond& other) = default;
+    WeekSecond(WeekSecond &&other) noexcept
+        : week(other.week), sow(other.sow) {
+    }
 
-    WeekSecond& operator=(WeekSecond&& other) noexcept {
+    WeekSecond &operator=(const WeekSecond &other) = default;
+
+    WeekSecond &operator=(WeekSecond &&other) noexcept {
         if (this != &other) {
             week = other.week;
             sow = other.sow;
@@ -525,26 +519,26 @@ public:
     /// Virtual Destructor.
     virtual ~WeekSecond() = default;
 
-    int Nbits() const {
+    [[nodiscard]] int Nbits() const {
         return timeSystem.getParams().Nbits;
     }
 
-    int bitmask() const {
+    [[nodiscard]] int bitmask() const {
         return timeSystem.getParams().bitmask;
     }
 
-    long MJDEpoch() const {
+    [[nodiscard]] long MJDEpoch() const {
         return timeSystem.getParams().MJDEpoch;
     }
 
-    int rollover() const { return bitmask() + 1; }
+    [[nodiscard]] int rollover() const { return bitmask() + 1; }
 
 
-    unsigned int getDayOfWeek() const {
+    [[nodiscard]] unsigned int getDayOfWeek() const {
         return static_cast<unsigned int>(sow) / SEC_PER_DAY;
     }
 
-    double getSOW() const { return sow; }
+    [[nodiscard]] double getSOW() const { return sow; }
 
     void reset();
 
@@ -578,15 +572,15 @@ public:
         setModWeek(w);
     }
 
-    unsigned int getWeek() const {
+    [[nodiscard]] unsigned int getWeek() const {
         return week;
     }
 
-    unsigned int getModWeek() const {
+    [[nodiscard]] unsigned int getModWeek() const {
         return (week & bitmask());
     }
 
-    unsigned int getEpoch() const {
+    [[nodiscard]] unsigned int getEpoch() const {
         return (week >> Nbits());
     }
 
@@ -595,7 +589,7 @@ public:
         w = getModWeek();
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(4) << week
                 << setw(10) << sow

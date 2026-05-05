@@ -79,13 +79,12 @@ bool YDSTime::operator==(const YDSTime &right) const {
 }
 
 bool YDSTime::operator!=(const YDSTime &right) const {
-    return (!operator==(right));
+    return !operator==(right);
 }
 
 bool YDSTime::operator<(const YDSTime &right) const {
     if (timeSystem != right.timeSystem) {
-        InvalidRequest ir("CommonTime objects not in same time system, cannot be compared");
-        throw (ir);
+        throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
     }
 
     if (year < right.year) {
@@ -106,11 +105,7 @@ bool YDSTime::operator<(const YDSTime &right) const {
     return false;
 }
 
-MJD &MJD::operator=(const MJD &right) {
-    mjd = right.mjd;
-    timeSystem = right.timeSystem;
-    return *this;
-}
+MJD &MJD::operator=(const MJD &right) = default;
 
 void MJD::reset() {
     mjd = 0.0;
@@ -129,14 +124,13 @@ bool MJD::operator==(const MJD &right) const {
 }
 
 bool MJD::operator!=(const MJD &right) const {
-    return (!operator==(right));
+    return !operator==(right);
 }
 
 bool MJD::operator<(const MJD &right) const {
     /// Any (wildcard) type exception allowed, otherwise must be same time systems
     if (timeSystem != right.timeSystem) {
-        InvalidRequest ir("CommonTime objects not in same time system, cannot be compared");
-        throw(ir);
+        throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
     }
 
     if (mjd < right.mjd) {
@@ -146,23 +140,19 @@ bool MJD::operator<(const MJD &right) const {
 }
 
 bool MJD::operator>(const MJD &right) const {
-    return (!operator<=(right));
+    return !operator<=(right);
 }
 
 bool MJD::operator<=(const MJD &right) const {
-    return (operator<(right) ||
-            operator==(right));
+    return operator<(right) ||
+           operator==(right);
 }
 
 bool MJD::operator>=(const MJD &right) const {
-    return (!operator<(right));
+    return !operator<(right);
 }
 
-JD2020 &JD2020::operator=(const JD2020 &right) {
-    jd = right.jd;
-    timeSystem = right.timeSystem;
-    return *this;
-}
+JD2020 &JD2020::operator=(const JD2020 &right) = default;
 
 void JD2020::reset() {
     jd = 0.0;
@@ -181,14 +171,13 @@ bool JD2020::operator==(const JD2020 &right) const {
 }
 
 bool JD2020::operator!=(const JD2020 &right) const {
-    return (!operator==(right));
+    return !operator==(right);
 }
 
 bool JD2020::operator<(const JD2020 &right) const {
     /// Any (wildcard) type exception allowed, otherwise must be same time systems
     if (timeSystem != right.timeSystem) {
-        InvalidRequest ir("CommonTime objects not in same time system, cannot be compared");
-        throw(ir);
+        throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
     }
 
     if (jd < right.jd) {
@@ -198,16 +187,16 @@ bool JD2020::operator<(const JD2020 &right) const {
 }
 
 bool JD2020::operator>(const JD2020 &right) const {
-    return (!operator<=(right));
+    return !operator<=(right);
 }
 
 bool JD2020::operator<=(const JD2020 &right) const {
-    return (operator<(right) ||
-            operator==(right));
+    return operator<(right) ||
+           operator==(right);
 }
 
 bool JD2020::operator>=(const JD2020 &right) const {
-    return (!operator<(right));
+    return !operator<(right);
 }
 
 
@@ -220,13 +209,13 @@ void WeekSecond::reset() {
 }
 
 bool WeekSecond::operator==(const WeekSecond &right) const {
-    return (week == right.week &&
-            timeSystem == right.timeSystem &&
-            sow == right.sow);
+    return week == right.week &&
+           timeSystem == right.timeSystem &&
+           sow == right.sow;
 }
 
 bool WeekSecond::operator!=(const WeekSecond &right) const {
-    return (!operator==(right));
+    return !operator==(right);
 }
 
 bool WeekSecond::operator<(const WeekSecond &right) const {
@@ -243,15 +232,15 @@ bool WeekSecond::operator<(const WeekSecond &right) const {
 }
 
 bool WeekSecond::operator>(const WeekSecond &right) const {
-    return (!operator<=(right));
+    return !operator<=(right);
 }
 
 bool WeekSecond::operator<=(const WeekSecond &right) const {
-    return (operator<(right) || operator==(right));
+    return operator<(right) || operator==(right);
 }
 
 bool WeekSecond::operator>=(const WeekSecond &right) const {
-    return (!operator<(right));
+    return !operator<(right);
 }
 
 double WeekSecond::operator-(const WeekSecond &right) const {

@@ -44,20 +44,19 @@ double getLeapSeconds(const CommonTime &ct) {
     leapData[57204.0] = 36;
     leapData[57754.0] = 37;
 
-    double mjd_ct = ct.m_day;
+    const double mjd_ct = ct.m_day;
 
     // 1972.1.1
     if (mjd_ct < 41317.0) {
-        InvalidRequest e("Time MUST be greater than 1972 for leapSec!");
-        throw (e);
+        throw InvalidRequest("Time MUST be greater than 1972 for leapSec!");
     }
 
     double leapSec = 0;
 
     //  循环所有的跳秒记录
-    for (const auto ld: leapData) {
-        if (ld.first <= mjd_ct)
-            leapSec = ld.second;
+    for (const auto [time, leap]: leapData) {
+        if (time <= mjd_ct)
+            leapSec = leap;
     }
 
     return leapSec;
@@ -102,18 +101,18 @@ void convertJD2YMD(const double jd, int &iyear, int &imonth, int &iday) {
     const double c = std::floor((b - 122.1) / 365.25);
     const double d = std::floor(365.25 * c);
     const double e = std::floor((b - d) / 30.6001);
-    iday = static_cast<int>(b) - d - std::floor(30.6001 * e) + (jd + 0.5) - std::floor(jd + 0.5);
-    imonth = static_cast<int>(e) - 1 - 12. * std::floor(e / 14);
-    iyear = static_cast<int>(c) - 4715 - std::floor((7 + imonth) / 10);
+    iday = static_cast<int>(b) - d - std::floor(30.6001 * e) + (jd + 0.5) - std::floor(jd + 0.5); //NOLINT
+    imonth = static_cast<int>(e) - 1 - 12. * std::floor(e / 14); //NOLINT
+    iyear = static_cast<int>(c) - 4715 - std::floor((7 + imonth) / 10); //NOLINT
 }
 
-double convertYMD2JD(int iyear, int imonth, int iday) {
+double convertYMD2JD(int iyear, int imonth, const int iday) {
     if (imonth <= 2) {
         imonth += 12;
         iyear -= 1;
     }
 
-    double B = 2 - floor(iyear / 100) + floor(iyear / 400);
+    const double B = 2 - floor(iyear / 100) + floor(iyear / 400);
     const double jd_double = floor(365.25 * (iyear + 4716)) + floor(30.6001 * (imonth + 1)) + B + iday - 1524.5;
     return jd_double;
 }
@@ -128,26 +127,24 @@ void convertSOD2HMS(double sod, int &hh, int &mm, double &sec) {
 
     double temp; // variable to hold the integer part of sod
     sod = modf(sod, &temp); // sod holds the fraction, temp the integer
-    long seconds = static_cast<long>(temp); // get temp into a real integer
+    const long seconds = static_cast<long>(temp); // get temp into a real integer
 
     hh = seconds / 3600;
-    mm = (seconds % 3600) / 60;
+    mm = seconds % 3600 / 60;
     sec = static_cast<double>(seconds % 60) + sod;
 }
 
-double convertHMS2SOD(int hh,
-                      int mm,
-                      double sec) {
-    return (sec + 60. * (mm + 60. * hh));
+double convertHMS2SOD(const int hh, const int mm, const double sec) {
+    return sec + 60. * (mm + 60. * hh);
 }
 
 CommonTime CivilTime2CommonTime(const CivilTime &civil_t) {
     CommonTime ct;
     // get the julian day
-    double jday = convertYMD2JD(civil_t.year, civil_t.month, civil_t.day);
+    const double jday = convertYMD2JD(civil_t.year, civil_t.month, civil_t.day);
 
     // convert jday to mjd day.
-    int mjd_day = static_cast<int>(round(jday)) - MJD_TO_JD; //NOLINT
+    int mjd_day = round(jday) - MJD_TO_JD; //NOLINT
 
     // get the second of day
     const double sod = convertHMS2SOD(civil_t.hour, civil_t.minute, civil_t.second);
@@ -168,8 +165,7 @@ CivilTime CommonTime2CivilTime(const CommonTime &ct) {
     ct.get(mjd_day, sod, sys);
     civilt.timeSys = sys;
 
-    double jday;
-    jday = mjd_day + MJD_TO_JD;
+    const double jday = mjd_day + MJD_TO_JD;
 
     // convert the julian day to calendar "year/month/day of month"
     convertJD2YMD(jday, civilt.year, civilt.month, civilt.day);
@@ -180,34 +176,34 @@ CivilTime CommonTime2CivilTime(const CommonTime &ct) {
     return civilt;
 }
 
-CommonTime JulianDate2CommonTime(JulianDate &jd) {
+CommonTime JulianDate2CommonTime(const JulianDate &jd) {
     CommonTime ct;
-    long double temp_jd(jd.jd);
+    const long double temp_jd(jd.jd);
 
-    long mjd_day = static_cast<long>(temp_jd - MJD_TO_JD);
+    const long mjd_day = static_cast<long>(temp_jd - MJD_TO_JD);
 
-    long double sod = (temp_jd - std::floor(temp_jd)) * SEC_PER_DAY;
+    const long double sod = (temp_jd - std::floor(temp_jd)) * SEC_PER_DAY;
 
     ct.set(mjd_day, static_cast<double>(sod), jd.timeSystem);
     return ct;
 }
 
-JulianDate CommonTime2JulianDate(CommonTime &ct) {
+JulianDate CommonTime2JulianDate(const CommonTime &ct) {
     JulianDate jd;
     long mjd_day;
     double sod;
     ct.get(mjd_day, sod, jd.timeSystem);
 
-    double jday = mjd_day + MJD_TO_JD;
-    jd.jd = static_cast<long double>(jday) + (static_cast<long double>(sod)) * DAY_PER_SEC;
+    const double jday = mjd_day + MJD_TO_JD;
+    jd.jd = static_cast<long double>(jday) + static_cast<long double>(sod) * DAY_PER_SEC;
 
     return jd;
-};
+}
 
 
-CommonTime YDSTime2CommonTime(YDSTime &ydst) {
+CommonTime YDSTime2CommonTime(const YDSTime &ydst) {
     CommonTime ct;
-    auto jday = static_cast<long>(convertYMD2JD(ydst.year, 1, 1) + ydst.doy - 1);
+    const auto jday = static_cast<long>(convertYMD2JD(ydst.year, 1, 1) + ydst.doy - 1);
     ct.set(jday, ydst.sod, ydst.timeSystem);
     return ct;
 }
@@ -219,17 +215,16 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct) {
     ct.get(mjday, secDay, ydst.timeSystem);
     ydst.sod = secDay;
 
-    double jday;
-    jday = mjday + MJD_TO_JD;
+    const double jday = mjday + MJD_TO_JD;
 
     int month, day;
     convertJD2YMD(jday, ydst.year, month, day);
 
-    ydst.doy = jday - convertYMD2JD(ydst.year, 1, 1) + 1;
+    ydst.doy = jday - convertYMD2JD(ydst.year, 1, 1) + 1;//NOLINT
     return ydst;
 }
 
-void MJD2CommonTime(MJD &mjd, CommonTime &ct) {
+void MJD2CommonTime(const MJD &mjd, CommonTime &ct) {
     const auto mday = static_cast<double>(mjd.mjd);
     // tmp now holds the partial days
     double sod = mday - static_cast<long>(mday);
@@ -298,7 +293,7 @@ void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct) {
 
     const int dow = static_cast<int>(wk.sow / SEC_PER_DAY);
     // NB this assumes MJDEpoch is an integer - what if epoch H:M:S != 0:0:0 ?
-    const long mday = wk.MJDEpoch() + 7 * wk.week + dow;
+    const long mday = wk.MJDEpoch() + 7 * wk.week + dow; //NOLINT
     const double sod(wk.sow - SEC_PER_DAY * dow);
     ct.set(mday, sod, wk.timeSystem);
 }

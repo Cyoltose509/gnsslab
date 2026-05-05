@@ -181,9 +181,9 @@ int main() {
                     outfile << obs.weekSecond.week << ","
                             << fixed << setprecision(3) << obs.weekSecond.sow << ","
                             << fixed << setprecision(4)
-                            << xyz.X() << ","
-                            << xyz.Y() << ","
-                            << xyz.Z()
+                            << xyz[0] << ","
+                            << xyz[1] << ","
+                            << xyz[2]
                             << endl;
                 }
             } catch (...) { break; }

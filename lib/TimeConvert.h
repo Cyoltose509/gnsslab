@@ -20,13 +20,13 @@ CommonTime CivilTime2CommonTime(const CivilTime &civil_t);
 
 CivilTime CommonTime2CivilTime(const CommonTime &ct);
 
-CommonTime JulianDate2CommonTime(JulianDate &jd);
+CommonTime JulianDate2CommonTime(const JulianDate &jd);
 
-JulianDate CommonTime2JulianDate(CommonTime &ct);
+JulianDate CommonTime2JulianDate(const CommonTime &ct);
 
 void CommonTime2MJD(const CommonTime &ct, MJD &mjd);
 
-void MJD2CommonTime(MJD &mjd, CommonTime &ct);
+void MJD2CommonTime(const MJD &mjd, CommonTime &ct);
 
 void CommonTime2JD2020(const CommonTime &ct, JD2020 &jd);
 
@@ -36,7 +36,7 @@ void MJD2JD2020(MJD &mjd, JD2020 &jd);
 
 void JD20202MJD(JD2020 &jd, MJD &mjd);
 
-CommonTime YDSTime2CommonTime(YDSTime &ydst);
+CommonTime YDSTime2CommonTime(const YDSTime &ydst);
 
 YDSTime CommonTime2YDSTime(const CommonTime &ct);
 

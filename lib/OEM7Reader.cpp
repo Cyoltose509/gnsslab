@@ -2,13 +2,10 @@
 #include <fstream>
 #include <vector>
 #include <iomanip>
-#include <cstring>
 #include <algorithm>
-#include <cmath>
 
 #include "TimeConvert.h"
 #include "GnssStruct.h"
-#include "NavEphGPS.h"
 #include "OEM7Reader.h"
 
 #define ID_RANGE        43
@@ -35,7 +32,6 @@ void OEM7Reader::close() {
 
 bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
     while (buffer.size() >= 3) {
-        constexpr size_t headerLen = 28;
         long long start = 0;
         bool found = false;
         for (; start <= buffer.size() - 3; ++start) {
@@ -54,7 +50,7 @@ bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
             buffer.erase(buffer.begin(), buffer.begin() + start);
         }
 
-        if (buffer.size() < headerLen) return false; // 剩余数据不足以读取头部
+        if (constexpr size_t headerLen = 28; buffer.size() < headerLen) return false; // 剩余数据不足以读取头部
 
         const auto hlen = buffer[3];
         const auto msgLen = U2(&buffer[8]);
@@ -218,7 +214,7 @@ bool OEM7Reader::parseGpsEphem(const std::vector<uint8_t> &message) {
     eph.a1 = R8(&message[off]);
     off += 8;
     eph.a2 = R8(&message[off]);
-    off += 8;
+    off += 8; //NOLINT
     latestGps[eph.prn] = std::move(eph);
     return true;
 }
@@ -281,7 +277,7 @@ bool OEM7Reader::parseBdsEphem(const std::vector<uint8_t> &message) {
     eph.cic = R8(&message[off]);
     off += 8;
     eph.cis = R8(&message[off]);
-    off += 8;
+    off += 8; //NOLINT
     latestBds[eph.prn] = std::move(eph);
     return true;
 }

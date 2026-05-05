@@ -13,10 +13,6 @@
 #include "CoordStruct.h"
 #include "TimeStruct.h"
 
-
-//---------------
-// 卫星号管理
-//---------------
 struct SatID {
     char system{};
     int id;
@@ -31,7 +27,9 @@ struct SatID {
     // 构造函数
     SatID() : id(-1) {
     }
-    SatID(const char sys, const int satID) : system(sys), id(satID) {}
+
+    SatID(const char sys, const int satID) : system(sys), id(satID) {
+    }
 
     // 从字符串构造函数
     explicit SatID(const string &satStr) {
@@ -60,7 +58,7 @@ struct SatID {
         return this->id < other.id;
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::stringstream sstream;
         sstream << system
                 << std::setw(2) << std::setfill('0') << id;
@@ -95,9 +93,9 @@ struct RinexHeader {
 typedef std::map<std::string, double> TypeValueMap;
 
 inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueMap) {
-    for (const auto &entry: typeValueMap) {
-        os << "  Type: " << entry.first
-                << ", Value: " << std::fixed << std::setprecision(6) << entry.second << "\n";
+    for (const auto &[type, value]: typeValueMap) {
+        os << "  Type: " << type
+                << ", Value: " << std::fixed << std::setprecision(6) << value << "\n";
     }
     return os;
 }
@@ -105,9 +103,9 @@ inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueM
 typedef std::map<SatID, double> SatValueMap;
 
 inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap) {
-    for (const auto &entry: satValueMap) {
-        os << "  sat: " << entry.first
-                << ", Value: " << std::fixed << std::setprecision(6) << entry.second << "\n";
+    for (const auto &[sat, value]: satValueMap) {
+        os << "  sat: " << sat
+                << ", Value: " << std::fixed << std::setprecision(6) << value << "\n";
     }
     return os;
 }
@@ -116,16 +114,16 @@ inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap
 typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
 
 inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satTypeValueMap) {
-    for (const auto &satEntry: satTypeValueMap) {
-        os << "Satellite ID: " << satEntry.first << "\n";
-        os << satEntry.second; // 这里使用了 TypeValueMap 的输出函数
+    for (const auto &[sat, map]: satTypeValueMap) {
+        os << "Satellite ID: " << sat << "\n";
+        os << map;
     }
     return os;
 }
 
 struct ObsData {
     //接收机天线位置
-    Eigen::Vector3d antennaPosition{0,0,0};
+    Eigen::Vector3d antennaPosition{0, 0, 0};
     //接收站名
     string station;
     //接收机接收信号的时刻
@@ -209,8 +207,8 @@ inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
     os << "clk bias:" << pvt.clockBias << endl;
     os << "clk drift:" << pvt.clockDrift << endl;
     os << "relcorr:" << pvt.relativityCorrection << endl;
-    for (const auto &tv: pvt.typeTGDData)
-        os << tv.first << "tgd:" << tv.second << endl;
+    for (const auto &[id, tgd]: pvt.typeTGDData)
+        os << id << "tgd:" << tgd << endl;
     return os;
 }
 
@@ -229,7 +227,7 @@ public:
     Parameter(const ParameterName _name) : paraName(_name) { //NOLINT
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         // 直接返回对应的字符串，假设调用方保证传入的颜色有效
         return paraNameStrings[static_cast<int>(paraName)];
     }
@@ -296,7 +294,7 @@ public:
         return this->obsType < other.obsType;
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::stringstream ss;
         ss << satSys << obsType;
         return ss.str();
@@ -342,12 +340,12 @@ public:
 
     // Getter方法
 
-    std::string getStation() const { return station; }
-    Parameter getParaType() const { return paraName; }
-    SatID getSat() const { return sat; } // 假设 SatID 是 string 类型
-    ObsID getObsID() const { return obsID; }
+    [[nodiscard]] std::string getStation() const { return station; }
+    [[nodiscard]] Parameter getParaType() const { return paraName; }
+    [[nodiscard]] SatID getSat() const { return sat; } // 假设 SatID 是 string 类型
+    [[nodiscard]] ObsID getObsID() const { return obsID; }
     // 添加 toString 方法
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::stringstream ss;
         ss << "Variable{"
                 << "station=" << station << ", "

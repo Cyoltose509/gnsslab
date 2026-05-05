@@ -1,6 +1,5 @@
 #pragma once
 
-#include <Eigen/Eigen>
 #include "GnssStruct.h"
 
 using namespace Eigen;
@@ -22,9 +21,9 @@ public:
         return getSolution(type, currentUnkSet, state);
     }
 
-    Vector3d getDXYZ() const{
+    [[nodiscard]] Vector3d getDXYZ() const{
         return dXYZ;
-    };
+    }
 
     /// Destructor.
     virtual ~SolverLSQ() = default;

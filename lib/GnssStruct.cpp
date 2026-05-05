@@ -5,7 +5,7 @@ bool Variable::operator<(const Variable &right) const {
     if (station == right.station) {
         if (paraName == right.paraName) {
             if (obsID == right.obsID) {
-                return (sat < right.sat);
+                return sat < right.sat;
             }
             return obsID < right.obsID;
         }
