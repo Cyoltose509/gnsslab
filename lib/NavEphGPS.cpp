@@ -150,9 +150,9 @@ PVT NavEphGPS::svPVT(const CommonTime &t) const {
     } while ((fabs(delea) > 1.0e-11) && (loop_cnt <= 20));
 
     ///compute clock corrections
-    sv.relcorr = svRelativity(t);
-    sv.clkbias = svClockBias(t);
-    sv.clkdrift = svClockDrift(t);
+    sv.relativityCorrection = svRelativity(t);
+    sv.clockBias = svClockBias(t);
+    sv.clockDrift = svClockDrift(t);
 
     ///True Anomaly
     const double q = std::sqrt(1.0 - ecc * ecc);

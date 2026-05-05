@@ -1,43 +1,39 @@
 #include <iostream>
 #include <map>
 #include <vector>
-#include <cmath>
 #include <iomanip>
 #include <fstream>
-#include <Eigen/Dense>
 #include "OEM7Reader.h"
 #include "SolverLSQ.h"
 #include "CoordConvert.h"
-#include "TimeConvert.h"
 #include "Const.h"
 
 using namespace std;
 
-struct GnssConfig {
-    map<string, pair<string, string> > dualCode;
-
-    GnssConfig() {
-        dualCode["G"] = {"C1", "C2"};
-        dualCode["C"] = {"C2", "C6"};
-    }
-} config;
-
-double getTropDelay(double elev_deg) {
-    if (elev_deg < 5.0) elev_deg = 5.0;
-    return 2.3 / sin(elev_deg * DEG_TO_RAD);
+inline double getTropDelay(const double elev_deg) {
+    return 2.3 / sin(max(elev_deg,5.0) * DEG_TO_RAD);
 }
 
-double getObsValue(const SatID &sat, const TypeValueMap &obs) {
-    if (config.dualCode.count(sat.system)) {
-        auto types = config.dualCode.at(sat.system);
-        if (obs.count(types.first) && obs.count(types.second)) {
-            double f1 = getFreq(sat.system, types.first);
-            double f2 = getFreq(sat.system, types.second);
-            if (f1 > 0 && f2 > 0)
-                return (f1 * f1 * obs.at(types.first) - f2 * f2 * obs.at(types.second)) / (f1 * f1 - f2 * f2);
+double getObsValue(const SatID& sat, const TypeValueMap& obs) {
+    const auto [code1, code2, valid] = getDualCode(sat.system);
+    if (!valid) return 0.0;
+
+    const auto it1 = obs.find(code1);
+    const auto it2 = obs.find(code2);
+    //双频无电离层组合
+    if (it1 != obs.end() && it2 != obs.end()) {
+        const double f1 = getFreq(sat.system, code1);
+        const double f2 = getFreq(sat.system, code2);
+
+        if (const double denom = f1 * f1 - f2 * f2; f1 > 0.0 && f2 > 0.0 && denom != 0.0) {
+            const double P1 = it1->second;
+            const double P2 = it2->second;
+
+            return (f1 * f1 * P1 - f2 * f2 * P2) / denom;
         }
-        if (obs.count(types.first)) return obs.at(types.first);
     }
+    if (it1 != obs.end()) return it1->second;
+    if (it2 != obs.end()) return it2->second;
     return 0.0;
 }
 
@@ -70,8 +66,10 @@ int main() {
         epochProcessed++;
 
         Vector4d x_state = Vector4d::Zero();
+        bool converged = false;
+        int iter = 0;
 
-        for (int iter = 0; iter < 10; ++iter) {
+        while (iter < 10 && !converged) {
             EquSys equSys;
             equSys.station = "base";
             equSys.varSet.insert(varX);
@@ -79,17 +77,16 @@ int main() {
             equSys.varSet.insert(varZ);
             equSys.varSet.insert(varCdt);
 
-            for (auto &it: obs.satTypeValueData) {
+            for (auto &[sat, snd]: obs.satTypeValueData) {
                 const Vector3d &pos = x_state.head<3>();
                 double clk = x_state[3];
-                auto &sat = it.first;
-                double pr = getObsValue(sat, it.second);
+                double pr = getObsValue(sat, snd);
                 if (pr <= 0) continue;
 
                 Ephemeris *eph = nullptr;
-                if (sat.system == "G" && oem7.latestGps.count(sat.id)) {
+                if (sat.system == 'G' && oem7.latestGps.count(sat.id)) {
                     eph = &oem7.latestGps.at(sat.id);
-                } else if (sat.system == "C" && oem7.latestBds.count(sat.id)) {
+                } else if (sat.system == 'C' && oem7.latestBds.count(sat.id)) {
                     eph = &oem7.latestBds.at(sat.id);
                 }
 
@@ -99,15 +96,14 @@ int main() {
                 auto t_emit = obs.epoch;
                 t_emit.m_sod -= tau + clk / C_MPS;
 
-                PVT pvt = eph->svPVT(t_emit);
-                double dts = pvt.clkbias;
-                double rel = pvt.relcorr;
+                auto pvt = eph->svPVT(t_emit);
+                double dts = pvt.clockBias;
+                double rel = pvt.relativityCorrection;
 
-                if (sat.system == "C") {
-                    auto *beph = dynamic_cast<BDSEphem *>(eph);
-                    if (beph) {
-                        double f1 = getFreq("C", 2);
-                        double f2 = getFreq("C", 6);
+                if (sat.system == 'C') {
+                    if (auto *beph = dynamic_cast<BDSEphem *>(eph)) {
+                        double f1 = getFreq('C', 2);
+                        double f2 = getFreq('C', 6);
                         double alpha = f1 * f1 / (f1 * f1 - f2 * f2);
                         dts -= alpha * beph->tgd1;
                     }
@@ -117,9 +113,9 @@ int main() {
                 double d_omega = Frame::WGS84.omega * tau;
                 auto &satPos = pvt.p;
                 Vector3d correctedSatPos;
-                correctedSatPos.x() = satPos.x() * cos(d_omega) + satPos.y() * sin(d_omega);
-                correctedSatPos.y() = -satPos.x() * sin(d_omega) + satPos.y() * cos(d_omega);
-                correctedSatPos.z() = satPos.z();
+                correctedSatPos[0] = satPos[0] * cos(d_omega) + satPos[1] * sin(d_omega);
+                correctedSatPos[1] = -satPos[0] * sin(d_omega) + satPos[1] * cos(d_omega);
+                correctedSatPos[2] = satPos[2];
 
                 double rho = (correctedSatPos - pos).norm();
                 if (rho < 1.0) rho = 20000000.0;
@@ -146,8 +142,8 @@ int main() {
 
             if (equSys.obsEquData.size() < 4) break;
 
-            SolverLSQ solverLSQ;
             try {
+                SolverLSQ solverLSQ;
                 solverLSQ.solve(equSys);
                 Vector3d dx = solverLSQ.getDXYZ();
                 double d_cdt = solverLSQ.getSolution(Parameter::cdt);
@@ -158,6 +154,7 @@ int main() {
                 x_state[3] += d_cdt;
 
                 if (dx.norm() < 1e-4) {
+                    converged = true;
                     successCount++;
                     XYZ xyz(x_state.head<3>());
                     BLH blh = xyz2blh(xyz, Frame::WGS84);
@@ -183,18 +180,16 @@ int main() {
                     //         << equSys.obsEquData.size() << endl;
                     outfile << obs.weekSecond.week << ","
                             << fixed << setprecision(3) << obs.weekSecond.sow << ","
-                            << fixed << setprecision(8)
+                            << fixed << setprecision(4)
                             << xyz.X() << ","
                             << xyz.Y() << ","
                             << xyz.Z()
                             << endl;
-
-                    goto next_epoch;
                 }
             } catch (...) { break; }
+            iter++;
         }
-    next_epoch:;
-        if (epochProcessed >= 2000) break;
+        //   if (epochProcessed >= 2000) break;
     }
 
     outfile.close();

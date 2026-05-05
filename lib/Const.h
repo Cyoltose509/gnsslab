@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstring>
 #include <string>
 #include <iostream>
+#include <string_view>
 
 using namespace std;
 
@@ -28,9 +30,9 @@ constexpr long MJD_JDAY = 2400001L;
 constexpr long UNIX_MJD = 40587L;
 
 /// Seconds per half week.
-constexpr long HALFWEEK = 302400L;
+constexpr long HALF_WEEK = 302400L;
 /// Seconds per whole week.
-constexpr long FULLWEEK = 604800L;
+constexpr long FULL_WEEK = 604800L;
 
 /// Seconds per day.
 constexpr long SEC_PER_DAY = 86400L;
@@ -110,18 +112,18 @@ constexpr double L7_WAVELENGTH_BDS = C_MPS / L7_FREQ_BDS;
 constexpr double L8_WAVELENGTH_BDS = C_MPS / L8_FREQ_BDS;
 constexpr double L5_WAVELENGTH_BDS = C_MPS / L5_FREQ_BDS;
 
-inline double getWavelength(const std::string &sys, const int &n)
+inline double getWavelength(const char sys, const int &n)
     noexcept {
     if (n == 0) {
         std::cerr << "getWavelength():frequency no must be positive integer!" << endl;
         exit(-1);
     }
 
-    if (sys == "G") {
+    if (sys == 'G') {
         if (n == 1) return L1_WAVELENGTH_GPS;
         if (n == 2) return L2_WAVELENGTH_GPS;
         if (n == 5) return L5_WAVELENGTH_GPS;
-    } else if (sys == "C") {
+    } else if (sys == 'C') {
         if (n == 1) return L1_WAVELENGTH_BDS;
         if (n == 2) return L2_WAVELENGTH_BDS;
         if (n == 5) return L5_WAVELENGTH_BDS;
@@ -135,13 +137,13 @@ inline double getWavelength(const std::string &sys, const int &n)
     return 0.0;
 }
 
-inline double getFreq(const string &sys, const int &n)
+inline double getFreq(const char sys, const int &n)
     noexcept {
-    if (sys == "G") {
+    if (sys == 'G') {
         if (n == 1) return L1_FREQ_GPS;
         if (n == 2) return L2_FREQ_GPS;
         if (n == 5) return L5_FREQ_GPS;
-    } else if (sys == "C") {
+    } else if (sys == 'C') {
         if (n == 1) return L1_FREQ_BDS;
         if (n == 2) return L2_FREQ_BDS;
         if (n == 5) return L5_FREQ_BDS;
@@ -154,27 +156,55 @@ inline double getFreq(const string &sys, const int &n)
     return 0.0;
 }
 
-inline double getFreq(const string &sys, const string &type)
-    noexcept {
-    if (sys == "G") {
-        if (type == "L1" || type == "C1") return L1_FREQ_GPS;
-        if (type == "L2" || type == "C2") return L2_FREQ_GPS;
-        if (type == "L5" || type == "C5") return L5_FREQ_GPS;
-    } else if (sys == "C") {
-        if (type == "L1" || type == "C1") return L1_FREQ_BDS;
-        if (type == "L2" || type == "C2") return L2_FREQ_BDS;
-        if (type == "L5" || type == "C5") return L5_FREQ_BDS;
-        if (type == "L7" || type == "C7") return L7_FREQ_BDS;
-        if (type == "L8" || type == "C8") return L8_FREQ_BDS;
-        if (type == "L6" || type == "C6") return L6_FREQ_BDS;
-    } else {
-        std::cerr << "don't support system except GPS and Beidou" << endl;
+inline double getFreq(const char sys, const std::string_view type) noexcept {
+    if (type.size() < 2) return 0.0;
+
+    const char band = type[1];
+
+    switch (sys) {
+        case 'G':
+            switch (band) {
+                case '1': return L1_FREQ_GPS;
+                case '2': return L2_FREQ_GPS;
+                case '5': return L5_FREQ_GPS;
+                default: ;
+            }
+            break;
+
+        case 'C':
+            switch (band) {
+                case '1': return L1_FREQ_BDS;
+                case '2': return L2_FREQ_BDS;
+                case '5': return L5_FREQ_BDS;
+                case '6': return L6_FREQ_BDS;
+                case '7': return L7_FREQ_BDS;
+                case '8': return L8_FREQ_BDS;
+                default: ;
+            }
+            break;
+        default: ;
     }
+
     return 0.0;
 }
 
-inline double getGamma(const string &sys,const string &type1,const string &type2) {
+inline double getGamma(const char sys,  const std::string_view type1, const std::string_view type2) {
     const double f1 = getFreq(sys, type1);
     const double f2 = getFreq(sys, type2);
     return f1 * f1 / (f2 * f2);
+}
+
+struct DualCode {
+    const std::string_view code1;
+    const std::string_view code2;
+    bool valid;
+};
+
+
+constexpr DualCode getDualCode(const char sys) {
+    switch (sys) {
+        case 'G': return {"C1", "C2", true};
+        case 'C': return {"C2", "C6", true};
+        default: return {"", "", false};
+    }
 }

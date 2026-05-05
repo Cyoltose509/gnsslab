@@ -1,4 +1,3 @@
-
 #include "Ephemeris.h"
 
 inline double c_Ek(const double M, const double e) {
@@ -31,19 +30,19 @@ PVT Ephemeris::svPVT(CommonTime t) {
     const double x0 = rk * cos(uk), y0 = rk * sin(uk);
 
     // 处理北斗 GEO 卫星 (PRN 1-5, 59-62)
-    double OMEk,sOMEk,cOMEk;
+    double OMEk, sOMEk, cOMEk;
     if (type == 'C' && ((prn >= 1 && prn <= 5) || (prn >= 59 && prn <= 62))) {
         OMEk = omega0 + omegaDot * tk - refFrame->omega * toe;
         sOMEk = sin(OMEk), cOMEk = cos(OMEk);
-        double cosik = cos(ik), sinik = sin(ik);
-        double xgk = x0 * cOMEk - y0 * cosik * sOMEk;
-        double ygk = x0 * sOMEk + y0 * cosik * cOMEk;
-        double zgk = y0 * sinik;
+        const double cosik = cos(ik), sinik = sin(ik);
+        const double xgk = x0 * cOMEk - y0 * cosik * sOMEk;
+        const double ygk = x0 * sOMEk + y0 * cosik * cOMEk;
+        const double zgk = y0 * sinik;
 
-        double I_5 = -5.0 * PI / 180.0;
-        double I_1 = refFrame->omega * tk;
-        double cosI_1 = cos(I_1), sinI_1 = sin(I_1);
-        double cosI_5 = cos(I_5), sinI_5 = sin(I_5);
+        constexpr double I_5 = -5.0 * PI / 180.0;
+        const double I_1 = refFrame->omega * tk;
+        const double cosI_1 = cos(I_1), sinI_1 = sin(I_1);
+        const double cosI_5 = cos(I_5), sinI_5 = sin(I_5);
 
         sv.p[0] = cosI_1 * xgk + sinI_1 * cosI_5 * ygk + sinI_1 * sinI_5 * zgk;
         sv.p[1] = -sinI_1 * xgk + cosI_1 * cosI_5 * ygk + cosI_1 * sinI_5 * zgk;
@@ -74,10 +73,10 @@ PVT Ephemeris::svPVT(CommonTime t) {
     sv.v[1] = ykdot;
     sv.v[2] = zkdot;
     double dt = tk + toe - toc;
-    if (dt > 302400) dt -= 604800;
-    if (dt < -302400) dt += 604800;
-    sv.clkbias = a0 + a1 * dt + a2 * dt * dt;
-    sv.clkdrift = a1 + 2 * a2 * dt;
-    sv.relcorr = -2.0 * sqrt(refFrame->gm) / (C_MPS * C_MPS) * e * rootA * sin(Ek);
+    if (dt > HALF_WEEK) dt -= FULL_WEEK;
+    if (dt < -HALF_WEEK) dt += FULL_WEEK;
+    sv.clockBias = a0 + a1 * dt + a2 * dt * dt;
+    sv.clockDrift = a1 + 2 * a2 * dt;
+    sv.relativityCorrection = -2.0 * sqrt(refFrame->gm) / (C_MPS * C_MPS) * e * rootA * sin(Ek);
     return sv;
 }

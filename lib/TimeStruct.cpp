@@ -296,8 +296,8 @@ double WeekSecond::operator-(const WeekSecond &right) const {
     if (timeSystem != right.timeSystem) {
         throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
     }
-    double sec = (week - right.week) * FULLWEEK + (sow - right.sow);
-    if (sec > HALFWEEK) sec -= FULLWEEK;
-    if (sec < -HALFWEEK) sec += FULLWEEK;
+    double sec = (week - right.week) * FULL_WEEK + (sow - right.sow);
+    if (sec > HALF_WEEK) sec -= FULL_WEEK;
+    if (sec < -HALF_WEEK) sec += FULL_WEEK;
     return sec;
 }

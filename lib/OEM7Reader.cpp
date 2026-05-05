@@ -132,17 +132,17 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
         const auto sysInt = static_cast<int>(trackingStatus >> 16) & 7;
         const auto sigType = static_cast<int>(trackingStatus >> 21) & 0x1F;
 
-        std::string sys;
+        char sys;
         int freqIdx = -1;
 
         if (sysInt == 0) {
             // GPS
-            sys = "G";
+            sys = 'G';
             if (sigType == 0) freqIdx = 1; // L1C/A
             else if (sigType == 9) freqIdx = 2; // L2P(Y)
         } else if (sysInt == 4) {
             // BDS
-            sys = "C";
+            sys = 'C';
             if (sigType == 0 || sigType == 4) freqIdx = 2; // B1I (Reference uses freq2 as B1I)
             else if (sigType == 2 || sigType == 6) freqIdx = 6; // B3I
         } else {

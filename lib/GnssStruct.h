@@ -18,7 +18,7 @@
 // 卫星号管理
 //---------------
 struct SatID {
-    string system;
+    char system{};
     int id;
 
     //
@@ -34,8 +34,12 @@ struct SatID {
 
     // 从字符串构造函数
     explicit SatID(const string &satStr) {
-        system = satStr.substr(0, 1);
-        id = stoi(satStr.substr(1));
+        if (!satStr.empty()) {
+            system = satStr[0];
+            id = stoi(satStr.substr(1));
+        } else {
+            system = '?';
+        }
     }
 
     // Overload the equality operator as a member function
@@ -66,8 +70,7 @@ struct SatID {
 typedef std::set<SatID> SatIDSet;
 
 inline ostream &operator<<(ostream &os, const SatID &sat_id) {
-    os << sat_id.system
-            << std::setw(2) << std::setfill('0') << sat_id.id;
+    os << sat_id.system << std::setw(2) << std::setfill('0') << sat_id.id;
     return os;
 }
 
@@ -88,7 +91,7 @@ struct RinexHeader {
 };
 
 
-typedef std::map<string, double> TypeValueMap;
+typedef std::map<std::string_view, double> TypeValueMap;
 
 inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueMap) {
     for (const auto &entry: typeValueMap) {
@@ -120,9 +123,13 @@ inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satType
 }
 
 struct ObsData {
+    //接收机天线位置
     Eigen::Vector3d antennaPosition;
+    //接收站名
     string station;
+    //接收机接收信号的时刻
     CommonTime epoch;
+    //接收机接收信号的时刻的周数和秒数
     WeekSecond weekSecond;
     SatTypeValueMap satTypeValueData;
 };
@@ -151,45 +158,56 @@ class PVT {
 public:
     /// Default constructor
     PVT() : p(0., 0., 0.), v(0., 0., 0.),
-            clkbias(0.), clkdrift(0.) {
+            clockBias(0.), clockDrift(0.) {
     }
 
     /// Destructor.
     virtual ~PVT() = default;
 
-    /// access the position, ECEF Cartesian in meters
-    Eigen::Vector3d getPos() const noexcept { return p; }
-
-    /// access the velocity in m/s
-    Eigen::Vector3d getVel() const noexcept { return v; }
-
-    /// access the clock bias, in second
-    double getClockBias() const noexcept { return clkbias; }
-
-    /// access the clock drift, in second/second
-    double getClockDrift() const noexcept { return clkdrift; }
-
-    /// access the relativity correction, in seconds
-    double getRelativityCorr() const noexcept { return relcorr; }
-
     // member data
 
     Eigen::Vector3d p; ///< Sat position ECEF Cartesian (X,Y,Z) meters
     Eigen::Vector3d v; ///< satellite velocity in ECEF Cartesian, meters/second
-    double clkbias; ///< Sat clock correction in seconds
-    double clkdrift; ///< satellite clock drift in seconds/second
-    double relcorr{};
+    double clockBias; ///< Sat clock correction in seconds
+    double clockDrift; ///< satellite clock drift in seconds/second
+    double relativityCorrection{};
     std::map<string, double> typeTGDData;
-}; // end class Xvt
 
-// Output operator for Xvt
+    PVT(const PVT &) = default;
+
+    PVT &operator=(const PVT &) = default;
+
+    PVT(PVT &&other) noexcept
+        : p(std::move(other.p)), // 移动 Eigen 向量
+          v(std::move(other.v)), // 移动 Eigen 向量
+          clockBias(other.clockBias), // 基本类型直接拷贝（很快）
+          clockDrift(other.clockDrift), // 基本类型直接拷贝
+          relativityCorrection(other.relativityCorrection), // 基本类型直接拷贝
+          typeTGDData(std::move(other.typeTGDData)) {
+        // 移动 map 容器
+    }
+
+    PVT &operator=(PVT &&other) noexcept {
+        if (this != &other) {
+            p = std::move(other.p);
+            v = std::move(other.v);
+            clockBias = other.clockBias;
+            clockDrift = other.clockDrift;
+            relativityCorrection = other.relativityCorrection;
+            typeTGDData = std::move(other.typeTGDData);
+        }
+        return *this;
+    }
+}; // end class pvt
+
+// Output operator for pvt
 inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
     noexcept {
     os << setprecision(10) << "p:" << pvt.p.transpose() << endl;
     os << "v:" << pvt.v.transpose() << endl;
-    os << "clk bias:" << pvt.clkbias << endl;
-    os << "clk drift:" << pvt.clkdrift << endl;
-    os << "relcorr:" << pvt.relcorr << endl;
+    os << "clk bias:" << pvt.clockBias << endl;
+    os << "clk drift:" << pvt.clockDrift << endl;
+    os << "relcorr:" << pvt.relativityCorrection << endl;
     for (const auto &tv: pvt.typeTGDData)
         os << tv.first << "tgd:" << tv.second << endl;
     return os;
@@ -299,8 +317,8 @@ public:
     }
 
     // isb, ion, ambiguity
-    Variable(std::string _station, SatID _sat, const Parameter _paraName, ObsID _obsID)
-        : station(std::move(_station)), sat(std::move(_sat)), obsID(std::move(_obsID)), paraName(_paraName) {
+    Variable(std::string _station, const SatID _sat, const Parameter _paraName, ObsID _obsID)
+        : station(std::move(_station)), sat(_sat), obsID(std::move(_obsID)), paraName(_paraName) {
     }
 
     Variable &operator=(const Variable &right) {
@@ -315,9 +333,9 @@ public:
 
     bool operator<(const Variable &right) const;
 
-    bool operator==(const Variable &right);
+    bool operator==(const Variable &right) const;
 
-    bool operator!=(const Variable &right);
+    bool operator!=(const Variable &right) const;
 
     // Getter方法
 
@@ -359,15 +377,15 @@ typedef std::map<Variable, int> VariableIntMap;
 class EquID {
 public:
     SatID sat; // 卫星标识（假设 SatID 已定义）
-    std::string obsType; // 观测类型
+    std::string_view obsType; // 观测类型
     //    std::string station; // 站点标识
 
     // 默认构造函数
     EquID() = default;
 
     // 带参数的构造函数（假设 SatID 可从字符串构造）
-    EquID(SatID sat, std::string type)
-        : sat(std::move(sat)), obsType(std::move(type)) {
+    EquID(const SatID sat, const std::string_view type)
+        : sat(sat), obsType(type) {
     }
 
     // 重载相等运算符
@@ -384,7 +402,7 @@ public:
         return this->obsType < other.obsType;
     }
 
-    std::string toString() const {
+    [[nodiscard]] std::string toString() const {
         std::stringstream ss;
         ss << "obs{"
                 << "sat=" << sat << ", "
@@ -409,7 +427,7 @@ struct EquData {
 // 所有观测方程数据，包括未知参数和每个方程的数据
 struct EquSys {
     // 每个观测方程的未知参数和系数及先验残差
-    string station;
+    std::string_view station;
     std::map<EquID, EquData> obsEquData;
     // 整个方程系统的所有未知参数
     VariableSet varSet;

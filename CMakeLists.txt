@@ -7,7 +7,7 @@ project(gnssLab VERSION 1.2)
 
 # 编译选项
 set(CMAKE_BUILD_TYPE "Debug")
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 
 # Eigen矩阵库的位置
@@ -37,7 +37,10 @@ set(DIR_LIB_SRCS
         lib/SolverLSQ.cpp
         lib/Ephemeris.cpp
         lib/Ephemeris.h
+        lib/SPPIFCode.h
+        lib/SPPIFCode.cpp
 )
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 # 根据源文件创建库文件
 add_library( gnss SHARED ${DIR_LIB_SRCS} )
 
