@@ -2,8 +2,6 @@
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
 
-#define debug 0
-
 void SPPIFCode::solve(ObsData &obsData) {
     // 1. Convert observation types (e.g., C1C -> C1)
     convertObsType(obsData);
@@ -22,52 +20,59 @@ void SPPIFCode::solve(ObsData &obsData) {
     // correctTGD(obsData);
 
     xyz = obsData.antennaPosition;
-    dxyz = {100, 100, 100};
+    result.reset();
+
 
     int iter(0);
-    while (iter < 10) {
-        // 4. Compute satellite positions at transmit time
+    while (iter < 20) {
         satPVTTransTime = computeSatPos(obsData);
-
-        // 5. Apply Earth rotation (Sagnac effect)
         satPVTRecTime = earthRotation();
 
-        // 6. Check satellite count
         if (obsData.satTypeValueData.size() < 4) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 (" + to_string(satPVTRecTime.size()) + ")");
         }
-
-        // 7. Compute elevation and azimuth (only near earth surface)
-        if (std::abs(xyz.norm() - RADIUS_EARTH) < 100000.0) {
+        if (abs(xyz.norm() - RADIUS_EARTH) < 100000.0) {
             satElevData.clear();
             satAzimData.clear();
             computeElevAzim();
         }
 
-        // 8. Linearize and form equations
-        equSys = linearize(obsData);
+        linearize(obsData);
 
-        // If we only have < 4 equations after elevation cut, we fail
-        if (equSys.obsEquData.size() < 4) {
+        if (posEquations.obsEquData.size() < 4 || velEquations.obsEquData.size() < 4) {
             throw SVNumException("num of satellites after elevation cut is less than 4");
         }
+        if (!isRover) break;
+        // 解算位置
+        posSolver.solve(posEquations);
+        const Vector3d dxyz = {
+            posSolver.getSolution(Parameter::dX),
+            posSolver.getSolution(Parameter::dY),
+            posSolver.getSolution(Parameter::dZ)
+        };
+        const double d_cdt = posSolver.getSolution(Parameter::cdt);
+        result.pdop = sqrt(posSolver.covMatrix(0, 0) +
+                           posSolver.covMatrix(1, 1) +
+                           posSolver.covMatrix(2, 2));
+        result.sigmaP = result.pdop * posSolver.sigma0;
 
-        // 9. Solve LSQ
-        if (!isRover) break; // Base station location is fixed
-
-        solver.solve(equSys);
-        dxyz = solver.getDXYZ();
-        const double d_cdt = solver.getSolution(Parameter::cdt);
-
-        // 10. Update state
+        // 解算速度
+        velSolver.solve(velEquations);
+        const Vector3d dvel = {
+            velSolver.getSolution(Parameter::dVX),
+            velSolver.getSolution(Parameter::dVY),
+            velSolver.getSolution(Parameter::dVZ)
+        };
+        const double dcdt_dot = velSolver.getSolution(Parameter::cdtr_dot);
+        result.sigmaV = sqrt(velSolver.covMatrix(0, 0) +
+                             velSolver.covMatrix(1, 1) +
+                             velSolver.covMatrix(2, 2)) * velSolver.sigma0;
         xyz += dxyz;
-        rcvrClk += d_cdt;
+        rClockBias += d_cdt;
+        vel += dvel;
+        rClockDrift += dcdt_dot;
 
-        // cout << "Iteration " << iter << ": dxyz=" << dxyz.norm()
-        //         << " d_cdt=" << d_cdt << " xyz=" << xyz.transpose() << endl;
-
-        // 11. Check convergence
-        if (dxyz.norm() < 0.0001 && std::abs(d_cdt) < 0.0001) {
+        if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001) {
             break;
         }
         iter++;
@@ -78,10 +83,13 @@ void SPPIFCode::solve(ObsData &obsData) {
     }
 
     result.xyz = xyz;
+    result.vel = vel;
+    result.blh = XYZtoBLH(xyz, frame);
+    result.numSats = static_cast<int>(satPVTRecTime.size());
 }
 
-std::map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
-    std::map<SatID, PVT> satPVTData;
+map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
+    map<SatID, PVT> satPVTData;
     satTropData.clear(); // Re-purpose this to store obs values for Sagnac if needed, 
     // but we'll use a better way.
 
@@ -92,7 +100,7 @@ std::map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
 
         // Choose observation to estimate travel time
         double obsVal = 0.0;
-        if (string ifType = (sat.system == 'G') ? "CC12" : "CC26"; codeList.count(ifType)) obsVal = codeList.at(ifType);
+        if (string ifType = sat.system == 'G' ? "CC12" : "CC26"; codeList.count(ifType)) obsVal = codeList.at(ifType);
         else if (sat.system == 'G') {
             if (codeList.count("C1")) obsVal = codeList.at("C1");
             else if (codeList.count("C2")) obsVal = codeList.at("C2");
@@ -105,7 +113,7 @@ std::map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
 
         // Emission time estimate (following lsq.cpp logic)
         // t_emit = t_receive_rcvr - (P + clk_rcvr)/c
-        const double tau_total = (obsVal + rcvrClk) / C_MPS;
+        const double tau_total = (obsVal + rClockBias) / C_MPS;
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
@@ -164,27 +172,24 @@ void SPPIFCode::computeIF(ObsData &obsData) const {
     }
 }
 
-std::map<SatID, PVT> SPPIFCode::earthRotation() {
-    std::map<SatID, PVT> satPVTRecTimeMap;
+map<SatID, PVT> SPPIFCode::earthRotation() {
+    map<SatID, PVT> satPVTRecTimeMap;
     for (auto const &[sat, pvt]: satPVTTransTime) {
         // Use the pseudorange to estimate signal travel time for Sagnac (following lsq.cpp)
         double tau = (pvt.p - xyz).norm() / C_MPS;
         if (satTropData.count(sat)) {
             tau = satTropData.at(sat) / C_MPS;
         }
-
         const double wt = OMEGA_EARTH * tau;
-        const double coswt = cos(wt);
-        const double sinwt = sin(wt);
-
+        const double cos_wt = cos(wt);
+        const double sin_wt = sin(wt);
+        Matrix3d rot;
+        rot << cos_wt, -sin_wt, 0.0,
+                sin_wt, cos_wt, 0.0,
+                0.0, 0.0, 1.0;
         PVT rotPvt = pvt;
-        rotPvt.p[0] = coswt * pvt.p[0] + sinwt * pvt.p[1];
-        rotPvt.p[1] = -sinwt * pvt.p[0] + coswt * pvt.p[1];
-        // z stays same
-
-        rotPvt.v[0] = coswt * pvt.v[0] + sinwt * pvt.v[1];
-        rotPvt.v[1] = -sinwt * pvt.v[0] + coswt * pvt.v[1];
-
+        rotPvt.p = rot * pvt.p;
+        rotPvt.v = rot * pvt.v;
         satPVTRecTimeMap[sat] = rotPvt;
     }
     return satPVTRecTimeMap;
@@ -197,17 +202,74 @@ void SPPIFCode::computeElevAzim() {
     }
 }
 
-EquSys SPPIFCode::linearize(ObsData &obsData) {
-    EquSys equSysTemp;
-    equSysTemp.station = obsData.station;
+double tropoCorrection(const double B_rad, const double H, const double elev_deg)
+{
+    // 1. 高度角（转弧度 + 限制）
+    double E = elev_deg * PI / 180.0;
+    if (E < 5.0 * PI / 180.0) E = 5.0 * PI / 180.0;
+    if (E > 85.0 * PI / 180.0) E = 85.0 * PI / 180.0;
 
+    // 2. 标准大气模型
+    constexpr double T0 = 288.15;     // K
+   constexpr  double P0 = 1013.25;    // hPa
+    constexpr double RH0 = 0.5;       // 相对湿度
+
+    const double P = P0 * pow(1 - 2.2557e-5 * H, 5.2568);
+    const double T = T0 - 0.0065 * H;
+
+    if (!isfinite(P) || !isfinite(T) || T < 200.0)
+        return 0.0;
+
+    // 饱和水汽压（hPa）
+    const double es = 6.112 * exp(17.67 * (T - 273.15) / (T - 29.65));
+    const double e = RH0 * es;
+
+    // 3. Saastamoinen 天顶延迟
+    const double denom = 1.0 - 0.00266 * cos(2.0 * B_rad) - 0.00028 * H / 1000.0;
+    if (fabs(denom) < 1e-6) return 0.0;
+
+    const double ZHD = 0.0022768 * P / denom;
+    const double ZWD = 0.002277 * (1255.0 / T + 0.05) * e / denom;
+
+
+    // 4. Niell Mapping Function（简化版）
+    const double sinE = sin(E);
+
+    // 干分量 mapping
+    const double md = 1.0 / (sinE + 0.00143 / (tan(E) + 0.0455));
+
+    // 湿分量 mapping（稍微不同）
+     const double mw = 1.0 / (sinE + 0.00035 / (tan(E) + 0.017));
+
+    // 5. 总对流层延迟
+     const double tropo = ZHD * md + ZWD * mw;
+
+    if (!isfinite(tropo) || tropo < 0.0 || tropo > 50.0)
+        return 0.0;
+
+    return tropo;
+}
+
+
+void SPPIFCode::linearize(ObsData &obsData) {
+    EquSys equSysTemp;
+    posEquations.reset();
+    velEquations.reset();
+    posEquations.station = obsData.station;
+    velEquations.station = obsData.station;
     const Variable dx(obsData.station, Parameter::dX);
     const Variable dy(obsData.station, Parameter::dY);
     const Variable dz(obsData.station, Parameter::dZ);
     const Variable cdt(obsData.station, Parameter::cdt);
 
+    const Variable dvx(obsData.station, Parameter::dVX);
+    const Variable dvy(obsData.station, Parameter::dVY);
+    const Variable dvz(obsData.station, Parameter::dVZ);
+    const Variable dcdt(obsData.station, Parameter::cdtr_dot);
+
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         if (!satPVTRecTime.count(sat)) continue;
+
         const PVT &pvt = satPVTRecTime.at(sat);
 
         double elev = 90.0;
@@ -225,9 +287,6 @@ EquSys SPPIFCode::linearize(ObsData &obsData) {
         } else if (sat.system == 'G' && codeList.count("C1")) {
             obsVal = codeList.at("C1");
             usedType = "C1";
-        } else if (sat.system == 'C' && codeList.count("C2")) {
-            obsVal = codeList.at("C2");
-            usedType = "C2";
         } else if (codeList.count("C2")) {
             obsVal = codeList.at("C2");
             usedType = "C2";
@@ -242,32 +301,69 @@ EquSys SPPIFCode::linearize(ObsData &obsData) {
         const double rel = pvt.relativityCorrection * C_MPS;
         double trop = 0.0;
         if (xyz.norm() > 1000.0) {
-            trop = 2.3 / sin(max(elev, 5.0) * DEG_TO_RAD);
+            auto BLH = XYZtoBLH(xyz, frame);
+            trop = tropoCorrection(BLH[0],BLH[2], elev);
+           //trop = 2.3 / sin(max(elev, 5.0) * DEG_TO_RAD);
         }
 
         const EquID eid(sat, usedType);
         EquData ed;
-        ed.prefit = obsVal - (rho + rcvrClk - dts - rel + trop);
+        ed.prefit = obsVal - (rho + rClockBias - dts - rel + trop);
 
         ed.varCoeffData[dx] = -(pvt.p[0] - xyz[0]) / rho;
         ed.varCoeffData[dy] = -(pvt.p[1] - xyz[1]) / rho;
         ed.varCoeffData[dz] = -(pvt.p[2] - xyz[2]) / rho;
         ed.varCoeffData[cdt] = 1.0;
 
-        double weight = 1.0;
-        // lsq.cpp is unweighted, but sin^2 E is better for stability
-        if (xyz.norm() > 1000.0) {
-            double sinE = sin(max(elev, 5.0) * DEG_TO_RAD);
-            weight = sinE * sinE;
+        // double weight = 1.0;
+        // if (xyz.norm() > 1000.0) {
+        //     double sinE = sin(max(elev, 5.0) * DEG_TO_RAD);
+        //     weight = sinE * sinE;
+        // }
+        double sinE = sin(max(elev, 5.0) * DEG_TO_RAD);
+        double sigma = 0.5 + 1.5 / sinE;
+        double weight = 1.0 / (sigma * sigma);
+        ed.weight = weight; //1.0 / (pow(sin(elev),2) + 0.01);// weight / (sigIFCode * sigIFCode);
+
+        posEquations.obsEquData[eid] = ed;
+        posEquations.varSet.insert(dx);
+        posEquations.varSet.insert(dy);
+        posEquations.varSet.insert(dz);
+        posEquations.varSet.insert(cdt);
+
+        if (codeList.count("D1")) {
+            double D = codeList.at("D1");
+
+            double f = getFreq(sat.system, "L1");
+            double lambda = C_MPS / f;
+
+            double rho_dot_obs = -lambda * D;
+
+            Vector3d los = (pvt.p - xyz).normalized();
+
+            Vector3d vs = pvt.v;
+
+
+            // 模型值
+            double rho_dot_model = (vs - vel).dot(los) + rClockDrift;
+
+            // 构造观测方程
+            EquID eid_vel(sat, "D1");
+
+            EquData ed_vel;
+            ed_vel.prefit = rho_dot_obs - rho_dot_model;
+            ed_vel.varCoeffData[dvx] = -los[0];
+            ed_vel.varCoeffData[dvy] = -los[1];
+            ed_vel.varCoeffData[dvz] = -los[2];
+            ed_vel.varCoeffData[dcdt] = 1.0;
+
+            ed_vel.weight = weight / 4.0;
+
+            velEquations.obsEquData[eid_vel] = ed_vel;
+            velEquations.varSet.insert(dvx);
+            velEquations.varSet.insert(dvy);
+            velEquations.varSet.insert(dvz);
+            velEquations.varSet.insert(dcdt);
         }
-        ed.weight = weight / (sigIFCode * sigIFCode);
-
-        equSysTemp.obsEquData[eid] = ed;
-        equSysTemp.varSet.insert(dx);
-        equSysTemp.varSet.insert(dy);
-        equSysTemp.varSet.insert(dz);
-        equSysTemp.varSet.insert(cdt);
     }
-
-    return equSysTemp;
 }

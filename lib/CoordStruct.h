@@ -104,7 +104,7 @@ public:
     ENU(const double E_, const double N_, const double U_) : Eigen::Vector3d(E_, N_, U_) {
     }
 
-    double E() const { return this->x(); }
-    double N() const { return this->y(); }
-    double U() const { return this->z(); }
+    [[nodiscard]] double E() const { return this->x(); }
+    [[nodiscard]] double N() const { return this->y(); }
+    [[nodiscard]] double U() const { return this->z(); }
 };

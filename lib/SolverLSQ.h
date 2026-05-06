@@ -6,7 +6,6 @@ using namespace Eigen;
 
 class SolverLSQ {
 public:
-
     SolverLSQ() = default;
 
     virtual void solve(EquSys &equSys);
@@ -21,20 +20,13 @@ public:
         return getSolution(type, currentUnkSet, state);
     }
 
-    [[nodiscard]] Vector3d getDXYZ() const{
-        return dXYZ;
-    }
-
     /// Destructor.
     virtual ~SolverLSQ() = default;
 
-private:
-
-    VectorXd state;
     MatrixXd covMatrix;
-    Vector3d dXYZ;
+    double sigma0{};
+
+private:
+    VectorXd state;
     VariableSet currentUnkSet;
 }; // End of class 'SolverLSQ'
-
-
-

@@ -5,7 +5,7 @@
 #include <Eigen/Eigen>
 
 // 坐标转换函数
-inline BLH xyz2blh(const XYZ &xyz, const ReferenceFrame &frame) {
+inline BLH XYZtoBLH(const XYZ &xyz, const ReferenceFrame &frame) {
     // 获取椭球参数
     const double a = frame.a;
     const double e2 = frame.e2;
@@ -70,15 +70,15 @@ inline Matrix3d computeRotationMatrix(const double B, const double L) {
     return R;
 }
 
-inline ENU xyz2enu(const XYZ &xyz, const XYZ &refXYZ, const ReferenceFrame &frame) {
+inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const ReferenceFrame &frame) {
     const auto diffXYZ = xyz - refXYZ;
-    const auto refBLH = xyz2blh(refXYZ, frame);
+    const auto refBLH = XYZtoBLH(refXYZ, frame);
     const Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
     return {R * diffXYZ};
 }
 
-inline XYZ enu2xyz(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &frame) {
-    const auto refBLH = xyz2blh(refXYZ, frame);
+inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &frame) {
+    const auto refBLH = XYZtoBLH(refXYZ, frame);
     auto R = computeRotationMatrix(refBLH.B(), refBLH.L());
     const auto diffXYZ = R.transpose() * enu;
     XYZ resXYZ;
@@ -90,7 +90,7 @@ inline XYZ enu2xyz(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &fram
 // (i.e. ellipsoidal) system.
 // @return the elevation in degrees
 inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ) {
-    const BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
+    const BLH refBLH = XYZtoBLH(refXYZ, Frame::WGS84);
 
     const double lat = refBLH.B();
     const double lon = refBLH.L();
@@ -124,7 +124,7 @@ inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ) {
 //        computed azimuth, as seen from this Position.
 // @return the azimuth in degrees
 inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ) {
-    const BLH refBLH = xyz2blh(refXYZ, Frame::WGS84);
+    const BLH refBLH = XYZtoBLH(refXYZ, Frame::WGS84);
 
     const double latRad = refBLH.B();
     const double lonRad = refBLH.L();

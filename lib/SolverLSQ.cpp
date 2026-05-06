@@ -1,12 +1,9 @@
-
-
 #include "SolverLSQ.h"
 
 using namespace std;
 
 
 void SolverLSQ::solve(EquSys &equSys) {
-
     currentUnkSet = equSys.varSet;
     const auto numUnk = static_cast<int>(currentUnkSet.size());
     const auto numObs = static_cast<int>(equSys.obsEquData.size());
@@ -40,30 +37,23 @@ void SolverLSQ::solve(EquSys &equSys) {
         covMatrix = hT * wMatrix * hMatrix;
         covMatrix = covMatrix.inverse();
     } catch (...) {
-        throw  InvalidSolver("Unable to invert matrix covMatrix");
+        throw InvalidSolver("Unable to invert matrix covMatrix");
     }
 
     state = covMatrix * hT * wMatrix * prefit;
-    try {
-        dXYZ[0] = getSolution(Parameter::dX, currentUnkSet, state);
-        dXYZ[1] = getSolution(Parameter::dY, currentUnkSet, state);
-        dXYZ[2] = getSolution(Parameter::dZ, currentUnkSet, state);
-    } catch (...) {
-        dXYZ.setZero();
-        // If solving for velocity, we might use dVX, dVY, dVZ
-        try {
-            dXYZ[0] = getSolution(Parameter::dVX, currentUnkSet, state);
-            dXYZ[1] = getSolution(Parameter::dVY, currentUnkSet, state);
-            dXYZ[2] = getSolution(Parameter::dVZ, currentUnkSet, state);
-        } catch (...) {
-            // No position or velocity parameters found
-        }
+    VectorXd v = prefit - hMatrix * state;
+    const int dof = numObs - numUnk;
+    if (dof <= 0) {
+        throw InvalidSolver("Degree of freedom <= 0, cannot compute sigma0");
     }
+    const double sigma0_sq = (v.transpose() * wMatrix * v)(0) / dof;
+
+    sigma0 = sqrt(sigma0_sq);
 }
 
 int SolverLSQ::getIndex(const VariableSet &varSet, const Variable &thisVar) {
     int index(0);
-    for (const auto& var: varSet) {
+    for (const auto &var: varSet) {
         if (var == thisVar) {
             break;
         }

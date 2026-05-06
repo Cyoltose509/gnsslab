@@ -8,7 +8,7 @@
 class SPPIFCode {
 public:
     SPPIFCode()
-        : cutOffElev(10), isRover(true), sigIFCode(1.0), result(), rcvrClk(0.0) {
+        : cutOffElev(10), sigIFCode(1.0) {
     }
 
     void setStationAsBase() {
@@ -17,11 +17,11 @@ public:
 
     void setEphemeris(const std::map<SatID, Ephemeris *> &ephs) {
         ephMap = ephs;
-    };
+    }
 
     void setIFCodeTypes(const std::map<char, std::pair<string, string> > &ifTypes) {
         ifCodeTypes = ifTypes;
-    };
+    }
 
     void solve(ObsData &obsData);
 
@@ -35,11 +35,8 @@ public:
 
     std::map<SatID, PVT> earthRotation();
 
-    EquSys linearize(ObsData &obsData);
+    void linearize(ObsData &obsData);
 
-    EquSys getEquSys() {
-        return equSys;
-    };
 
     [[nodiscard]] SatID getDatumSat() const {
         double maxElev(0.0);
@@ -51,43 +48,43 @@ public:
             }
         }
         return datumSat;
-    };
-
-    SatValueMap getSatElevData() {
-        return satElevData;
     }
 
-    Vector3d getXYZ() {
-        return xyz;
+    void setFrame(const ReferenceFrame &f) {
+        frame = f;
     }
 
     ~SPPIFCode() = default;
 
+    Vector3d xyz{0, 0, 0};
+    Vector3d vel{0, 0, 0};
+    ReferenceFrame frame = Frame::WGS84;
+    Result result{};
     // 继承类需要访问这个成员
 protected:
-    double cutOffElev;
+    double cutOffElev{};
 
-    bool isRover;
-    double sigIFCode;
+    bool isRover = true;
+    double sigIFCode{};
+    double rClockBias{}; // 接收机钟差
+    double rClockDrift{}; //接收机钟漂
 
-
-    EquSys equSys;
-    Result result;
-
-    Vector3d xyz;
-    Vector3d dxyz;
-    double rcvrClk; // Receiver clock bias in meters
+    EquSys posEquations{};
+    EquSys velEquations{};
+    SolverLSQ posSolver{};
+    SolverLSQ velSolver{};
 
     std::map<SatID, PVT> satPVTTransTime{};
     std::map<SatID, PVT> satPVTRecTime{};
 
-    SatValueMap satElevData;
-    SatValueMap satAzimData;
-    SatValueMap satTropData;
+    SatValueMap satElevData{};
+    SatValueMap satAzimData{};
+    SatValueMap satTropData{};
 
-    SolverLSQ solver;
 
-    std::map<SatID, Ephemeris *> ephMap;
+
+
+    std::map<SatID, Ephemeris *> ephMap{};
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
 };

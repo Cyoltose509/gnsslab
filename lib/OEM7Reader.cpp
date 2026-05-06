@@ -32,7 +32,7 @@ void OEM7Reader::close() {
 
 bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
     while (buffer.size() >= 3) {
-        long long start = 0;
+        int start = 0;
         bool found = false;
         for (; start <= buffer.size() - 3; ++start) {
             if (buffer[start] == 0xAA && buffer[start + 1] == 0x44 && buffer[start + 2] == 0x12) {

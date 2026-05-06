@@ -157,7 +157,7 @@ int main() {
                     converged = true;
                     successCount++;
                     XYZ xyz(x_state.head<3>());
-                    BLH blh = xyz2blh(xyz, Frame::WGS84);
+                    BLH blh = XYZtoBLH(xyz, Frame::WGS84);
 
                     // 控制台输出
                     // cout << fixed << setprecision(4)

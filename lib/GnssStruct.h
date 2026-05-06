@@ -432,13 +432,32 @@ struct EquSys {
     std::map<EquID, EquData> obsEquData;
     // 整个方程系统的所有未知参数
     VariableSet varSet;
+
+    void reset() {
+        obsEquData.clear();
+        varSet.clear();
+        station = "";
+    }
 };
 
 struct Result {
     Eigen::Vector3d xyz, xyzFixed;
     Eigen::Vector3d blh, blhFixed;
-    double sigDx, sigDy, sigDz;
+    Eigen::Vector3d vel;
+    double sigmaP;
+    double sigmaV;
     double pdop, gdop;
     int numSats;
     double ratio;
+    void reset() {
+        xyz.setZero();
+        xyzFixed.setZero();
+        blh.setZero();
+        blhFixed.setZero();
+        vel.setZero();
+        pdop = gdop = 0;
+        sigmaP = sigmaV = 0;
+        numSats = 0;
+        ratio = 0;
+    }
 };

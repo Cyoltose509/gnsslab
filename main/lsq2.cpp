@@ -24,14 +24,14 @@ int main() {
         return -1;
     }
 
-    outfile << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,numSats" << endl;
+    outfile << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,SigmaP,SigmaV,SatCount" << endl;
 
     // Initialize SPPIFCode solver
     SPPIFCode spp;
 
     spp.setIFCodeTypes({
-        {'G',{"C1", "C2"}},
-        {'C',{"C2", "C6"}}
+        {'G', {"C1", "C2"}},
+        {'C', {"C2", "C6"}}
     });
 
     ObsData obs;
@@ -39,41 +39,47 @@ int main() {
 
     while (oem7.getNextEpoch(obs)) {
         // Prepare ephemeris map for the current epoch
-        std::map<SatID, Ephemeris*> ephMap;
-        for (auto & [prn, eph] : oem7.latestGps) {
-            ephMap[SatID('G',prn)] = &eph;
+        std::map<SatID, Ephemeris *> ephMap;
+        for (auto &[prn, eph]: oem7.latestGps) {
+            ephMap[SatID('G', prn)] = &eph;
         }
-        for (auto & [prn, eph] : oem7.latestBds) {
-            ephMap[SatID('C',prn)] = &eph;
+        for (auto &[prn, eph]: oem7.latestBds) {
+            ephMap[SatID('C', prn)] = &eph;
         }
 
         spp.setEphemeris(ephMap);
 
-        // Initial guess for position (can be center of earth if unknown)
-        // Note: ObsData::antennaPosition is often (0,0,0) unless pre-set
-        if (obs.antennaPosition.norm() < 1000.0) {
-            obs.antennaPosition = Vector3d::Zero();
-        }
         try {
             spp.solve(obs);
 
             // If solve() didn't throw, we have a solution
             successCount++;
-            Vector3d solXyz = spp.getXYZ();
+            auto &result = spp.result;
+
 
             // Output to CSV
-            outfile << obs.weekSecond.week << ","
-                    << fixed << setprecision(3) << obs.weekSecond.sow << ","
+            outfile << obs.weekSecond.week << ','
+                    << fixed << setprecision(3) << obs.weekSecond.sow << ','
                     << fixed << setprecision(4)
-                    << solXyz[0] << ","
-                    << solXyz[1] << ","
-                    << solXyz[2] << ","
-                    << obs.satTypeValueData.size()
+                    << result.xyz[0] << ','
+                    << result.xyz[1] << ','
+                    << result.xyz[2] << ','
+                    << fixed << setprecision(8)
+                    << result.blh[0] * RAD_TO_DEG << ','
+                    << result.blh[1] * RAD_TO_DEG << ','
+                    << fixed << setprecision(3)
+                    << result.blh[2] << ','
+                    << result.vel[0] << ','
+                    << result.vel[1] << ','
+                    << result.vel[2] << ','
+                    << result.pdop << ','
+                    << result.sigmaP << ','
+                    << result.sigmaV << ','
+                    << result.numSats
                     << endl;
-
-        } catch (const std::exception& e) {
+        } catch (const std::exception &e) {
             // Skip epochs where solution failed
-             cout << "Epoch skip: " << e.what() << endl;
+            //cout << "Epoch skip: " << e.what() << endl;
         }
     }
 
