@@ -219,7 +219,19 @@ class Parameter {
 public:
     enum ParameterName {
         // 显式指定底层类型为int
-        Unknown = 0, dX, dY, dZ, cdt, ifb, iono, ambiguity, dVX, dVY, dVZ, cdtr_dot, count
+        Unknown = 0,
+        dX,
+        dY,
+        dZ,
+        cdt,
+        ifb,
+        iono,
+        ambiguity,
+        dVX,
+        dVY,
+        dVZ,
+        cdtr_dot,
+        count
     };
 
     Parameter() = default;

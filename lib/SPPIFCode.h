@@ -7,10 +7,6 @@
 
 class SPPIFCode {
 public:
-    SPPIFCode()
-        : cutOffElev(10), sigIFCode(1.0) {
-    }
-
     void setStationAsBase() {
         isRover = false;
     }
@@ -62,10 +58,10 @@ public:
     Result result{};
     // 继承类需要访问这个成员
 protected:
-    double cutOffElev{};
-
+    double cutOffElev = PI * 0.0555556;
     bool isRover = true;
-    double sigIFCode{};
+    double sigIFCode = 1;
+
     double rClockBias{}; // 接收机钟差
     double rClockDrift{}; //接收机钟漂
 
@@ -80,8 +76,6 @@ protected:
     SatValueMap satElevData{};
     SatValueMap satAzimData{};
     SatValueMap satTropData{};
-
-
 
 
     std::map<SatID, Ephemeris *> ephMap{};

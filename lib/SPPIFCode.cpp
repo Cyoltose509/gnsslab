@@ -3,28 +3,13 @@
 #include <Eigen/Eigen>
 
 void SPPIFCode::solve(ObsData &obsData) {
-    // 1. Convert observation types (e.g., C1C -> C1)
     convertObsType(obsData);
-
-    // 2. Compute IF combination if possible (don't reject if fails)
     computeIF(obsData);
-
-    // 3. Initialize state
-    // 计算发射时刻卫星位置（参考框架为时刻的）
     satPVTTransTime = computeSatPos(obsData);
-
-    //----------------------
-    // 得到卫星发射时刻位置和钟差、相对论和TGD后，改正观测值延迟，并更新C1/C2等观测值
-    //----------------------
-    // todo:
-    // correctTGD(obsData);
-
     xyz = obsData.antennaPosition;
     result.reset();
-
-
     int iter(0);
-    while (iter < 20) {
+    while (iter < 10) {
         satPVTTransTime = computeSatPos(obsData);
         satPVTRecTime = earthRotation();
 
@@ -167,6 +152,8 @@ void SPPIFCode::computeIF(ObsData &obsData) const {
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
+            } else {
+                obsData.satTypeValueData.erase(sat);
             }
         }
     }
@@ -177,6 +164,7 @@ map<SatID, PVT> SPPIFCode::earthRotation() {
     for (auto const &[sat, pvt]: satPVTTransTime) {
         // Use the pseudorange to estimate signal travel time for Sagnac (following lsq.cpp)
         double tau = (pvt.p - xyz).norm() / C_MPS;
+
         if (satTropData.count(sat)) {
             tau = satTropData.at(sat) / C_MPS;
         }
@@ -197,54 +185,29 @@ map<SatID, PVT> SPPIFCode::earthRotation() {
 
 void SPPIFCode::computeElevAzim() {
     for (auto const &[sat, pvt]: satPVTRecTime) {
-        satElevData[sat] = elevation(xyz, pvt.p);
-        satAzimData[sat] = azimuth(xyz, pvt.p);
+        satElevData[sat] = elevation(xyz, pvt.p, frame);
+        satAzimData[sat] = azimuth(xyz, pvt.p, frame);
     }
 }
 
-double tropoCorrection(const double B_rad, const double H, const double elev_deg)
-{
-    // 1. 高度角（转弧度 + 限制）
-    double E = elev_deg * PI / 180.0;
-    if (E < 5.0 * PI / 180.0) E = 5.0 * PI / 180.0;
-    if (E > 85.0 * PI / 180.0) E = 85.0 * PI / 180.0;
-
-    // 2. 标准大气模型
-    constexpr double T0 = 288.15;     // K
-   constexpr  double P0 = 1013.25;    // hPa
-    constexpr double RH0 = 0.5;       // 相对湿度
-
-    const double P = P0 * pow(1 - 2.2557e-5 * H, 5.2568);
-    const double T = T0 - 0.0065 * H;
-
-    if (!isfinite(P) || !isfinite(T) || T < 200.0)
-        return 0.0;
-
-    // 饱和水汽压（hPa）
-    const double es = 6.112 * exp(17.67 * (T - 273.15) / (T - 29.65));
-    const double e = RH0 * es;
-
-    // 3. Saastamoinen 天顶延迟
-    const double denom = 1.0 - 0.00266 * cos(2.0 * B_rad) - 0.00028 * H / 1000.0;
-    if (fabs(denom) < 1e-6) return 0.0;
-
-    const double ZHD = 0.0022768 * P / denom;
-    const double ZWD = 0.002277 * (1255.0 / T + 0.05) * e / denom;
-
-
-    // 4. Niell Mapping Function（简化版）
-    const double sinE = sin(E);
-
-    // 干分量 mapping
-    const double md = 1.0 / (sinE + 0.00143 / (tan(E) + 0.0455));
-
-    // 湿分量 mapping（稍微不同）
-     const double mw = 1.0 / (sinE + 0.00035 / (tan(E) + 0.017));
-
-    // 5. 总对流层延迟
-     const double tropo = ZHD * md + ZWD * mw;
-
-    if (!isfinite(tropo) || tropo < 0.0 || tropo > 50.0)
+double tropoHopfield(const double H, const double E) {
+    constexpr double T0 = 288.16; // K
+    constexpr double P0 = 1013.25; // hPa
+    constexpr double RH0 = 0.5; // 相对湿度
+    constexpr double H0 = 0.0; // 参考高度
+    const double T = T0 - 0.0065 * (H - H0);
+    if (T < 200.0) return 0.0;
+    const double P = P0 * pow(1 - 0.0000226 * (H - H0), 5.225);
+    const double RH = RH0 * exp(-0.0006396 * (H - H0));
+    const double e = RH * exp(-37.2465 + 0.213166 * T - 0.000256908 * T * T);
+    constexpr double hd = 40136.0 + 148.72 * (T0 - 273.16); // 干层高度
+    constexpr double hw = 11000.0; // 湿层高度
+    const double Kd = 155.2e-7 * (P / T) * (hd - H);
+    const double Kw = 155.2e-7 * (4810.0 * e / (T * T)) * (hw - H);
+    const double md = 1.0 / sin(sqrt(E * E + 1.90386e-3));
+    const double mw = 1.0 / sin(sqrt(E * E + 6.85389e-4));
+    const double tropo = Kd * md + Kw * mw;
+    if (!isfinite(tropo) || tropo < 0.0 || tropo > 100.0)
         return 0.0;
 
     return tropo;
@@ -272,7 +235,7 @@ void SPPIFCode::linearize(ObsData &obsData) {
 
         const PVT &pvt = satPVTRecTime.at(sat);
 
-        double elev = 90.0;
+        double elev = PI * 0.5;
         if (satElevData.count(sat)) elev = satElevData.at(sat);
 
         if (xyz.norm() > 1000.0 && elev < cutOffElev) continue;
@@ -302,8 +265,14 @@ void SPPIFCode::linearize(ObsData &obsData) {
         double trop = 0.0;
         if (xyz.norm() > 1000.0) {
             auto BLH = XYZtoBLH(xyz, frame);
-            trop = tropoCorrection(BLH[0],BLH[2], elev);
-           //trop = 2.3 / sin(max(elev, 5.0) * DEG_TO_RAD);
+            trop = tropoHopfield(BLH[2], elev);
+            // double iono = IF
+            //                   ? 0
+            //                   : ionoKlobuchar(BLH[0], BLH[1], elev,
+            //                       satAzimData[sat],
+            //                       obsData.epoch.m_sod,
+            //                       alpha, beta);
+            //trop = 2.3 / sin(max(elev, 5.0) * DEG_TO_RAD);
         }
 
         const EquID eid(sat, usedType);
@@ -320,10 +289,11 @@ void SPPIFCode::linearize(ObsData &obsData) {
         //     double sinE = sin(max(elev, 5.0) * DEG_TO_RAD);
         //     weight = sinE * sinE;
         // }
-        double sinE = sin(max(elev, 5.0) * DEG_TO_RAD);
-        double sigma = 0.5 + 1.5 / sinE;
-        double weight = 1.0 / (sigma * sigma);
-        ed.weight = weight; //1.0 / (pow(sin(elev),2) + 0.01);// weight / (sigIFCode * sigIFCode);
+        double weight = 1.0 / (sigIFCode * sigIFCode);
+        if (elev < PI / 6) {
+            weight *= std::pow(std::sin(elev), 2);
+        }
+        ed.weight = 1; //1.0 / (pow(sin(elev),2) + 0.01);// weight / (sigIFCode * sigIFCode);
 
         posEquations.obsEquData[eid] = ed;
         posEquations.varSet.insert(dx);

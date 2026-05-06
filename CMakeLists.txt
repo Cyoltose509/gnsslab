@@ -46,9 +46,6 @@ add_library(gnss SHARED ${DIR_LIB_SRCS})
 add_executable(ome7_read main/ome7_read.cpp)
 target_link_libraries(ome7_read gnss)
 
-add_executable(lsq main/lsq.cpp)
-target_link_libraries(lsq gnss)
-
 add_executable(lsq2 main/lsq2.cpp)
 target_link_libraries(lsq2 gnss)
 

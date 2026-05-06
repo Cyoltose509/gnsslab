@@ -86,79 +86,17 @@ inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &fra
     return resXYZ;
 }
 
-// computes the elevation of the input (Target) position as seen from ref Position, using a Geodetic
-// (i.e. ellipsoidal) system.
-// @return the elevation in degrees
-inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ) {
-    const BLH refBLH = XYZtoBLH(refXYZ, Frame::WGS84);
-
-    const double lat = refBLH.B();
-    const double lon = refBLH.L();
-
-    // Let's get the slant vector, 这里需要修改接口
-    const auto z = targetXYZ - refXYZ;
-
-    if (z.norm() <= 1e-4) // if the positions are within .1 millimeter
-    {
-        throw InvalidRequest("Positions are within .1 millimeter");
-    }
-
-    // Compute k vector in local North-East-Up (NEU) system
-    const Vector3d kVector(::cos(lat) * ::cos(lon), ::cos(lat) * ::sin(lon), ::sin(lat));
-
-    // Take advantage of dot method to get Up coordinate in local NEU system
-    const double localUp = z.dot(kVector);
-
-    // Let's get cos(z), being z the angle with respect to local vertical (Up);
-    const double cosUp = localUp / z.norm();
-
-    const double elev = 90.0 - ::acos(cosUp) * RAD_TO_DEG;
-
+inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ, const ReferenceFrame &frame = Frame::WGS84) {
+    // 先转到ENU
+    const ENU enu = XYZtoENU(targetXYZ, refXYZ, frame);
+    const double elev = atan2(enu(2), sqrt(enu(0) * enu(0) + enu(1) * enu(1)));
     return elev;
 }
 
-// A member function that computes the azimuth of the input
-// (Target) position as seen from this Position, using a Geodetic
-// (i.e. ellipsoidal) system.
-// @param Target the Position which is observed to have the
-//        computed azimuth, as seen from this Position.
-// @return the azimuth in degrees
-inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ) {
-    const BLH refBLH = XYZtoBLH(refXYZ, Frame::WGS84);
-
-    const double latRad = refBLH.B();
-    const double lonRad = refBLH.L();
-
-    // Let's get the slant vector
-    const Vector3d z = targetXYZ - refXYZ;
-
-    if (z.norm() <= 1e-4) // if the positions are within .1 millimeter
-    {
-        throw GeometryException("azimuthGeodetic::Positions are within .1 millimeter");
-    }
-
-    // Compute i vector in local North-East-Up (NEU) system
-    const Vector3d iVector(-::sin(latRad) * ::cos(lonRad),
-                           -::sin(latRad) * ::sin(lonRad),
-                           ::cos(latRad));
-
-    // Compute j vector in local North-East-Up (NEU) system
-    const Vector3d jVector(-::sin(lonRad),
-                           ::cos(lonRad),
-                           0);
-
-    // Now, let's use dot product to get localN and localE unitary vectors
-    const double localN = z.dot(iVector) / z.norm();
-    const double localE = z.dot(jVector) / z.norm();
-
-    // Let's test if computing azimuth has any sense
-
-    // Warning: If elevation is very close to 90 degrees, we will return azimuth = 0.0
-    if (const double test = fabs(localN) + fabs(localE); test < 1.0e-16) return 0.0;
-
-    const double alpha = atan2(localE, localN) * RAD_TO_DEG;
-    if (alpha < 0.0) {
-        return alpha + 360.0;
-    }
-    return alpha;
+inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ, const ReferenceFrame &frame = Frame::WGS84) {
+    // 转到ENU
+    const ENU enu = XYZtoENU(targetXYZ, refXYZ, frame);
+    double az = atan2(enu(0), enu(1));
+    if (az < 0.0) az += PI * 2.0;
+    return az;
 }
