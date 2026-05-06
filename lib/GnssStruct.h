@@ -224,6 +224,7 @@ public:
         dY,
         dZ,
         cdt,
+        cdt2,
         ifb,
         iono,
         ambiguity,
@@ -461,6 +462,7 @@ struct Result {
     double pdop, gdop;
     int numSats;
     double ratio;
+
     void reset() {
         xyz.setZero();
         xyzFixed.setZero();

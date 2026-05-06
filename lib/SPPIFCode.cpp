@@ -36,6 +36,7 @@ void SPPIFCode::solve(ObsData &obsData) {
             posSolver.getSolution(Parameter::dZ)
         };
         const double d_cdt = posSolver.getSolution(Parameter::cdt);
+        const double d_cdt2 = posSolver.getSolution(Parameter::cdt2);
         result.pdop = sqrt(posSolver.covMatrix(0, 0) +
                            posSolver.covMatrix(1, 1) +
                            posSolver.covMatrix(2, 2));
@@ -54,10 +55,11 @@ void SPPIFCode::solve(ObsData &obsData) {
                              velSolver.covMatrix(2, 2)) * velSolver.sigma0;
         xyz += dxyz;
         rClockBias += d_cdt;
+        rClockBiasBDS += d_cdt2;
         vel += dvel;
         rClockDrift += dcdt_dot;
 
-        if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001) {
+        if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001 && abs(d_cdt2) < 0.0001) {
             break;
         }
         iter++;
@@ -75,8 +77,6 @@ void SPPIFCode::solve(ObsData &obsData) {
 
 map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
     map<SatID, PVT> satPVTData;
-    satTropData.clear(); // Re-purpose this to store obs values for Sagnac if needed, 
-    // but we'll use a better way.
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         auto it = ephMap.find(sat);
@@ -86,19 +86,12 @@ map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
         // Choose observation to estimate travel time
         double obsVal = 0.0;
         if (string ifType = sat.system == 'G' ? "CC12" : "CC26"; codeList.count(ifType)) obsVal = codeList.at(ifType);
-        else if (sat.system == 'G') {
-            if (codeList.count("C1")) obsVal = codeList.at("C1");
-            else if (codeList.count("C2")) obsVal = codeList.at("C2");
-        } else if (sat.system == 'C') {
-            if (codeList.count("C2")) obsVal = codeList.at("C2");
-            else if (codeList.count("C6")) obsVal = codeList.at("C6");
-        }
 
         if (obsVal <= 0.0) continue;
 
         // Emission time estimate (following lsq.cpp logic)
-        // t_emit = t_receive_rcvr - (P + clk_rcvr)/c
-        const double tau_total = (obsVal + rClockBias) / C_MPS;
+        // t_emit = t_receive_rcvr - (P - clk_rcvr)/c
+        const double tau_total = (obsVal - (sat.system == 'G' ? rClockBias : rClockBiasBDS)) / C_MPS;
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
@@ -114,9 +107,6 @@ map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
             }
         }
 
-        // Store the raw observation value in a temporary map for Sagnac correction
-        // We'll use satTropData for this to avoid header changes
-        satTropData[sat] = obsVal;
 
         satPVTData[sat] = pvt;
     }
@@ -140,12 +130,12 @@ void SPPIFCode::convertObsType(ObsData &obsData) {
 }
 
 void SPPIFCode::computeIF(ObsData &obsData) const {
+    SatIDSet satRejectedSet;
     for (auto &[sat, codeList]: obsData.satTypeValueData) {
         if (const char sys = sat.system; ifCodeTypes.count(sys)) {
             const auto [code1, code2] = ifCodeTypes.at(sys);
             const double f1 = getFreq(sys, code1);
             const double f2 = getFreq(sys, code2);
-
             if (codeList.count(code1) && codeList.count(code2)) {
                 const double v1 = codeList.at(code1);
                 const double v2 = codeList.at(code2);
@@ -153,27 +143,27 @@ void SPPIFCode::computeIF(ObsData &obsData) const {
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
             } else {
-                obsData.satTypeValueData.erase(sat);
+                satRejectedSet.insert(sat);
             }
         }
     }
+    for (const auto &sat: satRejectedSet) {
+        obsData.satTypeValueData.erase(sat);
+    }
 }
+
 
 map<SatID, PVT> SPPIFCode::earthRotation() {
     map<SatID, PVT> satPVTRecTimeMap;
     for (auto const &[sat, pvt]: satPVTTransTime) {
         // Use the pseudorange to estimate signal travel time for Sagnac (following lsq.cpp)
         double tau = (pvt.p - xyz).norm() / C_MPS;
-
-        if (satTropData.count(sat)) {
-            tau = satTropData.at(sat) / C_MPS;
-        }
         const double wt = OMEGA_EARTH * tau;
         const double cos_wt = cos(wt);
         const double sin_wt = sin(wt);
         Matrix3d rot;
-        rot << cos_wt, -sin_wt, 0.0,
-                sin_wt, cos_wt, 0.0,
+        rot << cos_wt, sin_wt, 0.0,
+                -sin_wt, cos_wt, 0.0,
                 0.0, 0.0, 1.0;
         PVT rotPvt = pvt;
         rotPvt.p = rot * pvt.p;
@@ -224,6 +214,8 @@ void SPPIFCode::linearize(ObsData &obsData) {
     const Variable dy(obsData.station, Parameter::dY);
     const Variable dz(obsData.station, Parameter::dZ);
     const Variable cdt(obsData.station, Parameter::cdt);
+    const Variable cdt2(obsData.station, Parameter::cdt2);
+
 
     const Variable dvx(obsData.station, Parameter::dVX);
     const Variable dvy(obsData.station, Parameter::dVY);
@@ -233,7 +225,7 @@ void SPPIFCode::linearize(ObsData &obsData) {
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         if (!satPVTRecTime.count(sat)) continue;
 
-        const PVT &pvt = satPVTRecTime.at(sat);
+        const auto &pvt = satPVTRecTime.at(sat);
 
         double elev = PI * 0.5;
         if (satElevData.count(sat)) elev = satElevData.at(sat);
@@ -247,15 +239,9 @@ void SPPIFCode::linearize(ObsData &obsData) {
         if (string ifType = sat.system == 'G' ? "CC12" : "CC26"; codeList.count(ifType)) {
             obsVal = codeList.at(ifType);
             usedType = ifType;
-        } else if (sat.system == 'G' && codeList.count("C1")) {
-            obsVal = codeList.at("C1");
-            usedType = "C1";
-        } else if (codeList.count("C2")) {
-            obsVal = codeList.at("C2");
-            usedType = "C2";
         }
 
-        if (obsVal <= 0.0) continue;
+        if (usedType.empty() || obsVal <= 0.0) continue;
 
         double rho = (pvt.p - xyz).norm();
         if (rho < 1.0) rho = 20000000.0;
@@ -277,12 +263,18 @@ void SPPIFCode::linearize(ObsData &obsData) {
 
         const EquID eid(sat, usedType);
         EquData ed;
-        ed.prefit = obsVal - (rho + rClockBias - dts - rel + trop);
+        ed.prefit = obsVal - (rho + (sat.system == 'G' ? rClockBias : rClockBiasBDS) - dts - rel + trop);
 
         ed.varCoeffData[dx] = -(pvt.p[0] - xyz[0]) / rho;
         ed.varCoeffData[dy] = -(pvt.p[1] - xyz[1]) / rho;
         ed.varCoeffData[dz] = -(pvt.p[2] - xyz[2]) / rho;
-        ed.varCoeffData[cdt] = 1.0;
+        if (sat.system == 'G') {
+            ed.varCoeffData[cdt] = 1.0;
+            posEquations.varSet.insert(cdt);
+        } else {
+            ed.varCoeffData[cdt2] = 1.0;
+            posEquations.varSet.insert(cdt2);
+        }
 
         // double weight = 1.0;
         // if (xyz.norm() > 1000.0) {
@@ -293,13 +285,13 @@ void SPPIFCode::linearize(ObsData &obsData) {
         if (elev < PI / 6) {
             weight *= std::pow(std::sin(elev), 2);
         }
-        ed.weight = 1; //1.0 / (pow(sin(elev),2) + 0.01);// weight / (sigIFCode * sigIFCode);
+        ed.weight = weight; //1.0 / (pow(sin(elev),2) + 0.01);// weight / (sigIFCode * sigIFCode);
 
         posEquations.obsEquData[eid] = ed;
         posEquations.varSet.insert(dx);
         posEquations.varSet.insert(dy);
         posEquations.varSet.insert(dz);
-        posEquations.varSet.insert(cdt);
+
 
         if (codeList.count("D1")) {
             double D = codeList.at("D1");

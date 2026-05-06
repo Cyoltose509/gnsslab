@@ -64,6 +64,7 @@ protected:
 
     double rClockBias{}; // 接收机钟差
     double rClockDrift{}; //接收机钟漂
+    double rClockBiasBDS{};
 
     EquSys posEquations{};
     EquSys velEquations{};
@@ -75,7 +76,6 @@ protected:
 
     SatValueMap satElevData{};
     SatValueMap satAzimData{};
-    SatValueMap satTropData{};
 
 
     std::map<SatID, Ephemeris *> ephMap{};
