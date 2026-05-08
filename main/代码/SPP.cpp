@@ -6,19 +6,46 @@ using namespace std;
 #include "operaVM.h"
 #include<cmath>
 #include<limits>
-
+#include"coordinate.h"
 
 //构建结果类
 struct Sppresult
 {
     bool success;
     double x, y, z;
-    double dt;             // 接收机钟差 (秒)
+    double dt_gps = 0;             // 接收机钟差 (秒)
+    double dt_bds = 0;
     int used_sats;          // 使用的卫星数
     double pdop;            // 位置精度因子
     double sigma0;          // 验后单位权中误差 (m)
     double B, L, H;     // 纬度、经度(度)、椭球高(米)
 };
+
+struct SppVResult
+{
+    bool success = false;
+
+    // ECEF 速度，单位 m/s
+    double vx = 0.0;
+    double vy = 0.0;
+    double vz = 0.0;
+
+    // 速度大小，单位 m/s
+    double speed = 0.0;
+
+    // 接收机钟漂，米制形式，单位 m/s
+    double cdtDot_gps = 0.0;
+    double cdtDot_bds = 0.0;
+
+    // 接收机钟漂，秒制形式，单位 s/s
+    double dtDot_gps = 0.0;
+    double dtDot_bds = 0.0;
+
+    int used_sats = 0;
+    double vdop = 0.0;
+    double sigma_v = 0.0;
+};
+
 //构建SPP解算类
 class SppSolver_single
 {
@@ -300,7 +327,7 @@ public:
 
         result.success = true;
         result.x = xr; result.y = yr; result.z = zr;
-        result.dt = dt;
+        result.dt_gps = dt;
         result.used_sats = usedSats;
         result.pdop = pdop;
         result.sigma0 = sigma0;
@@ -765,7 +792,7 @@ public:
 
         result.success = true;
         result.x = xr; result.y = yr; result.z = zr;
-        result.dt = dt;
+        result.dt_bds = dt;
         result.used_sats = usedSats;
         result.pdop = pdop;
         result.sigma0 = sigma0;
@@ -1081,7 +1108,7 @@ public:
 
         result.success = true;
         result.x = xr; result.y = yr; result.z = zr;
-        result.dt = dt;
+        result.dt_gps = dt;
         result.used_sats = usedSats;
         result.pdop = pdop;
         result.sigma0 = sigma0;
@@ -1092,25 +1119,1020 @@ public:
     }
 };
 
+class SppSolver_BDS_GPS_IF
+{
+public:
+    const double C_LIGHT = 299792458.0;
+    const double M_PI = 3.14159265358979323846;
+    const double OMEGA_E_BDS = 7.2921150e-5;        // 北斗 CGCS2000 采用的地球自转角速度
+    const double OMEGA_E_GPS = 7.2921151467e-5;   // GPS WGS84 地球自转角速度
+
+    // 北斗 B1I / B3I 频率 (Hz)
+    const double FREQ_BDS_B1I = 1561.098e6;
+    const double FREQ_BDS_B3I = 1268.52e6;
+    // GPS L1 / L2 频率 (Hz)
+    const double FREQ_GPS_L1 = 1575.42e6;
+    const double FREQ_GPS_L2 = 1227.60e6;
+
+    // BDS组合系数
+    const double F1_SQ_BDS = FREQ_BDS_B1I * FREQ_BDS_B1I;
+    const double F3_SQ_BDS = FREQ_BDS_B3I * FREQ_BDS_B3I;
+    const double IF_COEF1_BDS = F1_SQ_BDS / (F1_SQ_BDS - F3_SQ_BDS);
+    const double IF_COEF2_BDS = -F3_SQ_BDS / (F1_SQ_BDS - F3_SQ_BDS);
+    // GPS组合系数
+    const double F1_SQ_GPS = FREQ_GPS_L1 * FREQ_GPS_L1;
+    const double F2_SQ_GPS = FREQ_GPS_L2 * FREQ_GPS_L2;
+    const double IF_COEF1_GPS = F1_SQ_GPS / (F1_SQ_GPS - F2_SQ_GPS);   
+    const double IF_COEF2_GPS = -F2_SQ_GPS / (F1_SQ_GPS - F2_SQ_GPS);  
+
+    double x0_, y0_, z0_, dt0_BDS, dt0_GPS;
+    SppSolver_BDS_IF bds;
+    SppSolver_GPS_IF gps;
+   
+
+    SppSolver_BDS_GPS_IF()
+    {
+        x0_ = y0_ = z0_ = dt0_BDS = dt0_GPS = 0.0;
+    }
+
+    double a = 6378137.0;
+    double f = 1.0 / 298.257223563;
+    double e2 = 2 * f - f * f;
+    BLH XYZToBLH_2(XYZ A) 
+    {
+        BLH res;
+        double p = sqrt(A.x * A.x + A.y * A.y);
+        double B0 = atan2(A.z, p);
+        const int maxIterations = 10;
+        int iterationCount = 0;
+        double B1, N;
+        do {
+            N = a / sqrt(1 - e2 * sin(B0) * sin(B0));
+            B1 = atan2(A.z + e2 * N * sin(B0), p);
+            if (fabs(B1 - B0) < 0.0001) break;
+            B0 = B1;
+            iterationCount++;
+            if (iterationCount > maxIterations) {
+                throw std::runtime_error("Iteration did not converge.");
+            }
+        } while (true);
+        res.b = B1;
+        res.l = atan2(A.y, A.x);
+        res.h = p / cos(B1) - N;
+        return res;
+    }
+
+    bool leastSquares(vector<SatObservation>& sats,
+        int rcvWeek, double rcvTow,
+        double& xr, double& yr, double& zr, double& dt_bds, double& dt_gps,
+        const unordered_map<int, BdsEphemeris>& bdsMap, const unordered_map<int, GpsEphemeris>& gpsMap,
+        int& usedSats, double& pdop, double& sigma0)
+    {
+        int n = sats.size();
+        if (n < 4) return false;
+
+        const double c = C_LIGHT;
+
+        double x = xr;
+        double y = yr;
+        double z = zr;
+        double cdt_bds = c * dt_bds;
+        double cdt_gps = c * dt_gps;
+
+
+        //Matrix HtH_inv;
+
+        double B, L, h;
+        vector<double> satX(n), satY(n), satZ(n), svClock(n);
+        Matrix HtH_inv;
+
+        //double B, L, h;
+        //xyzTOblh(x, y, z, B, L, h);
+        bds.ecefToGeodetic(x, y, z, B, L, h);
+
+        vector<int> finalValidIdx;
+
+        for (int iter = 0; iter < 10; ++iter)
+        {
+            //BDS的接收时刻
+            double true_rcvTow_bds = rcvTow - dt_bds;
+            int trueWeek_bds = rcvWeek;
+
+            if (true_rcvTow_bds < 0.0)
+            {
+                true_rcvTow_bds += 604800.0;
+                trueWeek_bds--;
+            }
+            else if (true_rcvTow_bds >= 604800.0)
+            {
+                true_rcvTow_bds -= 604800.0;
+                trueWeek_bds++;
+            }
+
+            //GPS的接收时刻
+            double true_rcvTow_gps = rcvTow - dt_gps;
+            int trueWeek_gps = rcvWeek;
+
+            if (true_rcvTow_gps < 0.0)
+            {
+                true_rcvTow_gps += 604800.0;
+                trueWeek_gps--;
+            }
+            else if (true_rcvTow_gps >= 604800.0)
+            {
+                true_rcvTow_gps -= 604800.0;
+                trueWeek_gps++;
+            }
+
+            // 1. 计算卫星位置和钟差
+            for (int i = 0; i < n; ++i)
+            {
+                bool ok = false;
+
+                if (sats[i].system == 0)   // GPS
+                {
+                    ok = gps.getSatStateAtEmission(sats[i], trueWeek_gps, true_rcvTow_gps,
+                        x, y, z, satX[i], satY[i], satZ[i], svClock[i], gpsMap);
+                }
+                else if (sats[i].system == 4)   // BDS
+                {
+                    ok = bds.getSatStateAtEmission(sats[i], trueWeek_bds, true_rcvTow_bds,
+                        x, y, z, satX[i], satY[i], satZ[i], svClock[i], bdsMap);
+                }
+                else
+                {
+                    ok = false;
+                }
+                if (!ok) return false;
+            }
+
+            vector<int> validIdx;
+            const double min_elev = 10.0 * M_PI / 180.0;
+            int gpsCount = 0;
+            int bdsCount = 0;
+            for (int i = 0; i < n; ++i)
+            {
+                double elev = bds.calcElevation(x, y, z, satX[i], satY[i], satZ[i]);
+
+                if (elev >= min_elev)
+                {
+                    validIdx.push_back(i);
+
+                    if (sats[i].system == 0) gpsCount++;
+                    else if (sats[i].system == 4) bdsCount++;
+                }
+            }
+
+            int m = static_cast<int>(validIdx.size());
+            if (m < 5) return false;
+            if (gpsCount < 1 || bdsCount < 1) return false;
+
+           
+            Matrix H(m, vector<double>(5, 0.0));
+            //vector<double> y_vec(m, 0.0);
+            Matrix y_vec(m, vector<double>(1, 0.0)); // 改为矩阵形式
+
+            for (int ii = 0; ii < m; ++ii)
+            {
+                int i = validIdx[ii];
+
+                double dxs = satX[i] - x;
+                double dys = satY[i] - y;
+                double dzs = satZ[i] - z;
+                double range = sqrt(dxs * dxs + dys * dys + dzs * dzs);
+
+                double elev = bds.calcElevation(x, y, z, satX[i], satY[i], satZ[i]);
+                double tropo = bds.tropoCorrection(B, h, elev);
+
+                H[ii][0] = -dxs / range;
+                H[ii][1] = -dys / range;
+                H[ii][2] = -dzs / range;
+                
+
+                double pr_if = 0;
+                double cdt = 0;
+                if (sats[i].system == 0)//GPS
+                {
+                    pr_if = gps.getIFPseudoRange(sats[i]);
+                    H[ii][3] = 1.0;
+                    H[ii][4] = 0.0;
+                    cdt = cdt_gps;
+                }
+                if (sats[i].system == 4)//BDS
+                {
+                    pr_if = bds.getIFPseudoRange(sats[i]);
+                    H[ii][3] = 0.0;
+                    H[ii][4] = 1.0;
+                    cdt = cdt_bds;
+                }
+
+                // P + c * dts - rho - c * dtr - tropo
+                double pr_corrected = pr_if + c * svClock[i];
+                y_vec[ii][0] = pr_corrected - range - cdt - tropo;
+            }
+
+            Matrix Ht;
+            matrix_T(H, Ht);
+            Matrix HtH;
+            matrix_multiply(Ht, H, HtH);
+
+            if (!matrix_inverse(HtH, HtH_inv))
+            {
+                return false;
+            }
+
+            Matrix Ht_y;
+            matrix_multiply(Ht, y_vec, Ht_y);
+
+            Matrix delta;
+            matrix_multiply(HtH_inv, Ht_y, delta);
+
+            x += delta[0][0];
+            y += delta[1][0];
+            z += delta[2][0];
+            cdt_gps += delta[3][0];
+            cdt_bds += delta[4][0];
+            dt_gps = cdt_gps / c;
+            dt_bds = cdt_bds / c;
+
+            bds.ecefToGeodetic(x, y, z, B, L, h);
+            //xyzTOblh(x, y, z, B, L, h);
+
+            finalValidIdx = validIdx;
+
+            double pos_change = sqrt(
+                delta[0][0] * delta[0][0] +
+                delta[1][0] * delta[1][0] +
+                delta[2][0] * delta[2][0]);
+
+            if (pos_change < 1e-4)
+            {
+                break;
+            }
+        }
+
+        //计算卫星位置、残差和 PDOP
+        double true_rcvTow = rcvTow - dt_bds;
+        int true_rcvWeek = rcvWeek;
+
+        if (true_rcvTow < 0.0)
+        {
+            true_rcvTow += 604800.0;
+            true_rcvWeek--;
+        }
+        else if (true_rcvTow >= 604800.0)
+        {
+            true_rcvTow -= 604800.0;
+            true_rcvWeek++;
+        }
+
+        // 计算卫星位置和钟差
+        for (int i = 0; i < n; ++i)
+        {
+            bool ok = false;
+
+            if (sats[i].system == 0)   // GPS
+            {
+                ok = gps.getSatStateAtEmission(sats[i], true_rcvWeek, true_rcvTow,
+                    x, y, z, satX[i], satY[i], satZ[i], svClock[i], gpsMap);
+            }
+            else if (sats[i].system == 4)   // BDS
+            {
+                ok = bds.getSatStateAtEmission(sats[i], true_rcvWeek, true_rcvTow,
+                    x, y, z, satX[i], satY[i], satZ[i], svClock[i], bdsMap);
+            }
+            else
+            {
+                ok = false;
+            }
+            if (!ok) return false;
+        }
+        
+        vector<int> validIdx;
+        const double min_elev = 10.0 * M_PI / 180.0;
+        int gpsCount = 0;
+        int bdsCount = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            double elev = bds.calcElevation(x, y, z, satX[i], satY[i], satZ[i]);
+
+            if (elev >= min_elev)
+            {
+                validIdx.push_back(i);
+
+                if (sats[i].system == 0) gpsCount++;
+                else if (sats[i].system == 4) bdsCount++;
+            }
+        }
+
+        
+
+        int m = static_cast<int>(validIdx.size());
+        if (m < 5) return false;
+
+        Matrix H_final(m, vector<double>(5, 0.0));
+
+        double sum_v2 = 0.0;
+
+        for (int ii = 0; ii < m; ++ii)
+        {
+            int i = validIdx[ii];
+
+            double dxs = satX[i] - x;
+            double dys = satY[i] - y;
+            double dzs = satZ[i] - z;
+            double range = sqrt(dxs * dxs + dys * dys + dzs * dzs);
+
+            double elev = bds.calcElevation(x, y, z, satX[i], satY[i], satZ[i]);
+            double tropo = bds.tropoCorrection(B, h, elev);
+
+            H_final[ii][0] = -dxs / range;
+            H_final[ii][1] = -dys / range;
+            H_final[ii][2] = -dzs / range;
+            
+            double pr_if = 0;
+            double cdt = 0;
+            if (sats[i].system == 0)//GPS
+            {
+                pr_if = gps.getIFPseudoRange(sats[i]);
+                H_final[ii][3] = 1.0;
+                H_final[ii][4] = 0.0;
+                cdt = cdt_gps;
+            }
+            if (sats[i].system == 4)//BDS
+            {
+                pr_if = bds.getIFPseudoRange(sats[i]);
+                H_final[ii][3] = 0.0;
+                H_final[ii][4] = 1.0;
+                cdt = cdt_bds;
+            }
+
+            // P + c * dts - rho - c * dtr - tropo
+            double pr_corrected = pr_if + c * svClock[i];
+            double v = pr_corrected - range - cdt - tropo;
+            sum_v2 += v * v;
+            
+        }
+
+        Matrix Ht_final;
+        matrix_T(H_final, Ht_final);
+
+        Matrix HtH_final;
+        matrix_multiply(Ht_final, H_final, HtH_final);
+
+        if (!matrix_inverse(HtH_final, HtH_inv))
+        {
+            return false;
+        }
+
+        if (m > 4)
+        {
+            sigma0 = sqrt(sum_v2 / (m - 4));
+        }
+        else
+        {
+            sigma0 = std::numeric_limits<double>::quiet_NaN();
+        }
+
+        pdop = sqrt(HtH_inv[0][0] + HtH_inv[1][1] + HtH_inv[2][2]);
+
+        xr = x;
+        yr = y;
+        zr = z;
+        usedSats = m;
+
+        return true;
+    }
+
+    bool solve(const EpochData& epoch,
+        unordered_map<int, BdsEphemeris>& bdsMap,
+        unordered_map<int, GpsEphemeris>& gpsMap,
+        Sppresult& result)
+    {
+        vector<SatObservation> mixSats;
+
+        int gpsCount = 0;
+        int bdsCount = 0;
+
+        for (const auto& sat : epoch.sats)
+        {
+            if (sat.cn0 < 30.0) continue;
+            if (sat.pseudoRange1 <= 0.0 || sat.pseudoRange2 <= 0.0) continue;
+
+            if (sat.system == 0)
+            {
+                if (gpsMap.find(sat.prn) == gpsMap.end()) continue;
+
+                mixSats.push_back(sat);
+                gpsCount++;
+            }
+            else if (sat.system == 4)
+            {
+                if (bdsMap.find(sat.prn) == bdsMap.end()) continue;
+
+                mixSats.push_back(sat);
+                bdsCount++;
+            }
+        }
+
+        if (mixSats.size() < 5) return false;
+        if (gpsCount < 1 || bdsCount < 1) return false;
+
+        double xr = x0_;
+        double yr = y0_;
+        double zr = z0_;
+
+        double dt_bds = dt0_BDS;
+        double dt_gps = dt0_GPS;
+
+        int usedSats = 0;
+        double pdop = 0.0;
+        double sigma0 = 0.0;
+
+        bool ok = leastSquares(
+            mixSats,
+            epoch.week,
+            epoch.tow,
+            xr, yr, zr,
+            dt_bds, dt_gps,
+            bdsMap,
+            gpsMap,
+            usedSats,
+            pdop,
+            sigma0);
+
+        if (!ok) return false;
+
+        result.success = true;
+        result.x = xr;
+        result.y = yr;
+        result.z = zr;
+        result.dt_gps = dt_gps;       // 可以先保存 GPS 钟差
+        result.dt_bds = dt_bds;   // 保存 BDS 钟差
+        result.used_sats = usedSats;
+        result.pdop = pdop;
+        result.sigma0 = sigma0;
+
+        //bds.ecefToGeodetic(xr, yr, zr, result.B, result.L, result.H);
+        //xyzTOblh(xr, yr, zr, result.B, result.L, result.H);
+        /*double a = 6378137.0;
+        double f = 1.0 / 298.257223563;*/
+        XYZ xyz{ xr, yr, zr };
+        BLH blh = XYZToBLH_2(xyz);
+        result.B = blh.b;
+        result.L = blh.l;
+        result.H = blh.h;
+
+        x0_ = xr;
+        y0_ = yr;
+        z0_ = zr;
+        dt0_BDS = dt_bds;
+        dt0_GPS = dt_gps;
+
+        return true;
+    }
+};
+
+class Spp_V
+{
+public:
+    const double C_LIGHT = 299792458.0;
+    const double PI = 3.14159265358979323846;
+
+    const double OMEGA_E_GPS = 7.2921151467e-5;
+    const double OMEGA_E_BDS = 7.2921150e-5;
+
+    // GPS L1/L2
+    const double FREQ_GPS_L1 = 1575.42e6;
+    const double FREQ_GPS_L2 = 1227.60e6;
+
+    // BDS B1I/B3I
+    const double FREQ_BDS_B1I = 1561.098e6;
+    const double FREQ_BDS_B3I = 1268.52e6;
+
+    // GPS IF 系数
+    const double F1_GPS_SQ = FREQ_GPS_L1 * FREQ_GPS_L1;
+    const double F2_GPS_SQ = FREQ_GPS_L2 * FREQ_GPS_L2;
+    const double IF_GPS_1 = F1_GPS_SQ / (F1_GPS_SQ - F2_GPS_SQ);
+    const double IF_GPS_2 = -F2_GPS_SQ / (F1_GPS_SQ - F2_GPS_SQ);
+
+    // BDS B1I/B3I IF 系数
+    const double F1_BDS_SQ = FREQ_BDS_B1I * FREQ_BDS_B1I;
+    const double F3_BDS_SQ = FREQ_BDS_B3I * FREQ_BDS_B3I;
+    const double IF_BDS_1 = F1_BDS_SQ / (F1_BDS_SQ - F3_BDS_SQ);
+    const double IF_BDS_3 = -F3_BDS_SQ / (F1_BDS_SQ - F3_BDS_SQ);
+
+    //辅助函数
+    void normalizeTime(int& week, double& tow)
+    {
+        while (tow < 0.0)
+        {
+            tow += 604800.0;
+            week--;
+        }
+
+        while (tow >= 604800.0)
+        {
+            tow -= 604800.0;
+            week++;
+        }
+    }
+    void ecefToGeodetic(double x, double y, double z,
+        double& B, double& L, double& H)
+    {
+        double a = 6378137.0;
+        double f = 1.0 / 298.257222101;
+        double b = a * (1.0 - f);
+
+        double e2 = (a * a - b * b) / (a * a);
+        double ep2 = (a * a - b * b) / (b * b);
+
+        L = atan2(y, x);
+
+        double p = sqrt(x * x + y * y);
+        double theta = atan2(z * a, p * b);
+
+        double sin_theta = sin(theta);
+        double cos_theta = cos(theta);
+
+        B = atan2(
+            z + ep2 * b * sin_theta * sin_theta * sin_theta,
+            p - e2 * a * cos_theta * cos_theta * cos_theta);
+
+        double sinB = sin(B);
+        double N = a / sqrt(1.0 - e2 * sinB * sinB);
+
+        H = p / cos(B) - N;
+
+        B = B * 180.0 / PI;
+        L = L * 180.0 / PI;
+    }
+    double calcElevation(double xr, double yr, double zr,
+        double xs, double ys, double zs)
+    {
+        double B_deg, L_deg, H_m;
+        ecefToGeodetic(xr, yr, zr, B_deg, L_deg, H_m);
+
+        double lat = B_deg * PI / 180.0;
+        double lon = L_deg * PI / 180.0;
+
+        double dx = xs - xr;
+        double dy = ys - yr;
+        double dz = zs - zr;
+
+        double sinLat = sin(lat);
+        double cosLat = cos(lat);
+        double sinLon = sin(lon);
+        double cosLon = cos(lon);
+
+        double east = -sinLon * dx + cosLon * dy;
+        double north = -sinLat * cosLon * dx - sinLat * sinLon * dy + cosLat * dz;
+        double up = cosLat * cosLon * dx + cosLat * sinLon * dy + sinLat * dz;
+
+        return atan2(up, sqrt(east * east + north * north));
+    }
+
+    // Doppler 转伪距率，单位 m/s
+    double dopplerToRangeRate(double doppler, double freq)
+    {
+        double lambda = C_LIGHT / freq;
+        return -lambda * doppler;
+    }
+
+    // GPS L1/L2 Doppler IF 组合
+    double getGpsIFRangeRate(const SatObservation& sat)
+    {
+        double prr1 = dopplerToRangeRate(sat.doppler1, FREQ_GPS_L1);
+        double prr2 = dopplerToRangeRate(sat.doppler2, FREQ_GPS_L2);
+
+        return IF_GPS_1 * prr1 + IF_GPS_2 * prr2;
+    }
+
+    // BDS B1I/B3I Doppler IF 组合
+    double getBdsIFRangeRate(const SatObservation& sat)
+    {
+        double prr1 = dopplerToRangeRate(sat.doppler1, FREQ_BDS_B1I);
+        double prr3 = dopplerToRangeRate(sat.doppler2, FREQ_BDS_B3I);
+
+        return IF_BDS_1 * prr1 + IF_BDS_3 * prr3;
+    }
+
+    //得到GPS卫星位置、速度、钟差和钟差率（考虑地球自转改正）
+    bool getGpsSatStateWithVelocity(const SatObservation& sat,
+        int rcvWeek, double rcvTow,
+        double xr, double yr, double zr,
+        double& xs, double& ys, double& zs,
+        double& vxs, double& vys, double& vzs,
+        double& svClock, double& svClockDrift,
+        const unordered_map<int, GpsEphemeris>& gpsMap)
+    {
+        if (sat.system != 0) return false;
+
+        auto it = gpsMap.find(sat.prn);
+        if (it == gpsMap.end()) return false;
+
+        CoordinateCalculator calc;
+        double tau = 0.0;
+
+        for (int k = 0; k < 5; ++k)
+        {
+            double t_T = rcvTow - tau;
+            int week = rcvWeek;
+            normalizeTime(week, t_T);
+
+            double x0, y0, z0;
+            double vx0, vy0, vz0;
+
+            calc.calculateGpsPosition(
+                it->second,
+                week,
+                t_T,
+                x0, y0, z0,
+                &svClock,
+                &svClockDrift,
+                &vx0, &vy0, &vz0);
+
+            double angle = OMEGA_E_GPS * tau;
+            double cosA = cos(angle);
+            double sinA = sin(angle);
+
+            // 地球自转改正后的卫星位置
+            xs = x0 * cosA + y0 * sinA;
+            ys = -x0 * sinA + y0 * cosA;
+            zs = z0;
+
+            // 速度同样旋转到接收时刻坐标系
+            vxs = vx0 * cosA + vy0 * sinA;
+            vys = -vx0 * sinA + vy0 * cosA;
+            vzs = vz0;
+
+            double dx = xs - xr;
+            double dy = ys - yr;
+            double dz = zs - zr;
+
+            double new_tau = sqrt(dx * dx + dy * dy + dz * dz) / C_LIGHT;
+
+            if (fabs(new_tau - tau) < 1e-10)
+            {
+                break;
+            }
+
+            tau = new_tau;
+        }
+
+        return true;
+    }
+
+    //得到BDS卫星位置、速度、钟差和钟差率（考虑地球自转改正）
+    bool getBdsSatStateWithVelocity(const SatObservation& sat,
+        int rcvWeek, double rcvTow,
+        double xr, double yr, double zr,
+        double& xs, double& ys, double& zs,
+        double& vxs, double& vys, double& vzs,
+        double& svClock, double& svClockDrift,
+        const unordered_map<int, BdsEphemeris>& bdsMap)
+    {
+        if (sat.system != 4) return false;
+
+        auto it = bdsMap.find(sat.prn);
+        if (it == bdsMap.end()) return false;
+
+        CoordinateCalculator calc;
+        double tau = 0.0;
+
+        for (int k = 0; k < 5; ++k)
+        {
+            double t_T = rcvTow - tau;
+            int week = rcvWeek;
+            normalizeTime(week, t_T);
+
+            double x0, y0, z0;
+            double vx0, vy0, vz0;
+
+            if (!calc.calculateBdsPosition(
+                it->second,
+                week,
+                t_T,
+                x0, y0, z0,
+                &svClock,
+                &svClockDrift,
+                &vx0, &vy0, &vz0))
+            {
+                return false;
+            }
+
+            double angle = OMEGA_E_BDS * tau;
+            double cosA = cos(angle);
+            double sinA = sin(angle);
+
+            xs = x0 * cosA + y0 * sinA;
+            ys = -x0 * sinA + y0 * cosA;
+            zs = z0;
+
+            vxs = vx0 * cosA + vy0 * sinA;
+            vys = -vx0 * sinA + vy0 * cosA;
+            vzs = vz0;
+
+            double dx = xs - xr;
+            double dy = ys - yr;
+            double dz = zs - zr;
+
+            double new_tau = sqrt(dx * dx + dy * dy + dz * dz) / C_LIGHT;
+
+            if (fabs(new_tau - tau) < 1e-10)
+            {
+                break;
+            }
+
+            tau = new_tau;
+        }
+
+        return true;
+    }
+
+    //最后的解算函数
+    bool solve(const EpochData& epoch,
+        double xr, double yr, double zr,
+        double dt_gps, double dt_bds,
+        const unordered_map<int, GpsEphemeris>& gpsMap,
+        const unordered_map<int, BdsEphemeris>& bdsMap,
+        SppVResult& result)
+    {
+        vector<SatObservation> sats;
+
+        int gpsRawCount = 0;
+        int bdsRawCount = 0;
+
+        // 1. 筛选具有双频 Doppler 的 GPS/BDS 卫星
+        for (const auto& sat : epoch.sats)
+        {
+            if (sat.cn0 < 30.0) continue;
+
+            if (fabs(sat.doppler1) < 1e-12) continue;
+            if (fabs(sat.doppler2) < 1e-12) continue;
+
+            if (sat.system == 0)
+            {
+                if (gpsMap.find(sat.prn) == gpsMap.end()) continue;
+
+                sats.push_back(sat);
+                gpsRawCount++;
+            }
+            else if (sat.system == 4)
+            {
+                if (bdsMap.find(sat.prn) == bdsMap.end()) continue;
+
+                sats.push_back(sat);
+                bdsRawCount++;
+            }
+        }
+
+        // 双系统测速未知量为 vx,vy,vz,cdtDot_gps,cdtDot_bds，共 5 个
+        if (sats.size() < 5) return false;
+        if (gpsRawCount < 1 || bdsRawCount < 1) return false;
+
+        int n = static_cast<int>(sats.size());
+
+        vector<double> satX(n), satY(n), satZ(n);
+        vector<double> satVx(n), satVy(n), satVz(n);
+        vector<double> svClock(n), svClockDrift(n);
+
+        // GPS 接收时刻
+        int gpsWeek = epoch.week;
+        double gpsTow = epoch.tow - dt_gps;
+        normalizeTime(gpsWeek, gpsTow);
+
+        // BDS 接收时刻
+        // 注意：你的 calculateBdsPosition() 内部已经有 gpsTimeToBdsTime()，
+        // 所以这里仍传 GPS week/tow，不要再手动减 14 秒。
+        int bdsWeek = epoch.week;
+        double bdsTow = epoch.tow - dt_bds;
+        normalizeTime(bdsWeek, bdsTow);
+
+        // 2. 计算卫星位置、速度、钟差、钟漂
+        for (int i = 0; i < n; ++i)
+        {
+            bool ok = false;
+
+            if (sats[i].system == 0)
+            {
+                ok = getGpsSatStateWithVelocity(
+                    sats[i],
+                    gpsWeek,
+                    gpsTow,
+                    xr, yr, zr,
+                    satX[i], satY[i], satZ[i],
+                    satVx[i], satVy[i], satVz[i],
+                    svClock[i], svClockDrift[i],
+                    gpsMap);
+            }
+            else if (sats[i].system == 4)
+            {
+                ok = getBdsSatStateWithVelocity(
+                    sats[i],
+                    bdsWeek,
+                    bdsTow,
+                    xr, yr, zr,
+                    satX[i], satY[i], satZ[i],
+                    satVx[i], satVy[i], satVz[i],
+                    svClock[i], svClockDrift[i],
+                    bdsMap);
+            }
+
+            if (!ok) return false;
+        }
+
+        // 3. 高度角筛选
+        vector<int> validIdx;
+        const double minElev = 10.0 * PI / 180.0;
+
+        int gpsCount = 0;
+        int bdsCount = 0;
+
+        for (int i = 0; i < n; ++i)
+        {
+            double elev = calcElevation(xr, yr, zr, satX[i], satY[i], satZ[i]);
+
+            if (elev >= minElev)
+            {
+                validIdx.push_back(i);
+
+                if (sats[i].system == 0) gpsCount++;
+                else if (sats[i].system == 4) bdsCount++;
+            }
+        }
+
+        int m = static_cast<int>(validIdx.size());
+
+        if (m < 5) return false;
+        if (gpsCount < 1 || bdsCount < 1) return false;
+
+        // 4. 构建 Doppler 测速方程
+        Matrix H(m, vector<double>(5, 0.0));
+        Matrix y_vec(m, vector<double>(1, 0.0));
+
+        for (int ii = 0; ii < m; ++ii)
+        {
+            int i = validIdx[ii];
+
+            double dx = satX[i] - xr;
+            double dy = satY[i] - yr;
+            double dz = satZ[i] - zr;
+
+            double range = sqrt(dx * dx + dy * dy + dz * dz);
+
+            double ex = dx / range;
+            double ey = dy / range;
+            double ez = dz / range;
+
+            // 卫星速度在视线方向上的投影 e · vs
+            double satRangeRate = ex * satVx[i] + ey * satVy[i] + ez * satVz[i];
+
+            double prr_if = 0.0;
+
+            H[ii][0] = -ex;
+            H[ii][1] = -ey;
+            H[ii][2] = -ez;
+
+            if (sats[i].system == 0)
+            {
+                prr_if = getGpsIFRangeRate(sats[i]);
+
+                H[ii][3] = 1.0;   // GPS 钟漂
+                H[ii][4] = 0.0;
+            }
+            else if (sats[i].system == 4)
+            {
+                prr_if = getBdsIFRangeRate(sats[i]);
+
+                H[ii][3] = 0.0;
+                H[ii][4] = 1.0;   // BDS 钟漂
+            }
+            else
+            {
+                return false;
+            }
+
+            // 多普勒测速观测方程：
+            // prr_if + c*dts_dot - e·vs = -e·vr + c*dtr_dot
+            y_vec[ii][0] = prr_if + C_LIGHT * svClockDrift[i] - satRangeRate;
+        }
+
+        // 5. 最小二乘求解
+        Matrix Ht;
+        matrix_T(H, Ht);
+
+        Matrix HtH;
+        matrix_multiply(Ht, H, HtH);
+
+        Matrix HtH_inv;
+        if (!matrix_inverse(HtH, HtH_inv))
+        {
+            return false;
+        }
+
+        Matrix Ht_y;
+        matrix_multiply(Ht, y_vec, Ht_y);
+
+        Matrix sol;
+        matrix_multiply(HtH_inv, Ht_y, sol);
+
+        double vx = sol[0][0];
+        double vy = sol[1][0];
+        double vz = sol[2][0];
+
+        double cdtDot_gps = sol[3][0];
+        double cdtDot_bds = sol[4][0];
+
+        // 6. 验后残差
+        double sum_v2 = 0.0;
+
+        for (int ii = 0; ii < m; ++ii)
+        {
+            double pred = 0.0;
+
+            for (int j = 0; j < 5; ++j)
+            {
+                pred += H[ii][j] * sol[j][0];
+            }
+
+            double v = y_vec[ii][0] - pred;
+            sum_v2 += v * v;
+
+            int i = validIdx[ii];
+
+            cout << (sats[i].system == 0 ? "G" : "C")
+                << sats[i].prn
+                << " dop1=" << sats[i].doppler1
+                << " dop2=" << sats[i].doppler2
+                << " v_res=" << v
+                << " cn0=" << sats[i].cn0
+                << endl;
+        }
+
+        result.success = true;
+
+        result.vx = vx;
+        result.vy = vy;
+        result.vz = vz;
+        result.speed = sqrt(vx * vx + vy * vy + vz * vz);
+
+        result.cdtDot_gps = cdtDot_gps;
+        result.cdtDot_bds = cdtDot_bds;
+
+        result.dtDot_gps = cdtDot_gps / C_LIGHT;
+        result.dtDot_bds = cdtDot_bds / C_LIGHT;
+
+        result.used_sats = m;
+
+        if (m > 5)
+        {
+            result.sigma_v = sqrt(sum_v2 / (m - 5));
+        }
+        else
+        {
+            result.sigma_v = numeric_limits<double>::quiet_NaN();
+        }
+
+        result.vdop = sqrt(
+            HtH_inv[0][0] +
+            HtH_inv[1][1] +
+            HtH_inv[2][2]);
+
+        return true;
+    }
+
+};
+
+
+
 int main()
 {
-    SppSolver_BDS_IF solver;
+    SppSolver_BDS_GPS_IF solver;
     EpochReader_double reader;
+    Spp_V solver_v;
     if (!reader.open("NovatelOEM20211114-01.log"))
     {
         return 1;
     }
     EpochData epoch;
     Sppresult result;
+    SppVResult vResult;
     int epochCount = 0;
     while (reader.getNextEpoch(epoch)) 
     {
         epochCount++;
         unordered_map<int, BdsEphemeris> bds=reader.getlatestBds();
-        bool ok = solver.solve(epoch, bds, result);
+        unordered_map<int, GpsEphemeris> gps = reader.getlatestGps();
+        bool ok = solver.solve(epoch, bds, gps, result);
 
+        if (!ok)
+        {
+            cout << "Epoch " << epochCount << " SPP position failed." << endl;
+            continue;
+        }
         // 打印结果
-        std::cout << std::fixed << std::setprecision(3);
+        /*std::cout << std::fixed << std::setprecision(3);
         if (ok) {
             std::cout << "Epoch " << std::setw(5) << epochCount
                 << "  Week:" << epoch.week
@@ -1121,15 +2143,45 @@ int main()
                 << "  |  BLH B:" << std::setw(10) << std::setprecision(7) << result.B
                 << "  L:" << std::setw(11) << result.L
                 << "  H:" << std::setw(8) << std::setprecision(4) << result.H
-                << "  |  dt:" << std::setw(9) << std::setprecision(6) << result.dt
+                << "  |  dt:" << std::setw(9) << std::setprecision(6) << result.dt_gps
                 << "  sats:" << result.used_sats
                 << "  PDOP:" << std::setw(6) << std::setprecision(2) << result.pdop
                 << "  sigma0:" << std::setw(6) << result.sigma0
                 << std::endl;
+        }*/
+        bool okV = solver_v.solve(
+            epoch,
+            result.x,
+            result.y,
+            result.z,
+            result.dt_gps,
+            result.dt_bds,
+            gps,
+            bds,
+            vResult);
+
+        if (okV)
+        {
+            cout << "SPP velocity solution:" << endl;
+            cout << "vx = " << vResult.vx << " m/s" << endl;
+            cout << "vy = " << vResult.vy << " m/s" << endl;
+            cout << "vz = " << vResult.vz << " m/s" << endl;
+            cout << "speed = " << vResult.speed << " m/s" << endl;
+            cout << "used sats = " << vResult.used_sats << endl;
+            cout << "sigma_v = " << vResult.sigma_v << " m/s" << endl;
         }
+        else
+        {
+            cout << "SPP velocity solution failed." << endl;
+        }
+
+
+        
+  
+
         if (epochCount >= 200)break;
     }
-
+    
 
     return 0;
 }

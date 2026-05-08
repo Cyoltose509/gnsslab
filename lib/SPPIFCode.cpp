@@ -156,9 +156,10 @@ void SPPIFCode::computeIF(ObsData &obsData) const {
 map<SatID, PVT> SPPIFCode::earthRotation() {
     map<SatID, PVT> satPVTRecTimeMap;
     for (auto const &[sat, pvt]: satPVTTransTime) {
-        // Use the pseudorange to estimate signal travel time for Sagnac (following lsq.cpp)
         double tau = (pvt.p - xyz).norm() / C_MPS;
-        const double wt = OMEGA_EARTH * tau;
+
+        double omega = sat.getFrame().omega;
+        const double wt = omega * tau;
         const double cos_wt = cos(wt);
         const double sin_wt = sin(wt);
         Matrix3d rot;

@@ -134,13 +134,15 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
         if (sysInt == 0) {
             // GPS
             sys = 'G';
-            if (sigType == 0) freqIdx = 1; // L1C/A
-            else if (sigType == 9) freqIdx = 2; // L2P(Y)
+            // L1: C/A(0), L2: P(5), P(Y)(9), L2C(17)
+            if (sigType == 0||sigType == 16) freqIdx = 1;
+            else if (sigType == 1||sigType == 5||sigType == 9||sigType == 17) freqIdx = 2;
         } else if (sysInt == 4) {
             // BDS
             sys = 'C';
-            if (sigType == 0 || sigType == 4) freqIdx = 2; // B1I (Reference uses freq2 as B1I)
-            else if (sigType == 2 || sigType == 6) freqIdx = 6; // B3I
+            // B1I: 0(D1) / 4(D2)    B2I: 1(D1) / 5(D2)
+            if (sigType == 0 || sigType == 4) freqIdx = 2;
+            else if (sigType == 2 || sigType == 6) freqIdx = 6;
         } else {
             off += 44;
             continue;

@@ -64,6 +64,16 @@ struct SatID {
                 << std::setw(2) << std::setfill('0') << id;
         return sstream.str();
     }
+    [[nodiscard]] const ReferenceFrame& getFrame() const {
+        switch (system) {
+            case 'G':
+                return Frame::GPS;
+            case 'C':
+                return Frame::WGS84;
+            default:
+                return Frame::WGS84;
+        }
+    }
 };
 
 typedef std::set<SatID> SatIDSet;

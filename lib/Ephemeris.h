@@ -47,7 +47,7 @@ struct Ephemeris {
         WeekSecond2CommonTime(getWeekSecond(), ct);
         return ct;
     }
-    string name() const {
+    [[nodiscard]] string name() const {
         string s;
         s.reserve(4);
         s += type;
@@ -78,7 +78,7 @@ struct GPSEphem : Ephemeris {
 };
 
 struct BDSEphem : Ephemeris {
-    BDSEphem() : Ephemeris(Frame::WGS84) {
+    BDSEphem() : Ephemeris(Frame::CGCS2000) {
         type = 'C';
         timeSystem = TimeSystem::BDT;
     }
