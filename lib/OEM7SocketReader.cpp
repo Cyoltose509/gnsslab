@@ -1,6 +1,6 @@
 #include "OEM7SocketReader.h"
 
-bool OEM7SocketReader::connect(const std::string& ip, unsigned short port) {
+bool OEM7SocketReader::connect(const std::string& ip, const unsigned short port) {
     buffer.clear();
     return socketClient.connect(ip, port);
 }
@@ -13,8 +13,7 @@ void OEM7SocketReader::close() {
 bool OEM7SocketReader::getNextMessage(std::vector<uint8_t>& message) {
     // 从网络接收数据到缓冲区
     unsigned char recvBuf[MAXRAWLEN];
-    int lenR = socketClient.receive(recvBuf, MAXRAWLEN - 1);
-    if (lenR > 0) {
+    if (const int lenR = socketClient.receive(recvBuf, MAXRAWLEN - 1); lenR > 0) {
         buffer.insert(buffer.end(), recvBuf, recvBuf + lenR);
     }
 

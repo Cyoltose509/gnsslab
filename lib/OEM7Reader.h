@@ -4,12 +4,13 @@
 #include <map>
 #include "GnssStruct.h"
 #include "Ephemeris.h"
+#include "CoordConvert.h"
 
 class OEM7Reader {
 public:
     OEM7Reader() = default;
 
-    virtual ~OEM7Reader() { close(); }
+    virtual ~OEM7Reader() { OEM7Reader::close(); }
 
     bool open(const std::string &filename);
 
@@ -19,6 +20,9 @@ public:
 
     std::map<int, GPSEphem> latestGps;
     std::map<int, BDSEphem> latestBds;
+
+    // 获取解析出的天线位置
+    [[nodiscard]] const Eigen::Vector3d& getAntennaPosition() const { return antennaPosition; }
 
 protected:
     struct Header {
@@ -32,6 +36,7 @@ protected:
     std::vector<unsigned char> buffer;
     size_t bufferIndex = 0;
     ObsData currentObs;
+    Eigen::Vector3d antennaPosition{0, 0, 0};  // 默认值
 
     virtual bool getNextMessage(std::vector<uint8_t> &message);
 
@@ -42,6 +47,8 @@ protected:
     bool parseGpsEphem(const std::vector<uint8_t> &message);
 
     bool parseBdsEphem(const std::vector<uint8_t> &message);
+
+    bool parseBestPos(const std::vector<uint8_t> &message);
 
     static bool crcExam(const std::vector<uint8_t> &message);
 

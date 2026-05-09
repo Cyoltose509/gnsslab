@@ -48,8 +48,8 @@ add_library(gnss SHARED ${DIR_LIB_SRCS})
 
 # 创建可执行程序
 
-add_executable(lsq main/lsq.cpp)
-target_link_libraries(lsq gnss)
+add_executable(spp_file main/spp_file.cpp)
+target_link_libraries(spp_file gnss)
 
 
 # 实时网络定位程序

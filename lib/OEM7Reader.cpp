@@ -1,4 +1,4 @@
-#include <iostream>
+
 #include <fstream>
 #include <vector>
 #include <iomanip>
@@ -11,6 +11,7 @@
 #define ID_RANGE        43
 #define ID_GPSEPHEM     7
 #define ID_BDSEPHEMRIS  1696
+#define ID_BESTPOS      42
 #define POLYCRC32 0xEDB88320u
 
 bool OEM7Reader::open(const std::string &filename) {
@@ -100,6 +101,8 @@ bool OEM7Reader::parseMessage(const std::vector<uint8_t> &message) {
             return parseGpsEphem(message);
         case ID_BDSEPHEMRIS:
             return parseBdsEphem(message);
+        case ID_BESTPOS:
+            return parseBestPos(message);
         default:
             break;
     }
@@ -284,6 +287,35 @@ bool OEM7Reader::parseBdsEphem(const std::vector<uint8_t> &message) {
     return true;
 }
 
+bool OEM7Reader::parseBestPos(const std::vector<uint8_t> &message) {
+    int off = currentHeader.hLen;
+
+    if (message.size() < off + 20) {
+        return false;
+    }
+
+    const int solStatus = static_cast<int>(U4(&message[off]));
+    off += 4;
+    //const int posType = static_cast<int>(U4(&message[off]));
+    off += 4;
+
+    // Novatel 使用小端序存储 double
+    const double lat_deg = R8(&message[off]);
+    off += 8;
+    const double lon_deg = R8(&message[off]);
+    off += 8;
+    const double hgt = R8(&message[off]);
+
+    if (solStatus == 0 && lat_deg > 0 && lat_deg < 90 && lon_deg > 0 && lon_deg < 180) {
+        const double lat_rad = lat_deg * DEG_TO_RAD;
+        const double lon_rad = lon_deg * DEG_TO_RAD;
+        antennaPosition = BLHtoXYZ({lat_rad, lon_rad, hgt}, Frame::WGS84);
+        return true;
+    }
+
+    return false;
+}
+
 bool OEM7Reader::getNextEpoch(ObsData &obs) {
     while (true) {
         std::vector<uint8_t> message;
@@ -291,6 +323,7 @@ bool OEM7Reader::getNextEpoch(ObsData &obs) {
         if (parseMessage(message)) {
             if (!currentObs.satTypeValueData.empty()) {
                 obs = currentObs;
+                obs.antennaPosition = antennaPosition;  // 设置天线位置
                 currentObs.satTypeValueData.clear(); // 交付后清空，防止重复触发
                 return true;
             }

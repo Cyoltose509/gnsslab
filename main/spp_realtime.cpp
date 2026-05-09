@@ -43,6 +43,7 @@ int main() {
     while (true) {
         try {
             if (reader.getNextEpoch(obs)) {
+
                 // 更新星历
                 std::map<SatID, Ephemeris *> ephMap;
                 for (const auto &[prn, eph]: reader.latestGps) {
@@ -53,7 +54,6 @@ int main() {
                 }
                 spp.setEphemeris(ephMap);
                 spp.solve(obs);
-
 
                 auto &result = spp.result;
                 ENU enu = XYZtoENU(result.xyz, REF_ECEF);

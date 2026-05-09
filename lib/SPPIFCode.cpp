@@ -37,10 +37,12 @@ void SPPIFCode::solve(ObsData &obsData) {
         };
         const double d_cdt = posSolver.getSolution(Parameter::cdt);
         const double d_cdt2 = posSolver.getSolution(Parameter::cdt2);
+        // PDOP: 直接从协方差矩阵计算（已经是米单位）
         result.pdop = sqrt(posSolver.covMatrix(0, 0) +
                            posSolver.covMatrix(1, 1) +
                            posSolver.covMatrix(2, 2));
-        result.sigmaP = result.pdop * posSolver.sigma0;
+        // SigmaP: PDOP * sigma0 * sigIFCode (sigma0 是无量纲比例因子，需要乘以先验 sigma)
+        result.sigmaP = result.pdop * posSolver.sigma0 * sigIFCode;
 
         // 解算速度
         velSolver.solve(velEquations);
@@ -50,9 +52,10 @@ void SPPIFCode::solve(ObsData &obsData) {
             velSolver.getSolution(Parameter::dVZ)
         };
         const double dcdt_dot = velSolver.getSolution(Parameter::cdtr_dot);
+        // SigmaV: 使用协方差矩阵对角线元素的平方根，乘以 sigIFCode 作为先验 sigma
         result.sigmaV = sqrt(velSolver.covMatrix(0, 0) +
                              velSolver.covMatrix(1, 1) +
-                             velSolver.covMatrix(2, 2)) * velSolver.sigma0;
+                             velSolver.covMatrix(2, 2)) * velSolver.sigma0 * sigIFCode;
         xyz += dxyz;
         rClockBias += d_cdt;
         rClockBiasBDS += d_cdt2;
@@ -132,6 +135,7 @@ void SPPIFCode::convertObsType(ObsData &obsData) {
 void SPPIFCode::computeIF(ObsData &obsData) const {
     SatIDSet satRejectedSet;
     for (auto &[sat, codeList]: obsData.satTypeValueData) {
+        // cout << sat<< ' '<< codeList << endl;
         if (const char sys = sat.system; ifCodeTypes.count(sys)) {
             const auto [code1, code2] = ifCodeTypes.at(sys);
             const double f1 = getFreq(sys, code1);
@@ -156,9 +160,9 @@ void SPPIFCode::computeIF(ObsData &obsData) const {
 map<SatID, PVT> SPPIFCode::earthRotation() {
     map<SatID, PVT> satPVTRecTimeMap;
     for (auto const &[sat, pvt]: satPVTTransTime) {
-        double tau = (pvt.p - xyz).norm() / C_MPS;
+        const double tau = (pvt.p - xyz).norm() / C_MPS;
 
-        double omega = sat.getFrame().omega;
+        const double omega = sat.getFrame().omega;
         const double wt = omega * tau;
         const double cos_wt = cos(wt);
         const double sin_wt = sin(wt);

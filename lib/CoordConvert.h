@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CoordStruct.h"
-#include "Exception.h"
 #include <Eigen/Eigen>
 
 // 坐标转换函数
@@ -55,14 +54,35 @@ inline BLH XYZtoBLH(const XYZ &xyz, const ReferenceFrame &frame) {
     return {B1, L, H};
 }
 
+inline XYZ BLHtoXYZ(const BLH &blh, const ReferenceFrame &frame) {
+    const double B = blh[0];  // 纬度 (rad)
+    const double L = blh[1];  // 经度 (rad)
+    const double H = blh[2];  // 高程 (m)
 
-inline Matrix3d computeRotationMatrix(const double B, const double L) {
+    const double a = frame.a;
+    const double e2 = frame.e2;
+
+    const double sinB = sin(B);
+    const double cosB = cos(B);
+    const double sinL = sin(L);
+    const double cosL = cos(L);
+
+    const double N = a / sqrt(1 - e2 * sinB * sinB);
+
+    double x = (N + H) * cosB * cosL;
+    double y = (N + H) * cosB * sinL;
+    double z = (N * (1 - e2) + H) * sinB;
+
+    return {x, y, z};
+}
+
+inline Eigen::Matrix3d computeRotationMatrix(const double B, const double L) {
     const double sinB = std::sin(B);
     const double cosB = std::cos(B);
     const double sinL = std::sin(L);
     const double cosL = std::cos(L);
 
-    Matrix3d R;
+    Eigen::Matrix3d R;
     R << -sinL, cosL, 0.0,
             -sinB * cosL, -sinB * sinL, cosB,
             cosB * cosL, cosB * sinL, sinB;
@@ -73,7 +93,7 @@ inline Matrix3d computeRotationMatrix(const double B, const double L) {
 inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const ReferenceFrame &frame = Frame::WGS84) {
     const auto diffXYZ = xyz - refXYZ;
     const auto refBLH = XYZtoBLH(refXYZ, frame);
-    const Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
+    const Eigen::Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
     return {R * diffXYZ};
 }
 
