@@ -97,8 +97,6 @@ int main() {
                         << endl;
                 epochCount++;
 
-                // 更新初始位置用于下一历元
-                spp.xyz = spp.result.xyz;
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
