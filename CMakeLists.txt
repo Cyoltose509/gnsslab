@@ -11,6 +11,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_subdirectory(thirdparty)
 add_subdirectory(lib)
+add_subdirectory(main)
 
 add_executable(spp_file test/spp_file.cpp)
 target_link_libraries(spp_file gnss)
