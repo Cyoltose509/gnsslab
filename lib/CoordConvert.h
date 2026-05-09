@@ -70,14 +70,14 @@ inline Matrix3d computeRotationMatrix(const double B, const double L) {
     return R;
 }
 
-inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const ReferenceFrame &frame) {
+inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const ReferenceFrame &frame = Frame::WGS84) {
     const auto diffXYZ = xyz - refXYZ;
     const auto refBLH = XYZtoBLH(refXYZ, frame);
     const Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
     return {R * diffXYZ};
 }
 
-inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &frame) {
+inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &frame = Frame::WGS84) {
     const auto refBLH = XYZtoBLH(refXYZ, frame);
     auto R = computeRotationMatrix(refBLH.B(), refBLH.L());
     const auto diffXYZ = R.transpose() * enu;

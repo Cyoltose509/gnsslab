@@ -320,7 +320,13 @@ void SPPIFCode::linearize(ObsData &obsData) {
             ed_vel.varCoeffData[dvz] = -los[2];
             ed_vel.varCoeffData[dcdt] = 1.0;
 
-            ed_vel.weight = weight / 4.0;
+            // 速度观测值加权优化：添加仰角加权 + 多普勒噪声衰减
+            double velWeight = weight / 4.0;
+            if (elev < PI / 6) {
+                velWeight *= std::pow(std::sin(elev), 2);
+            }
+            velWeight *= 0.1;  // 多普勒观测噪声较大，额外衰减
+            ed_vel.weight = velWeight;
 
             velEquations.obsEquData[eid_vel] = ed_vel;
             velEquations.varSet.insert(dvx);

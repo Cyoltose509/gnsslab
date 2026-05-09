@@ -37,17 +37,21 @@ set(DIR_LIB_SRCS
         lib/Ephemeris.h
         lib/SPPIFCode.h
         lib/SPPIFCode.cpp
+        lib/SocketClient.h
+        lib/SocketClient.cpp
+        lib/OEM7SocketReader.h
+        lib/OEM7SocketReader.cpp
 )
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 # 根据源文件创建库文件
 add_library(gnss SHARED ${DIR_LIB_SRCS})
 
 # 创建可执行程序
-add_executable(ome7_read main/ome7_read.cpp)
-target_link_libraries(ome7_read gnss)
 
-add_executable(lsq2 main/lsq2.cpp)
-target_link_libraries(lsq2 gnss)
+add_executable(lsq main/lsq.cpp)
+target_link_libraries(lsq gnss)
 
-add_executable(spp_spv main/spp_spv.cpp)
-target_link_libraries(spp_spv gnss)
+
+# 实时网络定位程序
+add_executable(spp_realtime main/spp_realtime.cpp)
+target_link_libraries(spp_realtime gnss)

@@ -60,7 +60,7 @@ public:
 protected:
     double cutOffElev = PI * 0.0555556;
     bool isRover = true;
-    double sigIFCode = 1;
+    double sigIFCode = 0.3;
 
     double rClockBias{}; // 接收机钟差
     double rClockDrift{}; //接收机钟漂

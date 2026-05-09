@@ -9,18 +9,18 @@ class OEM7Reader {
 public:
     OEM7Reader() = default;
 
-    ~OEM7Reader() { close(); }
+    virtual ~OEM7Reader() { close(); }
 
     bool open(const std::string &filename);
 
-    void close();
+    virtual void close();
 
     bool getNextEpoch(ObsData &obs);
 
     std::map<int, GPSEphem> latestGps;
     std::map<int, BDSEphem> latestBds;
 
-private:
+protected:
     struct Header {
         int type;
         int week;
@@ -33,7 +33,7 @@ private:
     size_t bufferIndex = 0;
     ObsData currentObs;
 
-    bool getNextMessage(std::vector<uint8_t> &message);
+    virtual bool getNextMessage(std::vector<uint8_t> &message);
 
     bool parseMessage(const std::vector<uint8_t> &message);
 
