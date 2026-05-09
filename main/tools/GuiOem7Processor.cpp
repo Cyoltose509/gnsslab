@@ -20,7 +20,7 @@ namespace GuiOem7Processor {
     // ================================================================
     // 后台线程：读取 OEM7 文件并执行 SPP 定位
     // ================================================================
-    void SolveThread(std::shared_ptr<SppTask> task) {
+    void SolveThread(const std::shared_ptr<SppTask>& task) {
         try {
             OEM7Reader oem7;
             if (!oem7.open(task->filePath)) {
@@ -50,65 +50,56 @@ namespace GuiOem7Processor {
                 spp.setEphemeris(ephMap);
                 spp.preprocess(obs);
 
-                // 记录观测卫星数据（solve 前采集，因为 solve 会修改 obs）
-                SppEpochObs epochObs;
-                epochObs.week = obs.weekSecond.week;
-                epochObs.sow = obs.weekSecond.sow;
-
+                SppEpochData data;
+                data.week = obs.weekSecond.week;
+                data.sow = obs.weekSecond.sow;
 
                 for (auto &[sat, typeMap]: obs.satTypeValueData) {
-                    epochObs.satIds.push_back(sat);
+                    data.satIds.push_back(sat);
                     auto it = typeMap.find("CC12");
                     if (it == typeMap.end()) it = typeMap.find("CC26");
-                    epochObs.pranges.push_back(it != typeMap.end() ? it->second : 0.0);
-                    epochObs.elevations.push_back(0.0);
-                    epochObs.azimuths.push_back(0.0);
+                    data.pranges.push_back(it != typeMap.end() ? it->second : 0.0);
+                    data.elevations.push_back(0.0);
+                    data.azimuths.push_back(0.0);
                 }
-                epochObs.numSats = (int)epochObs.satIds.size();
+                data.numObs = (int)data.satIds.size();
 
                 try {
                     spp.solve(obs);
-
                     auto &result = spp.result;
 
-                    // 填充卫星高度角和方位角（solve 后才有）
-                    for (int i = 0; i < (int)epochObs.satIds.size(); i++) {
-                        auto it = spp.getElevData().find(epochObs.satIds[i]);
+                    data.solved = true;
+                    data.xyz = result.xyz;
+                    data.blh = result.blh;
+                    data.vel = result.vel;
+                    data.pdop = result.pdop;
+                    data.sigmaP = result.sigmaP;
+                    data.sigmaV = result.sigmaV;
+                    data.numSatsResult = result.numSats;
+
+                    // 填充卫星高度角和方位角
+                    for (int i = 0; i < (int)data.satIds.size(); i++) {
+                        auto it = spp.getElevData().find(data.satIds[i]);
                         if (it != spp.getElevData().end())
-                            epochObs.elevations[i] = it->second;
-                        auto it2 = spp.getAzimData().find(epochObs.satIds[i]);
+                            data.elevations[i] = it->second;
+                        auto it2 = spp.getAzimData().find(data.satIds[i]);
                         if (it2 != spp.getAzimData().end())
-                            epochObs.azimuths[i] = it2->second;
+                            data.azimuths[i] = it2->second;
                     }
-
-                    SppEpochResult er;
-                    er.week = obs.weekSecond.week;
-                    er.sow = obs.weekSecond.sow;
-                    er.xyz = result.xyz;
-                    er.blh = result.blh;
-                    er.vel = result.vel;
-                    er.pdop = result.pdop;
-                    er.sigmaP = result.sigmaP;
-                    er.sigmaV = result.sigmaV;
-                    er.numSats = result.numSats;
-
-                    {
-                        std::lock_guard<std::mutex> lock(task->mutex);
-                        task->results.push_back(er);
-                        task->observations.push_back(epochObs);
-                    }
-
-                    // 更新时间范围（原子写入，单线程所以不需要锁）
-                    if (task->results.size() == 1) {
-                        task->weekFirst = er.week;
-                        task->sowFirst = er.sow;
-                    }
-                    task->weekLast = er.week;
-                    task->sowLast = er.sow;
-
                 } catch (...) {
+                    data.solved = false;
+                }
+
+                {
                     std::lock_guard<std::mutex> lock(task->mutex);
-                    task->observations.push_back(epochObs);
+                    if (task->epochs.empty()) {
+                        task->weekFirst = data.week;
+                        task->sowFirst = data.sow;
+                        task->selectedEpoch = 0;
+                    }
+                    task->weekLast = data.week;
+                    task->sowLast = data.sow;
+                    task->epochs.push_back(data);
                 }
             }
         } catch (const std::exception &e) {
@@ -121,121 +112,94 @@ namespace GuiOem7Processor {
     }
 
     // ================================================================
-    // 渲染任务内容（左右分栏）
+    // 渲染任务内容（主布局使用 Table 以支持拖拽分栏）
     // ================================================================
-    void RenderTask(std::shared_ptr<SppTask> task) {
-        // 读取共享数据
-        int resultCount = 0, obsCount = 0;
-        int selectedIdx = task->selectedEpoch;
+    void RenderTask(const std::shared_ptr<SppTask>& task) {
+        int epochCount = 0;
+        int selectedIdx = -1;
         bool isLoading = task->loading.load();
         bool isDone = task->done.load();
         bool hasError = task->hasError;
 
         {
             std::lock_guard<std::mutex> lock(task->mutex);
-            resultCount = (int)task->results.size();
-            obsCount = (int)task->observations.size();
-            if (selectedIdx >= resultCount) selectedIdx = resultCount - 1;
-            if (selectedIdx < 0) selectedIdx = 0;
+            epochCount = (int)task->epochs.size();
+            if (task->selectedEpoch >= epochCount) task->selectedEpoch = epochCount - 1;
+            selectedIdx = task->selectedEpoch;
         }
 
-        // --- 左右分栏 ---
-        float panelWidth = ImGui::GetContentRegionAvail().x * 0.55f;
-
-        // ===== 左面板：卫星列表 =====
-        ImGui::BeginChild("##sat_panel", ImVec2(panelWidth, 0), true);
-
+        // --- 顶部状态与导航 ---
         if (isLoading) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "正在解析并定位...");
-            ImGui::SameLine();
-            float t = (float)ImGui::GetTime();
-            const char *spinChars = "|/-\\";
-            int spinIdx = (int)(t * 4) % 4;
-            ImGui::Text("%c", spinChars[spinIdx]);
-            ImGui::SameLine();
-            ImGui::Text("已处理 %d 个历元", resultCount);
-        } else if (hasError && resultCount == 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "正在处理: 已解析 %d 个历元...", epochCount);
+        } else if (hasError && epochCount == 0) {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "错误: %s", task->errorMsg.c_str());
         }
 
-        if (resultCount > 0 && selectedIdx >= 0 && selectedIdx < resultCount) {
-            SppEpochResult curResult;
-            SppEpochObs curObs;
-            bool hasObs = false;
-
-            {
-                std::lock_guard<std::mutex> lock(task->mutex);
-                curResult = task->results[selectedIdx];
-                if (selectedIdx < obsCount) {
-                    curObs = task->observations[selectedIdx];
-                    hasObs = true;
-                }
-            }
-
-            ImGui::Separator();
-            ImGui::Text("历元 %d / %d", selectedIdx + 1, resultCount);
-            ImGui::SameLine();
-            ImGui::TextDisabled("Wk %u  SOW %.3f", curResult.week, curResult.sow);
-            ImGui::Separator();
-
-            // 历元导航
-            if (ImGui::Button("<<")) { task->selectedEpoch = 0; }
-            ImGui::SameLine();
-            if (ImGui::Button("< ")) {
-                if (task->selectedEpoch > 0) task->selectedEpoch--;
-            }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.0f);
-            int ep = task->selectedEpoch + 1;
-            if (ImGui::SliderInt("##epoch", &ep, 1, resultCount)) {
+        if (epochCount > 0) {
+            ImGui::PushItemWidth(200.0f);
+            int ep = selectedIdx + 1;
+            if (ImGui::SliderInt("历元导航", &ep, 1, epochCount)) {
                 task->selectedEpoch = ep - 1;
             }
+            ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button(" >")) {
-                if (task->selectedEpoch < resultCount - 1) task->selectedEpoch++;
+            {
+                std::lock_guard<std::mutex> lock(task->mutex);
+                auto &cur = task->epochs[selectedIdx];
+                ImGui::TextDisabled("| Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? "已定位" : "未定位");
             }
-            ImGui::SameLine();
-            if (ImGui::Button(">>")) { task->selectedEpoch = resultCount - 1; }
+        }
 
-            ImGui::Spacing();
-            ImGui::SeparatorText("卫星列表");
+        ImGui::Separator();
 
-            if (hasObs && !curObs.satIds.empty()) {
-                if (ImGui::BeginTable("##sats", 6,
-                    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                    ImGuiTableFlags_SizingStretchSame))
+        // --- 主分栏布局 (使用 Table 实现可拖拽分栏) ---
+        if (ImGui::BeginTable("##main_split", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("LeftPanel", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+            ImGui::TableSetupColumn("RightPanel", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+            
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, ImGui::GetContentRegionAvail().y - 40.0f);
+            
+            // ===== 左面板：卫星列表 =====
+            ImGui::TableSetColumnIndex(0);
+            ImGui::BeginChild("##sat_list_child");
+            if (epochCount > 0 && selectedIdx >= 0) {
+                SppEpochData curData;
                 {
-                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                    ImGui::TableSetupColumn("系统");
-                    ImGui::TableSetupColumn("高度角(deg)");
-                    ImGui::TableSetupColumn("方位角(deg)");
-                    ImGui::TableSetupColumn("IF伪距(m)");
-                    ImGui::TableSetupColumn("信号");
+                    std::lock_guard<std::mutex> lock(task->mutex);
+                    curData = task->epochs[selectedIdx];
+                }
+
+                ImGui::SeparatorText("卫星观测数据");
+                if (ImGui::BeginTable("##sats", 6, 
+                    ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) 
+                {
+                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+                    ImGui::TableSetupColumn("系统", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("高度角(°)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("IF伪距(m)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("信号", ImGuiTableColumnFlags_WidthFixed, 50.0f);
                     ImGui::TableHeadersRow();
 
-                    for (int i = 0; i < (int)curObs.satIds.size(); i++) {
+                    for (int i = 0; i < (int)curData.satIds.size(); i++) {
                         ImGui::TableNextRow();
-
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::Text("%02d", curObs.satIds[i].id);
-
+                        ImGui::Text("%c%02d", curData.satIds[i].system, curData.satIds[i].id);
+                        
                         ImGui::TableSetColumnIndex(1);
-                        const char *sysName = "?";
-                        if (curObs.satIds[i].system == 'G') sysName = "GPS";
-                        else if (curObs.satIds[i].system == 'C') sysName = "BDS";
-                        ImGui::Text("%s", sysName);
-
+                        ImGui::Text("%s", curData.satIds[i].system == 'G' ? "GPS" : (curData.satIds[i].system == 'C' ? "BDS" : "Other"));
+                        
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::Text("%.2f", curObs.elevations[i] * RAD_TO_DEG);
-
+                        ImGui::Text("%.2f", curData.elevations[i] * RAD_TO_DEG);
+                        
                         ImGui::TableSetColumnIndex(3);
-                        ImGui::Text("%.2f", curObs.azimuths[i] * RAD_TO_DEG);
-
+                        ImGui::Text("%.2f", curData.azimuths[i] * RAD_TO_DEG);
+                        
                         ImGui::TableSetColumnIndex(4);
-                        ImGui::Text("%.3f", curObs.pranges[i]);
-
+                        ImGui::Text("%.3f", curData.pranges[i]);
+                        
                         ImGui::TableSetColumnIndex(5);
-                        double elev = curObs.elevations[i];
+                        double elev = curData.elevations[i];
                         if (elev > 60.0 * DEG_TO_RAD) {
                             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "优");
                         } else if (elev > 30.0 * DEG_TO_RAD) {
@@ -246,97 +210,71 @@ namespace GuiOem7Processor {
                     }
                     ImGui::EndTable();
                 }
-            } else {
-                ImGui::TextDisabled("无卫星数据");
             }
-        } else if (!isLoading && !hasError) {
-            ImGui::TextDisabled("暂无解算结果");
+            ImGui::EndChild();
+
+            // ===== 右面板：解算结果 =====
+            ImGui::TableSetColumnIndex(1);
+            ImGui::BeginChild("##res_panel_child");
+            if (epochCount > 0 && selectedIdx >= 0) {
+                SppEpochData curData;
+                {
+                    std::lock_guard lock(task->mutex);
+                    curData = task->epochs[selectedIdx];
+                }
+
+                if (curData.solved) {
+                    ImGui::SeparatorText("位置 (WGS84)");
+                    ImGui::Text("  X: %.4f m", curData.xyz[0]);
+                    ImGui::Text("  Y: %.4f m", curData.xyz[1]);
+                    ImGui::Text("  Z: %.4f m", curData.xyz[2]);
+                    ImGui::Spacing();
+                    ImGui::Text("  B: %.9f °", curData.blh[0] * RAD_TO_DEG);
+                    ImGui::Text("  L: %.9f °", curData.blh[1] * RAD_TO_DEG);
+                    ImGui::Text("  H: %.4f m", curData.blh[2]);
+
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("速度 & 精度");
+                    ImGui::Text("  Vx: %.4f m/s", curData.vel[0]);
+                    ImGui::Text("  Vy: %.4f m/s", curData.vel[1]);
+                    ImGui::Text("  Vz: %.4f m/s", curData.vel[2]);
+                    ImGui::Spacing();
+                    ImGui::Text("  SigmaP: %.3f m", curData.sigmaP);
+                    ImGui::Text("  SigmaV: %.3f m/s", curData.sigmaV);
+                    ImGui::Text("  PDOP:   %.2f", curData.pdop);
+                    ImGui::Text("  卫星数: %d", curData.numSatsResult);
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "该历元未获得定位解");
+                    ImGui::TextWrapped("可能原因: 可用卫星不足或观测质量过差。");
+                }
+
+                ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40.0f);
+                if (isDone) {
+                    if (ImGui::Button("导出成果 (CSV)", ImVec2(-FLT_MIN, 30.0f))) {
+                        HWND hwnd = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
+                        if (!hwnd) hwnd = GetActiveWindow();
+                        ExportCsv(task, hwnd);
+                    }
+                } else {
+                    ImGui::Button("解析中...", ImVec2(-FLT_MIN, 30.0f));
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::EndTable();
         }
 
         // --- 底部时间轴 ---
-        ImGui::Spacing();
-        ImGui::Separator();
-        if (resultCount > 0) {
-            ImGui::Text("时间范围: Wk %u  SOW %.3f ~ %.3f  (共 %d 历元)",
-                task->weekFirst, task->sowFirst, task->sowLast, resultCount);
-
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            float normalized = (resultCount > 1)
-                ? (float)(task->selectedEpoch) / (float)(resultCount - 1)
-                : 0.0f;
-            if (ImGui::SliderFloat("##timeline", &normalized, 0.0f, 1.0f, "")) {
-                task->selectedEpoch = (int)(normalized * (resultCount - 1));
-            }
-        }
-
-        ImGui::EndChild(); // sat_panel
-
-        ImGui::SameLine();
-
-        // ===== 右面板：解算结果 =====
-        ImGui::BeginChild("##result_panel", ImVec2(0, 0), true);
-
-        if (resultCount > 0 && selectedIdx >= 0 && selectedIdx < resultCount) {
-            SppEpochResult curResult;
-            {
-                std::lock_guard<std::mutex> lock(task->mutex);
-                curResult = task->results[selectedIdx];
-            }
-
-            ImGui::SeparatorText("ECEF 坐标 (m)");
-            ImGui::Text("  X:  %.4f", curResult.xyz[0]);
-            ImGui::Text("  Y:  %.4f", curResult.xyz[1]);
-            ImGui::Text("  Z:  %.4f", curResult.xyz[2]);
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("大地坐标");
-            ImGui::Text("  B:  %.9f", curResult.blh[0] * RAD_TO_DEG);
-            ImGui::Text("  L:  %.9f", curResult.blh[1] * RAD_TO_DEG);
-            ImGui::Text("  H:  %.4f", curResult.blh[2]);
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("速度 (m/s)");
-            ImGui::Text("  VX: %.4f", curResult.vel[0]);
-            ImGui::Text("  VY: %.4f", curResult.vel[1]);
-            ImGui::Text("  VZ: %.4f", curResult.vel[2]);
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("精度指标");
-            ImGui::Text("  SigmaP: %.4f m", curResult.sigmaP);
-            ImGui::Text("  SigmaV: %.4f m/s", curResult.sigmaV);
-            ImGui::Text("  PDOP:    %.2f", curResult.pdop);
-            ImGui::Text("  卫星数:  %d", curResult.numSats);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-
-            // 导出按钮
-            if (isDone) {
-                if (ImGui::Button("导出 CSV", ImVec2(120, 30))) {
-                    HWND hwnd = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
-                    if (!hwnd) hwnd = GetActiveWindow();
-                    ExportCsv(task, hwnd);
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("共 %d 个历元", resultCount);
-            } else {
-                ImGui::TextDisabled("解析完成后可导出...");
-            }
-        } else {
-            ImGui::TextDisabled("等待解算结果...");
-        }
-
-        // 加载指示器（右下角）
-        if (isLoading) {
-            ImVec2 windowSize = ImGui::GetWindowSize();
-            float t = (float)ImGui::GetTime();
-            const char *spinChars = "|/-\\";
-            int spinIdx = (int)(t * 4) % 4;
-            ImGui::SetCursorPos(ImVec2(windowSize.x - 40, windowSize.y - 30));
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "%c", spinChars[spinIdx]);
-        }
-
-        ImGui::EndChild(); // result_panel
+        // ImGui::Separator();
+        // if (epochCount > 0) {
+        //     float normalized = (epochCount > 1) ? (float)selectedIdx / (float)(epochCount - 1) : 0.0f;
+        //     ImGui::SetNextItemWidth(-FLT_MIN);
+        //     if (ImGui::SliderFloat("##timeline", &normalized, 0.0f, 1.0f, "")) {
+        //         task->selectedEpoch = (int)(normalized * (epochCount - 1) + 0.5f);
+        //     }
+        //     if (ImGui::IsItemHovered())
+        //         ImGui::SetTooltip("拖动快速切换历元");
+        // }
     }
 
     // ================================================================
@@ -389,22 +327,29 @@ namespace GuiOem7Processor {
         std::ofstream out(filename);
         if (!out.is_open()) return;
 
-        out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,B/deg,L/deg,H/m,"
+        out << "Wk,SOW,Solved,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,B/deg,L/deg,H/m,"
             << "VX/m,VY/m,VZ/m,PDOP,SigmaP,SigmaV,SatCount\n";
 
-        for (const auto &r: task->results) {
+        for (const auto &r: task->epochs) {
             out << r.week << ','
                 << std::fixed << std::setprecision(3) << r.sow << ','
-                << std::setprecision(4)
-                << r.xyz[0] << ',' << r.xyz[1] << ',' << r.xyz[2] << ','
-                << std::setprecision(9)
-                << r.blh[0] * RAD_TO_DEG << ',' << r.blh[1] * RAD_TO_DEG << ','
-                << std::setprecision(4)
-                << r.blh[2] << ','
-                << r.vel[0] << ',' << r.vel[1] << ',' << r.vel[2] << ','
-                << std::setprecision(4)
-                << r.pdop << ',' << r.sigmaP << ',' << r.sigmaV << ','
-                << r.numSats << '\n';
+                << (r.solved ? "1" : "0") << ',';
+            
+            if (r.solved) {
+                out << std::setprecision(4)
+                    << r.xyz[0] << ',' << r.xyz[1] << ',' << r.xyz[2] << ','
+                    << std::setprecision(9)
+                    << r.blh[0] * RAD_TO_DEG << ',' << r.blh[1] * RAD_TO_DEG << ','
+                    << std::setprecision(4)
+                    << r.blh[2] << ','
+                    << r.vel[0] << ',' << r.vel[1] << ',' << r.vel[2] << ','
+                    << std::setprecision(4)
+                    << r.pdop << ',' << r.sigmaP << ',' << r.sigmaV << ','
+                    << r.numSatsResult;
+            } else {
+                out << ",,,,,,,,,,,,0";
+            }
+            out << '\n';
         }
 
         out.close();

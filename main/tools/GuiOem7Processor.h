@@ -19,26 +19,26 @@ typedef HWND__ *HWND;
 
 namespace GuiOem7Processor {
 
-    struct SppEpochResult {
+    struct SppEpochData {
         unsigned int week = 0;
         double sow = 0;
+        bool solved = false;
+
+        // Observation data
+        int numObs = 0;
+        std::vector<SatID> satIds;
+        std::vector<double> elevations;
+        std::vector<double> azimuths;
+        std::vector<double> pranges;
+
+        // Result data (if solved)
         Eigen::Vector3d xyz{0, 0, 0};
         Eigen::Vector3d blh{0, 0, 0};
         Eigen::Vector3d vel{0, 0, 0};
         double pdop = 0;
         double sigmaP = 0;
         double sigmaV = 0;
-        int numSats = 0;
-    };
-
-    struct SppEpochObs {
-        unsigned int week = 0;
-        double sow = 0;
-        int numSats = 0;
-        std::vector<SatID> satIds;
-        std::vector<double> elevations;
-        std::vector<double> azimuths;
-        std::vector<double> pranges;
+        int numSatsResult = 0;
     };
 
     struct SppTask {
@@ -51,13 +51,12 @@ namespace GuiOem7Processor {
         bool hasError = false;
         std::mutex mutex;
 
-        std::vector<SppEpochResult> results;
-        std::vector<SppEpochObs> observations;
+        std::vector<SppEpochData> epochs;
 
         unsigned int weekFirst = 0, weekLast = 0;
         double sowFirst = 0, sowLast = 0;
 
-        int selectedEpoch = 0;
+        int selectedEpoch = -1;
 
         std::string errorMsg;
 
@@ -66,8 +65,8 @@ namespace GuiOem7Processor {
         }
     };
 
-    void SolveThread(std::shared_ptr<SppTask> task);
-    void RenderTask(std::shared_ptr<SppTask> task);
+    void SolveThread(const std::shared_ptr<SppTask>& task);
+    void RenderTask(const std::shared_ptr<SppTask>& task);
     std::string ShowOpenFileDialog(HWND hwnd);
     void ExportCsv(std::shared_ptr<SppTask> task, HWND hwnd);
 

@@ -108,13 +108,26 @@ void Application::RenderTasks()
                     label = task->fileName;
                 label += "###" + std::to_string(i);
 
-                ImGuiTabItemFlags tabFlags = (i == m_activeTask)
-                    ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                ImGuiTabItemFlags tabFlags = ImGuiTabItemFlags_None;
+                if (i == m_taskToFocus) {
+                    tabFlags |= ImGuiTabItemFlags_SetSelected;
+                }
 
-                if (ImGui::BeginTabItem(label.c_str(), nullptr, tabFlags)) {
+                bool open = true;
+                if (ImGui::BeginTabItem(label.c_str(), &open, tabFlags)) {
                     m_activeTask = i;
+                    if (m_taskToFocus == i) m_taskToFocus = -1; // 消费掉选中请求
+
                     GuiOem7Processor::RenderTask(task);
                     ImGui::EndTabItem();
+                }
+
+                if (!open) {
+                    // 关闭任务：如果正在处理，worker 会在析构时 join
+                    m_tasks.erase(m_tasks.begin() + i);
+                    if (m_activeTask >= (int)m_tasks.size()) 
+                        m_activeTask = (int)m_tasks.size() - 1;
+                    i--; // 抵消循环中的 i++
                 }
             }
             ImGui::EndTabBar();
@@ -147,6 +160,7 @@ void Application::OpenOem7File()
 
     m_tasks.push_back(task);
     m_activeTask = (int)m_tasks.size() - 1;
+    m_taskToFocus = m_activeTask; // 设置选中标记
 }
 
 void Application::Render()
