@@ -52,7 +52,7 @@ int main() {
         }
 
         spp.setEphemeris(ephMap);
-
+        spp.preprocess(obs);
         try {
             spp.solve(obs);
 

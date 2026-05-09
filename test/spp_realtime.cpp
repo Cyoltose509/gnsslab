@@ -43,7 +43,6 @@ int main() {
     while (true) {
         try {
             if (reader.getNextEpoch(obs)) {
-
                 // 更新星历
                 std::map<SatID, Ephemeris *> ephMap;
                 for (const auto &[prn, eph]: reader.latestGps) {
@@ -53,6 +52,7 @@ int main() {
                     ephMap[SatID('C', prn)] = const_cast<BDSEphem *>(&eph);
                 }
                 spp.setEphemeris(ephMap);
+                spp.preprocess(obs);
                 spp.solve(obs);
 
                 auto &result = spp.result;
@@ -96,7 +96,6 @@ int main() {
                         << result.numSats
                         << endl;
                 epochCount++;
-
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }

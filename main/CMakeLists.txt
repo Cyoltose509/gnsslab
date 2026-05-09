@@ -7,6 +7,7 @@ add_executable(gnsslab_gui WIN32
     ui/Gui.cpp
     tools/GuiTimeConverter.cpp
     tools/GuiCoordConverter.cpp
+    tools/GuiOem7Processor.cpp
 )
 
 target_include_directories(gnsslab_gui PRIVATE
@@ -21,4 +22,5 @@ target_link_libraries(gnsslab_gui PRIVATE
     gnss
     d3d11
     dxgi
+    comdlg32
 )

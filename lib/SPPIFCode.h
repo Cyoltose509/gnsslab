@@ -19,6 +19,8 @@ public:
         ifCodeTypes = ifTypes;
     }
 
+    void preprocess(ObsData &obsData) const;
+
     void solve(ObsData &obsData);
 
     std::map<SatID, PVT> computeSatPos(ObsData &obsData);
@@ -33,6 +35,9 @@ public:
 
     void linearize(ObsData &obsData);
 
+
+    [[nodiscard]] const SatValueMap& getElevData() const { return satElevData; }
+    [[nodiscard]] const SatValueMap& getAzimData() const { return satAzimData; }
 
     [[nodiscard]] SatID getDatumSat() const {
         double maxElev(0.0);

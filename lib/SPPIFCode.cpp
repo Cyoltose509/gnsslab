@@ -2,9 +2,11 @@
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
 
-void SPPIFCode::solve(ObsData &obsData) {
+void SPPIFCode::preprocess(ObsData &obsData) const {
     convertObsType(obsData);
     computeIF(obsData);
+}
+void SPPIFCode::solve(ObsData &obsData) {
     satPVTTransTime = computeSatPos(obsData);
     xyz = obsData.antennaPosition;
     result.reset();
