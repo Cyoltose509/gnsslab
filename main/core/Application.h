@@ -21,7 +21,8 @@ public:
 private:
     void Initialize();
     void Shutdown();
-    void Update();
+
+    static void Update();
     void Render();
     void RenderMenuBar();
     void RenderDockSpace();

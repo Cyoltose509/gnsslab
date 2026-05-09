@@ -51,7 +51,7 @@ namespace GuiCoordConverter {
 
     static void SyncXYZtoBLH() {
         try {
-            BLH blh = XYZtoBLH(XYZ(s_X, s_Y, s_Z), CurFrame());
+            const BLH blh = XYZtoBLH({s_X, s_Y, s_Z}, CurFrame());
             s_B_deg = blh.B() * RAD_TO_DEG;
             s_L_deg = blh.L() * RAD_TO_DEG;
             s_H = blh.H();
@@ -61,7 +61,7 @@ namespace GuiCoordConverter {
 
     static void SyncBLHtoXYZ() {
         try {
-            XYZ xyz = BLHtoXYZ(BLH(s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H), CurFrame());
+            XYZ xyz = BLHtoXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
             s_X = xyz.X();
             s_Y = xyz.Y();
             s_Z = xyz.Z();
@@ -71,9 +71,8 @@ namespace GuiCoordConverter {
 
     static void SyncXYZtoENU() {
         try {
-            XYZ refXYZ = BLHtoXYZ(
-                BLH(s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH), CurFrame());
-            ENU enu = XYZtoENU(XYZ(s_TgtX, s_TgtY, s_TgtZ), refXYZ, CurFrame());
+            const XYZ refXYZ = BLHtoXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
+            const ENU enu = XYZtoENU({s_TgtX, s_TgtY, s_TgtZ}, refXYZ, CurFrame());
             s_E = enu.E();
             s_N = enu.N();
             s_U = enu.U();
@@ -83,9 +82,8 @@ namespace GuiCoordConverter {
 
     static void SyncENUtoXYZ() {
         try {
-            XYZ refXYZ = BLHtoXYZ(
-                BLH(s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH), CurFrame());
-            XYZ xyz = ENUtoXYZ(ENU(s_E, s_N, s_U), refXYZ, CurFrame());
+            const XYZ refXYZ = BLHtoXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
+            const XYZ xyz = ENUtoXYZ({s_E, s_N, s_U}, refXYZ, CurFrame());
             s_TgtX = xyz.X();
             s_TgtY = xyz.Y();
             s_TgtZ = xyz.Z();
@@ -93,10 +91,8 @@ namespace GuiCoordConverter {
         }
     }
 
-    // ========== Render helpers ==========
-    // Draw 3 InputDouble in a row using a table for equal width. Returns true if any was edited.
     static bool InputRow3(const char *id, const char *l1, double *v1, const char *l2, double *v2,
-                          const char *l3, double *v3, const char *fmt, ImGuiInputTextFlags flags = 0) {
+                          const char *l3, double *v3, const char *fmt, ImGuiInputTextFlags flags = 0) { //NOLINT
         bool edited = false;
         if (ImGui::BeginTable(id, 3, ImGuiTableFlags_SizingStretchSame)) {
             ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthStretch);
@@ -145,8 +141,8 @@ namespace GuiCoordConverter {
         // ======== XYZ <-> BLH ========
         ImGui::SeparatorText("XYZ <-> BLH");
 
-        bool xyz_edited = InputRow3("##xyz", "X (m)", &s_X, "Y (m)", &s_Y, "Z (m)", &s_Z, "%.4f");
-        bool blh_edited = InputRow3("##blh", "B (度)", &s_B_deg, "L (度)", &s_L_deg, "H (m)", &s_H, "%.9f");
+        const bool xyz_edited = InputRow3("##xyz", "X (m)", &s_X, "Y (m)", &s_Y, "Z (m)", &s_Z, "%.4f");
+        const bool blh_edited = InputRow3("##blh", "B (度)", &s_B_deg, "L (度)", &s_L_deg, "H (m)", &s_H, "%.9f");
 
         if (xyz_edited) {
             s_XyzBlhSrc = 0;
@@ -166,13 +162,13 @@ namespace GuiCoordConverter {
         // Reference point
         ImGui::TextDisabled("参考点:");
         ImGui::SameLine();
-        bool ref_edited = InputRow3("##ref", "B (度)", &s_RefB_deg, "L (度)", &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
+        const bool ref_edited = InputRow3("##ref", "B (度)", &s_RefB_deg, "L (度)", &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
 
         ImGui::Spacing();
 
         // XYZ <-> ENU rows
-        bool tgt_edited = InputRow3("##tgt", "目标 X (m)", &s_TgtX, "目标 Y (m)", &s_TgtY, "目标 Z (m)", &s_TgtZ, "%.4f");
-        bool enu_edited = InputRow3("##enu", "E (m)", &s_E, "N (m)", &s_N, "U (m)", &s_U, "%.4f");
+        const bool tgt_edited = InputRow3("##tgt", "目标 X (m)", &s_TgtX, "目标 Y (m)", &s_TgtY, "目标 Z (m)", &s_TgtZ, "%.4f");
+        const bool enu_edited = InputRow3("##enu", "E (m)", &s_E, "N (m)", &s_N, "U (m)", &s_U, "%.4f");
 
         if (tgt_edited) {
             s_EnuSrc = 0;

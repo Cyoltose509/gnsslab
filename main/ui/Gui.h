@@ -1,18 +1,16 @@
 #pragma once
 
-#ifndef GNSSLAB_GUI_H
-#define GNSSLAB_GUI_H
 
 #include <windows.h>
 
 class Gui {
 public:
-    void Initialize(const char* title, int width, int height);
+    void Initialize(const char *title, float width, float height);
     void Shutdown();
     /// Returns false on WM_QUIT.
     /// Sets *frameReady to false when minimized/occluded — caller should skip Update/Render/EndFrame.
-    bool BeginFrame(bool* frameReady = nullptr);
-    void EndFrame();
+    bool BeginFrame(bool* frameReady = nullptr) const;
+    void EndFrame() const;
     [[nodiscard]] bool IsInitialized() const { return m_initialized; }
 
 private:
@@ -20,5 +18,3 @@ private:
     WNDCLASSEXW m_wndClass{};
     bool        m_initialized = false;
 };
-
-#endif

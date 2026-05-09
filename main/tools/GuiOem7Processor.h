@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef GNSSLAB_GUI_OEM7_PROCESSOR_H
-#define GNSSLAB_GUI_OEM7_PROCESSOR_H
-
 #include <string>
 #include <vector>
 #include <memory>
@@ -10,15 +7,12 @@
 #include <atomic>
 #include <mutex>
 
-struct HWND__;
+struct HWND__; //NOLINT
 typedef HWND__ *HWND;
 
-// Eigen 和 Windows 不在同一个头文件里，避免 byte 冲突
-#include <Eigen/Eigen>
 #include "GnssStruct.h"
 
 namespace GuiOem7Processor {
-
     struct SppEpochData {
         unsigned int week = 0;
         double sow = 0;
@@ -65,11 +59,11 @@ namespace GuiOem7Processor {
         }
     };
 
-    void SolveThread(const std::shared_ptr<SppTask>& task);
-    void RenderTask(const std::shared_ptr<SppTask>& task);
+    void SolveThread(const std::shared_ptr<SppTask> &task);
+
+    void RenderTask(const std::shared_ptr<SppTask> &task);
+
     std::string ShowOpenFileDialog(HWND hwnd);
-    void ExportCsv(std::shared_ptr<SppTask> task, HWND hwnd);
 
+    void ExportCsv(const std::shared_ptr<SppTask> &task, HWND hwnd);
 } // namespace GuiOem7Processor
-
-#endif

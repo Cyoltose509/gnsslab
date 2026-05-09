@@ -14,7 +14,7 @@ void Application::Initialize()
 
 void Application::Shutdown()
 {
-    for (auto &task: m_tasks) {
+    for (const auto &task: m_tasks) {
         if (task->worker.joinable()) task->worker.join();
     }
     m_tasks.clear();
@@ -58,14 +58,14 @@ void Application::RenderTasks()
 {
     if (m_tasks.empty()) {
         // 空状态：居中提示
-        ImGuiViewport *viewport = ImGui::GetMainViewport();
-        ImVec2 center = ImVec2(
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+        const auto center = ImVec2(
             viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
             viewport->WorkPos.y + viewport->WorkSize.y * 0.5f
         );
 
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        ImGuiWindowFlags flags =
+        constexpr ImGuiWindowFlags flags =
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
 
@@ -79,11 +79,11 @@ void Application::RenderTasks()
     }
 
     // 渲染每个任务的标签页
-    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
 
-    ImGuiWindowFlags windowFlags =
+    constexpr ImGuiWindowFlags windowFlags =
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoResize |
@@ -94,7 +94,7 @@ void Application::RenderTasks()
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
 
         if (ImGui::BeginTabBar("##tasks", ImGuiTabBarFlags_None)) {
-            for (int i = 0; i < (int)m_tasks.size(); i++) {
+            for (int i = 0; i < static_cast<int>(m_tasks.size()); i++) {
                 auto &task = m_tasks[i];
 
                 std::string label;
@@ -125,8 +125,8 @@ void Application::RenderTasks()
                 if (!open) {
                     // 关闭任务：如果正在处理，worker 会在析构时 join
                     m_tasks.erase(m_tasks.begin() + i);
-                    if (m_activeTask >= (int)m_tasks.size()) 
-                        m_activeTask = (int)m_tasks.size() - 1;
+                    if (m_activeTask >= static_cast<int>(m_tasks.size()))
+                        m_activeTask = static_cast<int>(m_tasks.size()) - 1;
                     i--; // 抵消循环中的 i++
                 }
             }
@@ -140,15 +140,15 @@ void Application::RenderTasks()
 
 void Application::OpenOem7File()
 {
-    HWND hwnd = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
+    auto hwnd = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
     if (!hwnd) hwnd = GetActiveWindow();
 
-    std::string filePath = GuiOem7Processor::ShowOpenFileDialog(hwnd);
+    const std::string filePath = GuiOem7Processor::ShowOpenFileDialog(hwnd);
     if (filePath.empty()) return;
 
     auto sepPos = filePath.rfind('\\');
     if (sepPos == std::string::npos) sepPos = filePath.rfind('/');
-    std::string fileName = (sepPos != std::string::npos)
+    const std::string fileName = sepPos != std::string::npos
         ? filePath.substr(sepPos + 1) : filePath;
 
     auto task = std::make_shared<GuiOem7Processor::SppTask>();
@@ -159,7 +159,7 @@ void Application::OpenOem7File()
     task->worker = std::thread(GuiOem7Processor::SolveThread, task);
 
     m_tasks.push_back(task);
-    m_activeTask = (int)m_tasks.size() - 1;
+    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
     m_taskToFocus = m_activeTask; // 设置选中标记
 }
 
