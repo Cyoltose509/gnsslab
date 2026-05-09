@@ -26,21 +26,21 @@ void Application::Render()
     // ---- Main menu bar ----
     if (ImGui::BeginMainMenuBar())
     {
-        if (ImGui::BeginMenu("File"))
+        if (ImGui::BeginMenu("文件"))
         {
-            if (ImGui::MenuItem("Exit", "Alt+F4"))
+            if (ImGui::MenuItem("退出", "Alt+F4"))
                 m_ui.Shutdown();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Tools"))
+        if (ImGui::BeginMenu("工具"))
         {
-            ImGui::MenuItem("Time Converter", nullptr, &m_showTimeConverter);
-            ImGui::MenuItem("Coord Converter", nullptr, &m_showCoordConverter);
+            ImGui::MenuItem("时间转换", nullptr, &m_showTimeConverter);
+            ImGui::MenuItem("坐标转换", nullptr, &m_showCoordConverter);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Help"))
+        if (ImGui::BeginMenu("帮助"))
         {
-            ImGui::MenuItem("About", nullptr, nullptr);
+            ImGui::MenuItem("关于", nullptr, nullptr);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();

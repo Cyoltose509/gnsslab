@@ -1,4 +1,5 @@
 .idea
+.workbuddy
 cmake-build-debug
 legacy
 build

@@ -1,5 +1,5 @@
 # lib/CMakeLists.txt
-# 构建 gnss 共享库，自行声明依赖
+# 构建 gnss 静态库，链接进 exe 无需额外 DLL
 
 set(LIB_SOURCES
         Const.h
@@ -26,8 +26,7 @@ set(LIB_SOURCES
         OEM7SocketReader.cpp
 )
 
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-add_library(gnss SHARED ${LIB_SOURCES})
+add_library(gnss STATIC ${LIB_SOURCES})
 
 # 公共头文件路径（lib 的头文件暴露给下游）
 target_include_directories(gnss PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

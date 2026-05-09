@@ -90,17 +90,17 @@ namespace GuiTimeConverter
         }
 
         ImGui::SetNextWindowSize(ImVec2(620, 330), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Time Converter", p_open))
+        if (!ImGui::Begin("时间转换", p_open))
         {
             ImGui::End();
             return;
         }
 
         // --- Toolbar ---
-        if (ImGui::Button("Now"))
+        if (ImGui::Button("此刻"))
             SetToNow();
         ImGui::SameLine(0, 16);
-        ImGui::TextDisabled("Edit any field to sync all time systems");
+        ImGui::TextDisabled("编辑任意字段，自动同步所有时间系统");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -111,13 +111,13 @@ namespace GuiTimeConverter
             ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
             ImGuiTableFlags_SizingStretchSame))
         {
-            ImGui::TableSetupColumn("System", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableSetupColumn("Year");
-            ImGui::TableSetupColumn("Month");
-            ImGui::TableSetupColumn("Day");
-            ImGui::TableSetupColumn("Hour");
-            ImGui::TableSetupColumn("Min");
-            ImGui::TableSetupColumn("Sec");
+            ImGui::TableSetupColumn("系统", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("年");
+            ImGui::TableSetupColumn("月");
+            ImGui::TableSetupColumn("日");
+            ImGui::TableSetupColumn("时");
+            ImGui::TableSetupColumn("分");
+            ImGui::TableSetupColumn("秒");
             ImGui::TableHeadersRow();
 
             static const char* FID[] = { "##yr", "##mo", "##dy", "##hr", "##mn", "##sc" };
@@ -177,7 +177,7 @@ namespace GuiTimeConverter
             MJD mjd;
             CommonTime2MJD(gps, mjd);
 
-            ImGui::Text("Leap Seconds: %.0f    MJD (GPS): %.6f",
+            ImGui::Text("跳秒: %.0f    MJD (GPS): %.6f",
                         leap, (double)mjd.mjd);
         }
         catch (...) {}

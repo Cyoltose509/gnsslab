@@ -123,14 +123,14 @@ namespace GuiCoordConverter {
         }
 
         ImGui::SetNextWindowSize(ImVec2(560, 340), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Coord Converter", p_open)) {
+        if (!ImGui::Begin("坐标转换", p_open)) {
             ImGui::End();
             return;
         }
 
         // --- Frame selector ---
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Frame:");
+        ImGui::TextUnformatted("参考系:");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120);
         if (ImGui::Combo("##frame", &s_FrameIdx, FRAME_NAMES, FRAME_COUNT)) {
@@ -146,7 +146,7 @@ namespace GuiCoordConverter {
         ImGui::SeparatorText("XYZ <-> BLH");
 
         bool xyz_edited = InputRow3("##xyz", "X (m)", &s_X, "Y (m)", &s_Y, "Z (m)", &s_Z, "%.4f");
-        bool blh_edited = InputRow3("##blh", "B (deg)", &s_B_deg, "L (deg)", &s_L_deg, "H (m)", &s_H, "%.9f");
+        bool blh_edited = InputRow3("##blh", "B (度)", &s_B_deg, "L (度)", &s_L_deg, "H (m)", &s_H, "%.9f");
 
         if (xyz_edited) {
             s_XyzBlhSrc = 0;
@@ -161,17 +161,17 @@ namespace GuiCoordConverter {
         ImGui::Spacing();
 
         // ======== ENU ========
-        ImGui::SeparatorText("ENU (Local Tangent)");
+        ImGui::SeparatorText("站心坐标 (ENU)");
 
         // Reference point
-        ImGui::TextDisabled("Ref:");
+        ImGui::TextDisabled("参考点:");
         ImGui::SameLine();
-        bool ref_edited = InputRow3("##ref", "B (deg)", &s_RefB_deg, "L (deg)", &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
+        bool ref_edited = InputRow3("##ref", "B (度)", &s_RefB_deg, "L (度)", &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
 
         ImGui::Spacing();
 
         // XYZ <-> ENU rows
-        bool tgt_edited = InputRow3("##tgt", "Tgt X (m)", &s_TgtX, "Tgt Y (m)", &s_TgtY, "Tgt Z (m)", &s_TgtZ, "%.4f");
+        bool tgt_edited = InputRow3("##tgt", "目标 X (m)", &s_TgtX, "目标 Y (m)", &s_TgtY, "目标 Z (m)", &s_TgtZ, "%.4f");
         bool enu_edited = InputRow3("##enu", "E (m)", &s_E, "N (m)", &s_N, "U (m)", &s_U, "%.4f");
 
         if (tgt_edited) {
