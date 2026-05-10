@@ -2,6 +2,7 @@
 #include "tools/GuiTimeConverter.h"
 #include "tools/GuiCoordConverter.h"
 #include "tools/GuiOem7Processor.h"
+#include "version.h"
 
 #include "imgui.h"
 
@@ -9,7 +10,8 @@ Application::Application() = default;
 
 void Application::Initialize()
 {
-    m_ui.Initialize("gnssLab", 1280, 720);
+    std::string title = "GnssLab v" PROJECT_VERSION;
+    m_ui.Initialize(title.c_str(), 1280, 720);
 }
 
 void Application::Shutdown()
@@ -47,10 +49,28 @@ void Application::RenderMenuBar()
         }
         if (ImGui::BeginMenu("帮助"))
         {
-            ImGui::MenuItem("关于", nullptr, nullptr);
+            if (ImGui::MenuItem("关于", nullptr))
+                m_showAbout = true;
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
+    }
+
+    if (m_showAbout)
+    {
+        ImGui::OpenPopup("关于 GnssLab");
+        m_showAbout = false;
+    }
+
+    if (ImGui::BeginPopupModal("关于 GnssLab", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("GnssLab - GNSS 数据处理实验室");
+        ImGui::Separator();
+        ImGui::Text("版本: %s", PROJECT_VERSION);
+        ImGui::Text("开发者: %s", COMPANY_NAME);
+        ImGui::Spacing();
+        if (ImGui::Button("确定", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
     }
 }
 

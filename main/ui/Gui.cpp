@@ -3,7 +3,7 @@
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
-
+#include <vector>
 #include <d3d11.h>
 #include <tchar.h>
 
@@ -130,17 +130,24 @@ void Gui::Initialize(const char *title, const float width, const float height) {
     // Window class
     m_wndClass = {
         sizeof(m_wndClass), CS_CLASSDC, WndProc, 0L, 0L,
-        GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr,
-        L"GnssLabClass", nullptr
+        GetModuleHandle(nullptr), 
+        LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(101)), // Large icon
+        nullptr, nullptr, nullptr,
+        L"GnssLabClass", 
+        LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(101))  // Small icon
     };
     RegisterClassExW(&m_wndClass);
-
     const int w = static_cast<int>(width * main_scale);
     const int h = static_cast<int>(height * main_scale);
 
+    // Convert char* title to WCHAR* for CreateWindowW
+    int len = MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
+    std::vector<wchar_t> wTitle(len);
+    MultiByteToWideChar(CP_UTF8, 0, title, -1, wTitle.data(), len);
+
     m_hwnd = ::CreateWindowW(
         m_wndClass.lpszClassName,
-        L"GnssLab",
+        wTitle.data(),
         WS_OVERLAPPEDWINDOW, 100, 100, w, h,
         nullptr, nullptr, m_wndClass.hInstance, nullptr);
 
@@ -178,7 +185,6 @@ void Gui::Initialize(const char *title, const float width, const float height) {
     ImGui_ImplWin32_Init(m_hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    (void) title;
     m_initialized = true;
 }
 

@@ -33,6 +33,7 @@ private:
     Gui   m_ui;
     bool  m_showTimeConverter  = false;
     bool  m_showCoordConverter = false;
+    bool  m_showAbout          = false;
 
     // OEM7 文件任务
     std::vector<std::shared_ptr<GuiOem7Processor::SppTask>> m_tasks;
