@@ -253,7 +253,10 @@ void SPPIFCode::linearize(ObsData &obsData) {
             usedType = ifType;
         }
 
-        if (usedType.empty() || obsVal <= 0.0) continue;
+        if (usedType.empty() || obsVal <= 0.0) {
+            satRejected.insert(sat);
+            continue;
+        }
 
         double rho = (pvt.p - xyz).norm();
         if (rho < 1.0) rho = 20000000.0;

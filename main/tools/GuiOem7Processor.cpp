@@ -12,8 +12,7 @@
 
 namespace GuiOem7Processor {
     void SppEpochData::getFromSPP(const SPPIFCode &spp) {
-        auto &result = spp.result;
-        if (result.numSats > 0) {
+        if (auto &result = spp.result; result.numSats > 0) {
             solved = true;
             xyz = result.xyz;
             blh = result.blh;
@@ -28,14 +27,25 @@ namespace GuiOem7Processor {
                     elevations[i] = it->second;
                 if (auto it2 = spp.satAzimData.find(satIds[i]); it2 != spp.satAzimData.end())
                     azimuths[i] = it2->second;
-                if (spp.satRejected.count(satIds[i])) {
-                    rejected.insert(i);
-                }
-
+                rejected[i] = spp.satRejected.count(satIds[i]) > 0;
             }
         } else {
             solved = false;
         }
+    }
+    void SppEpochData::getFromObs(const ObsData &obs) {
+        week = obs.weekSecond.week;
+        sow = obs.weekSecond.sow;
+        for (auto &[sat, typeMap]: obs.satTypeValueData) {
+            satIds.push_back(sat);
+            auto it = typeMap.find("CC12");
+            if (it == typeMap.end()) it = typeMap.find("CC26");
+            pranges.push_back(it != typeMap.end() ? it->second : 0.0);
+            elevations.push_back(0.0);
+            azimuths.push_back(0.0);
+            rejected.push_back(false);
+        }
+        numObs = static_cast<int>(satIds.size());
     }
 
     void SolveThread(const std::shared_ptr<SppTask> &task) {
@@ -69,19 +79,7 @@ namespace GuiOem7Processor {
                 spp.preprocess(obs);
 
                 SppEpochData data;
-                data.week = obs.weekSecond.week;
-                data.sow = obs.weekSecond.sow;
-
-
-                for (auto &[sat, typeMap]: obs.satTypeValueData) {
-                    data.satIds.push_back(sat);
-                    auto it = typeMap.find("CC12");
-                    if (it == typeMap.end()) it = typeMap.find("CC26");
-                    data.pranges.push_back(it != typeMap.end() ? it->second : 0.0);
-                    data.elevations.push_back(0.0);
-                    data.azimuths.push_back(0.0);
-                }
-                data.numObs = static_cast<int>(data.satIds.size());
+                data.getFromObs(obs);
 
                 try {
                     spp.solve(obs);
@@ -215,7 +213,7 @@ namespace GuiOem7Processor {
                         ImGui::Text("%.3f", curData.pranges[i]);
 
                         ImGui::TableSetColumnIndex(5);
-                        if (double elev = curData.elevations[i]; elev > 60.0 * DEG_TO_RAD) {
+                        if (const double elev = curData.elevations[i]; elev > 60.0 * DEG_TO_RAD) {
                             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "优");
                         } else if (elev > 30.0 * DEG_TO_RAD) {
                             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "良");
@@ -223,7 +221,7 @@ namespace GuiOem7Processor {
                             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "低");
                         }
                         ImGui::TableSetColumnIndex(6);
-                        if (curData.rejected.count(i)) {
+                        if (curData.rejected[i]) {
                             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "排除");
                         } else {
                             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "参与");

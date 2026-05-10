@@ -25,7 +25,7 @@ namespace GuiOem7Processor {
         std::vector<double> elevations;
         std::vector<double> azimuths;
         std::vector<double> pranges;
-        std::set<int> rejected;
+        std::vector<bool> rejected;
 
         // Result data (if solved)
         Eigen::Vector3d xyz{0, 0, 0};
@@ -36,6 +36,7 @@ namespace GuiOem7Processor {
         double sigmaV = 0;
         int numSatsResult = 0;
         void getFromSPP(const SPPIFCode &spp);
+        void getFromObs(const ObsData &obs);
     };
 
     struct SppTask {

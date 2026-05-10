@@ -47,18 +47,7 @@ namespace GuiRealtimeProcessor {
                         spp.preprocess(obs);
 
                         GuiOem7Processor::SppEpochData data;
-                        data.week = obs.weekSecond.week;
-                        data.sow = obs.weekSecond.sow;
-
-                        for (auto &[sat, typeMap]: obs.satTypeValueData) {
-                            data.satIds.push_back(sat);
-                            auto it = typeMap.find("CC12");
-                            if (it == typeMap.end()) it = typeMap.find("CC26");
-                            data.pranges.push_back(it != typeMap.end() ? it->second : 0.0);
-                            data.elevations.push_back(0.0);
-                            data.azimuths.push_back(0.0);
-                        }
-                        data.numObs = static_cast<int>(data.satIds.size());
+                        data.getFromObs(obs);
 
                         try {
                             spp.solve(obs);
@@ -68,7 +57,8 @@ namespace GuiRealtimeProcessor {
                         }
                         {
                             std::lock_guard lock(task->mutex);
-                            const bool wasAtEnd = (task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1);
+                            const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size())
+                                                  - 1;
 
                             if (task->epochs.empty()) {
                                 task->weekFirst = data.week;
