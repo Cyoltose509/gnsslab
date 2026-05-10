@@ -9,7 +9,7 @@ Application::Application() = default;
 
 void Application::Initialize()
 {
-    m_ui.Initialize("gnssLab", 1280, 800);
+    m_ui.Initialize("gnssLab", 1280, 720);
 }
 
 void Application::Shutdown()
@@ -70,7 +70,7 @@ void Application::RenderTasks()
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
 
         if (ImGui::Begin("##empty_hint", nullptr, flags)) {
-            ImGui::Text("gnssLab");
+            ImGui::Text("GnssLab");
             ImGui::Spacing();
             ImGui::TextDisabled("任务 -> 打开OEM7文件 开始处理");
         }

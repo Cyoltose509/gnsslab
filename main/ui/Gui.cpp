@@ -131,7 +131,7 @@ void Gui::Initialize(const char *title, const float width, const float height) {
     m_wndClass = {
         sizeof(m_wndClass), CS_CLASSDC, WndProc, 0L, 0L,
         GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr,
-        L"gnssLabClass", nullptr
+        L"GnssLabClass", nullptr
     };
     RegisterClassExW(&m_wndClass);
 
@@ -140,7 +140,7 @@ void Gui::Initialize(const char *title, const float width, const float height) {
 
     m_hwnd = ::CreateWindowW(
         m_wndClass.lpszClassName,
-        L"gnssLab",
+        L"GnssLab",
         WS_OVERLAPPEDWINDOW, 100, 100, w, h,
         nullptr, nullptr, m_wndClass.hInstance, nullptr);
 
