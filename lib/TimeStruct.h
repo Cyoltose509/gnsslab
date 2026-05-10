@@ -43,6 +43,10 @@ public:
         }
     }
 
+    TimeSystem(const TimeSystem &right) = default;
+
+    TimeSystem &operator=(const TimeSystem &right) = default;
+
     bool operator==(const TimeSystem &right) const {
         if (system == right.system)
             return true;
@@ -503,7 +507,7 @@ public:
     }
 
     WeekSecond(WeekSecond &&other) noexcept
-        : week(other.week), sow(other.sow) {
+        : week(other.week), sow(other.sow), timeSystem(other.timeSystem) {
     }
 
     WeekSecond &operator=(const WeekSecond &other) = default;
@@ -512,12 +516,10 @@ public:
         if (this != &other) {
             week = other.week;
             sow = other.sow;
+            timeSystem = other.timeSystem;
         }
         return *this;
     }
-
-    /// Virtual Destructor.
-    virtual ~WeekSecond() = default;
 
     [[nodiscard]] int Nbits() const {
         return timeSystem.getParams().Nbits;

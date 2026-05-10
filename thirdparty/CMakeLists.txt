@@ -50,3 +50,28 @@ target_include_directories(thirdparty_imgui_impl_dx11
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/imgui
 )
 target_link_libraries(thirdparty_imgui_impl_dx11 PRIVATE thirdparty_imgui d3d11 dxgi)
+
+# ---- ImPlot ----
+add_library(thirdparty_implot STATIC
+        implot/implot.cpp
+        implot/implot_items.cpp
+        implot/implot_demo.cpp
+)
+target_include_directories(thirdparty_implot
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/implot
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/imgui
+)
+target_link_libraries(thirdparty_implot PRIVATE thirdparty_imgui)
+
+# ---- ImPlot3D ----
+add_library(thirdparty_implot3d STATIC
+        implot3d/implot3d.cpp
+        implot3d/implot3d_items.cpp
+        implot3d/implot3d_meshes.cpp
+        implot3d/implot3d_demo.cpp
+)
+target_include_directories(thirdparty_implot3d
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/implot3d
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/imgui ${CMAKE_CURRENT_SOURCE_DIR}/implot
+)
+target_link_libraries(thirdparty_implot3d PRIVATE thirdparty_imgui thirdparty_implot)

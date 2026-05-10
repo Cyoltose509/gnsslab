@@ -6,6 +6,8 @@
 #include "OEM7Reader.h"
 #include "SPPIFCode.h"
 #include "Const.h"
+#include "implot.h"
+#include "implot3d.h"
 
 #include <fstream>
 #include <iostream>
@@ -206,11 +208,16 @@ namespace GuiOem7Processor {
         ImGui::Separator();
 
         // --- 主分栏布局 (使用 Table 实现可拖拽分栏) ---
+        float availY = ImGui::GetContentRegionAvail().y;
+        float plotRegionH = (epochCount > 0) ? 380.0f : 0.0f;
+        float mainTableH = availY - plotRegionH - ImGui::GetStyle().ItemSpacing.y;
+        if (mainTableH < 200.0f) mainTableH = 200.0f;
+
         if (ImGui::BeginTable("##main_split", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableSetupColumn("LeftPanel", ImGuiTableColumnFlags_WidthStretch, 0.6f);
             ImGui::TableSetupColumn("RightPanel", ImGuiTableColumnFlags_WidthStretch, 0.4f);
 
-            ImGui::TableNextRow(ImGuiTableRowFlags_None, ImGui::GetContentRegionAvail().y - 35.0f);
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, mainTableH);
 
             // ===== 左面板：卫星列表 =====
             ImGui::TableSetColumnIndex(0);
@@ -313,24 +320,110 @@ namespace GuiOem7Processor {
                 } else {
                     ImGui::Button("解析中...", ImVec2(-FLT_MIN, 40.0f));
                 }
-
             }
             ImGui::EndChild();
 
             ImGui::EndTable();
         }
 
-        // --- 底部时间轴 ---
-        // ImGui::Separator();
-        // if (epochCount > 0) {
-        //     float normalized = (epochCount > 1) ? (float)selectedIdx / (float)(epochCount - 1) : 0.0f;
-        //     ImGui::SetNextItemWidth(-FLT_MIN);
-        //     if (ImGui::SliderFloat("##timeline", &normalized, 0.0f, 1.0f, "")) {
-        //         task->selectedEpoch = (int)(normalized * (epochCount - 1) + 0.5f);
-        //     }
-        //     if (ImGui::IsItemHovered())
-        //         ImGui::SetTooltip("拖动快速切换历元");
-        // }
+        // --- 绘图区域 ---
+
+        if (epochCount > 0) {
+            std::vector<double> times;
+            std::vector<double> sigmaPs;
+            std::vector<double> sigmaVs;
+            std::vector<double> pdops;
+            std::vector<double> enu_e;
+            std::vector<double> enu_n;
+            std::vector<double> enu_u;
+
+            // 提取绘图数据
+            {
+                std::lock_guard lock(task->mutex);
+                const int n = static_cast<int>(task->epochs.size());
+                times.resize(n);
+                sigmaPs.resize(n);
+                sigmaVs.resize(n);
+                pdops.resize(n);
+                enu_e.resize(n);
+                enu_n.resize(n);
+                enu_u.resize(n);
+                for (int i = 0; i < n; i++) {
+                    const auto &ep = task->epochs[i];
+                    times[i] = i;
+                    sigmaPs[i] = ep.solved ? ep.sigmaP : 0.0;
+                    sigmaVs[i] = ep.solved ? ep.sigmaV : 0.0;
+                    pdops[i] = ep.solved ? ep.pdop : 0.0;
+                    auto enu = XYZtoENU(ep.xyz, task->refECEF);
+                    enu_e[i] = enu[0];
+                    enu_n[i] = enu[1];
+                    enu_u[i] = enu[2];
+                }
+                //-------------------------------
+                ImGui::Separator();
+                if (ImPlot::BeginPlot("ENU时序图", ImVec2(-1, 400))) {
+                    ImPlot::SetupAxes("Epoch", "E/N/U (m)");
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
+                    if (task->loading) {
+                        ImPlot::SetupAxisLimits(ImAxis_X1, 0, times.empty() ? 10 : times.back(),
+                                                ImPlotCond_Always);
+                    }
+                    if (!times.empty()) {
+                        ImPlot::PlotLine("ENU-E", times.data(), enu_e.data(), static_cast<int>(times.size()));
+                        ImPlot::PlotLine("ENU-N", times.data(), enu_n.data(), static_cast<int>(times.size()));
+                        ImPlot::PlotLine("ENU-U", times.data(), enu_u.data(), static_cast<int>(times.size()));
+                        // 标记当前选中历元
+                        if (selectedIdx >= 0 && selectedIdx < static_cast<int>(times.size())) {
+                            double curTime = times[selectedIdx];
+                            if (ImPlot::DragLineX(1, &curTime, ImVec4(255, 0, 0, 255))) {
+                                task->selectedEpoch = static_cast<int>(std::clamp(curTime, 0.0, times.back()));
+                            }
+                        }
+                    }
+                    ImPlot::EndPlot();
+                }
+                ImGui::Separator();
+                if (ImGui::BeginTable("##main_split", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+                    ImGui::TableSetupColumn("LeftPanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);
+                    ImGui::TableSetupColumn("MiddlePanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);
+                    ImGui::TableSetupColumn("RightPanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, mainTableH);
+                    vector<double> *data[3] = {
+                        &sigmaPs,
+                        &sigmaVs,
+                        &pdops
+                    };
+                    for (int i = 0; i < 3; i++) {
+                        const char *names[3] = {
+                            "SigmaP",
+                            "SigmaV",
+                            "PDOP"
+                        };
+                        ImGui::TableSetColumnIndex(i);
+                        if (ImPlot::BeginPlot(names[i], ImVec2(-1, 400), ImPlotFlags_NoLegend)) {
+                            ImPlot::SetupAxes("Epoch", "σ (m)");
+                            if (task->loading) {
+                                ImPlot::SetupAxisLimits(ImAxis_X1, 0, times.empty() ? 10 : times.back(),
+                                                        ImPlotCond_Always);
+                            }
+                            if (!times.empty()) {
+                                ImPlot::PlotLine(names[i], times.data(), data[i]->data(), static_cast<int>(times.size()));
+                                if (selectedIdx >= 0 && selectedIdx < static_cast<int>(times.size())) {
+                                    double curTime = times[selectedIdx];
+                                    if (ImPlot::DragLineX(1, &curTime, ImVec4(255, 0, 0, 255))) {
+                                        task->selectedEpoch = static_cast<int>(std::clamp(curTime, 0.0, times.back()));
+                                    }
+                                }
+                            }
+                            ImPlot::EndPlot();
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+
+                //-------------------------------
+            }
+        }
     }
 
     // ================================================================

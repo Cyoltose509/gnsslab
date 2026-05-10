@@ -28,9 +28,9 @@ namespace GuiOem7Processor {
         std::vector<bool> rejected;
 
         // Result data (if solved)
-        Eigen::Vector3d xyz{0, 0, 0};
-        Eigen::Vector3d blh{0, 0, 0};
-        Eigen::Vector3d vel{0, 0, 0};
+        Vector3d xyz{0, 0, 0};
+        Vector3d blh{0, 0, 0};
+        Vector3d vel{0, 0, 0};
         double pdop = 0;
         double sigmaP = 0;
         double sigmaV = 0;

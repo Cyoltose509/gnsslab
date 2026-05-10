@@ -38,6 +38,7 @@ public:
 
     [[nodiscard]] const SatValueMap &getElevData() const { return satElevData; }
     [[nodiscard]] const SatValueMap &getAzimData() const { return satAzimData; }
+    [[nodiscard]] const std::map<SatID, PVT> &getSatPVT() const { return satPVTRecTime; }
 
     [[nodiscard]] SatID getDatumSat() const {
         double maxElev(0.0);
