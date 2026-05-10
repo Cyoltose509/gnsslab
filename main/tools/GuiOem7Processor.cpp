@@ -27,12 +27,16 @@ namespace GuiOem7Processor {
                     elevations[i] = it->second;
                 if (auto it2 = spp.satAzimData.find(satIds[i]); it2 != spp.satAzimData.end())
                     azimuths[i] = it2->second;
-                rejected[i] = spp.satRejected.count(satIds[i]) > 0;
+                if (spp.satRejected.count(satIds[i])) {
+                    rejected[i] = true;
+                    numSatsResult--;
+                }
             }
         } else {
             solved = false;
         }
     }
+
     void SppEpochData::getFromObs(const ObsData &obs) {
         week = obs.weekSecond.week;
         sow = obs.weekSecond.sow;
@@ -186,8 +190,8 @@ namespace GuiOem7Processor {
                 if (ImGui::BeginTable("##sats", 7,
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_ScrollY)) {
-                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                    ImGui::TableSetupColumn("系统", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                    ImGui::TableSetupColumn("序号", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 60.0f);
                     ImGui::TableSetupColumn("高度角(°)", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("IF伪距(m)", ImGuiTableColumnFlags_WidthStretch);
@@ -198,10 +202,11 @@ namespace GuiOem7Processor {
                     for (int i = 0; i < static_cast<int>(curData.satIds.size()); i++) {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::Text("%c%02d", curData.satIds[i].system, curData.satIds[i].id);
+                        ImGui::Text("%d", i + 1);
+
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%s", curData.satIds[i].system == 'G' ? "GPS" : curData.satIds[i].system == 'C' ? "BDS" : "Other");
+                        ImGui::Text("%c%02d", curData.satIds[i].system, curData.satIds[i].id);
 
                         ImGui::TableSetColumnIndex(2);
                         ImGui::Text("%.2f", curData.elevations[i] * RAD_TO_DEG);
@@ -262,7 +267,7 @@ namespace GuiOem7Processor {
                     ImGui::Text("  SigmaP: %.3f m", curData.sigmaP);
                     ImGui::Text("  SigmaV: %.3f m/s", curData.sigmaV);
                     ImGui::Text("  PDOP:   %.2f", curData.pdop);
-                    ImGui::Text("  卫星数: %d", curData.numSatsResult);
+                    ImGui::Text("  卫星数: %d/%d", curData.numSatsResult, curData.numObs);
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "该历元未获得定位解");
                     ImGui::TextWrapped("可能原因: 可用卫星不足或观测质量过差。");

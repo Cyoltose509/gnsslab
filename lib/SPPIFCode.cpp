@@ -149,6 +149,9 @@ void SPPIFCode::computeIF(ObsData &obsData) {
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
+                if (ifVal>2.7e7 || ifVal<1.8e7) {
+                    satRejected.insert(sat);
+                }
             } else {
                 satRejected.insert(sat);
             }
