@@ -2,10 +2,12 @@
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
 
-void SPPIFCode::preprocess(ObsData &obsData) const {
+void SPPIFCode::preprocess(ObsData &obsData) {
+    satRejected.clear();
     convertObsType(obsData);
     computeIF(obsData);
 }
+
 void SPPIFCode::solve(ObsData &obsData) {
     satPVTTransTime = computeSatPos(obsData);
     xyz = obsData.antennaPosition;
@@ -134,8 +136,7 @@ void SPPIFCode::convertObsType(ObsData &obsData) {
     obsData.satTypeValueData = stvData;
 }
 
-void SPPIFCode::computeIF(ObsData &obsData) const {
-    SatIDSet satRejectedSet;
+void SPPIFCode::computeIF(ObsData &obsData) {
     for (auto &[sat, codeList]: obsData.satTypeValueData) {
         // cout << sat<< ' '<< codeList << endl;
         if (const char sys = sat.system; ifCodeTypes.count(sys)) {
@@ -149,12 +150,9 @@ void SPPIFCode::computeIF(ObsData &obsData) const {
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
             } else {
-                satRejectedSet.insert(sat);
+                satRejected.insert(sat);
             }
         }
-    }
-    for (const auto &sat: satRejectedSet) {
-        obsData.satTypeValueData.erase(sat);
     }
 }
 
@@ -230,14 +228,21 @@ void SPPIFCode::linearize(ObsData &obsData) {
     const Variable dcdt(obsData.station, Parameter::cdtr_dot);
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        if (!satPVTRecTime.count(sat)) continue;
+        if (satRejected.count(sat)) continue;
+        if (!satPVTRecTime.count(sat)) {
+            satRejected.insert(sat);
+            continue;
+        }
 
         const auto &pvt = satPVTRecTime.at(sat);
 
         double elev = PI * 0.5;
         if (satElevData.count(sat)) elev = satElevData.at(sat);
 
-        if (xyz.norm() > 1000.0 && elev < cutOffElev) continue;
+        if (xyz.norm() > 1000.0 && elev < cutOffElev) {
+            satRejected.insert(sat);
+            continue;
+        }
 
         // Choose observation (following same logic as computeSatPos)
         double obsVal = 0.0;
@@ -324,7 +329,7 @@ void SPPIFCode::linearize(ObsData &obsData) {
             if (elev < PI / 6) {
                 velWeight *= std::pow(std::sin(elev), 2);
             }
-            velWeight *= 0.1;  // 多普勒观测噪声较大，额外衰减
+            velWeight *= 0.1; // 多普勒观测噪声较大，额外衰减
             ed_vel.weight = velWeight;
 
             velEquations.obsEquData[eid_vel] = ed_vel;

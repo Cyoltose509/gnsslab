@@ -11,6 +11,33 @@
 #include <iostream>
 
 namespace GuiOem7Processor {
+    void SppEpochData::getFromSPP(const SPPIFCode &spp) {
+        auto &result = spp.result;
+        if (result.numSats > 0) {
+            solved = true;
+            xyz = result.xyz;
+            blh = result.blh;
+            vel = result.vel;
+            pdop = result.pdop;
+            sigmaP = result.sigmaP;
+            sigmaV = result.sigmaV;
+            numSatsResult = result.numSats;
+            const auto size = static_cast<int>(satIds.size());
+            for (int i = 0; i < size; i++) {
+                if (auto it = spp.satElevData.find(satIds[i]); it != spp.satElevData.end())
+                    elevations[i] = it->second;
+                if (auto it2 = spp.satAzimData.find(satIds[i]); it2 != spp.satAzimData.end())
+                    azimuths[i] = it2->second;
+                if (spp.satRejected.count(satIds[i])) {
+                    rejected.insert(i);
+                }
+
+            }
+        } else {
+            solved = false;
+        }
+    }
+
     void SolveThread(const std::shared_ptr<SppTask> &task) {
         try {
             OEM7Reader oem7;
@@ -45,6 +72,7 @@ namespace GuiOem7Processor {
                 data.week = obs.weekSecond.week;
                 data.sow = obs.weekSecond.sow;
 
+
                 for (auto &[sat, typeMap]: obs.satTypeValueData) {
                     data.satIds.push_back(sat);
                     auto it = typeMap.find("CC12");
@@ -57,30 +85,14 @@ namespace GuiOem7Processor {
 
                 try {
                     spp.solve(obs);
-                    auto &result = spp.result;
-
-                    data.solved = true;
-                    data.xyz = result.xyz;
-                    data.blh = result.blh;
-                    data.vel = result.vel;
-                    data.pdop = result.pdop;
-                    data.sigmaP = result.sigmaP;
-                    data.sigmaV = result.sigmaV;
-                    data.numSatsResult = result.numSats;
-
-                    // 填充卫星高度角和方位角
-                    for (int i = 0; i < static_cast<int>(data.satIds.size()); i++) {
-                        if (auto it = spp.getElevData().find(data.satIds[i]); it != spp.getElevData().end())
-                            data.elevations[i] = it->second;
-                        if (auto it2 = spp.getAzimData().find(data.satIds[i]); it2 != spp.getAzimData().end())
-                            data.azimuths[i] = it2->second;
-                    }
+                    data.getFromSPP(spp);
                 } catch (...) {
                     data.solved = false;
                 }
 
                 {
                     std::lock_guard lock(task->mutex);
+                    const bool wasAtEnd = (task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1);
                     if (task->epochs.empty()) {
                         task->weekFirst = data.week;
                         task->sowFirst = data.sow;
@@ -89,6 +101,9 @@ namespace GuiOem7Processor {
                     task->weekLast = data.week;
                     task->sowLast = data.sow;
                     task->epochs.push_back(data);
+                    if (wasAtEnd) {
+                        task->selectedEpoch = static_cast<int>(task->epochs.size()) - 1;
+                    }
                 }
             }
         } catch (const std::exception &e) {
@@ -170,7 +185,7 @@ namespace GuiOem7Processor {
                 }
 
                 ImGui::SeparatorText("卫星观测数据");
-                if (ImGui::BeginTable("##sats", 6,
+                if (ImGui::BeginTable("##sats", 7,
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_ScrollY)) {
                     ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 50.0f);
@@ -179,6 +194,7 @@ namespace GuiOem7Processor {
                     ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("IF伪距(m)", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("信号", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("状态", ImGuiTableColumnFlags_WidthFixed, 50.0f);
                     ImGui::TableHeadersRow();
 
                     for (int i = 0; i < static_cast<int>(curData.satIds.size()); i++) {
@@ -205,6 +221,12 @@ namespace GuiOem7Processor {
                             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "良");
                         } else {
                             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "低");
+                        }
+                        ImGui::TableSetColumnIndex(6);
+                        if (curData.rejected.count(i)) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "排除");
+                        } else {
+                            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "参与");
                         }
                     }
                     ImGui::EndTable();

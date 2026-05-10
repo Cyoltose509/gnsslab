@@ -11,6 +11,7 @@ struct HWND__; //NOLINT
 typedef HWND__ *HWND;
 
 #include "GnssStruct.h"
+#include "SPPIFCode.h"
 
 namespace GuiOem7Processor {
     struct SppEpochData {
@@ -24,6 +25,7 @@ namespace GuiOem7Processor {
         std::vector<double> elevations;
         std::vector<double> azimuths;
         std::vector<double> pranges;
+        std::set<int> rejected;
 
         // Result data (if solved)
         Eigen::Vector3d xyz{0, 0, 0};
@@ -33,6 +35,7 @@ namespace GuiOem7Processor {
         double sigmaP = 0;
         double sigmaV = 0;
         int numSatsResult = 0;
+        void getFromSPP(const SPPIFCode &spp);
     };
 
     struct SppTask {

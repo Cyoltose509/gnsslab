@@ -62,31 +62,13 @@ namespace GuiRealtimeProcessor {
 
                         try {
                             spp.solve(obs);
-                            auto &result = spp.result;
-
-                            data.solved = true;
-                            data.xyz = result.xyz;
-                            data.blh = result.blh;
-                            data.vel = result.vel;
-                            data.pdop = result.pdop;
-                            data.sigmaP = result.sigmaP;
-                            data.sigmaV = result.sigmaV;
-                            data.numSatsResult = result.numSats;
-
-                            // 填充卫星高度角和方位角
-                            for (int i = 0; i < static_cast<int>(data.satIds.size()); i++) {
-                                if (auto it = spp.getElevData().find(data.satIds[i]); it != spp.getElevData().end())
-                                    data.elevations[i] = it->second;
-                                if (auto it2 = spp.getAzimData().find(data.satIds[i]); it2 != spp.getAzimData().end())
-                                    data.azimuths[i] = it2->second;
-                            }
+                            data.getFromSPP(spp);
                         } catch (...) {
                             data.solved = false;
                         }
-
                         {
                             std::lock_guard lock(task->mutex);
-                            bool wasAtEnd = (task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1);
+                            const bool wasAtEnd = (task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1);
 
                             if (task->epochs.empty()) {
                                 task->weekFirst = data.week;

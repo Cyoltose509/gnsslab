@@ -19,7 +19,7 @@ public:
         ifCodeTypes = ifTypes;
     }
 
-    void preprocess(ObsData &obsData) const;
+    void preprocess(ObsData &obsData);
 
     void solve(ObsData &obsData);
 
@@ -29,15 +29,15 @@ public:
 
     static void convertObsType(ObsData &obsData);
 
-    void computeIF(ObsData &obsData) const;
+    void computeIF(ObsData &obsData);
 
     std::map<SatID, PVT> earthRotation();
 
     void linearize(ObsData &obsData);
 
 
-    [[nodiscard]] const SatValueMap& getElevData() const { return satElevData; }
-    [[nodiscard]] const SatValueMap& getAzimData() const { return satAzimData; }
+    [[nodiscard]] const SatValueMap &getElevData() const { return satElevData; }
+    [[nodiscard]] const SatValueMap &getAzimData() const { return satAzimData; }
 
     [[nodiscard]] SatID getDatumSat() const {
         double maxElev(0.0);
@@ -61,6 +61,9 @@ public:
     Vector3d vel{0, 0, 0};
     ReferenceFrame frame = Frame::WGS84;
     Result result{};
+    SatValueMap satElevData{};
+    SatValueMap satAzimData{};
+    std::set<SatID> satRejected{};
     // 继承类需要访问这个成员
 protected:
     double cutOffElev = PI * 0.0555556;
@@ -79,8 +82,7 @@ protected:
     std::map<SatID, PVT> satPVTTransTime{};
     std::map<SatID, PVT> satPVTRecTime{};
 
-    SatValueMap satElevData{};
-    SatValueMap satAzimData{};
+
 
 
     std::map<SatID, Ephemeris *> ephMap{};
