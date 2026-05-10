@@ -52,6 +52,10 @@ namespace GuiRealtimeProcessor {
                         try {
                             spp.solve(obs);
                             data.getFromSPP(spp);
+                            if (!task->initializedRefECEF) {
+                                task->refECEF = data.xyz;
+                                task->initializedRefECEF = true;
+                            }
                         } catch (...) {
                             data.solved = false;
                         }

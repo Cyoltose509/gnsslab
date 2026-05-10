@@ -35,7 +35,9 @@ namespace GuiOem7Processor {
         double sigmaP = 0;
         double sigmaV = 0;
         int numSatsResult = 0;
+
         void getFromSPP(const SPPIFCode &spp);
+
         void getFromObs(const ObsData &obs);
     };
 
@@ -52,6 +54,8 @@ namespace GuiOem7Processor {
         std::mutex mutex;
 
         std::vector<SppEpochData> epochs;
+        XYZ refECEF{0, 0, 0};
+        bool initializedRefECEF = false;
 
         unsigned int weekFirst = 0, weekLast = 0;
         double sowFirst = 0, sowLast = 0;
@@ -61,14 +65,14 @@ namespace GuiOem7Processor {
         std::string errorMsg;
 
         ~SppTask() {
-            stop = true; 
+            stop = true;
             if (worker.joinable()) worker.join();
         }
     };
 
     void SolveThread(const std::shared_ptr<SppTask> &task);
 
-    void RenderTask(const std::shared_ptr<SppTask> &task,bool isRealtime = false);
+    void RenderTask(const std::shared_ptr<SppTask> &task, bool isRealtime = false);
 
     std::string ShowOpenFileDialog(HWND hwnd);
 

@@ -88,6 +88,10 @@ namespace GuiOem7Processor {
                 try {
                     spp.solve(obs);
                     data.getFromSPP(spp);
+                    if (!task->initializedRefECEF) {
+                        task->refECEF = data.xyz;
+                        task->initializedRefECEF = true;
+                    }
                 } catch (...) {
                     data.solved = false;
                 }
@@ -120,12 +124,12 @@ namespace GuiOem7Processor {
     // ================================================================
     // 渲染任务内容（主布局使用 Table 以支持拖拽分栏）
     // ================================================================
-    void RenderTask(const std::shared_ptr<SppTask> &task, bool isRealtime) {
+    void RenderTask(const std::shared_ptr<SppTask> &task, const bool isRealtime) {
         int epochCount = 0;
         int selectedIdx;
-        bool isLoading = task->loading.load();
-        bool isDone = task->done.load();
-        bool hasError = task->hasError;
+        const bool isLoading = task->loading.load();
+        const bool isDone = task->done.load();
+        const bool hasError = task->hasError;
 
         {
             std::lock_guard lock(task->mutex);
@@ -164,6 +168,38 @@ namespace GuiOem7Processor {
                 std::lock_guard lock(task->mutex);
                 auto &cur = task->epochs[selectedIdx];
                 ImGui::TextDisabled("| Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? "已定位" : "未定位");
+            }
+        }
+        {
+            ImGui::Text("参考真值：");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(200);
+            ImGui::InputDouble("X/m", &task->refECEF[0]);
+            ImGui::SameLine();
+            ImGui::InputDouble("Y/m", &task->refECEF[1]);
+            ImGui::SameLine();
+            ImGui::InputDouble("Z/m", &task->refECEF[2]);
+            ImGui::SameLine();
+            if (ImGui::Button("从剪贴板读取")) {
+                if (const char *clipText = ImGui::GetClipboardText(); clipText && clipText[0] != '\0') {
+                    double vals[3] = {0, 0, 0};
+                    int count = 0;
+                    const char *p = clipText;
+                    char *end;
+                    while (*p && count < 3) {
+                        // 跳过非数字字符（包括空格、逗号等）
+                        while (*p && !(*p == '-' || (*p >= '0' && *p <= '9'))) p++;
+                        if (!*p) break;
+
+                        vals[count] = strtod(p, &end);
+                        if (p == end) break; // 没解析到数字
+                        p = end;
+                        count++;
+                    }
+                    if (count >= 1) task->refECEF[0] = vals[0];
+                    if (count >= 2) task->refECEF[1] = vals[1];
+                    if (count >= 3) task->refECEF[2] = vals[2];
+                }
             }
         }
 
@@ -248,41 +284,36 @@ namespace GuiOem7Processor {
                 }
 
                 if (curData.solved) {
+                    auto enu = XYZtoENU(curData.xyz, task->refECEF);
                     ImGui::SeparatorText("位置 (WGS84)");
-                    ImGui::Text("  X: %.4f m", curData.xyz[0]);
-                    ImGui::Text("  Y: %.4f m", curData.xyz[1]);
-                    ImGui::Text("  Z: %.4f m", curData.xyz[2]);
-                    ImGui::Spacing();
-                    ImGui::Text("  B: %.9f °", curData.blh[0] * RAD_TO_DEG);
-                    ImGui::Text("  L: %.9f °", curData.blh[1] * RAD_TO_DEG);
-                    ImGui::Text("  H: %.4f m", curData.blh[2]);
-
+                    ImGui::Text("  ECEF: (%.4f, %.4f, %.4f) m", curData.xyz[0], curData.xyz[1], curData.xyz[2]);
+                    ImGui::Text("    REF: (%.4f, %.4f, %.4f) m", task->refECEF[0], task->refECEF[1], task->refECEF[2]);
+                    ImGui::Text("  ENU: (%.4f, %.4f, %.4f) m", enu[0], enu[1], enu[2]);
+                    ImGui::Text("  BLH: (%.8f°, %.8f°, %.4f m)", curData.blh[0] * RAD_TO_DEG, curData.blh[1] * RAD_TO_DEG, curData.blh[2]);
+                    ImGui::Text("  SigmaP: %.3f m", curData.sigmaP);
                     ImGui::Spacing();
                     ImGui::SeparatorText("速度");
-                    ImGui::Text("  Vx: %.4f m/s", curData.vel[0]);
-                    ImGui::Text("  Vy: %.4f m/s", curData.vel[1]);
-                    ImGui::Text("  Vz: %.4f m/s", curData.vel[2]);
+                    ImGui::Text("  (%.4f, %.4f, %.4f) m/s", curData.vel[0], curData.vel[1], curData.vel[2]);
+                    ImGui::Text("  SigmaV: %.3f m/s", curData.sigmaV);
                     ImGui::Spacing();
                     ImGui::SeparatorText("精度");
-                    ImGui::Text("  SigmaP: %.3f m", curData.sigmaP);
-                    ImGui::Text("  SigmaV: %.3f m/s", curData.sigmaV);
                     ImGui::Text("  PDOP:   %.2f", curData.pdop);
                     ImGui::Text("  卫星数: %d/%d", curData.numSatsResult, curData.numObs);
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "该历元未获得定位解");
                     ImGui::TextWrapped("可能原因: 可用卫星不足或观测质量过差。");
                 }
-
-                ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40.0f);
+                ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50.0f);
                 if (isDone || isRealtime) {
-                    if (ImGui::Button("导出结果 (CSV)", ImVec2(-FLT_MIN, 30.0f))) {
+                    if (ImGui::Button("导出结果 (CSV)", ImVec2(-FLT_MIN, 40.0f))) {
                         auto hwnd = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
                         if (!hwnd) hwnd = GetActiveWindow();
                         ExportCsv(task, hwnd);
                     }
                 } else {
-                    ImGui::Button("解析中...", ImVec2(-FLT_MIN, 30.0f));
+                    ImGui::Button("解析中...", ImVec2(-FLT_MIN, 40.0f));
                 }
+
             }
             ImGui::EndChild();
 
@@ -348,27 +379,33 @@ namespace GuiOem7Processor {
         std::ofstream out(filename);
         if (!out.is_open()) return;
 
-        out << "Wk,SOW,Solved,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,B/deg,L/deg,H/m,"
+        out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-ECEF-X/m,REF-ECEF-Y/m,REF-ECEF-Z/m,EAST/m,NORTH/m,UP/m,B/deg,L/deg,H/m,"
                 << "VX/m,VY/m,VZ/m,PDOP,SigmaP,SigmaV,SatCount\n";
 
         for (const auto &r: task->epochs) {
             out << r.week << ','
-                    << std::fixed << std::setprecision(3) << r.sow << ','
-                    << (r.solved ? "1" : "0") << ',';
+                    << std::fixed << std::setprecision(3) << r.sow << ',';
 
             if (r.solved) {
+                auto enu = XYZtoENU(r.xyz, task->refECEF);
                 out << std::setprecision(4)
                         << r.xyz[0] << ',' << r.xyz[1] << ',' << r.xyz[2] << ','
-                        << std::setprecision(9)
+                        << task->refECEF.X() << ','
+                        << task->refECEF.Y() << ','
+                        << task->refECEF.Z() << ','
+                        << enu.E() << ','
+                        << enu.N() << ','
+                        << enu.U() << ','
+                        << std::setprecision(8)
                         << r.blh[0] * RAD_TO_DEG << ',' << r.blh[1] * RAD_TO_DEG << ','
-                        << std::setprecision(4)
+                        << std::setprecision(3)
                         << r.blh[2] << ','
                         << r.vel[0] << ',' << r.vel[1] << ',' << r.vel[2] << ','
                         << std::setprecision(4)
                         << r.pdop << ',' << r.sigmaP << ',' << r.sigmaV << ','
                         << r.numSatsResult;
             } else {
-                out << ",,,,,,,,,,,,0";
+                //out << ",,,,,,,,,,,,0";
             }
             out << '\n';
         }
