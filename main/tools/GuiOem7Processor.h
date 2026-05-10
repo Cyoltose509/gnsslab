@@ -38,10 +38,12 @@ namespace GuiOem7Processor {
     struct SppTask {
         std::string filePath;
         std::string fileName;
+        bool isRealtime = false; // Flag to distinguish file vs realtime
 
         std::thread worker;
         std::atomic<bool> loading{false};
         std::atomic<bool> done{false};
+        std::atomic<bool> stop{false}; // New stop flag
         bool hasError = false;
         std::mutex mutex;
 
@@ -55,13 +57,14 @@ namespace GuiOem7Processor {
         std::string errorMsg;
 
         ~SppTask() {
+            stop = true; 
             if (worker.joinable()) worker.join();
         }
     };
 
     void SolveThread(const std::shared_ptr<SppTask> &task);
 
-    void RenderTask(const std::shared_ptr<SppTask> &task);
+    void RenderTask(const std::shared_ptr<SppTask> &task,bool isRealtime = false);
 
     std::string ShowOpenFileDialog(HWND hwnd);
 

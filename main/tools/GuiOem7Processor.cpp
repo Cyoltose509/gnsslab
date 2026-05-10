@@ -11,7 +11,6 @@
 #include <iostream>
 
 namespace GuiOem7Processor {
-
     void SolveThread(const std::shared_ptr<SppTask> &task) {
         try {
             OEM7Reader oem7;
@@ -104,7 +103,7 @@ namespace GuiOem7Processor {
     // ================================================================
     // 渲染任务内容（主布局使用 Table 以支持拖拽分栏）
     // ================================================================
-    void RenderTask(const std::shared_ptr<SppTask> &task) {
+    void RenderTask(const std::shared_ptr<SppTask> &task, bool isRealtime) {
         int epochCount = 0;
         int selectedIdx;
         bool isLoading = task->loading.load();
@@ -250,7 +249,7 @@ namespace GuiOem7Processor {
                 }
 
                 ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 40.0f);
-                if (isDone) {
+                if (isDone || isRealtime) {
                     if (ImGui::Button("导出结果 (CSV)", ImVec2(-FLT_MIN, 30.0f))) {
                         auto hwnd = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
                         if (!hwnd) hwnd = GetActiveWindow();
@@ -281,7 +280,7 @@ namespace GuiOem7Processor {
     // ================================================================
     // 文件打开对话框
     // ================================================================
-    std::string ShowOpenFileDialog(HWND hwnd) {//NOLINT
+    std::string ShowOpenFileDialog(HWND hwnd) { //NOLINT
         char filename[MAX_PATH] = "";
 
         OPENFILENAMEA ofn = {};

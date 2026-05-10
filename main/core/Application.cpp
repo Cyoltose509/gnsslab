@@ -2,6 +2,7 @@
 #include "tools/GuiTimeConverter.h"
 #include "tools/GuiCoordConverter.h"
 #include "tools/GuiOem7Processor.h"
+#include "tools/GuiRealtimeProcessor.h"
 #include "version.h"
 
 #include "imgui.h"
@@ -36,6 +37,8 @@ void Application::RenderMenuBar()
         {
             if (ImGui::MenuItem("打开OEM7文件..."))
                 OpenOem7File();
+            if (ImGui::MenuItem("连接到..."))
+                m_showConnectDialog = true;
             ImGui::Separator();
             if (ImGui::MenuItem("退出", "Alt+F4"))
                 m_ui.Shutdown();
@@ -70,6 +73,27 @@ void Application::RenderMenuBar()
         ImGui::Text("开发者: %s", COMPANY_NAME);
         ImGui::Spacing();
         if (ImGui::Button("确定", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+
+    // ---- 连接对话框 ----
+    if (m_showConnectDialog)
+    {
+        ImGui::OpenPopup("连接到 Oem7 实时流");
+        m_showConnectDialog = false;
+    }
+
+    if (ImGui::BeginPopupModal("连接到 Oem7 实时流", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::InputText("IP 地址", m_ipBuffer, sizeof(m_ipBuffer));
+        ImGui::InputInt("端口", &m_portBuffer);
+        ImGui::Separator();
+        if (ImGui::Button("连接", ImVec2(120, 0))) {
+            ConnectToRealtime();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -118,14 +142,18 @@ void Application::RenderTasks()
                 auto &task = m_tasks[i];
 
                 std::string label;
-                if (task->loading.load())
-                    label = task->fileName + " [加载中]";
-                else if (task->hasError)
-                    label = task->fileName + " [错误]";
-                else if (task->done.load())
-                    label = task->fileName + " [完成]";
+                if (task->isRealtime)
+                    label = "[实时] " + task->fileName;
                 else
                     label = task->fileName;
+
+                if (task->loading.load())
+                    label += " [加载中]";
+                else if (task->hasError)
+                    label += " [错误]";
+                else if (task->done.load())
+                    label += " [已停止]";
+                
                 label += "###" + std::to_string(i);
 
                 ImGuiTabItemFlags tabFlags = ImGuiTabItemFlags_None;
@@ -138,7 +166,11 @@ void Application::RenderTasks()
                     m_activeTask = i;
                     if (m_taskToFocus == i) m_taskToFocus = -1; // 消费掉选中请求
 
-                    GuiOem7Processor::RenderTask(task);
+                    if (task->isRealtime)
+                        GuiRealtimeProcessor::RenderTask(task);
+                    else
+                        GuiOem7Processor::RenderTask(task);
+                    
                     ImGui::EndTabItem();
                 }
 
@@ -174,6 +206,7 @@ void Application::OpenOem7File()
     auto task = std::make_shared<GuiOem7Processor::SppTask>();
     task->filePath = filePath;
     task->fileName = fileName;
+    task->isRealtime = false;
     task->loading = true;
 
     task->worker = std::thread(GuiOem7Processor::SolveThread, task);
@@ -181,6 +214,24 @@ void Application::OpenOem7File()
     m_tasks.push_back(task);
     m_activeTask = static_cast<int>(m_tasks.size()) - 1;
     m_taskToFocus = m_activeTask; // 设置选中标记
+}
+
+void Application::ConnectToRealtime()
+{
+    GuiRealtimeProcessor::ConnectionConfig config;
+    config.ip = m_ipBuffer;
+    config.port = m_portBuffer;
+
+    auto task = std::make_shared<GuiRealtimeProcessor::SppTask>();
+    task->fileName = config.ip + ":" + std::to_string(config.port);
+    task->isRealtime = true;
+    task->loading = true;
+
+    task->worker = std::thread(GuiRealtimeProcessor::SolveRealtimeThread, task, config);
+
+    m_tasks.push_back(task);
+    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
+    m_taskToFocus = m_activeTask;
 }
 
 void Application::Render()
