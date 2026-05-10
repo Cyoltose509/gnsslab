@@ -259,13 +259,6 @@ void SPPIFCode::linearize(ObsData &obsData) {
         if (xyz.norm() > 1000.0) {
             auto BLH = XYZtoBLH(xyz, frame);
             trop = tropoHopfield(BLH[2], elev);
-            // double iono = IF
-            //                   ? 0
-            //                   : ionoKlobuchar(BLH[0], BLH[1], elev,
-            //                       satAzimData[sat],
-            //                       obsData.epoch.m_sod,
-            //                       alpha, beta);
-            //trop = 2.3 / sin(max(elev, 5.0) * DEG_TO_RAD);
         }
 
         const EquID eid(sat, usedType);

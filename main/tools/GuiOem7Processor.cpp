@@ -173,8 +173,8 @@ namespace GuiOem7Processor {
                 if (ImGui::BeginTable("##sats", 6,
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_ScrollY)) {
-                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-                    ImGui::TableSetupColumn("系统", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("系统", ImGuiTableColumnFlags_WidthFixed, 60.0f);
                     ImGui::TableSetupColumn("高度角(°)", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("IF伪距(m)", ImGuiTableColumnFlags_WidthStretch);

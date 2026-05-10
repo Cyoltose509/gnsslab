@@ -13,7 +13,8 @@ namespace GuiRealtimeProcessor {
         int port = 7003;
     };
 
-    void SolveRealtimeThread(const std::shared_ptr<SppTask> &task, const ConnectionConfig& config);
+    void SolveRealtimeThread(const std::shared_ptr<SppTask> &task, const ConnectionConfig &config);
+
 
     // We can mostly use GuiOem7Processor::RenderTask, 
     // but maybe we want a slightly different one for real-time (e.g. auto-scroll to latest)

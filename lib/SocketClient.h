@@ -68,6 +68,8 @@ public:
 
     void close();
 
+    bool setReceiveTimeout(int timeoutMs);
+
     int receive(unsigned char *buffer, int maxLen) const;
 
     [[nodiscard]] bool isConnected() const;

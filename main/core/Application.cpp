@@ -17,6 +17,12 @@ void Application::Initialize()
 
 void Application::Shutdown()
 {
+    // First, signal all tasks to stop
+    for (const auto &task : m_tasks) {
+        task->stop = true;
+    }
+
+    // Then, wait for all threads to finish
     for (const auto &task: m_tasks) {
         if (task->worker.joinable()) task->worker.join();
     }

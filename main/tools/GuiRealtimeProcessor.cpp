@@ -2,6 +2,9 @@
 #define NOMINMAX
 
 #define COM_NO_WINDOWS_H
+#define _HAS_STD_BYTE 0
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include "GuiRealtimeProcessor.h"
 #include "OEM7SocketReader.h"
 #include "SPPIFCode.h"
@@ -21,6 +24,7 @@ namespace GuiRealtimeProcessor {
                 task->done = true;
                 return;
             }
+            reader.setReceiveTimeout(100); // 100ms timeout
 
             SPPIFCode spp;
             spp.setIFCodeTypes({
@@ -35,9 +39,9 @@ namespace GuiRealtimeProcessor {
                         // 构造星历映射
                         std::map<SatID, Ephemeris *> ephMap;
                         for (auto &[prn, eph]: reader.latestGps)
-                            ephMap[SatID('G', prn)] = const_cast<GPSEphem *>(&eph);
+                            ephMap[SatID('G', prn)] = &eph;
                         for (auto &[prn, eph]: reader.latestBds)
-                            ephMap[SatID('C', prn)] = const_cast<BDSEphem *>(&eph);
+                            ephMap[SatID('C', prn)] = &eph;
 
                         spp.setEphemeris(ephMap);
                         spp.preprocess(obs);

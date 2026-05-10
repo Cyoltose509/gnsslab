@@ -35,6 +35,20 @@ void SocketClient::close() {
     connected = false;
 }
 
+bool SocketClient::setReceiveTimeout(int timeoutMs) {
+    if (sock == SOCKET_INVALID) return false;
+
+#ifdef _WIN32
+    int tv = timeoutMs;
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv)) == 0;
+#else
+    struct timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
+#endif
+}
+
 int SocketClient::receive(unsigned char* buffer, const int maxLen) const {
     if (!connected || sock == SOCKET_INVALID) {
         return -1;

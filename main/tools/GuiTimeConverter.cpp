@@ -67,7 +67,7 @@ namespace GuiTimeConverter
         time_t raw_time;
         tm utc;
         time(&raw_time);
-        if (gmtime_s(&utc, &raw_time)) {
+        if (!gmtime_s(&utc, &raw_time)) {
             s_Civil[0][0] = utc.tm_year + 1900;
             s_Civil[0][1] = utc.tm_mon + 1;
             s_Civil[0][2] = utc.tm_mday;
