@@ -26,15 +26,8 @@ namespace GuiOem7Processor {
         std::vector<double> azimuths;
         std::vector<double> pranges;
         std::vector<bool> rejected;
-
-        // Result data (if solved)
-        Vector3d xyz{0, 0, 0};
-        Vector3d blh{0, 0, 0};
-        Vector3d vel{0, 0, 0};
-        double pdop = 0;
-        double sigmaP = 0;
-        double sigmaV = 0;
-        int numSatsResult = 0;
+        Result sppResult;
+        int numSatsResult;
 
         void getFromSPP(const SPPIFCode &spp);
 
@@ -57,8 +50,6 @@ namespace GuiOem7Processor {
         XYZ refECEF{0, 0, 0};
         bool initializedRefECEF = false;
 
-        unsigned int weekFirst = 0, weekLast = 0;
-        double sowFirst = 0, sowLast = 0;
 
         int selectedEpoch = -1;
 

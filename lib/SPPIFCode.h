@@ -23,6 +23,8 @@ public:
 
     void solve(ObsData &obsData);
 
+    void getResult();
+
     std::map<SatID, PVT> computeSatPos(ObsData &obsData);
 
     void computeElevAzim();

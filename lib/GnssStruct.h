@@ -125,7 +125,7 @@ inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap
 
 
 typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
-typedef std::map<SatID, Ephemeris*> SatEphemerisMap;
+typedef std::map<SatID, Ephemeris *> SatEphemerisMap;
 
 inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satTypeValueMap) {
     for (const auto &[sat, map]: satTypeValueMap) {
@@ -166,7 +166,6 @@ typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 //-------------------
 // 星历相关数据结构
 //-------------------
-
 
 
 // Output operator for pvt
@@ -427,9 +426,11 @@ struct Result {
     Eigen::Vector3d xyz, xyzFixed;
     Eigen::Vector3d blh, blhFixed;
     Eigen::Vector3d vel;
+    Eigen::Vector3d sigmaXYZ;
+    Eigen::Vector3d sigmaVel;
     double sigmaP;
     double sigmaV;
-    double pdop, gdop;
+    double pdop, gdop, hdop, vdop, tdop;
     int numSats;
     double ratio;
 

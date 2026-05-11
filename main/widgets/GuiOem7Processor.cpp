@@ -16,12 +16,7 @@ namespace GuiOem7Processor {
     void SppEpochData::getFromSPP(const SPPIFCode &spp) {
         if (auto &result = spp.result; result.numSats > 0) {
             solved = true;
-            xyz = result.xyz;
-            blh = result.blh;
-            vel = result.vel;
-            pdop = result.pdop;
-            sigmaP = result.sigmaP;
-            sigmaV = result.sigmaV;
+            sppResult = result;
             numSatsResult = result.numSats;
             const auto size = static_cast<int>(satIds.size());
             for (int i = 0; i < size; i++) {
@@ -83,7 +78,7 @@ namespace GuiOem7Processor {
                     spp.solve(obs);
                     data.getFromSPP(spp);
                     if (!task->initializedRefECEF) {
-                        task->refECEF = data.xyz;
+                        task->refECEF = data.sppResult.xyz;
                         task->initializedRefECEF = true;
                     }
                 } catch (...) {
@@ -94,12 +89,8 @@ namespace GuiOem7Processor {
                     std::lock_guard lock(task->mutex);
                     const bool wasAtEnd = (task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1);
                     if (task->epochs.empty()) {
-                        task->weekFirst = data.week;
-                        task->sowFirst = data.sow;
                         task->selectedEpoch = 0;
                     }
-                    task->weekLast = data.week;
-                    task->sowLast = data.sow;
                     task->epochs.push_back(data);
                     if (wasAtEnd) {
                         task->selectedEpoch = static_cast<int>(task->epochs.size()) - 1;
@@ -283,20 +274,27 @@ namespace GuiOem7Processor {
                 }
 
                 if (curData.solved) {
-                    auto enu = XYZtoENU(curData.xyz, task->refECEF);
+                    auto &result = curData.sppResult;
+                    auto enu = XYZtoENU(result.xyz, task->refECEF);
                     ImGui::SeparatorText("位置 (WGS84)");
-                    ImGui::Text("  ECEF: (%.4f, %.4f, %.4f) m", curData.xyz[0], curData.xyz[1], curData.xyz[2]);
+                    ImGui::Text("  ECEF: (%.4f, %.4f, %.4f) m", result.xyz[0], result.xyz[1], result.xyz[2]);
                     ImGui::Text("    REF: (%.4f, %.4f, %.4f) m", task->refECEF[0], task->refECEF[1], task->refECEF[2]);
                     ImGui::Text("  ENU: (%.4f, %.4f, %.4f) m", enu[0], enu[1], enu[2]);
-                    ImGui::Text("  BLH: (%.8f°, %.8f°, %.4f m)", curData.blh[0] * RAD_TO_DEG, curData.blh[1] * RAD_TO_DEG, curData.blh[2]);
-                    ImGui::Text("  SigmaP: %.3f m", curData.sigmaP);
+                    ImGui::Text("  BLH: (%.8f°, %.8f°, %.4f m)", result.blh[0] * RAD_TO_DEG, result.blh[1] * RAD_TO_DEG, result.blh[2]);
+                    ImGui::Text("  SigmaP: (%.3f, %.3f, %.3f) m (%.3f m)", result.sigmaXYZ[0], result.sigmaXYZ[1], result.sigmaXYZ[2],
+                                result.sigmaP);
                     ImGui::Spacing();
                     ImGui::SeparatorText("速度");
-                    ImGui::Text("  (%.4f, %.4f, %.4f) m/s", curData.vel[0], curData.vel[1], curData.vel[2]);
-                    ImGui::Text("  SigmaV: %.3f m/s", curData.sigmaV);
+                    ImGui::Text("  (%.4f, %.4f, %.4f) m/s", result.vel[0], result.vel[1], result.vel[2]);
+                    ImGui::Text("  SigmaV: (%.3f, %.3f, %.3f) m/s (%.3f m/s)", result.sigmaVel[0], result.sigmaVel[1], result.sigmaVel[2],
+                                result.sigmaV);
                     ImGui::Spacing();
                     ImGui::SeparatorText("精度");
-                    ImGui::Text("  PDOP:   %.2f", curData.pdop);
+                    ImGui::Text("  PDOP:   %.2f", result.pdop);
+                    ImGui::Text("  GDOP:   %.2f", result.gdop);
+                    ImGui::Text("  HDOP:   %.2f", result.hdop);
+                    ImGui::Text("  VDOP:   %.2f", result.vdop);
+                    ImGui::Text("  TDOP:   %.2f", result.tdop);
                     ImGui::Text("  卫星数: %d/%d", curData.numSatsResult, curData.numObs);
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "该历元未获得定位解");
@@ -342,11 +340,12 @@ namespace GuiOem7Processor {
                 enu_u.resize(n);
                 for (int i = 0; i < n; i++) {
                     const auto &ep = task->epochs[i];
+                    const auto &result = ep.sppResult;
                     times[i] = i;
-                    sigmaPs[i] = ep.solved ? ep.sigmaP : 0.0;
-                    sigmaVs[i] = ep.solved ? ep.sigmaV : 0.0;
-                    pdops[i] = ep.solved ? ep.pdop : 0.0;
-                    auto enu = XYZtoENU(ep.xyz, task->refECEF);
+                    sigmaPs[i] = ep.solved ? result.sigmaP : 0.0;
+                    sigmaVs[i] = ep.solved ? result.sigmaV : 0.0;
+                    pdops[i] = ep.solved ? result.pdop : 0.0;
+                    auto enu = XYZtoENU(result.xyz, task->refECEF);
                     enu_e[i] = enu[0];
                     enu_n[i] = enu[1];
                     enu_u[i] = enu[2];
@@ -465,16 +464,17 @@ namespace GuiOem7Processor {
         if (!out.is_open()) return;
 
         out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-ECEF-X/m,REF-ECEF-Y/m,REF-ECEF-Z/m,EAST/m,NORTH/m,UP/m,B/deg,L/deg,H/m,"
-                << "VX/m,VY/m,VZ/m,PDOP,SigmaP,SigmaV,SatCount\n";
+                << "VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
 
         for (const auto &r: task->epochs) {
             out << r.week << ','
                     << std::fixed << std::setprecision(3) << r.sow << ',';
 
             if (r.solved) {
-                auto enu = XYZtoENU(r.xyz, task->refECEF);
+                auto &result = r.sppResult;
+                auto enu = XYZtoENU(result.xyz, task->refECEF);
                 out << std::setprecision(4)
-                        << r.xyz[0] << ',' << r.xyz[1] << ',' << r.xyz[2] << ','
+                        << result.xyz[0] << ',' << result.xyz[1] << ',' << result.xyz[2] << ','
                         << task->refECEF.X() << ','
                         << task->refECEF.Y() << ','
                         << task->refECEF.Z() << ','
@@ -482,12 +482,13 @@ namespace GuiOem7Processor {
                         << enu.N() << ','
                         << enu.U() << ','
                         << std::setprecision(8)
-                        << r.blh[0] * RAD_TO_DEG << ',' << r.blh[1] * RAD_TO_DEG << ','
+                        << result.blh[0] * RAD_TO_DEG << ',' << result.blh[1] * RAD_TO_DEG << ','
                         << std::setprecision(3)
-                        << r.blh[2] << ','
-                        << r.vel[0] << ',' << r.vel[1] << ',' << r.vel[2] << ','
+                        << result.blh[2] << ','
+                        << result.vel[0] << ',' << result.vel[1] << ',' << result.vel[2] << ','
                         << std::setprecision(4)
-                        << r.pdop << ',' << r.sigmaP << ',' << r.sigmaV << ','
+                        << result.pdop << ',' << result.gdop << ',' << result.hdop << ',' << result.vdop << ',' << result.tdop << ','
+                        << result.sigmaP << ',' << result.sigmaV << ','
                         << r.numSatsResult;
             } else {
                 //out << ",,,,,,,,,,,,0";

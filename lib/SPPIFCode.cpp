@@ -35,6 +35,8 @@ void SPPIFCode::solve(ObsData &obsData) {
         if (!isRover) break;
         // 解算位置
         posSolver.solve(posEquations);
+        // 解算速度
+        velSolver.solve(velEquations);
         const Vector3d dxyz = {
             posSolver.getSolution(Parameter::dX),
             posSolver.getSolution(Parameter::dY),
@@ -42,31 +44,18 @@ void SPPIFCode::solve(ObsData &obsData) {
         };
         const double d_cdt = posSolver.getSolution(Parameter::cdt);
         const double d_cdt2 = posSolver.getSolution(Parameter::cdt2);
-        // PDOP: 直接从协方差矩阵计算（已经是米单位）
-        result.pdop = sqrt(posSolver.covMatrix(0, 0) +
-                           posSolver.covMatrix(1, 1) +
-                           posSolver.covMatrix(2, 2));
-        // SigmaP: PDOP * sigma0 * sigIFCode (sigma0 是无量纲比例因子，需要乘以先验 sigma)
-        result.sigmaP = result.pdop * posSolver.sigma0 * sigIFCode;
-
-        // 解算速度
-        velSolver.solve(velEquations);
         const Vector3d dvel = {
             velSolver.getSolution(Parameter::dVX),
             velSolver.getSolution(Parameter::dVY),
             velSolver.getSolution(Parameter::dVZ)
         };
         const double dcdt_dot = velSolver.getSolution(Parameter::cdtr_dot);
-        // SigmaV: 使用协方差矩阵对角线元素的平方根，乘以 sigIFCode 作为先验 sigma
-        result.sigmaV = sqrt(velSolver.covMatrix(0, 0) +
-                             velSolver.covMatrix(1, 1) +
-                             velSolver.covMatrix(2, 2)) * velSolver.sigma0 * sigIFCode;
+
         xyz += dxyz;
         rClockBias += d_cdt;
         rClockBiasBDS += d_cdt2;
         vel += dvel;
         rClockDrift += dcdt_dot;
-
         if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001 && abs(d_cdt2) < 0.0001) {
             break;
         }
@@ -76,10 +65,37 @@ void SPPIFCode::solve(ObsData &obsData) {
     if (iter >= 10) {
         throw InvalidSolver("too many iterations without convergence");
     }
+    getResult();
+}
 
+void SPPIFCode::getResult() {
+    auto& pD=posSolver.covMatrix;
+    auto& vD=velSolver.covMatrix;
+    result.pdop = sqrt(pD(0, 0) +pD(1, 1) +pD(2, 2));
+    result.gdop = sqrt(pD(0, 0) +pD(1, 1) +pD(2, 2) +pD(3, 3) +pD(4, 4));
+
+    result.tdop = sqrt(pD(3, 3)+pD(4, 4));
+
+    result.sigmaP = result.pdop * posSolver.sigma0;
+    result.sigmaV = sqrt(vD(0, 0) +vD(1, 1) +vD(2, 2)) * velSolver.sigma0;
+    result.sigmaXYZ = {
+        sqrt(pD(0, 0)) * posSolver.sigma0,
+        sqrt(pD(1, 1)) * posSolver.sigma0,
+        sqrt(pD(2, 2)) * posSolver.sigma0
+    };
+    result.sigmaVel = {
+        sqrt(vD(0, 0)) * velSolver.sigma0,
+        sqrt(vD(1, 1)) * velSolver.sigma0,
+        sqrt(vD(2, 2)) * velSolver.sigma0
+    };
     result.xyz = xyz;
     result.vel = vel;
     result.blh = XYZtoBLH(xyz, frame);
+    auto mt=computeRotationMatrix(result.blh[0],result.blh[1]);
+    Matrix3d C_enu = mt * pD.topLeftCorner(3, 3) * mt.transpose();
+    result.hdop = sqrt(C_enu(0, 0) +C_enu(1, 1));
+    result.vdop = sqrt(C_enu(2, 2));
+
     result.numSats = static_cast<int>(satPVTRecTime.size());
 }
 

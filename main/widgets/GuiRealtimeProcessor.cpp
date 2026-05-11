@@ -46,7 +46,7 @@ namespace GuiRealtimeProcessor {
                             spp.solve(obs);
                             data.getFromSPP(spp);
                             if (!task->initializedRefECEF) {
-                                task->refECEF = data.xyz;
+                                task->refECEF = data.sppResult.xyz;
                                 task->initializedRefECEF = true;
                             }
                         } catch (...) {
@@ -56,13 +56,6 @@ namespace GuiRealtimeProcessor {
                             std::lock_guard lock(task->mutex);
                             const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size())
                                                   - 1;
-
-                            if (task->epochs.empty()) {
-                                task->weekFirst = data.week;
-                                task->sowFirst = data.sow;
-                            }
-                            task->weekLast = data.week;
-                            task->sowLast = data.sow;
                             task->epochs.push_back(data);
 
                             // 如果之前在最后一个历元，则自动跟随
