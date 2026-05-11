@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utility>
+#include <memory>
 #include <vector>
 #include <set>
 #include <map>
@@ -11,6 +12,7 @@
 
 #include "TimeConvert.h"
 #include "CoordStruct.h"
+#include "Ephemeris.h"
 #include "TimeStruct.h"
 
 struct SatID {
@@ -64,7 +66,8 @@ struct SatID {
                 << std::setw(2) << std::setfill('0') << id;
         return sstream.str();
     }
-    [[nodiscard]] const ReferenceFrame& getFrame() const {
+
+    [[nodiscard]] const ReferenceFrame &getFrame() const {
         switch (system) {
             case 'G':
                 return Frame::GPS;
@@ -122,6 +125,7 @@ inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap
 
 
 typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
+typedef std::map<SatID, Ephemeris*> SatEphemerisMap;
 
 inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satTypeValueMap) {
     for (const auto &[sat, map]: satTypeValueMap) {
@@ -141,6 +145,7 @@ struct ObsData {
     //接收机接收信号的时刻的周数和秒数
     WeekSecond weekSecond;
     SatTypeValueMap satTypeValueData;
+    SatEphemerisMap satEphemerisData;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
@@ -162,52 +167,7 @@ typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 // 星历相关数据结构
 //-------------------
 
-/// ECEF position, velocity, clock bias and drift
-class PVT {
-public:
-    /// Default constructor
-    PVT() : p(0., 0., 0.), v(0., 0., 0.),
-            clockBias(0.), clockDrift(0.) {
-    }
 
-    /// Destructor.
-    virtual ~PVT() = default;
-
-    // member data
-
-    Eigen::Vector3d p; ///< Sat position ECEF Cartesian (X,Y,Z) meters
-    Eigen::Vector3d v; ///< satellite velocity in ECEF Cartesian, meters/second
-    double clockBias; ///< Sat clock correction in seconds
-    double clockDrift; ///< satellite clock drift in seconds/second
-    double relativityCorrection{};
-    std::map<string, double> typeTGDData;
-
-    PVT(const PVT &) = default;
-
-    PVT &operator=(const PVT &) = default;
-
-    PVT(PVT &&other) noexcept
-        : p(std::move(other.p)), // 移动 Eigen 向量
-          v(std::move(other.v)), // 移动 Eigen 向量
-          clockBias(other.clockBias), // 基本类型直接拷贝（很快）
-          clockDrift(other.clockDrift), // 基本类型直接拷贝
-          relativityCorrection(other.relativityCorrection), // 基本类型直接拷贝
-          typeTGDData(std::move(other.typeTGDData)) {
-        // 移动 map 容器
-    }
-
-    PVT &operator=(PVT &&other) noexcept {
-        if (this != &other) {
-            p = std::move(other.p);
-            v = std::move(other.v);
-            clockBias = other.clockBias;
-            clockDrift = other.clockDrift;
-            relativityCorrection = other.relativityCorrection;
-            typeTGDData = std::move(other.typeTGDData);
-        }
-        return *this;
-    }
-}; // end class pvt
 
 // Output operator for pvt
 inline std::ostream &operator<<(std::ostream &os, PVT &pvt)

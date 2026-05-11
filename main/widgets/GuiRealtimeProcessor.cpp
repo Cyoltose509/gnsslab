@@ -36,14 +36,7 @@ namespace GuiRealtimeProcessor {
             while (!task->stop) {
                 try {
                     if (reader.getNextEpoch(obs)) {
-                        // 构造星历映射
-                        std::map<SatID, Ephemeris *> ephMap;
-                        for (auto &[prn, eph]: reader.latestGps)
-                            ephMap[SatID('G', prn)] = &eph;
-                        for (auto &[prn, eph]: reader.latestBds)
-                            ephMap[SatID('C', prn)] = &eph;
 
-                        spp.setEphemeris(ephMap);
                         spp.preprocess(obs);
 
                         GuiOem7Processor::SppEpochData data;
@@ -80,7 +73,7 @@ namespace GuiRealtimeProcessor {
                     } else {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
-                } catch (const std::exception &e) {
+                } catch (const std::exception &) {
                     // 运行时错误但不中断连接
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }

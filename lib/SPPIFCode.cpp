@@ -4,6 +4,7 @@
 
 void SPPIFCode::preprocess(ObsData &obsData) {
     satRejected.clear();
+    setEphemeris(obsData.satEphemerisData);
     convertObsType(obsData);
     computeIF(obsData);
 }
@@ -88,7 +89,7 @@ map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         auto it = ephMap.find(sat);
         if (it == ephMap.end()) continue;
-        Ephemeris *eph = it->second;
+        auto &eph = it->second;
 
         // Choose observation to estimate travel time
         double obsVal = 0.0;
@@ -149,7 +150,7 @@ void SPPIFCode::computeIF(ObsData &obsData) {
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
-                if (ifVal>2.7e7 || ifVal<1.8e7) {
+                if (ifVal > 2.7e7 || ifVal < 1.8e7) {
                     satRejected.insert(sat);
                 }
             } else {

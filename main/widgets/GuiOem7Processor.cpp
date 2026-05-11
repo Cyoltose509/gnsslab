@@ -74,14 +74,6 @@ namespace GuiOem7Processor {
             ObsData obs;
 
             while (oem7.getNextEpoch(obs)) {
-                // 构造星历映射
-                std::map<SatID, Ephemeris *> ephMap;
-                for (auto &[prn, eph]: oem7.latestGps)
-                    ephMap[SatID('G', prn)] = &eph;
-                for (auto &[prn, eph]: oem7.latestBds)
-                    ephMap[SatID('C', prn)] = &eph;
-
-                spp.setEphemeris(ephMap);
                 spp.preprocess(obs);
 
                 SppEpochData data;

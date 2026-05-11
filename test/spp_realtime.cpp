@@ -44,14 +44,6 @@ int main() {
         try {
             if (reader.getNextEpoch(obs)) {
                 // 更新星历
-                std::map<SatID, Ephemeris *> ephMap;
-                for (const auto &[prn, eph]: reader.latestGps) {
-                    ephMap[SatID('G', prn)] = const_cast<GPSEphem *>(&eph);
-                }
-                for (const auto &[prn, eph]: reader.latestBds) {
-                    ephMap[SatID('C', prn)] = const_cast<BDSEphem *>(&eph);
-                }
-                spp.setEphemeris(ephMap);
                 spp.preprocess(obs);
                 spp.solve(obs);
 

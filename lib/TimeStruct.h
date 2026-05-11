@@ -136,6 +136,10 @@ public:
 
     CommonTime &operator=(const CommonTime &right) = default;
 
+    // 补上这两行，告诉编译器允许移动
+    CommonTime(CommonTime&&) = default;
+    CommonTime& operator=(CommonTime&&) = default;
+
     double operator-(const CommonTime &right) const {
         if (m_timeSystem != right.m_timeSystem) {
             throw InvalidRequest("CommonTime objects not in same time system, cannot be different");

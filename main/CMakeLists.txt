@@ -31,10 +31,10 @@ add_executable(GnssLab WIN32
     main.cpp
     core/Application.cpp
     ui/Gui.cpp
-    tools/GuiTimeConverter.cpp
-    tools/GuiCoordConverter.cpp
-    tools/GuiOem7Processor.cpp
-    tools/GuiRealtimeProcessor.cpp
+        widgets/GuiTimeConverter.cpp
+        widgets/GuiCoordConverter.cpp
+        widgets/GuiOem7Processor.cpp
+        widgets/GuiRealtimeProcessor.cpp
     ${GNSSLAB_RESOURCES}
 )
 

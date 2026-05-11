@@ -42,16 +42,6 @@ int main() {
     int successCount = 0;
 
     while (oem7.getNextEpoch(obs)) {
-        // Prepare ephemeris map for the current epoch
-        std::map<SatID, Ephemeris *> ephMap;
-        for (auto &[prn, eph]: oem7.latestGps) {
-            ephMap[SatID('G', prn)] = &eph;
-        }
-        for (auto &[prn, eph]: oem7.latestBds) {
-            ephMap[SatID('C', prn)] = &eph;
-        }
-
-        spp.setEphemeris(ephMap);
         spp.preprocess(obs);
         try {
             spp.solve(obs);

@@ -1,4 +1,3 @@
-
 #include <fstream>
 #include <vector>
 #include <iomanip>
@@ -138,8 +137,8 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             // GPS
             sys = 'G';
             // L1: C/A(0), L2: P(5), P(Y)(9), L2C(17)
-            if (sigType == 0||sigType == 16) freqIdx = 1;
-            else if (sigType == 1||sigType == 5||sigType == 9||sigType == 17) freqIdx = 2;
+            if (sigType == 0 || sigType == 16) freqIdx = 1;
+            else if (sigType == 1 || sigType == 5 || sigType == 9 || sigType == 17) freqIdx = 2;
         } else if (sysInt == 4) {
             // BDS
             sys = 'C';
@@ -309,7 +308,7 @@ bool OEM7Reader::parseBestPos(const std::vector<uint8_t> &message) {
     if (solStatus == 0 && lat_deg > 0 && lat_deg < 90 && lon_deg > 0 && lon_deg < 180) {
         const double lat_rad = lat_deg * DEG_TO_RAD;
         const double lon_rad = lon_deg * DEG_TO_RAD;
-        antennaPosition = BLHtoXYZ({lat_rad, lon_rad, hgt}, Frame::WGS84);
+        currentObs.antennaPosition = BLHtoXYZ({lat_rad, lon_rad, hgt}, Frame::WGS84);
         return true;
     }
 
@@ -322,8 +321,14 @@ bool OEM7Reader::getNextEpoch(ObsData &obs) {
         if (!getNextMessage(message)) return false;
         if (parseMessage(message)) {
             if (!currentObs.satTypeValueData.empty()) {
-                obs = currentObs;
-                obs.antennaPosition = antennaPosition;  // 设置天线位置
+                obs = std::move(currentObs);
+                for (const auto &[prn, eph]: latestGps) {
+                    obs.satEphemerisData[SatID('G', prn)] = const_cast<GPSEphem *>(&eph);
+                }
+                for (const auto &[prn, eph]: latestBds) {
+                    obs.satEphemerisData[SatID('C', prn)] = const_cast<BDSEphem *>(&eph);
+                }
+                // currentObs.satEphemerisData.clear();
                 currentObs.satTypeValueData.clear(); // 交付后清空，防止重复触发
                 return true;
             }

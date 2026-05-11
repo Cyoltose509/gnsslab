@@ -1,8 +1,8 @@
 #include "core/Application.h"
-#include "tools/GuiTimeConverter.h"
-#include "tools/GuiCoordConverter.h"
-#include "tools/GuiOem7Processor.h"
-#include "tools/GuiRealtimeProcessor.h"
+#include "widgets/GuiTimeConverter.h"
+#include "widgets/GuiCoordConverter.h"
+#include "widgets/GuiOem7Processor.h"
+#include "widgets/GuiRealtimeProcessor.h"
 #include "version.h"
 
 #include "imgui.h"

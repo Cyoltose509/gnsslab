@@ -11,7 +11,7 @@ public:
         isRover = false;
     }
 
-    void setEphemeris(const std::map<SatID, Ephemeris *> &ephs) {
+    void setEphemeris(const SatEphemerisMap &ephs) {
         ephMap = ephs;
     }
 
@@ -84,9 +84,7 @@ protected:
     std::map<SatID, PVT> satPVTRecTime{};
 
 
-
-
-    std::map<SatID, Ephemeris *> ephMap{};
+    SatEphemerisMap ephMap{};
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
 };
