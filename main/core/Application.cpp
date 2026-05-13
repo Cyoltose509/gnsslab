@@ -1,6 +1,7 @@
 #include "core/Application.h"
 #include "widgets/GuiTimeConverter.h"
 #include "widgets/GuiCoordConverter.h"
+#include "widgets/GuiLsqSolver.h"
 #include "widgets/GuiOem7Processor.h"
 #include "widgets/GuiRealtimeProcessor.h"
 #include "version.h"
@@ -54,6 +55,7 @@ void Application::RenderMenuBar()
         {
             ImGui::MenuItem("时间转换", nullptr, &m_showTimeConverter);
             ImGui::MenuItem("坐标转换", nullptr, &m_showCoordConverter);
+            ImGui::MenuItem("最小二乘工具", nullptr, &m_showLsqSolver);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("帮助"))
@@ -249,6 +251,8 @@ void Application::Render()
         GuiTimeConverter::Render(&m_showTimeConverter);
     if (m_showCoordConverter)
         GuiCoordConverter::Render(&m_showCoordConverter);
+    if (m_showLsqSolver)
+        GuiLsqSolver::Render(&m_showLsqSolver);
 
     // ---- 任务内容（全视口标签页） ----
     RenderTasks();

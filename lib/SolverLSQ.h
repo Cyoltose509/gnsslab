@@ -26,6 +26,8 @@ public:
     MatrixXd covMatrix;
     double sigma0{};
 
+    const VectorXd& getState() const { return state; }
+
 private:
     VectorXd state;
     VariableSet currentUnkSet;

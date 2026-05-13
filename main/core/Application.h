@@ -34,6 +34,7 @@ private:
     Gui   m_ui;
     bool  m_showTimeConverter  = false;
     bool  m_showCoordConverter = false;
+    bool  m_showLsqSolver      = false;
     bool  m_showAbout          = false;
     bool  m_showConnectDialog  = false;
 

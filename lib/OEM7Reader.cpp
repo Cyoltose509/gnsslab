@@ -129,6 +129,8 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
         const auto trackingStatus = U4(&message[off + 40]);
         const auto sysInt = static_cast<int>(trackingStatus >> 16) & 7;
         const auto sigType = static_cast<int>(trackingStatus >> 21) & 0x1F;
+        const auto codeLocked = static_cast<int>(trackingStatus >> 12) & 1;
+        const auto phaseLocked = static_cast<int>(trackingStatus >> 10) & 1;
 
         char sys;
         int freqIdx = -1;
@@ -154,8 +156,8 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             sat.system = sys;
             sat.id = prn;
             std::string s_f = std::to_string(freqIdx);
-            currentObs.satTypeValueData[sat]["C" + s_f] = psr;
-            currentObs.satTypeValueData[sat]["L" + s_f] = adr;
+            currentObs.satTypeValueData[sat]["C" + s_f] = phaseLocked ? psr : 0;
+            currentObs.satTypeValueData[sat]["L" + s_f] = codeLocked ? adr : 0;
             currentObs.satTypeValueData[sat]["D" + s_f] = static_cast<double>(doppler);
             currentObs.satTypeValueData[sat]["S" + s_f] = static_cast<double>(cn0);
         }
