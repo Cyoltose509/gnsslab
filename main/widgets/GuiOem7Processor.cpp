@@ -7,10 +7,11 @@
 #include "SPPIFCode.h"
 #include "Const.h"
 #include "implot.h"
-#include "implot3d.h"
 
 #include <fstream>
 #include <iostream>
+#include <set>
+#include <algorithm>
 
 namespace GuiOem7Processor {
     void SppEpochData::getFromSPP(const SPPIFCode &spp) {
@@ -24,6 +25,8 @@ namespace GuiOem7Processor {
                     elevations[i] = it->second;
                 if (auto it2 = spp.satAzimData.find(satIds[i]); it2 != spp.satAzimData.end())
                     azimuths[i] = it2->second;
+                if (auto it3 = spp.satPVTTransTime.find(satIds[i]); it3 != spp.satPVTTransTime.end())
+                    satPVTs[i] = it3->second;
                 if (spp.satRejected.count(satIds[i])) {
                     rejected[i] = true;
                     numSatsResult--;
@@ -39,12 +42,11 @@ namespace GuiOem7Processor {
         sow = obs.weekSecond.sow;
         for (auto &[sat, typeMap]: obs.satTypeValueData) {
             satIds.push_back(sat);
-            auto it = typeMap.find("CC12");
-            if (it == typeMap.end()) it = typeMap.find("CC26");
-            pranges.push_back(it != typeMap.end() ? it->second : 0.0);
             elevations.push_back(0.0);
             azimuths.push_back(0.0);
+            satPVTs.emplace_back();
             rejected.push_back(false);
+            allObs.push_back(typeMap);
         }
         numObs = static_cast<int>(satIds.size());
     }
@@ -69,6 +71,7 @@ namespace GuiOem7Processor {
             ObsData obs;
 
             while (oem7.getNextEpoch(obs)) {
+                if (task->stop) break;
                 spp.preprocess(obs);
 
                 SppEpochData data;
@@ -87,7 +90,7 @@ namespace GuiOem7Processor {
 
                 {
                     std::lock_guard lock(task->mutex);
-                    const bool wasAtEnd = (task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1);
+                    const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1;
                     if (task->epochs.empty()) {
                         task->selectedEpoch = 0;
                     }
@@ -192,7 +195,7 @@ namespace GuiOem7Processor {
 
         // --- 主分栏布局 (使用 Table 实现可拖拽分栏) ---
         float availY = ImGui::GetContentRegionAvail().y;
-        float plotRegionH = (epochCount > 0) ? 380.0f : 0.0f;
+        float plotRegionH = epochCount > 0 ? 380.0f : 0.0f;
         float mainTableH = availY - plotRegionH - ImGui::GetStyle().ItemSpacing.y;
         if (mainTableH < 200.0f) mainTableH = 200.0f;
 
@@ -202,7 +205,7 @@ namespace GuiOem7Processor {
 
             ImGui::TableNextRow(ImGuiTableRowFlags_None, mainTableH);
 
-            // ===== 左面板：卫星列表 =====
+            // ===== 左面板：卫星列表 (Master-Detail View) =====
             ImGui::TableSetColumnIndex(0);
             ImGui::BeginChild("##sat_list_child");
             if (epochCount > 0 && selectedIdx >= 0) {
@@ -212,16 +215,18 @@ namespace GuiOem7Processor {
                     curData = task->epochs[selectedIdx];
                 }
 
-                ImGui::SeparatorText("卫星观测数据");
-                if (ImGui::BeginTable("##sats", 7,
+                // 1. Master Table (Satellite Overview)
+                ImGui::SeparatorText("卫星概览");
+                if (ImGui::BeginTable("##sats_master", 8,
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                      ImGuiTableFlags_ScrollY)) {
+                                      ImGuiTableFlags_ScrollY, ImVec2(0, ImGui::GetContentRegionAvail().y * 0.8f))) {
                     ImGui::TableSetupColumn("序号", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                    ImGui::TableSetupColumn("PRN", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                    ImGui::TableSetupColumn("高度角(°)", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("IF伪距(m)", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("信号", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("卫星", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("X坐标(m)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Y坐标(m)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Z坐标(m)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("高度角(°)", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                    ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                     ImGui::TableSetupColumn("状态", ImGuiTableColumnFlags_WidthFixed, 50.0f);
                     ImGui::TableHeadersRow();
 
@@ -229,36 +234,88 @@ namespace GuiOem7Processor {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
                         ImGui::Text("%d", i + 1);
-
-
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%c%02d", curData.satIds[i].system, curData.satIds[i].id);
 
+                        if (ImGui::Selectable(curData.satIds[i].toString().c_str(), task->selectedSatIdx == i,
+                                              ImGuiSelectableFlags_SpanAllColumns)) {
+                            task->selectedSatIdx = i;
+                        }
+                        auto showText=[](const double val) {
+                            if (val!=0.0f) {
+                                ImGui::Text("%.1f", val);
+                            }
+                            else {
+                                ImGui::TextUnformatted("未知");
+                            }
+                        };
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::Text("%.2f", curData.elevations[i] * RAD_TO_DEG);
-
+                        showText(curData.satPVTs[i].p[0]);
                         ImGui::TableSetColumnIndex(3);
-                        ImGui::Text("%.2f", curData.azimuths[i] * RAD_TO_DEG);
-
+                        showText(curData.satPVTs[i].p[1]);
                         ImGui::TableSetColumnIndex(4);
-                        ImGui::Text("%.3f", curData.pranges[i]);
-
+                        showText(curData.satPVTs[i].p[2]);
                         ImGui::TableSetColumnIndex(5);
-                        if (const double elev = curData.elevations[i]; elev > 60.0 * DEG_TO_RAD) {
-                            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "优");
-                        } else if (elev > 30.0 * DEG_TO_RAD) {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "良");
-                        } else {
-                            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "低");
-                        }
+                        showText(curData.elevations[i] * RAD_TO_DEG);
                         ImGui::TableSetColumnIndex(6);
-                        if (curData.rejected[i]) {
-                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "排除");
-                        } else {
-                            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "参与");
-                        }
+                        showText(curData.azimuths[i] * RAD_TO_DEG);
+                        ImGui::TableSetColumnIndex(7);
+                        if (curData.rejected[i]||!curData.solved) ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "排除");
+                        else ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "参与");
                     }
                     ImGui::EndTable();
+                }
+
+                ImGui::Spacing();
+
+                // 2. Detail Table (Frequency Observations)
+
+                if (task->selectedSatIdx >= 0 && task->selectedSatIdx < static_cast<int>(curData.satIds.size())) {
+                    ImGui::SeparatorText(("观测详情 (" + curData.satIds[task->selectedSatIdx].toString() + ")").c_str());
+                    int satIdx = task->selectedSatIdx;
+                    const auto &typeMap = curData.allObs[satIdx];
+
+                    if (ImGui::BeginTable("##obs_detail", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                        ImGui::TableSetupColumn("频段", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                        ImGui::TableSetupColumn("伪距(m)", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("载波(cycle)", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("多普勒(Hz)", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("强度(dB/Hz)", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableHeadersRow();
+
+                        std::set<std::string> freqs;
+                        for (auto const &[type, val]: typeMap) {
+                            if (type.length() < 4) freqs.insert(type.substr(1));
+                        }
+                        if (freqs.empty()) freqs.insert("?");
+
+                        for (const auto &f: freqs) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            std::string freqLabel = f;
+                            if (curData.satIds[satIdx].system == 'G') freqLabel = "L" + f;
+                            else if (curData.satIds[satIdx].system == 'C') freqLabel = "B" + f;
+                            ImGui::Text("%s", freqLabel.c_str());
+
+                            ImGui::TableSetColumnIndex(1);
+                            if (auto itC = typeMap.find("C" + f); itC != typeMap.end()) ImGui::Text("%.3f", itC->second);
+                            else ImGui::TextDisabled("-");
+
+                            ImGui::TableSetColumnIndex(2);
+                            if (auto itL = typeMap.find("L" + f); itL != typeMap.end()) ImGui::Text("%.3f", itL->second);
+                            else ImGui::TextDisabled("-");
+
+                            ImGui::TableSetColumnIndex(3);
+                            if (auto itD = typeMap.find("D" + f); itD != typeMap.end()) ImGui::Text("%.3f", itD->second);
+                            else ImGui::TextDisabled("-");
+
+                            ImGui::TableSetColumnIndex(4);
+                            if (auto itS = typeMap.find("S" + f); itS != typeMap.end()) ImGui::Text("%.1f", itS->second);
+                            else ImGui::TextDisabled("-");
+                        }
+                        ImGui::EndTable();
+                    }
+                } else {
+                    ImGui::SeparatorText("请在上方列表中选择一颗卫星查看详情...");
                 }
             }
             ImGui::EndChild();
@@ -276,7 +333,7 @@ namespace GuiOem7Processor {
                 if (curData.solved) {
                     auto &result = curData.sppResult;
                     auto enu = XYZtoENU(result.xyz, task->refECEF);
-                    ImGui::SeparatorText("位置 (WGS84)");
+                    ImGui::SeparatorText("定位位置 (WGS84)");
                     ImGui::Text("  ECEF: (%.4f, %.4f, %.4f) m", result.xyz[0], result.xyz[1], result.xyz[2]);
                     ImGui::Text("    REF: (%.4f, %.4f, %.4f) m", task->refECEF[0], task->refECEF[1], task->refECEF[2]);
                     ImGui::Text("  ENU: (%.4f, %.4f, %.4f) m", enu[0], enu[1], enu[2]);

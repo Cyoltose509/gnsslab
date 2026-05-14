@@ -25,36 +25,18 @@ public:
 
     void getResult();
 
-    std::map<SatID, PVT> computeSatPos(ObsData &obsData);
+    void computeSatPos(ObsData &obsData);
 
     void computeElevAzim();
 
-    static void convertObsType(ObsData &obsData);
 
     void computeIF(ObsData &obsData);
 
-    std::map<SatID, PVT> earthRotation();
+    void earthRotation();
 
     void linearize(ObsData &obsData);
 
-
-    [[nodiscard]] const SatValueMap &getElevData() const { return satElevData; }
-    [[nodiscard]] const SatValueMap &getAzimData() const { return satAzimData; }
-    [[nodiscard]] const std::map<SatID, PVT> &getSatPVT() const { return satPVTRecTime; }
-
-    [[nodiscard]] SatID getDatumSat() const {
-        double maxElev(0.0);
-        SatID datumSat;
-        for (const auto [sat, elev]: satElevData) {
-            if (elev > maxElev) {
-                maxElev = elev;
-                datumSat = sat;
-            }
-        }
-        return datumSat;
-    }
-
-    void setFrame(const ReferenceFrame &f) {
+    void setFrame(const FrameInfo &f) {
         frame = f;
     }
 
@@ -62,11 +44,13 @@ public:
 
     Vector3d xyz{0, 0, 0};
     Vector3d vel{0, 0, 0};
-    ReferenceFrame frame = Frame::WGS84;
+    FrameInfo frame = Frame::WGS84;
     Result result{};
     SatValueMap satElevData{};
     SatValueMap satAzimData{};
     std::set<SatID> satRejected{};
+    std::map<SatID, PVT> satPVTTransTime{};
+    std::map<SatID, PVT> satPVTRecTime{};
     // 继承类需要访问这个成员
 protected:
     double cutOffElev = PI * 0.0555556;
@@ -81,9 +65,6 @@ protected:
     EquSys velEquations{};
     SolverLSQ posSolver{};
     SolverLSQ velSolver{};
-
-    std::map<SatID, PVT> satPVTTransTime{};
-    std::map<SatID, PVT> satPVTRecTime{};
 
 
     SatEphemerisMap ephMap{};

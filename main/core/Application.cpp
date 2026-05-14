@@ -18,22 +18,36 @@ void Application::Initialize()
 
 void Application::Shutdown()
 {
-    // First, signal all tasks to stop
-    for (const auto &task : m_tasks) {
-        task->stop = true;
-    }
+    // 1. 信号所有任务停止 (包括主任务和待清理任务)
+    for (const auto &task : m_tasks) task->stop = true;
+    for (const auto &task : m_closingTasks) task->stop = true;
 
-    // Then, wait for all threads to finish
-    for (const auto &task: m_tasks) {
+    // 2. 等待所有线程汇合
+    for (const auto &task : m_tasks) {
         if (task->worker.joinable()) task->worker.join();
     }
+    for (const auto &task : m_closingTasks) {
+        if (task->worker.joinable()) task->worker.join();
+    }
+
     m_tasks.clear();
+    m_closingTasks.clear();
     m_ui.Shutdown();
 }
 
 void Application::Update()
 {
-    // Reserved for future business logic updates
+    // 垃圾回收：清理已结束的待关闭任务
+    for (auto it = m_closingTasks.begin(); it != m_closingTasks.end(); ) {
+        auto &task = *it;
+        // 如果任务已完成、出错或线程本身已不可汇合，则进行清理
+        if (task->done.load() || task->hasError || !task->worker.joinable()) {
+            if (task->worker.joinable()) task->worker.join();
+            it = m_closingTasks.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void Application::RenderMenuBar()
@@ -183,8 +197,11 @@ void Application::RenderTasks()
                 }
 
                 if (!open) {
-                    // 关闭任务：如果正在处理，worker 会在析构时 join
+                    // 关闭任务：先发送停止信号，然后移入待清理列表
+                    task->stop = true;
+                    m_closingTasks.push_back(task);
                     m_tasks.erase(m_tasks.begin() + i);
+                    
                     if (m_activeTask >= static_cast<int>(m_tasks.size()))
                         m_activeTask = static_cast<int>(m_tasks.size()) - 1;
                     i--; // 抵消循环中的 i++

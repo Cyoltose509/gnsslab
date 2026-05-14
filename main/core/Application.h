@@ -22,7 +22,7 @@ private:
     void Initialize();
     void Shutdown();
 
-    static void Update();
+    void Update();
     void Render();
     void RenderMenuBar();
     void RenderDockSpace();
@@ -43,6 +43,7 @@ private:
 
     // OEM7 文件任务
     std::vector<std::shared_ptr<GuiOem7Processor::SppTask>> m_tasks;
+    std::vector<std::shared_ptr<GuiOem7Processor::SppTask>> m_closingTasks;
     int m_activeTask = -1;  // 当前激活的标签页索引
     int m_taskToFocus = -1; // 待强制选中的标签页索引
 };

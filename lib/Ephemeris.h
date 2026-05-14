@@ -11,9 +11,6 @@ public:
             clockBias(0.), clockDrift(0.) {
     }
 
-    /// Destructor.
-    virtual ~PVT() = default;
-
     // member data
 
     Eigen::Vector3d p; ///< Sat position ECEF Cartesian (X,Y,Z) meters
@@ -21,20 +18,17 @@ public:
     double clockBias; ///< Sat clock correction in seconds
     double clockDrift; ///< satellite clock drift in seconds/second
     double relativityCorrection{};
-    std::map<string, double> typeTGDData;
 
     PVT(const PVT &) = default;
 
     PVT &operator=(const PVT &) = default;
 
     PVT(PVT &&other) noexcept
-        : p(std::move(other.p)), // 移动 Eigen 向量
-          v(std::move(other.v)), // 移动 Eigen 向量
-          clockBias(other.clockBias), // 基本类型直接拷贝（很快）
-          clockDrift(other.clockDrift), // 基本类型直接拷贝
-          relativityCorrection(other.relativityCorrection), // 基本类型直接拷贝
-          typeTGDData(std::move(other.typeTGDData)) {
-        // 移动 map 容器
+        : p(std::move(other.p)),
+          v(std::move(other.v)),
+          clockBias(other.clockBias),
+          clockDrift(other.clockDrift),
+          relativityCorrection(other.relativityCorrection) {
     }
 
     PVT &operator=(PVT &&other) noexcept {
@@ -44,11 +38,21 @@ public:
             clockBias = other.clockBias;
             clockDrift = other.clockDrift;
             relativityCorrection = other.relativityCorrection;
-            typeTGDData = std::move(other.typeTGDData);
         }
         return *this;
     }
 }; // end class pvt
+
+inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
+    noexcept {
+    os << setprecision(10) << "p:" << pvt.p.transpose() << endl;
+    os << "v:" << pvt.v.transpose() << endl;
+    os << "clk bias:" << pvt.clockBias << endl;
+    os << "clk drift:" << pvt.clockDrift << endl;
+    os << "relcorr:" << pvt.relativityCorrection << endl;
+    return os;
+}
+
 // 基类：包含所有卫星通用的轨道参数
 struct Ephemeris {
     // --- 通用轨道参数 (所有系统都有) ---
@@ -84,17 +88,20 @@ struct Ephemeris {
 
     unsigned int week{};
     char type{};
-    TimeSystem timeSystem{};
+
+
     const WeekSecond &getWeekSecond() {
         ws.week = week;
         ws.sow = toe;
         ws.timeSystem = timeSystem;
         return ws;
     }
+
     const CommonTime &getCommonTime() {
         WeekSecond2CommonTime(getWeekSecond(), ct);
         return ct;
     }
+
     [[nodiscard]] string name() const {
         string s;
         s.reserve(4);
@@ -102,11 +109,16 @@ struct Ephemeris {
         s += std::to_string(prn);
         return s;
     }
+
     PVT svPVT(CommonTime t);
-    const ReferenceFrame *refFrame;
-    explicit Ephemeris(const ReferenceFrame &frame) : refFrame(&frame) {
-    }
+
+    FrameInfo refFrame{};
+    TimeSystem timeSystem{};
+
     virtual ~Ephemeris() = default;
+
+    virtual void fixTGD(PVT &pvt) {
+    }
 
 private:
     WeekSecond ws;
@@ -115,9 +127,10 @@ private:
 
 // GPS 星历：特有 IODE, TGD, AS 等
 struct GPSEphem : Ephemeris {
-    GPSEphem() : Ephemeris(Frame::GPS) {
+    GPSEphem() {
         type = 'G';
         timeSystem = TimeSystem::GPS;
+        refFrame = Frame::GPS;
     }
 
     unsigned int IODE{};
@@ -126,13 +139,20 @@ struct GPSEphem : Ephemeris {
 };
 
 struct BDSEphem : Ephemeris {
-    BDSEphem() : Ephemeris(Frame::CGCS2000) {
+    BDSEphem() {
         type = 'C';
         timeSystem = TimeSystem::BDT;
+        refFrame = Frame::CGCS2000;
     }
 
     unsigned int AODE{};
     unsigned int AODC{};
     double tgd1{}; // B1/B1C 群时延
     double tgd2{}; // B2/B2a 群时延
+    void fixTGD(PVT &pvt) override {
+        constexpr double f1 = getFreq('C', 2);
+        constexpr double f2 = getFreq('C', 6);
+        constexpr double alpha = f1 * f1 / (f1 * f1 - f2 * f2);
+        pvt.clockBias -= alpha * tgd1;
+    }
 };

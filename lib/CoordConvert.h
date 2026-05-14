@@ -4,7 +4,7 @@
 #include <Eigen/Eigen>
 
 // 坐标转换函数
-inline BLH XYZtoBLH(const XYZ &xyz, const ReferenceFrame &frame) {
+inline BLH XYZtoBLH(const XYZ &xyz, const FrameInfo &frame) {
     // 获取椭球参数
     const double a = frame.a;
     const double e2 = frame.e2;
@@ -54,7 +54,7 @@ inline BLH XYZtoBLH(const XYZ &xyz, const ReferenceFrame &frame) {
     return {B1, L, H};
 }
 
-inline XYZ BLHtoXYZ(const BLH &blh, const ReferenceFrame &frame) {
+inline XYZ BLHtoXYZ(const BLH &blh, const FrameInfo &frame) {
     const double B = blh[0];  // 纬度 (rad)
     const double L = blh[1];  // 经度 (rad)
     const double H = blh[2];  // 高程 (m)
@@ -90,14 +90,14 @@ inline Eigen::Matrix3d computeRotationMatrix(const double B, const double L) {
     return R;
 }
 
-inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const ReferenceFrame &frame = Frame::WGS84) {
+inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
     const auto diffXYZ = xyz - refXYZ;
     const auto refBLH = XYZtoBLH(refXYZ, frame);
     const Eigen::Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
     return {R * diffXYZ};
 }
 
-inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &frame = Frame::WGS84) {
+inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
     const auto refBLH = XYZtoBLH(refXYZ, frame);
     auto R = computeRotationMatrix(refBLH.B(), refBLH.L());
     const auto diffXYZ = R.transpose() * enu;
@@ -106,14 +106,14 @@ inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const ReferenceFrame &fra
     return resXYZ;
 }
 
-inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ, const ReferenceFrame &frame = Frame::WGS84) {
+inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ, const FrameInfo &frame = Frame::WGS84) {
     // 先转到ENU
     const ENU enu = XYZtoENU(targetXYZ, refXYZ, frame);
     const double elev = atan2(enu(2), sqrt(enu(0) * enu(0) + enu(1) * enu(1)));
     return elev;
 }
 
-inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ, const ReferenceFrame &frame = Frame::WGS84) {
+inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ, const FrameInfo &frame = Frame::WGS84) {
     // 转到ENU
     const ENU enu = XYZtoENU(targetXYZ, refXYZ, frame);
     double az = atan2(enu(0), enu(1));

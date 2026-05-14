@@ -4,7 +4,6 @@
 #define COM_NO_WINDOWS_H
 #define _HAS_STD_BYTE 0
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include "GuiRealtimeProcessor.h"
 #include "OEM7SocketReader.h"
 #include "SPPIFCode.h"

@@ -67,7 +67,7 @@ struct SatID {
         return sstream.str();
     }
 
-    [[nodiscard]] const ReferenceFrame &getFrame() const {
+    [[nodiscard]] const FrameInfo &getFrame() const {
         switch (system) {
             case 'G':
                 return Frame::GPS;
@@ -169,17 +169,7 @@ typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 
 
 // Output operator for pvt
-inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
-    noexcept {
-    os << setprecision(10) << "p:" << pvt.p.transpose() << endl;
-    os << "v:" << pvt.v.transpose() << endl;
-    os << "clk bias:" << pvt.clockBias << endl;
-    os << "clk drift:" << pvt.clockDrift << endl;
-    os << "relcorr:" << pvt.relativityCorrection << endl;
-    for (const auto &[id, tgd]: pvt.typeTGDData)
-        os << id << "tgd:" << tgd << endl;
-    return os;
-}
+
 
 //---------------
 // 参数估计模块数据结构

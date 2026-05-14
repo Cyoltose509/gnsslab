@@ -5,18 +5,16 @@
 void SPPIFCode::preprocess(ObsData &obsData) {
     satRejected.clear();
     setEphemeris(obsData.satEphemerisData);
-    convertObsType(obsData);
     computeIF(obsData);
 }
 
 void SPPIFCode::solve(ObsData &obsData) {
-    satPVTTransTime = computeSatPos(obsData);
     xyz = obsData.antennaPosition;
     result.reset();
     int iter(0);
     while (iter < 10) {
-        satPVTTransTime = computeSatPos(obsData);
-        satPVTRecTime = earthRotation();
+        computeSatPos(obsData);
+        earthRotation();
 
         if (obsData.satTypeValueData.size() < 4) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 (" + to_string(satPVTRecTime.size()) + ")");
@@ -99,13 +97,12 @@ void SPPIFCode::getResult() {
     result.numSats = static_cast<int>(satPVTRecTime.size());
 }
 
-map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
-    map<SatID, PVT> satPVTData;
-
+void SPPIFCode::computeSatPos(ObsData &obsData) {
+    satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         auto it = ephMap.find(sat);
         if (it == ephMap.end()) continue;
-        auto &eph = it->second;
+        const auto &eph = it->second;
 
         // Choose observation to estimate travel time
         double obsVal = 0.0;
@@ -113,44 +110,13 @@ map<SatID, PVT> SPPIFCode::computeSatPos(ObsData &obsData) {
 
         if (obsVal <= 0.0) continue;
 
-        // Emission time estimate (following lsq.cpp logic)
-        // t_emit = t_receive_rcvr - (P - clk_rcvr)/c
         const double tau_total = (obsVal - (sat.system == 'G' ? rClockBias : rClockBiasBDS)) / C_MPS;
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
-        PVT pvt = eph->svPVT(t_emit);
-
-        // BDS TGD correction
-        if (sat.system == 'C') {
-            if (const auto *beph = dynamic_cast<const BDSEphem *>(eph)) {
-                const double f1 = getFreq('C', 2);
-                const double f2 = getFreq('C', 6);
-                const double alpha = f1 * f1 / (f1 * f1 - f2 * f2);
-                pvt.clockBias -= alpha * beph->tgd1;
-            }
-        }
-
-
-        satPVTData[sat] = pvt;
+        satPVTTransTime[sat] = eph->svPVT(std::move(t_emit));
     }
 
-    return satPVTData;
-}
-
-void SPPIFCode::convertObsType(ObsData &obsData) {
-    SatTypeValueMap stvData;
-    for (const auto &[sat, codeList]: obsData.satTypeValueData) {
-        TypeValueMap tvData;
-        for (const auto &[lCode, v]: codeList) {
-            if (lCode.length() >= 2)
-                tvData[lCode.substr(0, 2)] = v;
-            else
-                tvData[lCode] = v;
-        }
-        stvData[sat] = tvData;
-    }
-    obsData.satTypeValueData = stvData;
 }
 
 void SPPIFCode::computeIF(ObsData &obsData) {
@@ -177,8 +143,8 @@ void SPPIFCode::computeIF(ObsData &obsData) {
 }
 
 
-map<SatID, PVT> SPPIFCode::earthRotation() {
-    map<SatID, PVT> satPVTRecTimeMap;
+void SPPIFCode::earthRotation() {
+    satPVTRecTime.clear();
     for (auto const &[sat, pvt]: satPVTTransTime) {
         const double tau = (pvt.p - xyz).norm() / C_MPS;
 
@@ -193,9 +159,8 @@ map<SatID, PVT> SPPIFCode::earthRotation() {
         PVT rotPvt = pvt;
         rotPvt.p = rot * pvt.p;
         rotPvt.v = rot * pvt.v;
-        satPVTRecTimeMap[sat] = rotPvt;
+        satPVTRecTime[sat] = rotPvt;
     }
-    return satPVTRecTimeMap;
 }
 
 void SPPIFCode::computeElevAzim() {

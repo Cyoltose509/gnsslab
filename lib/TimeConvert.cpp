@@ -63,10 +63,11 @@ double getLeapSeconds(const CommonTime &ct) {
 }
 
 // 时间系统转换
-void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys) {
+void convertTimeSystem(CommonTime &in_time, const TimeSystem targetSys) {
     const TimeSystem inTS = in_time.m_timeSystem;
     double dt = 0;
     in_time.m_timeSystem = targetSys;
+    cout << "inTS: " << inTS << ", targetSys: " << targetSys << endl;
     if (inTS == targetSys)
         return;
     if (inTS == TimeSystem::GPS) // GAL -> TAI
@@ -78,7 +79,7 @@ void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys) {
     else if (inTS == TimeSystem::TAI) // TAI -> TAI
         dt = 0;
     else {
-        throw InvalidRequest("Invalid input TimeSystem " + inTS.toString());
+        throw InvalidRequest("Invalid input TimeSystem");
     }
     if (targetSys == TimeSystem::GPS) // TAI -> GAL
         dt -= 19;
@@ -89,7 +90,7 @@ void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys) {
     else if (targetSys == TimeSystem::TAI) // TAI
         dt -= 0;
     else {
-        throw InvalidRequest("Invalid output TimeSystem " + targetSys.toString());
+        throw InvalidRequest("Invalid output TimeSystem");
     }
     in_time += dt;
 }

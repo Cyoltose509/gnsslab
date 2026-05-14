@@ -6,7 +6,7 @@
 double getLeapSeconds(const CommonTime &ct);
 
 // 时间系统转换
-void convertTimeSystem(CommonTime &in_time, const TimeSystem &targetSys);
+void convertTimeSystem(CommonTime &in_time, TimeSystem targetSys);
 
 void convertJD2YMD(double jd, int &iyear, int &imonth, int &iday);
 

@@ -22,10 +22,11 @@ namespace GuiOem7Processor {
         // Observation data
         int numObs = 0;
         std::vector<SatID> satIds;
+        std::vector<PVT> satPVTs;
         std::vector<double> elevations;
         std::vector<double> azimuths;
-        std::vector<double> pranges;
         std::vector<bool> rejected;
+        std::vector<TypeValueMap> allObs;
         Result sppResult;
         int numSatsResult;
 
@@ -52,12 +53,13 @@ namespace GuiOem7Processor {
 
 
         int selectedEpoch = -1;
+        int selectedSatIdx = -1;
 
         std::string errorMsg;
 
         ~SppTask() {
             stop = true;
-            if (worker.joinable()) worker.join();
+            // Thread joining moved to Application::Update/Shutdown for safety
         }
     };
 

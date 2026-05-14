@@ -4,7 +4,7 @@
 
 using namespace std;
 
-struct ReferenceFrame {
+struct FrameInfo {
     double a; // 长半轴
     double f; // 扁率
     double gm; // 引力常数
@@ -14,7 +14,7 @@ struct ReferenceFrame {
 };
 
 namespace Frame {
-    constexpr ReferenceFrame WGS84{
+    constexpr FrameInfo WGS84{
         6378137.0,
         1.0 / 298.257223563,
         3.986004418e14,
@@ -22,7 +22,7 @@ namespace Frame {
         2.0 * (1.0 / 298.257223563) - 1.0 / 298.257223563 * (1.0 / 298.257223563),
         0.0,
     };
-    constexpr ReferenceFrame GPS{
+    constexpr FrameInfo GPS{
         6378137.0,
         1.0 / 298.257223563,
         3.986005e14,
@@ -31,7 +31,7 @@ namespace Frame {
         0.0
     };
 
-    constexpr ReferenceFrame PZ90{
+    constexpr FrameInfo PZ90{
         6378136.0,
         1.0 / 298.257839,
         3.9860044e14,
@@ -40,7 +40,7 @@ namespace Frame {
         1.08262575e-3
     };
 
-    constexpr ReferenceFrame CGCS2000{
+    constexpr FrameInfo CGCS2000{
         6378137.0,
         1.0 / 298.257222101,
         3.986004418e14,

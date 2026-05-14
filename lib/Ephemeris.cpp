@@ -16,84 +16,70 @@ constexpr double lonPRN[6] = {0.0, 1.027, 1.396, 1.931, 2.443, 2.793};
 
 PVT Ephemeris::svPVT(CommonTime t) {
     convertTimeSystem(t, timeSystem);
-    PVT sv{};
-
+    PVT sv;
     const double tk = t - getCommonTime();
-
-    // 轨道基本参数
-    const double A = rootA * rootA;
-    const double n0 = sqrt(refFrame->gm / (A*A*A));
-    const double nA = n0 + dn;
-    const double Mk = m0 + nA*tk;
+    const double A = rootA * rootA; //计算轨道长半径
+    const double n0 = sqrt(refFrame.gm / (A * A * A)); //平均角速度0.000145859rad/s
+    const double nA = n0 + dn; //改正平均角速度
+    const double Mk = m0 + nA * tk;
     const double Ek = c_Ek(Mk, e);
-    const double vk = 2 * atan(sqrt((1+e)/(1-e)) * tan(Ek/2));
-    const double phi = vk + omega;
+    const double vk = 2 * atan(sqrt((1 + e) / (1 - e)) * tan(Ek / 2)); //计算真近点角
+    const double phi = vk + omega; //卫星与升交点间地心夹角
+    const double s2 = sin(2 * phi), c2 = cos(2 * phi);
+    const double Qu = cus * s2 + cuc * c2, Qr = crs * s2 + crc * c2, Qi = cis * s2 + cic * c2; //短周期摄动项
+    const double uk = phi + Qu, rk = A * (1 - e * cos(Ek)) + Qr; //短周期摄动改正，ik的值不确定
+    const double ik = i0 + Qi + idot * tk;
+    const double x0 = rk * cos(uk), y0 = rk * sin(uk);
 
-    // 短周期摄动
-    const double s2 = sin(2*phi), c2 = cos(2*phi);
-    const double Qu = cus*s2 + cuc*c2;
-    const double Qr = crs*s2 + crc*c2;
-    const double Qi = cis*s2 + cic*c2;
+    // 处理北斗 GEO 卫星 (PRN 1-5, 59-62)
+    double OMEk, sOMEk, cOMEk;
+    if (type == 'C' && ((prn >= 1 && prn <= 5) || (prn >= 59 && prn <= 62))) {
+        OMEk = omega0 + omegaDot * tk - refFrame.omega * toe;
+        sOMEk = sin(OMEk), cOMEk = cos(OMEk);
+        const double cosik = cos(ik), sinik = sin(ik);
+        const double xgk = x0 * cOMEk - y0 * cosik * sOMEk;
+        const double ygk = x0 * sOMEk + y0 * cosik * cOMEk;
+        const double zgk = y0 * sinik;
 
-    const double uk = phi + Qu;
-    const double rk = A * (1 - e*cos(Ek)) + Qr;
-    const double ik = i0 + Qi + idot*tk;
+        constexpr double I_5 = -5.0 * PI / 180.0;
+        const double I_1 = refFrame.omega * tk;
+        const double cosI_1 = cos(I_1), sinI_1 = sin(I_1);
+        const double cosI_5 = cos(I_5), sinI_5 = sin(I_5);
 
-    const double x0 = rk * cos(uk);
-    const double y0 = rk * sin(uk);
-
-    bool isGEO = (type == 'C' && prn >= 1 && prn <= 5);
-
-    if (isGEO) {
-        // --- GEO卫星，直接用同步轨道公式 ---
-        constexpr double r_geo = 42164e3; // 地心距
-        double lon = lonPRN[prn];
-        double i_geo = 0.0;
-        const double coslon = cos(lon), sinlon = sin(lon);
-        const double cosi = cos(i_geo), sini = sin(i_geo);
-
-        sv.p[0] = r_geo * coslon;
-        sv.p[1] = r_geo * sinlon;
-        sv.p[2] = r_geo * sini;
+        sv.p[0] = cosI_1 * xgk + sinI_1 * cosI_5 * ygk + sinI_1 * sinI_5 * zgk;
+        sv.p[1] = -sinI_1 * xgk + cosI_1 * cosI_5 * ygk + cosI_1 * sinI_5 * zgk;
+        sv.p[2] = -sinI_5 * ygk + cosI_5 * zgk;
     } else {
-        // --- MEO/IGSO卫星 ---
-        double OMEk = omega0 + (omegaDot - refFrame->omega)*tk - refFrame->omega*toe;
-        double cosOMEk = cos(OMEk), sinOMEk = sin(OMEk);
-        double cosik = cos(ik), sinik = sin(ik);
-
-        sv.p[0] = x0 * cosOMEk - y0 * cosik * sinOMEk;
-        sv.p[1] = x0 * sinOMEk + y0 * cosik * cosOMEk;
-        sv.p[2] = y0 * sinik;
+        OMEk = omega0 - refFrame.omega * toe + (omegaDot - refFrame.omega) * tk; //计算升交点经度
+        sOMEk = sin(OMEk), cOMEk = cos(OMEk);
+        sv.p[0] = x0 * cOMEk - y0 * cos(ik) * sOMEk;
+        sv.p[1] = x0 * sOMEk + y0 * cos(ik) * cOMEk;
+        sv.p[2] = y0 * sin(ik);
     }
 
-    // --- 保留你原来的速度公式 ---
-    double cosik = cos(ik), sinik = sin(ik);
-    double OMEk = omega0 + (omegaDot - refFrame->omega)*tk - refFrame->omega*toe;
-    double sOMEk = sin(OMEk), cOMEk = cos(OMEk);
-    const double Edot = nA / (1 - e*cos(Ek));
-    const double phidot = sqrt(1 - e*e) * Edot / (1 - e*cos(Ek));
-    const double rdot = A * e * sin(Ek) * Edot + 2 * (crs*c2 - crc*s2) * phidot;
-    const double ukdot = phidot + 2 * phidot * (cus*c2 - cuc*s2);
-    const double OMEkdot = omegaDot - refFrame->omega;
-    const double ikdot = 2 * phidot * (cis*c2 - cic*s2) + idot;
+    const double Edot = nA / (1 - e * cos(Ek)); //偏近点角速率
+    const double phidot = sqrt(1 - e * e) * Edot / (1 - e * cos(Ek)); //升交角距速率
+    const double rdot = A * e * sin(Ek) * Edot + 2 * (crs * c2 - crc * s2) * phidot; //轨道半径速率
+    const double ukdot = phidot + 2 * phidot * (cus * c2 - cuc * s2);
+    const double OMEkdot = omegaDot - refFrame.omega; //升交点速率
+    const double ikdot = 2 * phidot * (cis * c2 - cic * s2) + idot;
     const double x0dot = rdot * cos(uk) - rk * ukdot * sin(uk);
-    const double y0dot = rdot * sin(uk) + rk * ukdot * cos(uk);
-
-    sv.v[0] = x0dot * cOMEk - x0 * sOMEk * OMEkdot
-             - (y0dot * cosik * sOMEk + y0 * (-sinik * ikdot) * sOMEk + y0 * cosik * cOMEk * OMEkdot);
-    sv.v[1] = x0dot * sOMEk + x0 * cOMEk * OMEkdot
-             + (y0dot * cosik * cOMEk + y0 * (-sinik * ikdot) * cOMEk - y0 * cosik * sOMEk * OMEkdot);
-    sv.v[2] = y0dot * sinik + y0 * cosik * ikdot;
-
-    // --- 卫星时钟 ---
+    const double y0dot = rdot * sin(uk) + rk * ukdot * cos(uk); //轨道平面内速度分量
+    const double cosik = cos(ik), sinik = sin(ik);
+    const double xkdot = x0dot * cOMEk - x0 * sOMEk * OMEkdot
+                         - (y0dot * cosik * sOMEk + y0 * (-sinik * ikdot) * sOMEk + y0 * cosik * cOMEk * OMEkdot);
+    const double ykdot = x0dot * sOMEk + x0 * cOMEk * OMEkdot
+                         + (y0dot * cosik * cOMEk + y0 * (-sinik * ikdot) * cOMEk - y0 * cosik * sOMEk * OMEkdot);
+    const double zkdot = y0dot * sinik + y0 * cosik * ikdot;
+    sv.v[0] = xkdot;
+    sv.v[1] = ykdot;
+    sv.v[2] = zkdot;
     double dt = tk + toe - toc;
     if (dt > HALF_WEEK) dt -= FULL_WEEK;
     if (dt < -HALF_WEEK) dt += FULL_WEEK;
-    sv.clockBias = a0 + a1*dt + a2*dt*dt;
-    sv.clockDrift = a1 + 2*a2*dt;
-
-    // --- 相对论修正 ---
-    sv.relativityCorrection = -2.0 * sqrt(refFrame->gm) / (C_MPS*C_MPS) * e * rootA * sin(Ek);
-
+    sv.clockBias = a0 + a1 * dt + a2 * dt * dt;
+    sv.clockDrift = a1 + 2 * a2 * dt;
+    sv.relativityCorrection = -2.0 * sqrt(refFrame.gm) / (C_MPS * C_MPS) * e * rootA * sin(Ek);
+    fixTGD(sv);
     return sv;
 }

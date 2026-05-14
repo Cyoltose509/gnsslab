@@ -6,88 +6,45 @@
 #include <sstream>
 #include <cstdlib>
 #include "Const.h"
+#include <array>
 
-using namespace std;
+enum class TimeSystem:uint8_t {
+    Unknown = 0,
+    GPS,
+    GLO,
+    GAL,
+    BDT,
+    QZS,
+    UTC,
+    TAI,
+    TT,
+    Count
+};
 
-class TimeSystem {
-public:
-    // list of time systems supported by this class
-    enum SystemType {
-        Unknown = 0,
-        GPS, // GPS system time
-        GLO, // glonass system time
-        GAL, // Galileo system time
-        BDT, // BDS system time
-        QZS, // qzss time
-        UTC, // utc
-        TAI,
-        TT,
-        count // the number of systems
-    };
 
-    // Constructor, including empty constructor
-    TimeSystem(const SystemType sys = GPS) { //NOLINT
-        if (sys >= count)
-            system = GPS;
-        else
-            system = sys;
-    }
+struct EpochParam {
+    int nBits;
+    int bitmask;
+    long mjdEpoch;
+};
 
-    // Constructor
-    explicit TimeSystem(const std::string &str) {
-        for (int i = 0; i < count; i++) {
-            if (sys_strings[i] == str) {
-                system = static_cast<SystemType>(i);
-                break;
-            }
-        }
-    }
-
-    TimeSystem(const TimeSystem &right) = default;
-
-    TimeSystem &operator=(const TimeSystem &right) = default;
-
-    bool operator==(const TimeSystem &right) const {
-        if (system == right.system)
-            return true;
-        return false;
-    }
-
-    bool operator!=(const TimeSystem &right) const {
-        return !operator==(right);
-    }
-
-    [[nodiscard]] std::string toString() const {
-        std::ostringstream oss;
-        oss << sys_strings[static_cast<int>(system)];
-        return oss.str();
-    }
-
-    struct epoch_params {
-        int Nbits;
-        int bitmask;
-        long MJDEpoch;
-    };
-
-    [[nodiscard]] const epoch_params &getParams() const {
-        return EPOCH_PARAM[static_cast<int>(system)];
-    }
-
-    // time system
-    SystemType system;
-    // string for enum sys, 1 vs 1
-    inline static const std::string sys_strings[count] = {
-        "Unknown",
-        "GPS", // GPS system time
-        "GLO", // glonass system time
-        "GAL", // Galileo system time
-        "BDT", // BDS system time
-        "QZS", // qzss time
-        "UTC", // utc
-        "TAI",
-        "TT"
-    };
-    inline static const epoch_params EPOCH_PARAM[count] = {
+constexpr std::array<std::string_view,
+    static_cast<size_t>(TimeSystem::Count)>
+TIME_SYSTEM_STRINGS = {
+    "Unknown",
+    "GPS",
+    "GLO",
+    "GAL",
+    "BDT",
+    "QZS",
+    "UTC",
+    "TAI",
+    "TT"
+};
+constexpr std::array<EpochParam,
+    static_cast<size_t>(TimeSystem::Count)>
+TIME_SYSTEM_EPOCH = {
+    {
         {0, 0, 0},
         {10, 0x3FF, GPS_EPOCH_MJD},
         {0, 0, 0},
@@ -97,13 +54,14 @@ public:
         {0, 0, 0},
         {0, 0, 0},
         {0, 0, 0},
-    };
-}; // end class TimeSystem
+    }
+};
 
 
-inline std::ostream &operator<<(std::ostream &os, const TimeSystem &ts) {
-    return os << ts.toString() << std::endl;
+inline std::ostream &operator<<(std::ostream &os, const TimeSystem ts) {
+    return os << TIME_SYSTEM_STRINGS[static_cast<size_t>(ts)] << std::endl;
 }
+
 
 class CommonTime {
 public:
@@ -137,8 +95,9 @@ public:
     CommonTime &operator=(const CommonTime &right) = default;
 
     // 补上这两行，告诉编译器允许移动
-    CommonTime(CommonTime&&) = default;
-    CommonTime& operator=(CommonTime&&) = default;
+    CommonTime(CommonTime &&) = default;
+
+    CommonTime &operator=(CommonTime &&) = default;
 
     double operator-(const CommonTime &right) const {
         if (m_timeSystem != right.m_timeSystem) {
@@ -199,7 +158,7 @@ public:
         oss << setfill('0')
                 << setw(7) << m_day << " "
                 << fixed << setprecision(15) << setw(17) << m_sod
-                << " " << m_timeSystem.toString();
+                << " " << m_timeSystem;
         return oss.str();
     }
 
@@ -217,9 +176,7 @@ public:
 
     bool operator<(const CommonTime &right) const {
         if (m_timeSystem != right.m_timeSystem) {
-            throw InvalidRequest("CommonTime objects not in same time system, cannot be compared: "
-                                 + m_timeSystem.toString() +
-                                 " != " + right.m_timeSystem.toString());
+            throw InvalidRequest("CommonTime objects not in same time system, cannot be compared.");
         }
 
         if (m_day < right.m_day)
@@ -295,7 +252,7 @@ public:
                 << setw(2) << hour << ":"
                 << setw(2) << minute << ":"
                 << setw(2) << second << " "
-                << timeSys.toString();
+                << timeSys;
 
         return oss.str();
     }
@@ -331,7 +288,7 @@ public:
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << fixed << setw(16) << jd << ":"
-                << timeSystem.toString();
+                << timeSystem;
 
         return oss.str();
     }
@@ -379,7 +336,7 @@ public:
         oss << setw(4) << year << " "
                 << setw(3) << doy << " "
                 << setw(14) << sod << " "
-                << timeSystem.toString() << " ";
+                << timeSystem << " ";
 
         return oss.str();
     }
@@ -427,7 +384,7 @@ public:
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(8) << mjd
-                << timeSystem.toString();
+                << timeSystem;
 
         return oss.str();
     }
@@ -475,7 +432,7 @@ public:
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
         oss << setw(8) << jd
-                << timeSystem.toString();
+                << timeSystem;
 
         return oss.str();
     }
@@ -526,15 +483,15 @@ public:
     }
 
     [[nodiscard]] int Nbits() const {
-        return timeSystem.getParams().Nbits;
+        return TIME_SYSTEM_EPOCH[static_cast<size_t>(timeSystem)].nBits;
     }
 
     [[nodiscard]] int bitmask() const {
-        return timeSystem.getParams().bitmask;
+        return TIME_SYSTEM_EPOCH[static_cast<size_t>(timeSystem)].bitmask;
     }
 
     [[nodiscard]] long MJDEpoch() const {
-        return timeSystem.getParams().MJDEpoch;
+        return TIME_SYSTEM_EPOCH[static_cast<size_t>(timeSystem)].mjdEpoch;
     }
 
     [[nodiscard]] int rollover() const { return bitmask() + 1; }
@@ -543,8 +500,6 @@ public:
     [[nodiscard]] unsigned int getDayOfWeek() const {
         return static_cast<unsigned int>(sow) / SEC_PER_DAY;
     }
-
-    [[nodiscard]] double getSOW() const { return sow; }
 
     void reset();
 
@@ -599,7 +554,7 @@ public:
         std::ostringstream oss;
         oss << setw(4) << week
                 << setw(10) << sow
-                << timeSystem.toString();
+                << timeSystem;
 
         return oss.str();
     }

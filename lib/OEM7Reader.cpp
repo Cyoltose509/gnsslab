@@ -133,20 +133,38 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
         const auto phaseLocked = static_cast<int>(trackingStatus >> 10) & 1;
 
         char sys;
-        int freqIdx = -1;
+        int freqIdx;
 
         if (sysInt == 0) {
             // GPS
             sys = 'G';
-            // L1: C/A(0), L2: P(5), P(Y)(9), L2C(17)
-            if (sigType == 0 || sigType == 16) freqIdx = 1;
-            else if (sigType == 1 || sigType == 5 || sigType == 9 || sigType == 17) freqIdx = 2;
+            switch (sigType) {
+                case 0: // L1 C/A
+                    freqIdx = 1;
+                    break;
+                case 9: // L2 P(Y)
+                    freqIdx = 2;
+                    break;
+                default:
+                    freqIdx = -1;
+                    break;
+            }
         } else if (sysInt == 4) {
             // BDS
             sys = 'C';
-            // B1I: 0(D1) / 4(D2)    B2I: 1(D1) / 5(D2)
-            if (sigType == 0 || sigType == 4) freqIdx = 2;
-            else if (sigType == 2 || sigType == 6) freqIdx = 6;
+            switch (sigType) {
+                case 0: // B1I D1
+                case 4: // B1I D2
+                    freqIdx = 2; // B1
+                    break;
+                case 2: // B3I D1
+                case 6: // B3I D2
+                    freqIdx = 6; // B3
+                    break;
+                default:
+                    freqIdx = -1;
+                    break;
+            }
         } else {
             off += 44;
             continue;
@@ -156,8 +174,8 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             sat.system = sys;
             sat.id = prn;
             std::string s_f = std::to_string(freqIdx);
-            currentObs.satTypeValueData[sat]["C" + s_f] = phaseLocked ? psr : 0;
-            currentObs.satTypeValueData[sat]["L" + s_f] = codeLocked ? adr : 0;
+            currentObs.satTypeValueData[sat]["C" + s_f] = codeLocked ? psr : 0;
+            currentObs.satTypeValueData[sat]["L" + s_f] = phaseLocked ? adr : 0;
             currentObs.satTypeValueData[sat]["D" + s_f] = static_cast<double>(doppler);
             currentObs.satTypeValueData[sat]["S" + s_f] = static_cast<double>(cn0);
         }

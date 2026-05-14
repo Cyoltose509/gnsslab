@@ -11,7 +11,7 @@ namespace GuiCoordConverter {
     // ========== Frame selection ==========
     static const char *FRAME_NAMES[] = {"WGS84", "GPS", "CGCS2000", "PZ90"};
     static constexpr int FRAME_COUNT = 4;
-    static const ReferenceFrame *FRAMES[] = {
+    static const FrameInfo *FRAMES[] = {
         &Frame::WGS84, &Frame::GPS, &Frame::CGCS2000, &Frame::PZ90
     };
     static int s_FrameIdx = 0;
@@ -47,7 +47,7 @@ namespace GuiCoordConverter {
     static bool s_Initialized = false;
 
     // ========== Conversions ==========
-    static const ReferenceFrame &CurFrame() { return *FRAMES[s_FrameIdx]; }
+    static const FrameInfo &CurFrame() { return *FRAMES[s_FrameIdx]; }
 
     static void SyncXYZtoBLH() {
         try {
