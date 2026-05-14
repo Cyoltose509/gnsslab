@@ -127,10 +127,15 @@ namespace GuiOem7Processor {
         }
 
         // --- 顶部状态与导航 ---
-        if (isLoading) {
+        if (hasError) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "状态: %s", task->errorMsg.c_str());
+            if (epochCount > 0) ImGui::SameLine();
+        }
+        
+        if (isLoading && !hasError) {
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "正在处理: 已解析 %d 个历元...", epochCount);
-        } else if (hasError && epochCount == 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "错误: %s", task->errorMsg.c_str());
+        } else if (epochCount > 0 && !hasError) {
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "处理完成: 共 %d 个历元", epochCount);
         }
 
         if (epochCount > 0) {

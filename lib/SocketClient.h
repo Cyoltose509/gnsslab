@@ -70,7 +70,7 @@ public:
 
     bool setReceiveTimeout(int timeoutMs);
 
-    int receive(unsigned char *buffer, int maxLen) const;
+    int receive(unsigned char *buffer, int maxLen);
 
     [[nodiscard]] bool isConnected() const;
 

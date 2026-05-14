@@ -13,6 +13,8 @@ public:
     bool connect(const std::string& ip, unsigned short port);
     void close() override;
 
+    bool isConnected() const { return socketClient.isConnected(); }
+
     bool setReceiveTimeout(int timeoutMs) { return socketClient.setReceiveTimeout(timeoutMs); }
 
     bool getNextMessage(std::vector<uint8_t> &message) override;

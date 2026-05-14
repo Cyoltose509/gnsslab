@@ -49,11 +49,26 @@ bool SocketClient::setReceiveTimeout(int timeoutMs) {
 #endif
 }
 
-int SocketClient::receive(unsigned char* buffer, const int maxLen) const {
+int SocketClient::receive(unsigned char* buffer, const int maxLen) {
     if (!connected || sock == SOCKET_INVALID) {
         return -1;
     }
-    return socket_receive(sock, reinterpret_cast<char*>(buffer), maxLen);
+    int ret = socket_receive(sock, reinterpret_cast<char*>(buffer), maxLen);
+    if (ret == 0) {
+        connected = false;
+    } else if (ret < 0) {
+#ifdef _WIN32
+        int err = WSAGetLastError();
+        if (err != WSAEWOULDBLOCK && err != WSAETIMEDOUT) {
+            connected = false;
+        }
+#else
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            connected = false;
+        }
+#endif
+    }
+    return ret;
 }
 
 bool SocketClient::isConnected() const {

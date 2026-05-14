@@ -14,66 +14,73 @@
 
 namespace GuiRealtimeProcessor {
     void SolveRealtimeThread(const std::shared_ptr<SppTask> &task, const ConnectionConfig &config) {
-        try {
-            OEM7SocketReader reader;
-            if (!reader.connect(config.ip, static_cast<unsigned short>(config.port))) {
-                task->hasError = true;
-                task->errorMsg = "无法连接到 " + config.ip + ":" + std::to_string(config.port);
-                task->loading = false;
-                task->done = true;
-                return;
-            }
-            reader.setReceiveTimeout(100); // 100ms timeout
+        SPPIFCode spp;
+        spp.setIFCodeTypes({
+            {'G', {"C1", "C2"}},
+            {'C', {"C2", "C6"}}
+        });
 
-            SPPIFCode spp;
-            spp.setIFCodeTypes({
-                {'G', {"C1", "C2"}},
-                {'C', {"C2", "C6"}}
-            });
+        while (!task->stop) {
+            try {
+                OEM7SocketReader reader;
+                if (!reader.connect(config.ip, static_cast<unsigned short>(config.port))) {
+                    task->hasError = true;
+                    task->errorMsg = "正在尝试连接 " + config.ip + ":" + std::to_string(config.port) + "...";
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                    continue;
+                }
 
-            ObsData obs;
-            while (!task->stop) {
-                try {
-                    if (reader.getNextEpoch(obs)) {
+                // 连接成功，重置错误状态
+                task->hasError = false;
+                task->errorMsg = "";
+                reader.setReceiveTimeout(200); // 200ms timeout
 
-                        spp.preprocess(obs);
+                ObsData obs;
+                while (!task->stop) {
+                    try {
+                        if (reader.getNextEpoch(obs)) {
+                            spp.preprocess(obs);
 
-                        GuiOem7Processor::SppEpochData data;
-                        data.getFromObs(obs);
+                            GuiOem7Processor::SppEpochData data;
+                            data.getFromObs(obs);
 
-                        try {
-                            spp.solve(obs);
-                            data.getFromSPP(spp);
-                            if (!task->initializedRefECEF) {
-                                task->refECEF = data.sppResult.xyz;
-                                task->initializedRefECEF = true;
+                            try {
+                                spp.solve(obs);
+                                data.getFromSPP(spp);
+                                if (!task->initializedRefECEF) {
+                                    task->refECEF = data.sppResult.xyz;
+                                    task->initializedRefECEF = true;
+                                }
+                            } catch (...) {
+                                data.solved = false;
                             }
-                        } catch (...) {
-                            data.solved = false;
-                        }
-                        {
-                            std::lock_guard lock(task->mutex);
-                            const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size())
-                                                  - 1;
-                            task->epochs.push_back(data);
+                            {
+                                std::lock_guard lock(task->mutex);
+                                const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1;
+                                task->epochs.push_back(data);
 
-                            // 如果之前在最后一个历元，则自动跟随
-                            if (wasAtEnd) {
-                                task->selectedEpoch = static_cast<int>(task->epochs.size()) - 1;
+                                if (wasAtEnd) {
+                                    task->selectedEpoch = static_cast<int>(task->epochs.size()) - 1;
+                                }
                             }
+                        } else {
+                            // 检查连接是否依然有效
+                            if (!reader.isConnected()) {
+                                break; // 跳出内层循环进行重连
+                            }
+                            std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         }
-                    } else {
+                    } catch (const std::exception &) {
+                        if (!reader.isConnected()) break;
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
-                } catch (const std::exception &) {
-                    // 运行时错误但不中断连接
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
+                reader.close();
+            } catch (const std::exception &e) {
+                task->hasError = true;
+                task->errorMsg = std::string("运行异常: ") + e.what();
+                std::this_thread::sleep_for(std::chrono::seconds(2));
             }
-            reader.close();
-        } catch (const std::exception &e) {
-            task->hasError = true;
-            task->errorMsg = e.what();
         }
 
         task->loading = false;
