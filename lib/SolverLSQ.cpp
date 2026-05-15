@@ -8,8 +8,9 @@ void SolverLSQ::solve(EquSys &equSys) {
     const auto numUnk = static_cast<int>(currentUnkSet.size());
     const auto numObs = static_cast<int>(equSys.obsEquData.size());
 
-    VectorXd prefit = VectorXd::Zero(numObs);
-    MatrixXd hMatrix = MatrixXd::Zero(numObs, numUnk);
+    prefit = VectorXd::Zero(numObs);
+    hMatrix = MatrixXd::Zero(numObs, numUnk);
+    weights = VectorXd::Zero(numObs);
     MatrixXd wMatrix = MatrixXd::Zero(numObs, numObs);
 
     int iobs = 0;
@@ -23,6 +24,7 @@ void SolverLSQ::solve(EquSys &equSys) {
             hMatrix(iobs, indexUnk) = value;
         }
         wMatrix(iobs, iobs) = data.weight;
+        weights(iobs) = data.weight;
 
         iobs++;
     }
@@ -41,7 +43,7 @@ void SolverLSQ::solve(EquSys &equSys) {
     }
 
     state = covMatrix * hT * wMatrix * prefit;
-    VectorXd v = prefit - hMatrix * state;
+    v = prefit - hMatrix * state;
     const int dof = numObs - numUnk;
     if (dof <= 0) {
         throw InvalidSolver("Degree of freedom <= 0, cannot compute sigma0");

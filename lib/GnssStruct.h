@@ -412,6 +412,7 @@ struct EquSys {
     }
 };
 
+
 struct Result {
     Eigen::Vector3d xyz, xyzFixed;
     Eigen::Vector3d blh, blhFixed;
@@ -423,6 +424,7 @@ struct Result {
     double pdop, gdop, hdop, vdop, tdop;
     int numSats;
     double ratio;
+    std::map<SatID, double> postRes;
 
     void reset() {
         xyz.setZero();
@@ -434,5 +436,6 @@ struct Result {
         sigmaP = sigmaV = 0;
         numSats = 0;
         ratio = 0;
+        postRes.clear();
     }
 };

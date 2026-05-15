@@ -25,7 +25,7 @@ void SPPIFCode::solve(ObsData &obsData) {
             computeElevAzim();
         }
 
-        linearize(obsData);
+        linearize(obsData, iter);
 
         if (posEquations.obsEquData.size() < 4 || velEquations.obsEquData.size() < 4) {
             throw SVNumException("num of satellites after elevation cut is less than 4");
@@ -95,6 +95,11 @@ void SPPIFCode::getResult() {
     result.vdop = sqrt(C_enu(2, 2));
 
     result.numSats = static_cast<int>(satPVTRecTime.size());
+
+    int iobs = 0;
+    for (const auto &[id, data]: posEquations.obsEquData) {
+        result.postRes[id.sat] = posSolver.v[iobs++];
+    }
 }
 
 void SPPIFCode::computeSatPos(ObsData &obsData) {
@@ -132,9 +137,9 @@ void SPPIFCode::computeIF(ObsData &obsData) {
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
-                if (ifVal > 2.7e7 || ifVal < 1.8e7) {
-                    satRejected.insert(sat);
-                }
+                //if (ifVal > 2.7e7 || ifVal < 1.8e7) {
+                   // satRejected.insert(sat);
+                //}
             } else {
                 satRejected.insert(sat);
             }
@@ -194,7 +199,7 @@ double tropoHopfield(const double H, const double E) {
 }
 
 
-void SPPIFCode::linearize(ObsData &obsData) {
+void SPPIFCode::linearize(ObsData &obsData,int iterCount) {
     EquSys equSysTemp;
     posEquations.reset();
     velEquations.reset();
@@ -211,10 +216,14 @@ void SPPIFCode::linearize(ObsData &obsData) {
     const Variable dvy(obsData.station, Parameter::dVY);
     const Variable dvz(obsData.station, Parameter::dVZ);
     const Variable dcdt(obsData.station, Parameter::cdtr_dot);
-
+    int iobs = 0;
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         if (satRejected.count(sat)) continue;
         if (!satPVTRecTime.count(sat)) {
+            satRejected.insert(sat);
+            continue;
+        }
+        if (iterCount>=1&&abs(posSolver.v[iobs++])>60.0) {
             satRejected.insert(sat);
             continue;
         }
@@ -312,12 +321,10 @@ void SPPIFCode::linearize(ObsData &obsData) {
             ed_vel.varCoeffData[dvz] = -los[2];
             ed_vel.varCoeffData[dcdt] = 1.0;
 
-            // 速度观测值加权优化：添加仰角加权 + 多普勒噪声衰减
-            double velWeight = weight / 4.0;
+            double velWeight = weight / 40.0;
             if (elev < PI / 6) {
                 velWeight *= std::pow(std::sin(elev), 2);
             }
-            velWeight *= 0.1; // 多普勒观测噪声较大，额外衰减
             ed_vel.weight = velWeight;
 
             velEquations.obsEquData[eid_vel] = ed_vel;

@@ -222,7 +222,7 @@ namespace GuiOem7Processor {
 
                 // 1. Master Table (Satellite Overview)
                 ImGui::SeparatorText("卫星概览");
-                if (ImGui::BeginTable("##sats_master", 8,
+                if (ImGui::BeginTable("##sats_master", 9,
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_ScrollY, ImVec2(0, ImGui::GetContentRegionAvail().y * 0.8f))) {
                     ImGui::TableSetupColumn("序号", ImGuiTableColumnFlags_WidthFixed, 50.0f);
@@ -233,6 +233,7 @@ namespace GuiOem7Processor {
                     ImGui::TableSetupColumn("高度角(°)", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                     ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                     ImGui::TableSetupColumn("状态", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                    ImGui::TableSetupColumn("残差(m)", ImGuiTableColumnFlags_WidthFixed, 80.0f);
                     ImGui::TableHeadersRow();
 
                     for (int i = 0; i < static_cast<int>(curData.satIds.size()); i++) {
@@ -245,11 +246,10 @@ namespace GuiOem7Processor {
                                               ImGuiSelectableFlags_SpanAllColumns)) {
                             task->selectedSatIdx = i;
                         }
-                        auto showText=[](const double val) {
-                            if (val!=0.0f) {
+                        auto showText = [](const double val) {
+                            if (val != 0.0f) {
                                 ImGui::Text("%.1f", val);
-                            }
-                            else {
+                            } else {
                                 ImGui::TextUnformatted("未知");
                             }
                         };
@@ -264,8 +264,15 @@ namespace GuiOem7Processor {
                         ImGui::TableSetColumnIndex(6);
                         showText(curData.azimuths[i] * RAD_TO_DEG);
                         ImGui::TableSetColumnIndex(7);
-                        if (curData.rejected[i]||!curData.solved) ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "排除");
+                        if (curData.rejected[i] || !curData.solved) ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "排除");
                         else ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "参与");
+
+                        ImGui::TableSetColumnIndex(8);
+                        if (auto it = curData.sppResult.postRes.find(curData.satIds[i]); it != curData.sppResult.postRes.end()) {
+                            ImGui::Text("%.4f", it->second);
+                        } else {
+                            ImGui::TextDisabled("-");
+                        }
                     }
                     ImGui::EndTable();
                 }

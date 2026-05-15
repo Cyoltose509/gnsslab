@@ -115,7 +115,7 @@ namespace GuiLsqSolver {
             SolverLSQ solver;
             solver.solve(sys);
 
-            s_X = solver.getState();
+            s_X = solver.state;
             s_Q = solver.covMatrix;
             s_Sigma0 = solver.sigma0;
         } catch (const std::exception &e) {

@@ -26,9 +26,11 @@ public:
     MatrixXd covMatrix;
     double sigma0{};
 
-    const VectorXd& getState() const { return state; }
-
-private:
     VectorXd state;
+    VectorXd prefit;
+    MatrixXd hMatrix;
+    VectorXd weights;
+    VectorXd v;
     VariableSet currentUnkSet;
+
 }; // End of class 'SolverLSQ'
