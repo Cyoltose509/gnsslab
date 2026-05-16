@@ -170,9 +170,7 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             continue;
         }
         if (freqIdx != -1) {
-            SatID sat;
-            sat.system = sys;
-            sat.id = prn;
+            SatID sat(sys,prn);
             std::string s_f = std::to_string(freqIdx);
             currentObs.satTypeValueData[sat]["C" + s_f] = codeLocked ? psr : 0;
             currentObs.satTypeValueData[sat]["L" + s_f] = phaseLocked ? adr : 0;

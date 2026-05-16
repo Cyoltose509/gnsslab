@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string_view>
 
+
 using namespace std;
 
 //  PI
@@ -111,7 +112,7 @@ constexpr double L7_WAVELENGTH_BDS = C_MPS / L7_FREQ_BDS;
 constexpr double L8_WAVELENGTH_BDS = C_MPS / L8_FREQ_BDS;
 constexpr double L5_WAVELENGTH_BDS = C_MPS / L5_FREQ_BDS;
 
-constexpr double getWavelength(const char sys, const int &n){
+constexpr double getWavelength(const char sys, const int &n) {
     if (n == 0) {
         std::cerr << "getWavelength():frequency no must be positive integer!" << endl;
         exit(-1);
@@ -135,7 +136,7 @@ constexpr double getWavelength(const char sys, const int &n){
     return 0.0;
 }
 
-constexpr double getFreq(const char sys, const int &n){
+constexpr double getFreq(const char sys, const int &n) {
     if (sys == 'G') {
         if (n == 1) return L1_FREQ_GPS;
         if (n == 2) return L2_FREQ_GPS;
@@ -153,7 +154,7 @@ constexpr double getFreq(const char sys, const int &n){
     return 0.0;
 }
 
-constexpr   double getFreq(const char sys, const std::string_view type) noexcept {
+constexpr double getFreq(const char sys, const std::string_view type) noexcept {
     if (type.size() < 2) return 0.0;
 
     const char band = type[1];
@@ -185,15 +186,15 @@ constexpr   double getFreq(const char sys, const std::string_view type) noexcept
     return 0.0;
 }
 
-inline  double getGamma(const char sys,  const std::string_view type1, const std::string_view type2) {
+inline double getGamma(const char sys, const std::string_view type1, const std::string_view type2) {
     const double f1 = getFreq(sys, type1);
     const double f2 = getFreq(sys, type2);
     return f1 * f1 / (f2 * f2);
 }
 
 struct DualCode {
-    const char* code1;
-    const char* code2;
+    const char *code1;
+    const char *code2;
     bool valid;
 };
 
@@ -203,5 +204,34 @@ constexpr DualCode getDualCode(const char sys) {
         case 'G': return {"C1", "C2", true};
         case 'C': return {"C2", "C6", true};
         default: return {"", "", false};
+    }
+}
+
+enum class SatType {
+    MEO,
+    GEO,
+    IGSO,
+};
+constexpr SatType getSatType(const char sys, const int prn, const bool old = false) {
+    if (old) {
+        switch (sys) {
+            case 'G': return SatType::MEO;
+            case 'C': {
+                if (prn >= 1 && prn <= 4) return SatType::GEO;
+                if (prn >= 59 && prn <= 62) return SatType::GEO;
+                if ((prn >= 38 && prn <= 40) || (prn >= 13 && prn <= 16))return SatType::IGSO;
+                return SatType::MEO;
+            }
+            default: return SatType::MEO;
+        }
+    }
+    switch (sys) {
+        case 'G': return SatType::MEO;
+        case 'C': {
+            if (prn >= 1 && prn <= 4) return SatType::GEO;
+            if (prn >= 6 && prn <= 10) return SatType::IGSO;
+            return SatType::MEO;
+        }
+        default: return SatType::MEO;
     }
 }

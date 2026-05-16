@@ -51,6 +51,7 @@ public:
     std::set<SatID> satRejected{};
     std::map<SatID, PVT> satPVTTransTime{};
     std::map<SatID, PVT> satPVTRecTime{};
+    bool oldVersion=false;
     // 继承类需要访问这个成员
 protected:
     double cutOffElev = PI * 0.0555556;

@@ -67,7 +67,6 @@ void convertTimeSystem(CommonTime &in_time, const TimeSystem targetSys) {
     const TimeSystem inTS = in_time.m_timeSystem;
     double dt = 0;
     in_time.m_timeSystem = targetSys;
-    cout << "inTS: " << inTS << ", targetSys: " << targetSys << endl;
     if (inTS == targetSys)
         return;
     if (inTS == TimeSystem::GPS) // GAL -> TAI

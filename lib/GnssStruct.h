@@ -19,6 +19,7 @@ struct SatID {
     char system{};
     int id;
 
+
     //
     // todo:
     // 增加这个字段，实现北斗2代和北斗3代的区分，
@@ -29,31 +30,15 @@ struct SatID {
     // 构造函数
     SatID() : id(-1) {
     }
-
     SatID(const char sys, const int satID) : system(sys), id(satID) {
     }
 
-    // 从字符串构造函数
-    explicit SatID(const string &satStr) {
-        if (!satStr.empty()) {
-            system = satStr[0];
-            id = stoi(satStr.substr(1));
-        } else {
-            system = '?';
-        }
-    }
-
-    // Overload the equality operator as a member function
     bool operator==(const SatID &other) const {
         return this->system == other.system && this->id == other.id;
     }
-
-    // Overload the not equal operator as a member function
     bool operator!=(const SatID &other) const {
         return !(*this == other);
     }
-
-    // Overload the less-than operator as a member function
     bool operator<(const SatID &other) const {
         if (this->system != other.system)
             return this->system < other.system;

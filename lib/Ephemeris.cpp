@@ -14,7 +14,7 @@ inline double c_Ek(const double M, const double e) {
 
 constexpr double lonPRN[6] = {0.0, 1.027, 1.396, 1.931, 2.443, 2.793};
 
-PVT Ephemeris::svPVT(CommonTime t) {
+PVT Ephemeris::svPVT(CommonTime t, const bool oldVersion = false) {
     convertTimeSystem(t, timeSystem);
     PVT sv;
     const double tk = t - getCommonTime();
@@ -31,9 +31,8 @@ PVT Ephemeris::svPVT(CommonTime t) {
     const double ik = i0 + Qi + idot * tk;
     const double x0 = rk * cos(uk), y0 = rk * sin(uk);
 
-    // 处理北斗 GEO 卫星 (PRN 1-5, 59-62)
     double OMEk, sOMEk, cOMEk;
-    if (type == 'C' && ((prn >= 1 && prn <= 5) || (prn >= 59 && prn <= 62))) {
+    if (getSatType(type, prn, oldVersion) == SatType::GEO) {
         OMEk = omega0 + omegaDot * tk - refFrame.omega * toe;
         sOMEk = sin(OMEk), cOMEk = cos(OMEk);
         const double cosik = cos(ik), sinik = sin(ik);

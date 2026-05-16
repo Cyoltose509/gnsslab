@@ -76,7 +76,7 @@ inline XYZ BLHtoXYZ(const BLH &blh, const FrameInfo &frame) {
     return {x, y, z};
 }
 
-inline Eigen::Matrix3d computeRotationMatrix(const double B, const double L) {
+inline Eigen::Matrix3d getBLMatrix(const double B, const double L) {
     const double sinB = std::sin(B);
     const double cosB = std::cos(B);
     const double sinL = std::sin(L);
@@ -93,13 +93,13 @@ inline Eigen::Matrix3d computeRotationMatrix(const double B, const double L) {
 inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
     const auto diffXYZ = xyz - refXYZ;
     const auto refBLH = XYZtoBLH(refXYZ, frame);
-    const Eigen::Matrix3d R = computeRotationMatrix(refBLH.B(), refBLH.L());
+    const Eigen::Matrix3d R = getBLMatrix(refBLH.B(), refBLH.L());
     return {R * diffXYZ};
 }
 
 inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
     const auto refBLH = XYZtoBLH(refXYZ, frame);
-    auto R = computeRotationMatrix(refBLH.B(), refBLH.L());
+    auto R = getBLMatrix(refBLH.B(), refBLH.L());
     const auto diffXYZ = R.transpose() * enu;
     XYZ resXYZ;
     resXYZ << refXYZ[0] + diffXYZ[0], refXYZ[1] + diffXYZ[1], refXYZ[2] + diffXYZ[2];

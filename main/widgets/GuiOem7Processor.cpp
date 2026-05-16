@@ -13,11 +13,15 @@
 #include <set>
 #include <algorithm>
 
+
 namespace GuiOem7Processor {
+    auto oldTime = CommonTime(61120);
+
     void SppEpochData::getFromSPP(const SPPIFCode &spp) {
         if (auto &result = spp.result; result.numSats > 0) {
             solved = true;
             sppResult = result;
+
             numSatsResult = result.numSats;
             const auto size = static_cast<int>(satIds.size());
             for (int i = 0; i < size; i++) {
@@ -72,7 +76,9 @@ namespace GuiOem7Processor {
 
             while (oem7.getNextEpoch(obs)) {
                 if (task->stop) break;
+                spp.oldVersion = obs.epoch < oldTime;
                 spp.preprocess(obs);
+
 
                 SppEpochData data;
                 data.getFromObs(obs);
@@ -131,7 +137,7 @@ namespace GuiOem7Processor {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "状态: %s", task->errorMsg.c_str());
             if (epochCount > 0) ImGui::SameLine();
         }
-        
+
         if (isLoading && !hasError) {
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "正在处理: 已解析 %d 个历元...", epochCount);
         } else if (epochCount > 0 && !hasError) {
@@ -296,7 +302,7 @@ namespace GuiOem7Processor {
 
                         std::set<std::string> freqs;
                         for (auto const &[type, val]: typeMap) {
-                            if (type.length() < 4) freqs.insert(type.substr(1));
+                            if (type.length() > 1) freqs.insert(type.substr(1));
                         }
                         if (freqs.empty()) freqs.insert("?");
 
@@ -414,10 +420,16 @@ namespace GuiOem7Processor {
                     sigmaPs[i] = ep.solved ? result.sigmaP : 0.0;
                     sigmaVs[i] = ep.solved ? result.sigmaV : 0.0;
                     pdops[i] = ep.solved ? result.pdop : 0.0;
-                    auto enu = XYZtoENU(result.xyz, task->refECEF);
-                    enu_e[i] = enu[0];
-                    enu_n[i] = enu[1];
-                    enu_u[i] = enu[2];
+                    if (ep.solved) {
+                        auto enu = XYZtoENU(result.xyz, task->refECEF);
+                        enu_e[i] = enu[0];
+                        enu_n[i] = enu[1];
+                        enu_u[i] = enu[2];
+                    } else {
+                        enu_e[i] = 0;
+                        enu_n[i] = 0;
+                        enu_u[i] = 0;
+                    }
                 }
                 //-------------------------------
                 ImGui::Separator();

@@ -110,7 +110,7 @@ struct Ephemeris {
         return s;
     }
 
-    PVT svPVT(CommonTime t);
+    PVT svPVT(CommonTime t, bool oldVersion);
 
     FrameInfo refFrame{};
     TimeSystem timeSystem{};

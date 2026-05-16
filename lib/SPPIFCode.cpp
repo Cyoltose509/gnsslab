@@ -54,7 +54,7 @@ void SPPIFCode::solve(ObsData &obsData) {
         rClockBiasBDS += d_cdt2;
         vel += dvel;
         rClockDrift += dcdt_dot;
-        if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001 && abs(d_cdt2) < 0.0001) {
+        if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001 && abs(d_cdt2) < 0.0001 && iter >= 3) {
             break;
         }
         iter++;
@@ -67,15 +67,15 @@ void SPPIFCode::solve(ObsData &obsData) {
 }
 
 void SPPIFCode::getResult() {
-    auto& pD=posSolver.covMatrix;
-    auto& vD=velSolver.covMatrix;
-    result.pdop = sqrt(pD(0, 0) +pD(1, 1) +pD(2, 2));
-    result.gdop = sqrt(pD(0, 0) +pD(1, 1) +pD(2, 2) +pD(3, 3) +pD(4, 4));
+    auto &pD = posSolver.covMatrix;
+    auto &vD = velSolver.covMatrix;
+    result.pdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2));
+    result.gdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2) + pD(3, 3) + pD(4, 4));
 
-    result.tdop = sqrt(pD(3, 3)+pD(4, 4));
+    result.tdop = sqrt(pD(3, 3) + pD(4, 4));
 
     result.sigmaP = result.pdop * posSolver.sigma0;
-    result.sigmaV = sqrt(vD(0, 0) +vD(1, 1) +vD(2, 2)) * velSolver.sigma0;
+    result.sigmaV = sqrt(vD(0, 0) + vD(1, 1) + vD(2, 2)) * velSolver.sigma0;
     result.sigmaXYZ = {
         sqrt(pD(0, 0)) * posSolver.sigma0,
         sqrt(pD(1, 1)) * posSolver.sigma0,
@@ -89,9 +89,9 @@ void SPPIFCode::getResult() {
     result.xyz = xyz;
     result.vel = vel;
     result.blh = XYZtoBLH(xyz, frame);
-    auto mt=computeRotationMatrix(result.blh[0],result.blh[1]);
+    auto mt = getBLMatrix(result.blh[0], result.blh[1]);
     Matrix3d C_enu = mt * pD.topLeftCorner(3, 3) * mt.transpose();
-    result.hdop = sqrt(C_enu(0, 0) +C_enu(1, 1));
+    result.hdop = sqrt(C_enu(0, 0) + C_enu(1, 1));
     result.vdop = sqrt(C_enu(2, 2));
 
     result.numSats = static_cast<int>(satPVTRecTime.size());
@@ -119,9 +119,8 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
-        satPVTTransTime[sat] = eph->svPVT(std::move(t_emit));
+        satPVTTransTime[sat] = eph->svPVT(std::move(t_emit), oldVersion);
     }
-
 }
 
 void SPPIFCode::computeIF(ObsData &obsData) {
@@ -137,9 +136,6 @@ void SPPIFCode::computeIF(ObsData &obsData) {
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
-                //if (ifVal > 2.7e7 || ifVal < 1.8e7) {
-                   // satRejected.insert(sat);
-                //}
             } else {
                 satRejected.insert(sat);
             }
@@ -199,7 +195,7 @@ double tropoHopfield(const double H, const double E) {
 }
 
 
-void SPPIFCode::linearize(ObsData &obsData,int iterCount) {
+void SPPIFCode::linearize(ObsData &obsData, int iterCount) {
     EquSys equSysTemp;
     posEquations.reset();
     velEquations.reset();
@@ -223,7 +219,7 @@ void SPPIFCode::linearize(ObsData &obsData,int iterCount) {
             satRejected.insert(sat);
             continue;
         }
-        if (iterCount>=1&&abs(posSolver.v[iobs++])>60.0) {
+        if (iterCount >= 1 && abs(posSolver.v[iobs++]) > posSolver.sigma0) {
             satRejected.insert(sat);
             continue;
         }
