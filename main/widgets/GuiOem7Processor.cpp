@@ -507,7 +507,7 @@ namespace GuiOem7Processor {
         OPENFILENAMEA ofn = {};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = "OEM7 Log Files (*.log)\0*.log\0All Files\0*.*\0";
+        ofn.lpstrFilter = "OEM7 Log Files (*.log)\0*.log\0";
         ofn.lpstrFile = filename;
         ofn.nMaxFile = MAX_PATH;
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;

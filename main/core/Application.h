@@ -1,13 +1,10 @@
 #pragma once
 
-#ifndef GNSSLAB_APPLICATION_H
-#define GNSSLAB_APPLICATION_H
 
 #include "ui/Gui.h"
 
 #include <vector>
 #include <memory>
-#include <string>
 
 namespace GuiOem7Processor {
     struct SppTask;
@@ -25,7 +22,6 @@ private:
     void Update();
     void Render();
     void RenderMenuBar();
-    void RenderDockSpace();
     void RenderTasks();
 
     void OpenOem7File();
@@ -47,5 +43,3 @@ private:
     int m_activeTask = -1;  // 当前激活的标签页索引
     int m_taskToFocus = -1; // 待强制选中的标签页索引
 };
-
-#endif

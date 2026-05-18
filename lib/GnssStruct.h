@@ -153,9 +153,6 @@ typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 //-------------------
 
 
-// Output operator for pvt
-
-
 //---------------
 // 参数估计模块数据结构
 //---------------

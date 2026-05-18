@@ -9,9 +9,3 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 add_subdirectory(thirdparty)
 add_subdirectory(lib)
 add_subdirectory(main)
-
-add_executable(spp_file test/spp_file.cpp)
-target_link_libraries(spp_file gnss)
-
-add_executable(spp_realtime test/spp_realtime.cpp)
-target_link_libraries(spp_realtime gnss)

@@ -18,9 +18,7 @@ void SolverLSQ::solve(EquSys &equSys) {
         prefit(iobs) = data.prefit;
 
         for (const auto &[var, value]: data.varCoeffData) {
-            // 从整体的X中搜索当前未知参数的位置
             const int indexUnk = getIndex(currentUnkSet, var);
-            // 把偏导数插入到对应的h矩阵中
             hMatrix(iobs, indexUnk) = value;
         }
         wMatrix(iobs, iobs) = data.weight;
@@ -35,21 +33,25 @@ void SolverLSQ::solve(EquSys &equSys) {
         throw InvalidSolver("prefit size don't equal with rows of hMatrix");
     }
 
+    // 正规方程 N = H^T * W * H
+    MatrixXd N = hT * wMatrix * hMatrix;
+    // 右端项 b = H^T * W * prefit
+    VectorXd b = hT * wMatrix * prefit;
+
     try {
-        covMatrix = hT * wMatrix * hMatrix;
-        covMatrix = covMatrix.inverse();
+        LDLT<MatrixXd> ldlt(N);
+        state = ldlt.solve(b);
+        covMatrix = ldlt.solve(MatrixXd::Identity(N.rows(), N.cols())); // 协方差
     } catch (...) {
-        throw InvalidSolver("Unable to invert matrix covMatrix");
+        throw InvalidSolver("LDLT failed, matrix singular or ill-conditioned");
     }
 
-    state = covMatrix * hT * wMatrix * prefit;
     v = prefit - hMatrix * state;
     const int dof = numObs - numUnk;
     if (dof <= 0) {
         throw InvalidSolver("Degree of freedom <= 0, cannot compute sigma0");
     }
-    const double sigma0_sq = (v.transpose() * wMatrix * v)(0) / dof;
-
+    const double sigma0_sq = (v.transpose() * wMatrix * v)(0,0) / dof;
     sigma0 = sqrt(sigma0_sq);
 }
 
