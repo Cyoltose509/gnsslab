@@ -12,6 +12,7 @@ void SPPIFCode::solve(ObsData &obsData) {
     xyz = obsData.antennaPosition;
     result.reset();
     int iter(0);
+    double last_rms = 1e9;
     while (iter < 10) {
         computeSatPos(obsData);
         earthRotation();
@@ -25,7 +26,7 @@ void SPPIFCode::solve(ObsData &obsData) {
             computeElevAzim();
         }
 
-        linearize(obsData, iter);
+        linearize(obsData, last_rms);
 
         if (posEquations.obsEquData.size() < 4 || velEquations.obsEquData.size() < 4) {
             throw SVNumException("num of satellites after elevation cut is less than 4");
@@ -54,9 +55,12 @@ void SPPIFCode::solve(ObsData &obsData) {
         rClockBiasBDS += d_cdt2;
         vel += dvel;
         rClockDrift += dcdt_dot;
-        if (dxyz.norm() < 0.0001 && abs(d_cdt) < 0.0001 && abs(d_cdt2) < 0.0001 && iter >= 3) {
+        const double rms = posSolver.v.norm() / sqrt(posSolver.v.size());
+        if (fabs(rms - last_rms) < 1e-4) {
+            // 残差几乎不再变化
             break;
         }
+        last_rms = rms;
         iter++;
     }
 
@@ -149,8 +153,7 @@ void SPPIFCode::earthRotation() {
     for (auto const &[sat, pvt]: satPVTTransTime) {
         const double tau = (pvt.p - xyz).norm() / C_MPS;
 
-        const double omega = sat.getFrame().omega;
-        const double wt = omega * tau;
+        const double wt = OMEGA_EARTH * tau;
         const double cos_wt = cos(wt);
         const double sin_wt = sin(wt);
         Matrix3d rot;
@@ -171,31 +174,8 @@ void SPPIFCode::computeElevAzim() {
     }
 }
 
-double tropoHopfield(const double H, const double E) {
-    constexpr double T0 = 288.16; // K
-    constexpr double P0 = 1013.25; // hPa
-    constexpr double RH0 = 0.5; // 相对湿度
-    constexpr double H0 = 0.0; // 参考高度
-    const double T = T0 - 0.0065 * (H - H0);
-    if (T < 200.0) return 0.0;
-    const double P = P0 * pow(1 - 0.0000226 * (H - H0), 5.225);
-    const double RH = RH0 * exp(-0.0006396 * (H - H0));
-    const double e = RH * exp(-37.2465 + 0.213166 * T - 0.000256908 * T * T);
-    constexpr double hd = 40136.0 + 148.72 * (T0 - 273.16); // 干层高度
-    constexpr double hw = 11000.0; // 湿层高度
-    const double Kd = 155.2e-7 * (P / T) * (hd - H);
-    const double Kw = 155.2e-7 * (4810.0 * e / (T * T)) * (hw - H);
-    const double md = 1.0 / sin(sqrt(E * E + 1.90386e-3));
-    const double mw = 1.0 / sin(sqrt(E * E + 6.85389e-4));
-    const double tropo = Kd * md + Kw * mw;
-    if (!isfinite(tropo) || tropo < 0.0 || tropo > 100.0)
-        return 0.0;
 
-    return tropo;
-}
-
-
-void SPPIFCode::linearize(ObsData &obsData, int iterCount) {
+void SPPIFCode::linearize(ObsData &obsData, double rms) {
     EquSys equSysTemp;
     posEquations.reset();
     velEquations.reset();
@@ -219,7 +199,7 @@ void SPPIFCode::linearize(ObsData &obsData, int iterCount) {
             satRejected.insert(sat);
             continue;
         }
-        if (iterCount >= 1 && abs(posSolver.v[iobs++]) > posSolver.sigma0) {
+        if (posSolver.v.size() > iobs && abs(posSolver.v[iobs++]) > rms * 3) {
             satRejected.insert(sat);
             continue;
         }

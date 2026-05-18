@@ -34,7 +34,7 @@ public:
 
     void earthRotation();
 
-    void linearize(ObsData &obsData, int iterCount);
+    void linearize(ObsData &obsData, double rms);
 
     void setFrame(const FrameInfo &f) {
         frame = f;

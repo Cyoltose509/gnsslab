@@ -12,6 +12,7 @@ typedef HWND__ *HWND;
 
 #include "GnssStruct.h"
 #include "SPPIFCode.h"
+#include "CoordConvert.h"
 
 namespace GuiOem7Processor {
     struct SppEpochData {
@@ -35,6 +36,63 @@ namespace GuiOem7Processor {
         void getFromObs(const ObsData &obs);
     };
 
+    struct PlotData {
+        std::vector<double> times;
+        std::vector<double> sigmaPs;
+        std::vector<double> sigmaVs;
+        std::vector<double> pdops;
+        std::vector<double> enu_e;
+        std::vector<double> enu_n;
+        std::vector<double> enu_u;
+        bool newed = false;
+
+        void insert(const int index, const SppEpochData &ep, const ENU &refECEF) {
+            times.push_back(index);
+            const auto &result = ep.sppResult;
+            const bool solved = ep.solved;
+            sigmaPs.push_back(solved ? result.sigmaP : 0.0);
+            sigmaVs.push_back(solved ? result.sigmaV : 0.0);
+            pdops.push_back(solved ? result.pdop : 0.0);
+            if (solved) {
+                auto enu = XYZtoENU(result.xyz, refECEF);
+                enu_e.push_back(enu[0]);
+                enu_n.push_back(enu[1]);
+                enu_u.push_back(enu[2]);
+            } else {
+                enu_e.push_back(0);
+                enu_n.push_back(0);
+                enu_u.push_back(0);
+            }
+            newed = true;
+        }
+
+        void refreshENU(const std::vector<SppEpochData> &ep, const ENU &refECEF) {
+            for (int i = 0; i < enu_e.size(); i++) {
+                const auto &result = ep[i].sppResult;
+                if (ep[i].solved) {
+                    auto enu = XYZtoENU(result.xyz, refECEF);
+                    enu_e[i] = enu[0];
+                    enu_n[i] = enu[1];
+                    enu_u[i] = enu[2];
+                } else {
+                    enu_e[i] = 0;
+                    enu_n[i] = 0;
+                    enu_u[i] = 0;
+                }
+            }
+        }
+
+        void clear() {
+            times.clear();
+            sigmaPs.clear();
+            sigmaVs.clear();
+            pdops.clear();
+            enu_e.clear();
+            enu_n.clear();
+            enu_u.clear();
+        }
+    };
+
     struct SppTask {
         std::string filePath;
         std::string fileName;
@@ -48,6 +106,7 @@ namespace GuiOem7Processor {
         std::mutex mutex;
 
         std::vector<SppEpochData> epochs;
+        PlotData plotData;
         XYZ refECEF{0, 0, 0};
         bool initializedRefECEF = false;
 
@@ -59,9 +118,10 @@ namespace GuiOem7Processor {
 
         ~SppTask() {
             stop = true;
-            // Thread joining moved to Application::Update/Shutdown for safety
         }
     };
+
+
 
     void SolveThread(const std::shared_ptr<SppTask> &task);
 

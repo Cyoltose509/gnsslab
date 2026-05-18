@@ -93,16 +93,17 @@ namespace GuiOem7Processor {
                 } catch (...) {
                     data.solved = false;
                 }
-
                 {
                     std::lock_guard lock(task->mutex);
-                    const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1;
+                    const auto index = static_cast<int>(task->epochs.size()) - 1;
+                    task->plotData.insert(index, data, task->refECEF);
+                    const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == index;
                     if (task->epochs.empty()) {
                         task->selectedEpoch = 0;
                     }
                     task->epochs.push_back(data);
                     if (wasAtEnd) {
-                        task->selectedEpoch = static_cast<int>(task->epochs.size()) - 1;
+                        task->selectedEpoch = index + 1;
                     }
                 }
             }
@@ -165,7 +166,7 @@ namespace GuiOem7Processor {
             ImGui::SameLine();
             {
                 std::lock_guard lock(task->mutex);
-                auto &cur = task->epochs[selectedIdx];
+                const auto &cur = task->epochs[selectedIdx];
                 ImGui::TextDisabled("| Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? "已定位" : "未定位");
             }
         }
@@ -173,11 +174,17 @@ namespace GuiOem7Processor {
             ImGui::Text("参考真值：");
             ImGui::SameLine();
             ImGui::PushItemWidth(200);
-            ImGui::InputDouble("X/m", &task->refECEF[0]);
+            if (ImGui::InputDouble("X/m", &task->refECEF[0])) {
+                task->plotData.refreshENU(task->epochs, task->refECEF);
+            }
             ImGui::SameLine();
-            ImGui::InputDouble("Y/m", &task->refECEF[1]);
+            if (ImGui::InputDouble("Y/m", &task->refECEF[1])) {
+                task->plotData.refreshENU(task->epochs, task->refECEF);
+            }
             ImGui::SameLine();
-            ImGui::InputDouble("Z/m", &task->refECEF[2]);
+            if (ImGui::InputDouble("Z/m", &task->refECEF[2])) {
+                task->plotData.refreshENU(task->epochs, task->refECEF);
+            }
             ImGui::SameLine();
             if (ImGui::Button("从剪贴板读取")) {
                 if (const char *clipText = ImGui::GetClipboardText(); clipText && clipText[0] != '\0') {
@@ -198,6 +205,7 @@ namespace GuiOem7Processor {
                     if (count >= 1) task->refECEF[0] = vals[0];
                     if (count >= 2) task->refECEF[1] = vals[1];
                     if (count >= 3) task->refECEF[2] = vals[2];
+                    task->plotData.refreshENU(task->epochs, task->refECEF);
                 }
             }
         }
@@ -205,8 +213,8 @@ namespace GuiOem7Processor {
         ImGui::Separator();
 
         // --- 主分栏布局 (使用 Table 实现可拖拽分栏) ---
-        float availY = ImGui::GetContentRegionAvail().y;
-        float plotRegionH = epochCount > 0 ? 380.0f : 0.0f;
+        const float availY = ImGui::GetContentRegionAvail().y;
+        const float plotRegionH = epochCount > 0 ? 380.0f : 0.0f;
         float mainTableH = availY - plotRegionH - ImGui::GetStyle().ItemSpacing.y;
         if (mainTableH < 200.0f) mainTableH = 200.0f;
 
@@ -289,7 +297,7 @@ namespace GuiOem7Processor {
 
                 if (task->selectedSatIdx >= 0 && task->selectedSatIdx < static_cast<int>(curData.satIds.size())) {
                     ImGui::SeparatorText(("观测详情 (" + curData.satIds[task->selectedSatIdx].toString() + ")").c_str());
-                    int satIdx = task->selectedSatIdx;
+                    const int satIdx = task->selectedSatIdx;
                     const auto &typeMap = curData.allObs[satIdx];
 
                     if (ImGui::BeginTable("##obs_detail", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
@@ -394,49 +402,24 @@ namespace GuiOem7Processor {
         // --- 绘图区域 ---
 
         if (epochCount > 0) {
-            std::vector<double> times;
-            std::vector<double> sigmaPs;
-            std::vector<double> sigmaVs;
-            std::vector<double> pdops;
-            std::vector<double> enu_e;
-            std::vector<double> enu_n;
-            std::vector<double> enu_u;
+            const auto &times = task->plotData.times;
+            const auto &sigmaPs = task->plotData.sigmaPs;
+            const auto &sigmaVs = task->plotData.sigmaVs;
+            const auto &pdops = task->plotData.pdops;
+            const auto &enu_e = task->plotData.enu_e;
+            const auto &enu_n = task->plotData.enu_n;
+            const auto &enu_u = task->plotData.enu_u;
+            const auto newed = task->plotData.newed;
+            task->plotData.newed = false;
 
             // 提取绘图数据
             {
-                std::lock_guard lock(task->mutex);
-                const int n = static_cast<int>(task->epochs.size());
-                times.resize(n);
-                sigmaPs.resize(n);
-                sigmaVs.resize(n);
-                pdops.resize(n);
-                enu_e.resize(n);
-                enu_n.resize(n);
-                enu_u.resize(n);
-                for (int i = 0; i < n; i++) {
-                    const auto &ep = task->epochs[i];
-                    const auto &result = ep.sppResult;
-                    times[i] = i;
-                    sigmaPs[i] = ep.solved ? result.sigmaP : 0.0;
-                    sigmaVs[i] = ep.solved ? result.sigmaV : 0.0;
-                    pdops[i] = ep.solved ? result.pdop : 0.0;
-                    if (ep.solved) {
-                        auto enu = XYZtoENU(result.xyz, task->refECEF);
-                        enu_e[i] = enu[0];
-                        enu_n[i] = enu[1];
-                        enu_u[i] = enu[2];
-                    } else {
-                        enu_e[i] = 0;
-                        enu_n[i] = 0;
-                        enu_u[i] = 0;
-                    }
-                }
                 //-------------------------------
                 ImGui::Separator();
                 if (ImPlot::BeginPlot("ENU时序图", ImVec2(-1, 400))) {
                     ImPlot::SetupAxes("Epoch", "E/N/U (m)");
                     ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-                    if (task->loading) {
+                    if (newed) {
                         ImPlot::SetupAxisLimits(ImAxis_X1, 0, times.empty() ? 10 : times.back(),
                                                 ImPlotCond_Always);
                     }
@@ -460,7 +443,7 @@ namespace GuiOem7Processor {
                     ImGui::TableSetupColumn("MiddlePanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);
                     ImGui::TableSetupColumn("RightPanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);
                     ImGui::TableNextRow(ImGuiTableRowFlags_None, mainTableH);
-                    vector<double> *data[3] = {
+                    const vector<double> *data[3] = {
                         &sigmaPs,
                         &sigmaVs,
                         &pdops
@@ -474,7 +457,7 @@ namespace GuiOem7Processor {
                         ImGui::TableSetColumnIndex(i);
                         if (ImPlot::BeginPlot(names[i], ImVec2(-1, 400), ImPlotFlags_NoLegend)) {
                             ImPlot::SetupAxes("Epoch", "σ (m)");
-                            if (task->loading) {
+                            if (newed) {
                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, times.empty() ? 10 : times.back(),
                                                         ImPlotCond_Always);
                             }

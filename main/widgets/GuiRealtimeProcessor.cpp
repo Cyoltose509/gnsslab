@@ -56,11 +56,13 @@ namespace GuiRealtimeProcessor {
                             }
                             {
                                 std::lock_guard lock(task->mutex);
-                                const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == static_cast<int>(task->epochs.size()) - 1;
+                                const auto index = static_cast<int>(task->epochs.size()) - 1;
+                                task->plotData.insert(index, data, task->refECEF);
+                                const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == index;
                                 task->epochs.push_back(data);
 
                                 if (wasAtEnd) {
-                                    task->selectedEpoch = static_cast<int>(task->epochs.size()) - 1;
+                                    task->selectedEpoch = index+1;
                                 }
                             }
                         } else {

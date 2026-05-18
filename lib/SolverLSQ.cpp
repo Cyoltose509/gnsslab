@@ -36,10 +36,10 @@ void SolverLSQ::solve(EquSys &equSys) {
     // 正规方程 N = H^T * W * H
     MatrixXd N = hT * wMatrix * hMatrix;
     // 右端项 b = H^T * W * prefit
-    VectorXd b = hT * wMatrix * prefit;
+    const VectorXd b = hT * wMatrix * prefit;
 
     try {
-        LDLT<MatrixXd> ldlt(N);
+        const LDLT<MatrixXd> ldlt(N);
         state = ldlt.solve(b);
         covMatrix = ldlt.solve(MatrixXd::Identity(N.rows(), N.cols())); // 协方差
     } catch (...) {
