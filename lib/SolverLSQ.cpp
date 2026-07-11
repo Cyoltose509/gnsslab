@@ -8,11 +8,19 @@ void SolverLSQ::solve(EquSys &equSys) {
     const auto numUnk = static_cast<int>(currentUnkSet.size());
     const auto numObs = static_cast<int>(equSys.obsEquData.size());
 
-    prefit = VectorXd::Zero(numObs);
-    hMatrix = MatrixXd::Zero(numObs, numUnk);
-    weights = VectorXd::Zero(numObs);
-    MatrixXd wMatrix = MatrixXd::Zero(numObs, numObs);
+    // ---- 矩阵预分配：只在维度变化时 resize，平时 setZero 复用内存 ----
+    if (prefit.size() != numObs) {
+        prefit.resize(numObs);
+        weights.resize(numObs);
+    }
+    if (hMatrix.rows() != numObs || hMatrix.cols() != numUnk) {
+        hMatrix.resize(numObs, numUnk);
+    }
+    prefit.setZero();
+    hMatrix.setZero();
+    weights.setZero();
 
+    // ---- 组装设计矩阵 H 和观测值向量 prefit ----
     int iobs = 0;
     for (const auto &[id, data]: equSys.obsEquData) {
         prefit(iobs) = data.prefit;
@@ -21,7 +29,6 @@ void SolverLSQ::solve(EquSys &equSys) {
             const int indexUnk = getIndex(currentUnkSet, var);
             hMatrix(iobs, indexUnk) = value;
         }
-        wMatrix(iobs, iobs) = data.weight;
         weights(iobs) = data.weight;
 
         iobs++;
@@ -33,15 +40,14 @@ void SolverLSQ::solve(EquSys &equSys) {
         throw InvalidSolver("prefit size don't equal with rows of hMatrix");
     }
 
-    // 正规方程 N = H^T * W * H
-    MatrixXd N = hT * wMatrix * hMatrix;
-    // 右端项 b = H^T * W * prefit
-    const VectorXd b = hT * wMatrix * prefit;
+    // ---- 正规方程：使用 weights.asDiagonal() 替代稠密 wMatrix ----
+    MatrixXd N = hT * weights.asDiagonal() * hMatrix;
+    const VectorXd b = hT * weights.asDiagonal() * prefit;
 
     try {
         const LDLT<MatrixXd> ldlt(N);
         state = ldlt.solve(b);
-        covMatrix = ldlt.solve(MatrixXd::Identity(N.rows(), N.cols())); // 协方差
+        covMatrix = ldlt.solve(MatrixXd::Identity(N.rows(), N.cols()));
     } catch (...) {
         throw InvalidSolver("LDLT failed, matrix singular or ill-conditioned");
     }
@@ -51,7 +57,8 @@ void SolverLSQ::solve(EquSys &equSys) {
     if (dof <= 0) {
         throw InvalidSolver("Degree of freedom <= 0, cannot compute sigma0");
     }
-    const double sigma0_sq = (v.transpose() * wMatrix * v)(0,0) / dof;
+    // sigma0² = (vᵀ W v) / dof，其中 W=weights 对角阵 → 直接逐元素加权求和
+    const double sigma0_sq = (v.array() * weights.array() * v.array()).sum() / dof;
     sigma0 = sqrt(sigma0_sq);
 }
 
@@ -69,7 +76,6 @@ int SolverLSQ::getIndex(const VariableSet &varSet, const Variable &thisVar) {
 double SolverLSQ::getSolution(const Parameter &type,
                               VariableSet &currentUnkSet,
                               const VectorXd &stateVec) {
-    // Declare an varIterator for 'stateMap' and go to the first element
     auto varIt = currentUnkSet.begin();
     int index = 0;
     while (varIt != currentUnkSet.end()) {
