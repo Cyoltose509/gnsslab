@@ -16,17 +16,21 @@ void SPPIFCode::preprocess(ObsData &obsData) {
 void SPPIFCode::solve(ObsData &obsData) {
     xyz = obsData.antennaPosition;
     result.reset();
-    lastWStats_.clear();  // 新历元：清空上一历元的 w 统计量
+    lastWStats_.clear(); // 新历元：清空上一历元的 w 统计量
 
     int iter(0);
     double last_rms = 1e9;
     while (iter < 10) {
-        computeSatPos(obsData);
-        earthRotation();
+        // 卫星位置（Kepler 轨道）只在第 1 轮计算，后续迭代复用：
+        // 迭代间接收机位置变化 < 100m → 卫星位置变化 < 0.1m，对 SPP 精度无影响
+        if (iter == 0) {
+            computeSatPos(obsData);
+            earthRotation();
+        }
 
         if (obsData.satTypeValueData.size() < 4) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
-                + to_string(satPVTRecTime.size()) + ")");
+                                 + to_string(satPVTRecTime.size()) + ")");
         }
         if (abs(xyz.norm() - RADIUS_EARTH) < 100000.0) {
             satElevData.clear();
@@ -55,7 +59,7 @@ void SPPIFCode::solve(ObsData &obsData) {
             posSolver.getSolution(Parameter::dY),
             posSolver.getSolution(Parameter::dZ)
         };
-        const double d_cdt  = posSolver.getSolution(Parameter::cdt);
+        const double d_cdt = posSolver.getSolution(Parameter::cdt);
         const double d_cdt2 = posSolver.getSolution(Parameter::cdt2);
         const Vector3d dvel = {
             velSolver.getSolution(Parameter::dVX),
@@ -128,17 +132,17 @@ void SPPIFCode::getResult() {
 void SPPIFCode::buildResidualMap() {
     lastWStats_.clear();
 
-    const auto &Ninv = posSolver.covMatrix;  // N⁻¹ (order 5×5)
+    const auto &Ninv = posSolver.covMatrix; // N⁻¹ (order 5×5)
     const double sigma0 = posSolver.sigma0;
     if (sigma0 <= 0.0) return;
 
     int i = 0;
-    for (const auto &[eid, data] : posEquations.obsEquData) {
+    for (const auto &[eid, data]: posEquations.obsEquData) {
         if (i >= posSolver.v.size()) break;
 
-        const double v     = posSolver.v[i];
-        const double w     = data.weight;
-        const double invW  = (w > 0.0) ? 1.0 / w : 0.0;
+        const double v = posSolver.v[i];
+        const double w = data.weight;
+        const double invW = (w > 0.0) ? 1.0 / w : 0.0;
 
         // 设计矩阵第 i 行 (1 × numUnk)
         const auto hRow = posSolver.hMatrix.row(i);
@@ -159,7 +163,7 @@ void SPPIFCode::buildResidualMap() {
 // linearize — 单次遍历所有卫星，完成拒绝检查 + 共享几何计算 + 组装观测方程
 // ============================================================================
 void SPPIFCode::linearize(ObsData &obsData, const int iter) {
-    static constexpr double W_THRESHOLD = 3.29;  // Baarda w 检验阈值 (α=0.001)
+    static constexpr double W_THRESHOLD = 3.29; // Baarda w 检验阈值 (α=0.001)
 
     // 前 2 轮跳过 w 检验：此时位置可能远未收敛
     const bool applyWTest = (iter >= 2);
@@ -168,7 +172,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     SatID outlierSat;
     double worstW = 0.0;
     if (applyWTest) {
-        for (auto const &[sat, codeList] : obsData.satTypeValueData) {
+        for (auto const &[sat, codeList]: obsData.satTypeValueData) {
             if (satRejected.count(sat)) continue;
             if (auto itW = lastWStats_.find(sat);
                 itW != lastWStats_.end() && itW->second > worstW) {
@@ -184,6 +188,17 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     posEquations.station = obsData.station;
     velEquations.station = obsData.station;
 
+    // ---- 未知参数（只构造一次，所有卫星共用） ----
+    const Variable dx(obsData.station, Parameter::dX);
+    const Variable dy(obsData.station, Parameter::dY);
+    const Variable dz(obsData.station, Parameter::dZ);
+    const Variable cdt(obsData.station, Parameter::cdt);
+    const Variable cdt2(obsData.station, Parameter::cdt2);
+    const Variable dvx(obsData.station, Parameter::dVX);
+    const Variable dvy(obsData.station, Parameter::dVY);
+    const Variable dvz(obsData.station, Parameter::dVZ);
+    const Variable dcdt(obsData.station, Parameter::cdtr_dot);
+
     // ---- BLH 提到循环外 ----
     double refHgt = 0.0;
     if (xyz.norm() > 1000.0) {
@@ -191,7 +206,9 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         refHgt = BLH[2];
     }
 
-    for (auto const &[sat, codeList] : obsData.satTypeValueData) {
+    bool hasGps = false, hasBds = false;
+
+    for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         // ---- 拒绝检查 ----
         if (satRejected.count(sat)) continue;
 
@@ -248,24 +265,37 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         }
 
         // ---- 逐卫星构建方程 ----
-        buildPosEquation(sat, codeList, pvt, los, rho, elev, trop,
-                         ifType, obsVal, weight);
+        buildPosEquation(sat, pvt, los, rho, trop,
+                         ifType, obsVal, weight, dx, dy, dz, cdt, cdt2);
         // 速度方程需要卫星→接收机方向的 LOS（与位置方程的 sign 相反）
-        buildVelEquation(sat, codeList, pvt, {-los[0], -los[1], -los[2]}, elev, weight);
+        buildVelEquation(sat, codeList, pvt, los, elev, weight,
+                         dvx, dvy, dvz, dcdt);
+
+        if (isGps) hasGps = true;
+        else hasBds = true;
     }
+
+    // ---- varSet 统一插入（只做一次，不在循环内重复） ----
+    posEquations.varSet.insert(dx);
+    posEquations.varSet.insert(dy);
+    posEquations.varSet.insert(dz);
+    if (hasGps) posEquations.varSet.insert(cdt);
+    if (hasBds) posEquations.varSet.insert(cdt2);
+    velEquations.varSet.insert(dvx);
+    velEquations.varSet.insert(dvy);
+    velEquations.varSet.insert(dvz);
+    velEquations.varSet.insert(dcdt);
 }
 
 // ============================================================================
 // buildPosEquation — 单颗卫星的位置观测方程
 // ============================================================================
 void SPPIFCode::buildPosEquation(
-    const SatID &sat, const TypeValueMap & /*codeList*/,
-    const PVT &pvt, const Vector3d &los,
-    const double rho, const double elev, const double trop,
-    const std::string &obsType, const double obsVal, const double weight) {
-
-    (void)elev;  // 权已在 linearize 中计算
-
+    const SatID &sat, const PVT &pvt, const Vector3d &los,
+    const double rho, const double trop,
+    const std::string &obsType, const double obsVal, const double weight,
+    const Variable &dx, const Variable &dy, const Variable &dz,
+    const Variable &cdt, const Variable &cdt2) {
     const bool isGps = (sat.system == 'G');
     const double dts = pvt.clockBias * C_MPS;
     const double rel = pvt.relativityCorrection * C_MPS;
@@ -274,30 +304,16 @@ void SPPIFCode::buildPosEquation(
     EquData ed;
     ed.prefit = obsVal - (rho + (isGps ? rClockBias : rClockBiasBDS) - dts - rel + trop);
 
-    // 方向余弦
-    const std::string stn(posEquations.station);
-    const Variable _dx(stn, Parameter::dX);
-    const Variable _dy(stn, Parameter::dY);
-    const Variable _dz(stn, Parameter::dZ);
-    ed.varCoeffData[_dx] = los[0];
-    ed.varCoeffData[_dy] = los[1];
-    ed.varCoeffData[_dz] = los[2];
+    ed.varCoeffData[dx] = los[0];
+    ed.varCoeffData[dy] = los[1];
+    ed.varCoeffData[dz] = los[2];
+    if (isGps)
+        ed.varCoeffData[cdt] = 1.0;
+    else
+        ed.varCoeffData[cdt2] = 1.0;
 
-    if (isGps) {
-        const Variable _cdt(stn, Parameter::cdt);
-        ed.varCoeffData[_cdt] = 1.0;
-        posEquations.varSet.insert(_cdt);
-    } else {
-        const Variable _cdt2(stn, Parameter::cdt2);
-        ed.varCoeffData[_cdt2] = 1.0;
-        posEquations.varSet.insert(_cdt2);
-    }
     ed.weight = weight;
-
     posEquations.obsEquData[eid] = ed;
-    posEquations.varSet.insert(_dx);
-    posEquations.varSet.insert(_dy);
-    posEquations.varSet.insert(_dz);
 }
 
 // ============================================================================
@@ -306,27 +322,26 @@ void SPPIFCode::buildPosEquation(
 void SPPIFCode::buildVelEquation(
     const SatID &sat, const TypeValueMap &codeList,
     const PVT &pvt, const Vector3d &los,
-    const double elev, const double posWeight) {
-
+    const double elev, const double posWeight,
+    const Variable &dvx, const Variable &dvy,
+    const Variable &dvz, const Variable &dcdt) {
     const auto itD = codeList.find("D1");
     if (itD == codeList.end()) return;
-
-    const std::string stn(velEquations.station);
 
     const double f = getFreq(sat.system, "L1");
     const double lambda = C_MPS / f;
     const double rho_dot_obs = -lambda * itD->second;
 
-    const double rho_dot_model = (pvt.v - vel).dot(los) + rClockDrift;
+    const double rho_dot_model = (vel - pvt.v).dot(los) + rClockDrift;
 
     const EquID eidVel(sat, "D1");
     EquData ed;
     ed.prefit = rho_dot_obs - rho_dot_model;
 
-    ed.varCoeffData[Variable(stn, Parameter::dVX)]  = -los[0];
-    ed.varCoeffData[Variable(stn, Parameter::dVY)]  = -los[1];
-    ed.varCoeffData[Variable(stn, Parameter::dVZ)]  = -los[2];
-    ed.varCoeffData[Variable(stn, Parameter::cdtr_dot)] = 1.0;
+    ed.varCoeffData[dvx] = los[0];
+    ed.varCoeffData[dvy] = los[1];
+    ed.varCoeffData[dvz] = los[2];
+    ed.varCoeffData[dcdt] = 1.0;
 
     double velWeight = posWeight / 40.0;
     if (elev < PI / 6) {
@@ -336,10 +351,6 @@ void SPPIFCode::buildVelEquation(
     ed.weight = velWeight;
 
     velEquations.obsEquData[eidVel] = ed;
-    velEquations.varSet.insert({Variable(stn, Parameter::dVX),
-                                 Variable(stn, Parameter::dVY),
-                                 Variable(stn, Parameter::dVZ),
-                                 Variable(stn, Parameter::cdtr_dot)});
 }
 
 // ============================================================================
@@ -347,7 +358,7 @@ void SPPIFCode::buildVelEquation(
 // ============================================================================
 void SPPIFCode::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
-    for (auto const &[sat, codeList] : obsData.satTypeValueData) {
+    for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         auto itEph = ephMap.find(sat);
         if (itEph == ephMap.end()) continue;
         const auto &eph = itEph->second;

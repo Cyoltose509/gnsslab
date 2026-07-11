@@ -9,8 +9,8 @@ namespace GuiRealtimeProcessor {
     using SppTask = GuiOem7Processor::SppTask;
 
     struct ConnectionConfig {
-        std::string ip = "8.148.22.229";
-        int port = 7003;
+        std::string ip = "47.114.134.129";
+        int port = 7190;
     };
 
     void SolveRealtimeThread(const std::shared_ptr<SppTask> &task, const ConnectionConfig &config);

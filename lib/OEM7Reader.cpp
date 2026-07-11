@@ -18,6 +18,7 @@ bool OEM7Reader::open(const std::string &filename) {
     if (!ifs) return false;
 
     buffer.clear();
+    bufferIndex = 0;
     uint8_t tmp[4096];
     while (ifs.read(reinterpret_cast<char *>(tmp), sizeof(tmp)) || ifs.gcount() > 0) {
         buffer.insert(buffer.end(), tmp, tmp + ifs.gcount());
@@ -28,13 +29,15 @@ bool OEM7Reader::open(const std::string &filename) {
 
 void OEM7Reader::close() {
     buffer.clear();
+    bufferIndex = 0;
 }
 
 bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
-    while (buffer.size() >= 3) {
-        int start = 0;
+    while (buffer.size() - bufferIndex >= 3) {
+        // 从 bufferIndex 开始扫描同步头 0xAA 0x44 0x12
+        size_t start = bufferIndex;
         bool found = false;
-        for (; start <= buffer.size() - 3; ++start) {
+        for (; start + 2 < buffer.size(); ++start) {
             if (buffer[start] == 0xAA && buffer[start + 1] == 0x44 && buffer[start + 2] == 0x12) {
                 found = true;
                 break;
@@ -43,27 +46,28 @@ bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
 
         if (!found) {
             buffer.clear();
+            bufferIndex = 0;
             return false;
         }
 
-        if (start > 0) {
-            buffer.erase(buffer.begin(), buffer.begin() + start);
-        }
+        // 跳过同步头之前的无效数据（移动指针替代 erase）
+        bufferIndex = start;
 
-        if (constexpr size_t headerLen = 28; buffer.size() < headerLen) return false; // 剩余数据不足以读取头部
+        if (constexpr size_t headerLen = 28; buffer.size() - bufferIndex < headerLen)
+            return false;
 
-        const auto hlen = buffer[3];
-        const auto msgLen = U2(&buffer[8]);
+        const auto hlen = buffer[bufferIndex + 3];
+        const auto msgLen = U2(&buffer[bufferIndex + 8]);
         const auto totalLen = hlen + msgLen + 4;
 
-        if (buffer.size() < totalLen) {
-            // 发现同步头但剩余数据不足一条完整消息，跳过此同步头继续搜索
-            buffer.erase(buffer.begin(), buffer.begin() + 3);
+        if (buffer.size() - bufferIndex < totalLen) {
+            // 同步头后数据不足 → 跳过此同步头继续搜索
+            bufferIndex += 3;
             continue;
         }
 
-        message.assign(buffer.begin(), buffer.begin() + totalLen);
-        buffer.erase(buffer.begin(), buffer.begin() + totalLen);
+        message.assign(buffer.begin() + bufferIndex, buffer.begin() + bufferIndex + totalLen);
+        bufferIndex += totalLen;
         return true;
     }
     return false;

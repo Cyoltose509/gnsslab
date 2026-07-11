@@ -34,7 +34,7 @@ protected:
     } currentHeader = {};
 
     std::vector<unsigned char> buffer;
-    size_t bufferIndex = 0;
+    size_t bufferIndex = 0;  // 当前读取位置，替代 buffer.erase 避免 O(N²) 搬迁
     ObsData currentObs;
     Eigen::Vector3d antennaPosition{0, 0, 0};  // 默认值
 

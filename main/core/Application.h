@@ -34,8 +34,8 @@ private:
     bool  m_showAbout          = false;
     bool  m_showConnectDialog  = false;
 
-    char  m_ipBuffer[64] = "8.148.22.229";
-    int   m_portBuffer = 7003;
+    char  m_ipBuffer[64] = "47.114.134.129";
+    int   m_portBuffer = 7190;
 
     // OEM7 文件任务
     std::vector<std::shared_ptr<GuiOem7Processor::SppTask>> m_tasks;

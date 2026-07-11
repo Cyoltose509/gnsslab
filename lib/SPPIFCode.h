@@ -77,15 +77,19 @@ private:
     void buildResidualMap();
 
     /// 构建单颗卫星的位置观测方程
-    void buildPosEquation(const SatID &sat, const TypeValueMap &codeList,
-                          const PVT &pvt, const Vector3d &los,
-                          double rho, double elev, double trop,
-                          const std::string &obsType, double obsVal, double weight);
+    void buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
+                          double rho, double trop,
+                          const string &obsType, double obsVal, double weight,
+                          const class Variable &dx, const class Variable &dy,
+                          const class Variable &dz, const class Variable &cdt,
+                          const class Variable &cdt2);
 
     /// 构建单颗卫星的速度观测方程
     void buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
                           const PVT &pvt, const Vector3d &los,
-                          double elev, double posWeight);
+                          double elev, double posWeight,
+                          const class Variable &dvx, const class Variable &dvy,
+                          const class Variable &dvz, const class Variable &dcdt);
 
     /// 上一轮解算的标准化残差 |v|/σ₀ (SatID → 值)，用于粗差探测
     std::map<SatID, double> lastWStats_;
