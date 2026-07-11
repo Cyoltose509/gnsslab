@@ -64,6 +64,9 @@ namespace GuiOem7Processor {
 
     void SolveThread(const std::shared_ptr<SppTask> &task) {
         try {
+            // ================================================================
+            // Phase 1：批量读取全部历元 + 建星历表
+            // ================================================================
             OEM7Reader oem7;
             if (!oem7.open(task->filePath)) {
                 task->hasError = true;
@@ -73,19 +76,38 @@ namespace GuiOem7Processor {
                 return;
             }
 
+            task->phase = SppTask::Phase::Reading;
+
+            std::vector<EphemerisTable> ephSnapshots;
+            std::vector<ObsData> allObs;
+            oem7.readAll(allObs, ephSnapshots, &task->readProgress);
+            task->totalEpochs = static_cast<int>(allObs.size());
+
+            if (task->totalEpochs == 0) {
+                task->loading = false;
+                task->done = true;
+                return;
+            }
+
+            // ================================================================
+            // Phase 2：逐历元解算
+            // ================================================================
+            task->phase = SppTask::Phase::Solving;
+            task->solvingProgress = 0;
+
             SPPIFCode spp;
             spp.setIFCodeTypes({
                 {'G', {"C1", "C2"}},
                 {'C', {"C2", "C6"}}
             });
 
-            ObsData obs;
-
-            while (oem7.getNextEpoch(obs)) {
+            for (int i = 0; i < task->totalEpochs; ++i) {
                 if (task->stop) break;
+
+                spp.setEphemerisTable(&ephSnapshots[i]);  // 逐历元星历快照
+                ObsData &obs = allObs[i];
                 spp.oldVersion = obs.epoch < oldTime;
                 spp.preprocess(obs);
-
 
                 SppEpochData data;
                 data.getFromObs(obs);
@@ -100,18 +122,16 @@ namespace GuiOem7Processor {
                 } catch (...) {
                     data.solved = false;
                 }
+
                 {
                     std::lock_guard lock(task->mutex);
-                    const auto index = static_cast<int>(task->epochs.size()) - 1;
-                    task->plotData.insert(index, data, task->refECEF);
-                    const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == index;
-                    if (task->epochs.empty()) {
-                        task->selectedEpoch = 0;
-                    }
+                    task->solvingProgress = i + 1;
+                    const auto prevSize = static_cast<int>(task->epochs.size());
+                    task->plotData.insert(prevSize, data, task->refECEF);
+                    const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == prevSize - 1;
                     task->epochs.push_back(data);
-                    if (wasAtEnd) {
-                        task->selectedEpoch = index + 1;
-                    }
+                    if (wasAtEnd)
+                        task->selectedEpoch = prevSize;
                 }
             }
         } catch (const std::exception &e) {
@@ -128,7 +148,7 @@ namespace GuiOem7Processor {
     // ================================================================
     void RenderTask(const std::shared_ptr<SppTask> &task, const bool isRealtime) {
         int epochCount = 0;
-        int selectedIdx;
+        int selectedIdx = -1;
         const bool isLoading = task->loading.load();
         const bool isDone = task->done.load();
         const bool hasError = task->hasError;
@@ -137,7 +157,16 @@ namespace GuiOem7Processor {
             std::lock_guard lock(task->mutex);
             epochCount = static_cast<int>(task->epochs.size());
             if (task->selectedEpoch >= epochCount) task->selectedEpoch = epochCount - 1;
+            if (task->selectedEpoch < 0 && epochCount > 0) task->selectedEpoch = 0;
             selectedIdx = task->selectedEpoch;
+        }
+
+        // --- 读取阶段进度 ---
+        if (isLoading && !hasError && task->phase == SppTask::Phase::Reading) {
+            const float frac = task->readProgress.load();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "阶段 1/2: 正在读取文件...");
+            ImGui::ProgressBar(frac, ImVec2(200.0f, 0.0f), "");
+            return;
         }
 
         // --- 顶部状态与导航 ---
@@ -146,9 +175,7 @@ namespace GuiOem7Processor {
             if (epochCount > 0) ImGui::SameLine();
         }
 
-        if (isLoading && !hasError) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "正在处理: 已解析 %d 个历元...", epochCount);
-        } else if (epochCount > 0 && !hasError) {
+        if (epochCount > 0 && !hasError) {
             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "处理完成: 共 %d 个历元", epochCount);
         }
 
@@ -171,7 +198,7 @@ namespace GuiOem7Processor {
             if (ImGui::Button(">>")) { task->selectedEpoch = epochCount - 1; }
 
             ImGui::SameLine();
-            {
+            if (selectedIdx >= 0) {
                 std::lock_guard lock(task->mutex);
                 const auto &cur = task->epochs[selectedIdx];
                 ImGui::TextDisabled("| Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? "已定位" : "未定位");

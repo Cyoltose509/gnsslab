@@ -3,6 +3,7 @@
 #include "GnssStruct.h"
 #include "SolverLSQ.h"
 #include "Ephemeris.h"
+#include "EphemerisTable.h"
 #include <Eigen/Eigen>
 
 class SPPIFCode {
@@ -11,6 +12,10 @@ public:
         isRover = false;
     }
 
+    /// 文件模式：传入星历表（数据由 EphemerisTable 拥有，SPPIFCode 不持所有权）
+    void setEphemerisTable(EphemerisTable *table) { ephTable_ = table; }
+
+    /// 实时模式：从 ObsData 拷贝星历指针（兼容旧路径）
     void setEphemeris(const SatEphemerisMap &ephs) {
         ephMap = ephs;
     }
@@ -33,8 +38,6 @@ public:
 
     void earthRotation();
 
-    /// 构建全部观测方程（单次遍历卫星 → 逐颗调用子函数）
-    /// @param iter 当前迭代轮数（从 0 开始），前 2 轮跳过 w 检验以避免收敛前误伤
     void linearize(ObsData &obsData, int iter);
 
     void setFrame(const FrameInfo &f) {
@@ -68,7 +71,8 @@ protected:
     SolverLSQ posSolver{};
     SolverLSQ velSolver{};
 
-    SatEphemerisMap ephMap{};
+    SatEphemerisMap ephMap{};           // 实时模式：指向 ObsData 中的星历（后向兼容）
+    EphemerisTable *ephTable_ = nullptr;  // 文件模式：指向外部星历表
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
 

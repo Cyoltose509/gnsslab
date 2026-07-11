@@ -4,6 +4,7 @@
 #include <map>
 #include "GnssStruct.h"
 #include "Ephemeris.h"
+#include "EphemerisTable.h"
 #include "CoordConvert.h"
 
 class OEM7Reader {
@@ -16,7 +17,19 @@ public:
 
     virtual void close();
 
+    /// 流式读取（逐历元，realtime 路径使用）
     bool getNextEpoch(ObsData &obs);
+
+    /// 批量读取：一次性消费所有消息，产出历元列表 + 逐历元星历快照
+    /// @param progress 可选进度输出（0.0~1.0），由调用方轮询
+    void readAll(std::vector<ObsData> &epochs,
+                 std::vector<EphemerisTable> &ephSnapshots,
+                 std::atomic<float> *progress = nullptr);
+
+    /// 文件读取进度（0.0 ~ 1.0）
+    [[nodiscard]] double progress() const {
+        return fileSize_ > 0 ? static_cast<double>(bufferIndex) / static_cast<double>(fileSize_) : 0.0;
+    }
 
     std::map<int, GPSEphem> latestGps;
     std::map<int, BDSEphem> latestBds;
@@ -35,6 +48,7 @@ protected:
 
     std::vector<unsigned char> buffer;
     size_t bufferIndex = 0;  // 当前读取位置，替代 buffer.erase 避免 O(N²) 搬迁
+    size_t fileSize_ = 0;    // 文件总字节数（用于进度显示）
     ObsData currentObs;
     Eigen::Vector3d antennaPosition{0, 0, 0};  // 默认值
 

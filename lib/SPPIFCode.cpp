@@ -362,9 +362,13 @@ void SPPIFCode::buildVelEquation(
 void SPPIFCode::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        auto itEph = ephMap.find(sat);
-        if (itEph == ephMap.end()) continue;
-        const auto &eph = itEph->second;
+        // 优先查 EphemerisTable（文件模式），fallback 到 ephMap（实时模式）
+        Ephemeris *eph = ephTable_ ? ephTable_->find(sat) : nullptr;
+        if (!eph) {
+            auto itEph = ephMap.find(sat);
+            if (itEph == ephMap.end()) continue;
+            eph = itEph->second;
+        }
 
         const bool isGps = (sat.system == 'G');
         const string ifType = isGps ? "CC12" : "CC26";

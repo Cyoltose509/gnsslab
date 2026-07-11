@@ -105,6 +105,13 @@ namespace GuiOem7Processor {
         bool hasError = false;
         std::mutex mutex;
 
+        // 两阶段进度
+        enum class Phase { Reading, Solving };
+        std::atomic<Phase> phase{Phase::Reading};
+        std::atomic<int> solvingProgress{0};  // 已解算历元数
+        std::atomic<float> readProgress{0.0f}; // 文件读取进度 (0.0~1.0)
+        int totalEpochs{0};                    // 总历元数
+
         std::vector<SppEpochData> epochs;
         PlotData plotData;
         XYZ refECEF{0, 0, 0};

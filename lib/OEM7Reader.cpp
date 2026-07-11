@@ -14,8 +14,12 @@
 #define POLYCRC32 0xEDB88320u
 
 bool OEM7Reader::open(const std::string &filename) {
-    std::ifstream ifs(filename, std::ios::binary);
+    std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
     if (!ifs) return false;
+
+    // 记录文件总大小用于进度显示
+    fileSize_ = static_cast<size_t>(ifs.tellg());
+    ifs.seekg(0, std::ios::beg);
 
     buffer.clear();
     bufferIndex = 0;
@@ -30,6 +34,34 @@ bool OEM7Reader::open(const std::string &filename) {
 void OEM7Reader::close() {
     buffer.clear();
     bufferIndex = 0;
+}
+
+void OEM7Reader::readAll(std::vector<ObsData> &epochs,
+                         std::vector<EphemerisTable> &ephSnapshots,
+                         std::atomic<float> *progress) {
+    EphemerisTable currentTable;
+    std::vector<uint8_t> message;
+    while (getNextMessage(message)) {
+        if (progress) progress->store(this->progress());
+        if (!parseMessage(message)) continue;
+
+        // 仅星历消息才更新星历表
+        if (currentHeader.type == ID_GPSEPHEM) {
+            for (const auto &[prn, eph] : latestGps)
+                currentTable.gps[prn] = eph;
+        } else if (currentHeader.type == ID_BDSEPHEMRIS) {
+            for (const auto &[prn, eph] : latestBds)
+                currentTable.bds[prn] = eph;
+        }
+
+        // RANGE 观测：存为历元，同时快照此刻的星历表
+        if (!currentObs.satTypeValueData.empty()) {
+            epochs.push_back(std::move(currentObs));
+            ephSnapshots.push_back(currentTable);  // 逐历元快照
+            currentObs.satTypeValueData.clear();
+        }
+    }
+    if (progress) progress->store(1.0f);
 }
 
 bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {

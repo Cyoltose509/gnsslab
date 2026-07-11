@@ -5,6 +5,7 @@ set(LIB_SOURCES
         Const.h
         CoordConvert.h
         CoordStruct.h
+        EphemerisTable.h
         Exception.h
         TimeConvert.cpp
         TimeConvert.h

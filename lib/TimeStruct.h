@@ -467,6 +467,8 @@ public:
         timeSystem = ts;
     }
 
+    WeekSecond(const WeekSecond &) = default;
+
     WeekSecond(WeekSecond &&other) noexcept
         : week(other.week), sow(other.sow), timeSystem(other.timeSystem) {
     }
