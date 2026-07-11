@@ -25,6 +25,11 @@ set(LIB_SOURCES
         SocketClient.cpp
         OEM7SocketReader.h
         OEM7SocketReader.cpp
+        RinexObsReader.h
+        StringUtils.h
+        RinexObsReader.cpp
+        RinexNavStore.h
+        RinexNavStore.cpp
 )
 
 add_library(gnss STATIC ${LIB_SOURCES})

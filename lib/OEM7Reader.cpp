@@ -48,10 +48,10 @@ void OEM7Reader::readAll(std::vector<ObsData> &epochs,
         // 仅星历消息才更新星历表
         if (currentHeader.type == ID_GPSEPHEM) {
             for (const auto &[prn, eph] : latestGps)
-                currentTable.gps[prn] = eph;
+                currentTable.gps[prn] = std::make_shared<GPSEphem>(eph);
         } else if (currentHeader.type == ID_BDSEPHEMRIS) {
             for (const auto &[prn, eph] : latestBds)
-                currentTable.bds[prn] = eph;
+                currentTable.bds[prn] = std::make_shared<BDSEphem>(eph);
         }
 
         // RANGE 观测：存为历元，同时快照此刻的星历表

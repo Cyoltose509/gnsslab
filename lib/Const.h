@@ -216,6 +216,7 @@ constexpr SatType getSatType(const char sys, const int prn, const bool old = fal
         case 'G': return SatType::MEO;
         case 'C': {
             if (prn >= 1 && prn <= 4) return SatType::GEO;
+            if (prn >= 59 && prn <= 62) return SatType::GEO;//假的，但是我就这样写了
             if (prn >= 6 && prn <= 10) return SatType::IGSO;
             return SatType::MEO;
         }

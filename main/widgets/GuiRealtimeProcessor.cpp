@@ -41,7 +41,7 @@ namespace GuiRealtimeProcessor {
                         if (reader.getNextEpoch(obs)) {
                             spp.preprocess(obs);
 
-                            GuiOem7Processor::SppEpochData data;
+                            GuiFileProcessor::SppEpochData data;
                             data.getFromObs(obs);
 
                             try {
@@ -101,7 +101,7 @@ namespace GuiRealtimeProcessor {
             ImGui::SameLine();
         }
 
-        // 复用 GuiOem7Processor 的渲染逻辑
-        GuiOem7Processor::RenderTask(task, true);
+        // 复用 GuiFileProcessor 的渲染逻辑
+        GuiFileProcessor::RenderTask(task, true);
     }
 } // namespace GuiRealtimeProcessor

@@ -32,25 +32,30 @@ void SPPIFCode::solve(ObsData &obsData) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
                                  + to_string(satPVTRecTime.size()) + ")");
         }
-        if (abs(xyz.norm() - RADIUS_EARTH) < 100000.0) {
-            satElevData.clear();
-            satAzimData.clear();
-            computeElevAzim();
-        }
+        // 高度角重算很便宜（arcsin/arctan），每轮都做
+        satElevData.clear();
+        satAzimData.clear();
+        computeElevAzim();
 
         // ---- 构建观测方程（前 2 轮跳过 w 检验，避免收敛前误伤） ----
         linearize(obsData, iter);
 
-        if (posEquations.obsEquData.size() < 4 || velEquations.obsEquData.size() < 4) {
-            throw SVNumException("num of satellites after elevation cut is less than 4");
+    if (posEquations.obsEquData.size() < 4 || velEquations.obsEquData.size() < 4) {
+        throw SVNumException("num of satellites after elevation cut is less than 4");
+    }
+    if (!isRover) break;
+
+    // ---- 位置解算（即使 dof <= 0 也解，sigma0 由 SolverLSQ 内部处理） ----
+    posSolver.solve(posEquations);
+
+    // ---- 速度解算（doft <= 0 时只解 vel 位置部分） ----
+    if (velEquations.obsEquData.size() > velEquations.varSet.size()) {
+        try {
+            velSolver.solve(velEquations);
+        } catch (const std::exception &) {
+            // 速度解算失败不影响位置
         }
-        if (!isRover) break;
-
-        // ---- 位置解算 ----
-        posSolver.solve(posEquations);
-
-        // ---- 速度解算 ----
-        velSolver.solve(velEquations);
+    }
 
         // ---- 更新状态 ----
         const Vector3d dxyz = {
@@ -60,6 +65,7 @@ void SPPIFCode::solve(ObsData &obsData) {
         };
         const double d_cdt = posSolver.getSolution(Parameter::cdt);
         const double d_cdt2 = posSolver.getSolution(Parameter::cdt2);
+
         const Vector3d dvel = {
             velSolver.getSolution(Parameter::dVX),
             velSolver.getSolution(Parameter::dVY),
@@ -210,13 +216,18 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     }
 
     bool hasGps = false, hasBds = false;
+    int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         // ---- 拒绝检查 ----
         if (satRejected.count(sat)) continue;
 
+        // 只处理配置了 IF 类型的系统（GPS / BDS）
+        if (!ifTypeNames_.count(sat.system)) continue;
+
         if (!satPVTRecTime.count(sat)) {
             satRejected.insert(sat);
+            nRejPVT++;
             continue;
         }
         const auto &pvt = satPVTRecTime.at(sat);
@@ -233,18 +244,24 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
             elev = itE->second;
         if (xyz.norm() > 1000.0 && elev < cutOffElev) {
             satRejected.insert(sat);
+            nRejElev++;
             continue;
         }
 
-        // IF 观测值有效性
+        // IF 观测值有效性（同 computeSatPos 的兜底逻辑）
         const bool isGps = (sat.system == 'G');
-        const string ifType = isGps ? "CC12" : "CC26";
-        auto itObs = codeList.find(ifType);
-        if (itObs == codeList.end() || itObs->second <= 0.0) {
+        const string ifType = ifTypeNames_.at(sat.system);
+        double obsVal = 0.0;
+        if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
+            obsVal = itObs->second;
+        } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
+                   itRaw != codeList.end() && itRaw->second > 0.0) {
+            obsVal = itRaw->second;   // 单频兜底
+        } else {
             satRejected.insert(sat);
+            nRejIF++;
             continue;
         }
-        const double obsVal = itObs->second;
 
         // ---- 共享几何量 ----
         double rho = (pvt.p - xyz).norm();
@@ -270,12 +287,13 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         // ---- 逐卫星构建方程 ----
         buildPosEquation(sat, pvt, los, rho, trop,
                          ifType, obsVal, weight, dx, dy, dz, cdt, cdt2);
-        // 速度方程需要卫星→接收机方向的 LOS（与位置方程的 sign 相反）
+        // 速度方程与位置方程共用同一个 LOS（接收机→卫星方向）
         buildVelEquation(sat, codeList, pvt, los, elev, weight,
                          dvx, dvy, dvz, dcdt);
 
         if (isGps) hasGps = true;
         else hasBds = true;
+        nPass++;
     }
 
     // ---- varSet 统一插入（只做一次，不在循环内重复） ----
@@ -289,6 +307,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     velEquations.varSet.insert(dvz);
     velEquations.varSet.insert(dcdt);
 }
+
 
 // ============================================================================
 // buildPosEquation — 单颗卫星的位置观测方程
@@ -328,12 +347,22 @@ void SPPIFCode::buildVelEquation(
     const double elev, const double posWeight,
     const Variable &dvx, const Variable &dvy,
     const Variable &dvz, const Variable &dcdt) {
-    const auto itD = codeList.find("D1");
-    if (itD == codeList.end()) return;
+    // 多普勒代码：L1 频段，可能是 D1C (GPS C/A)、D1I (BDS B1I) 等。
+    // 简单做法：找任何以 "D1" 开头的键。
+    double dopplerVal = 0.0;
+    bool found = false;
+    for (const auto &[k, v] : codeList) {
+        if (k.size() >= 2 && k[0] == 'D' && k[1] == '1') {
+            dopplerVal = v;
+            found = true;
+            break;
+        }
+    }
+    if (!found) return;
 
     const double f = getFreq(sat.system, "L1");
     const double lambda = C_MPS / f;
-    const double rho_dot_obs = -lambda * itD->second;
+    const double rho_dot_obs = -lambda * dopplerVal;
 
     const double rho_dot_model = (vel - pvt.v).dot(los) + rClockDrift;
 
@@ -362,7 +391,8 @@ void SPPIFCode::buildVelEquation(
 void SPPIFCode::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        // 优先查 EphemerisTable（文件模式），fallback 到 ephMap（实时模式）
+        if (!ifTypeNames_.count(sat.system)) continue;
+
         Ephemeris *eph = ephTable_ ? ephTable_->find(sat) : nullptr;
         if (!eph) {
             auto itEph = ephMap.find(sat);
@@ -371,16 +401,22 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
         }
 
         const bool isGps = (sat.system == 'G');
-        const string ifType = isGps ? "CC12" : "CC26";
-        auto itObs = codeList.find(ifType);
-        if (itObs == codeList.end() || itObs->second <= 0.0) continue;
-        const double obsVal = itObs->second;
+        const string ifType = ifTypeNames_[sat.system];
+        double obsVal = 0.0;
+        if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
+            obsVal = itObs->second;
+        } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
+                   itRaw != codeList.end() && itRaw->second > 0.0) {
+            obsVal = itRaw->second;
+        } else {
+            continue;
+        }
 
         const double tau_total = (obsVal - (isGps ? rClockBias : rClockBiasBDS)) / C_MPS;
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
-        satPVTTransTime[sat] = eph->svPVT(std::move(t_emit), oldVersion);
+        satPVTTransTime[sat] = eph->svPVT(std::move(t_emit));
     }
 }
 
@@ -388,17 +424,16 @@ void SPPIFCode::computeIF(ObsData &obsData) {
     for (auto &[sat, codeList]: obsData.satTypeValueData) {
         if (const char sys = sat.system; ifCodeTypes.count(sys)) {
             const auto [code1, code2] = ifCodeTypes.at(sys);
-            const double f1 = getFreq(sys, code1);
-            const double f2 = getFreq(sys, code2);
             if (codeList.count(code1) && codeList.count(code2)) {
+                const double f1 = getFreq(sys, code1);
+                const double f2 = getFreq(sys, code2);
                 const double v1 = codeList.at(code1);
                 const double v2 = codeList.at(code2);
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
-            } else {
-                satRejected.insert(sat);
             }
+            // 缺频点时不直接 reject，让 linearize 阶段用单频兜底
         }
     }
 }

@@ -6,7 +6,7 @@
 #include <vector>
 #include <memory>
 
-namespace GuiOem7Processor {
+namespace GuiFileProcessor {
     struct SppTask;
 }
 
@@ -38,8 +38,8 @@ private:
     int   m_portBuffer = 7190;
 
     // OEM7 文件任务
-    std::vector<std::shared_ptr<GuiOem7Processor::SppTask>> m_tasks;
-    std::vector<std::shared_ptr<GuiOem7Processor::SppTask>> m_closingTasks;
+    std::vector<std::shared_ptr<GuiFileProcessor::SppTask>> m_tasks;
+    std::vector<std::shared_ptr<GuiFileProcessor::SppTask>> m_closingTasks;
     int m_activeTask = -1;  // 当前激活的标签页索引
     int m_taskToFocus = -1; // 待强制选中的标签页索引
 };

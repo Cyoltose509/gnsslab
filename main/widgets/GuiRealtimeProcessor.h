@@ -1,12 +1,12 @@
 #pragma once
 
-#include "GuiOem7Processor.h"
+#include "GuiFileProcessor.h"
 #include <string>
 #include <memory>
 
 namespace GuiRealtimeProcessor {
-    // Reuse SppTask from GuiOem7Processor
-    using SppTask = GuiOem7Processor::SppTask;
+    // Reuse SppTask from GuiFileProcessor
+    using SppTask = GuiFileProcessor::SppTask;
 
     struct ConnectionConfig {
         std::string ip = "47.114.134.129";
@@ -16,7 +16,7 @@ namespace GuiRealtimeProcessor {
     void SolveRealtimeThread(const std::shared_ptr<SppTask> &task, const ConnectionConfig &config);
 
 
-    // We can mostly use GuiOem7Processor::RenderTask, 
+    // We can mostly use GuiFileProcessor::RenderTask, 
     // but maybe we want a slightly different one for real-time (e.g. auto-scroll to latest)
     void RenderTask(const std::shared_ptr<SppTask> &task);
 }

@@ -54,12 +54,12 @@ void SolverLSQ::solve(EquSys &equSys) {
 
     v = prefit - hMatrix * state;
     const int dof = numObs - numUnk;
-    if (dof <= 0) {
-        throw InvalidSolver("Degree of freedom <= 0, cannot compute sigma0");
+    if (dof > 0) {
+        const double sigma0_sq = (v.array() * weights.array() * v.array()).sum() / dof;
+        sigma0 = sqrt(sigma0_sq);
+    } else {
+        sigma0 = 1.0;  // 方程数刚好等于未知数，无法估计 sigma0
     }
-    // sigma0² = (vᵀ W v) / dof，其中 W=weights 对角阵 → 直接逐元素加权求和
-    const double sigma0_sq = (v.array() * weights.array() * v.array()).sum() / dof;
-    sigma0 = sqrt(sigma0_sq);
 }
 
 int SolverLSQ::getIndex(const VariableSet &varSet, const Variable &thisVar) {

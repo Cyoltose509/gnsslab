@@ -2,7 +2,7 @@
 #include "widgets/GuiTimeConverter.h"
 #include "widgets/GuiCoordConverter.h"
 #include "widgets/GuiLsqSolver.h"
-#include "widgets/GuiOem7Processor.h"
+#include "widgets/GuiFileProcessor.h"
 #include "widgets/GuiRealtimeProcessor.h"
 #include "version.h"
 
@@ -56,7 +56,7 @@ void Application::RenderMenuBar()
     {
         if (ImGui::BeginMenu("任务"))
         {
-            if (ImGui::MenuItem("打开OEM7文件..."))
+            if (ImGui::MenuItem("打开文件..."))
                 OpenOem7File();
             if (ImGui::MenuItem("连接到..."))
                 m_showConnectDialog = true;
@@ -138,7 +138,7 @@ void Application::RenderTasks()
         if (ImGui::Begin("##empty_hint", nullptr, flags)) {
             ImGui::Text("GnssLab");
             ImGui::Spacing();
-            ImGui::TextDisabled("任务 -> 打开OEM7文件 开始处理");
+            ImGui::TextDisabled("任务 -> 打开文件 开始处理");
         }
         ImGui::End();
         return;
@@ -191,7 +191,7 @@ void Application::RenderTasks()
                     if (task->isRealtime)
                         GuiRealtimeProcessor::RenderTask(task);
                     else
-                        GuiOem7Processor::RenderTask(task);
+                        GuiFileProcessor::RenderTask(task);
                     
                     ImGui::EndTabItem();
                 }
@@ -220,7 +220,7 @@ void Application::OpenOem7File()
     auto hwnd = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
     if (!hwnd) hwnd = GetActiveWindow();
 
-    const std::string filePath = GuiOem7Processor::ShowOpenFileDialog(hwnd);
+    const std::string filePath = GuiFileProcessor::ShowOpenFileDialog(hwnd);
     if (filePath.empty()) return;
 
     auto sepPos = filePath.rfind('\\');
@@ -228,13 +228,13 @@ void Application::OpenOem7File()
     const std::string fileName = sepPos != std::string::npos
         ? filePath.substr(sepPos + 1) : filePath;
 
-    auto task = std::make_shared<GuiOem7Processor::SppTask>();
+    auto task = std::make_shared<GuiFileProcessor::SppTask>();
     task->filePath = filePath;
     task->fileName = fileName;
     task->isRealtime = false;
     task->loading = true;
 
-    task->worker = std::thread(GuiOem7Processor::SolveThread, task);
+    task->worker = std::thread(GuiFileProcessor::SolveThread, task);
 
     m_tasks.push_back(task);
     m_activeTask = static_cast<int>(m_tasks.size()) - 1;

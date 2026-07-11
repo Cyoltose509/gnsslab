@@ -14,7 +14,7 @@ inline double c_Ek(const double M, const double e) {
 
 constexpr double lonPRN[6] = {0.0, 1.027, 1.396, 1.931, 2.443, 2.793};
 
-PVT Ephemeris::svPVT(CommonTime t, const bool oldVersion = false) {
+PVT Ephemeris::svPVT(CommonTime t) {
     convertTimeSystem(t, timeSystem);
     PVT sv;
     const double tk = t - getCommonTime();
@@ -32,7 +32,7 @@ PVT Ephemeris::svPVT(CommonTime t, const bool oldVersion = false) {
     const double x0 = rk * cos(uk), y0 = rk * sin(uk);
 
     double OMEk, sOMEk, cOMEk;
-    if (getSatType(type, prn, oldVersion) == SatType::GEO) {
+    if (getSatType(type, prn) == SatType::GEO) {
         OMEk = omega0 + omegaDot * tk - refFrame.omega * toe;
         sOMEk = sin(OMEk), cOMEk = cos(OMEk);
         const double cosik = cos(ik), sinik = sin(ik);

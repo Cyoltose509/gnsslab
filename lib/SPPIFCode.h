@@ -22,6 +22,9 @@ public:
 
     void setIFCodeTypes(const std::map<char, std::pair<string, string> > &ifTypes) {
         ifCodeTypes = ifTypes;
+        for (const auto &[sys, pair] : ifCodeTypes) {
+            ifTypeNames_[sys] = "CC" + pair.first.substr(1, 1) + pair.second.substr(1, 1);
+        }
     }
 
     void preprocess(ObsData &obsData);
@@ -55,7 +58,6 @@ public:
     std::set<SatID> satRejected{};
     std::map<SatID, PVT> satPVTTransTime{};
     std::map<SatID, PVT> satPVTRecTime{};
-    bool oldVersion=false;
 
 protected:
     double cutOffElev = PI * 0.0555556;
@@ -75,6 +77,7 @@ protected:
     EphemerisTable *ephTable_ = nullptr;  // 文件模式：指向外部星历表
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
+    std::map<char, std::string> ifTypeNames_{};  // 预计算的 IF 类型名
 
 private:
     /// 解算完成后计算每颗卫星的 Baarda w 统计量

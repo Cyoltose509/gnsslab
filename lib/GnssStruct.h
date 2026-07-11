@@ -33,6 +33,14 @@ struct SatID {
     SatID(const char sys, const int satID) : system(sys), id(satID) {
     }
 
+    explicit SatID(const string & substr) {
+        if (substr.length() != 3) {
+            throw std::runtime_error("SatID substr length error");
+        }
+        system = substr[0];
+        id = std::stoi(substr.substr(1, 2));
+    };
+
     bool operator==(const SatID &other) const {
         return this->system == other.system && this->id == other.id;
     }
@@ -71,7 +79,7 @@ struct RinexHeader {
     string station;
     double version; //< RINEX 3 version/type
     XYZ antennaPosition; //< APPROX POSITION XYZ
-    std::map<string, std::vector<string> > mapObsTypes; //< SYS / # / OBS TYPES
+    std::map<char, std::vector<string> > mapObsTypes; //< SYS / # / OBS TYPES
     RinexHeader() : version(0) {
     }
 };

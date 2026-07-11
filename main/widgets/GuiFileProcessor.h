@@ -14,7 +14,7 @@ typedef HWND__ *HWND;
 #include "SPPIFCode.h"
 #include "CoordConvert.h"
 
-namespace GuiOem7Processor {
+namespace GuiFileProcessor {
     struct SppEpochData {
         unsigned int week = 0;
         double sow = 0;
@@ -122,7 +122,6 @@ namespace GuiOem7Processor {
         int selectedSatIdx = -1;
 
         std::string errorMsg;
-
         ~SppTask() {
             stop = true;
         }
@@ -137,4 +136,4 @@ namespace GuiOem7Processor {
     std::string ShowOpenFileDialog(HWND hwnd);
 
     void ExportCsv(const std::shared_ptr<SppTask> &task, HWND hwnd);
-} // namespace GuiOem7Processor
+} // namespace GuiFileProcessor

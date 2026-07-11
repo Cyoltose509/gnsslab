@@ -1,7 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commdlg.h>
-#include "GuiOem7Processor.h"
+#include "GuiFileProcessor.h"
 #include "imgui.h"
 #include "OEM7Reader.h"
 #include "SPPIFCode.h"
@@ -12,9 +12,13 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
+#include <cctype>
+
+#include "RinexObsReader.h"
+#include "RinexNavStore.h"
 
 
-namespace GuiOem7Processor {
+namespace GuiFileProcessor {
     auto oldTime = CommonTime(61120);
 
     void SppEpochData::getFromSPP(const SPPIFCode &spp) {
@@ -64,74 +68,234 @@ namespace GuiOem7Processor {
 
     void SolveThread(const std::shared_ptr<SppTask> &task) {
         try {
-            // ================================================================
-            // Phase 1：批量读取全部历元 + 建星历表
-            // ================================================================
-            OEM7Reader oem7;
-            if (!oem7.open(task->filePath)) {
-                task->hasError = true;
-                task->errorMsg = "无法打开文件: " + task->filePath;
-                task->loading = false;
-                task->done = true;
-                return;
-            }
-
-            task->phase = SppTask::Phase::Reading;
-
-            std::vector<EphemerisTable> ephSnapshots;
-            std::vector<ObsData> allObs;
-            oem7.readAll(allObs, ephSnapshots, &task->readProgress);
-            task->totalEpochs = static_cast<int>(allObs.size());
-
-            if (task->totalEpochs == 0) {
-                task->loading = false;
-                task->done = true;
-                return;
-            }
-
-            // ================================================================
-            // Phase 2：逐历元解算
-            // ================================================================
-            task->phase = SppTask::Phase::Solving;
-            task->solvingProgress = 0;
-
-            SPPIFCode spp;
-            spp.setIFCodeTypes({
-                {'G', {"C1", "C2"}},
-                {'C', {"C2", "C6"}}
-            });
-
-            for (int i = 0; i < task->totalEpochs; ++i) {
-                if (task->stop) break;
-
-                spp.setEphemerisTable(&ephSnapshots[i]);  // 逐历元星历快照
-                ObsData &obs = allObs[i];
-                spp.oldVersion = obs.epoch < oldTime;
-                spp.preprocess(obs);
-
-                SppEpochData data;
-                data.getFromObs(obs);
-
-                try {
-                    spp.solve(obs);
-                    data.getFromSPP(spp);
-                    if (!task->initializedRefECEF) {
-                        task->refECEF = data.sppResult.xyz;
-                        task->initializedRefECEF = true;
+            // ---- 文件格式识别（先看 magic bytes，再看后缀） ----
+            const auto &path = task->filePath;
+            bool isRinex = false;
+            {
+                std::ifstream probe(path, std::ios::binary);
+                if (probe) {
+                    char head[3] = {};
+                    probe.read(head, 3);
+                    // OEM7 magic: 0xAA 0x44 0x12 → 二进制，不管后缀
+                    if (static_cast<unsigned char>(head[0]) == 0xAA &&
+                        static_cast<unsigned char>(head[1]) == 0x44 &&
+                        static_cast<unsigned char>(head[2]) == 0x12) {
+                        isRinex = false;
+                    } else {
+                        isRinex = (path.size() >= 4 &&
+                            isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
+                            toupper(path.back()) == 'O');
                     }
-                } catch (...) {
-                    data.solved = false;
+                }
+            }
+
+            if (isRinex) {
+                // ================================================================
+                // RINEX 路径：读 nav 文件 → 读 obs 文件 → 解算
+                // ================================================================
+                task->phase = SppTask::Phase::Reading;
+
+                // Phase 1a: 读星历（自动找 .??N / .??G / .??C）
+                EphemerisTable ephTable;
+                {
+                    RinexNavStore navStore;
+                    const string base = path.substr(0, path.size() - 1);
+                    const string navExts[] = {"N", "G", "C"};
+                    int navLoaded = 0;
+                    for (const auto &ext : navExts) {
+                        const string navPath = base + ext;
+                        std::ifstream test(navPath);
+                        if (test.good()) {
+                            test.close();
+                        try {
+                            navStore.loadFile(navPath, ephTable);
+                            navLoaded++;
+                        } catch (const std::exception &) {
+                            // nav 文件解析失败不致命，继续
+                        }
+                        }
+                    }
+                    if (navLoaded == 0) {
+                        task->hasError = true;
+                        task->errorMsg = "未找到导航文件 (.??N/.??G/.??C)";
+                        task->loading = false; task->done = true;
+                        return;
+                    }
+                }
+                task->readProgress = 0.8f;  // 导航文件读完
+
+                // 自动检测 IF 码类型（先声明，后面 header 解析后填入）
+                std::map<char, std::pair<string,string>> ifCodeTypes;
+                // Phase 1b: 读观测值
+                std::vector<ObsData> allObs;
+                {
+                    RinexObsReader obsReader;
+                    std::fstream obsFile(path.c_str(), std::ios::in);
+                    if (!obsFile) {
+                        task->hasError = true;
+                        task->errorMsg = "无法打开 RINEX 文件: " + path;
+                        task->loading = false; task->done = true; return;
+                    }
+                    obsReader.setFileStream(&obsFile);
+
+                    // 不主动调 parseRinexHeader —— parseRinexObs() 第一次进入时会自动调
+                    // 我们在第一次拿到 ObsData 之后再读 header
+                    bool headerCaptured = false;
+
+                    // 读全部观测值（全量类型，不筛选）
+                    int safety = 0, okCount = 0;
+                    while (++safety < 100000) {
+                        task->readProgress = 0.8f + static_cast<float>(safety) * 0.00002f;
+                        try {
+                            ObsData obs = obsReader.parseRinexObs();
+                            allObs.push_back(std::move(obs));
+                            okCount++;
+                            task->readProgress = 0.8f + static_cast<float>(okCount) * 0.0002f;
+
+                            // 第一次拿到 obs 后，header 已就绪，自动检测 IF
+                            if (!headerCaptured) {
+                                headerCaptured = true;
+                                const auto &obsTypes = obsReader.getHeader().mapObsTypes;
+                                for (const auto &[sys, types] : obsTypes) {
+                                    if (sys == 'G') {
+                                        string c1, c2;
+                                        for (const auto &t : types) {
+                                            if (t.size() >= 2 && t[0] == 'C') {
+                                                if (t[1] == '1' && c1.empty()) c1 = t;
+                                                if (t[1] == '2' && c2.empty()) c2 = t;
+                                            }
+                                        }
+                                        if (!c1.empty() && !c2.empty()) ifCodeTypes['G'] = {c1, c2};
+                                    } else if (sys == 'C') {
+                                        // BDS: pre C1?/C2?+C6? (B1+B3 for all sats), fallback C7?+C6? (BDS-3 only)
+                                        string cL, c6;
+                                        for (const auto &t : types) {
+                                            if (t.size() >= 2 && t[0] == 'C') {
+                                                if ((t[1] == '2' || t[1] == '1') && cL.empty()) cL = t;
+                                                if (t[1] == '6' && c6.empty()) c6 = t;
+                                            }
+                                        }
+                                        if (cL.empty() || c6.empty()) {
+                                            for (const auto &t : types) {
+                                                if (t.size() >= 2 && t[0] == 'C') {
+                                                    if (t[1] == '7' && cL.empty()) cL = t;
+                                                    if (t[1] == '6' && c6.empty()) c6 = t;
+                                                }
+                                            }
+                                        }
+                                        if (!cL.empty() && !c6.empty()) ifCodeTypes['C'] = {cL, c6};
+                                    }
+                                }
+                            }
+                        } catch (const EndOfFile &) { break; }
+                        catch (const std::exception &e) {
+                            task->hasError = true;
+                            task->errorMsg = "RINEX 解析错误 @" + std::to_string(okCount) + ": " + e.what();
+                            task->loading = false; task->done = true; return;
+                        }
+                    }
+                    if (okCount == 0) {
+                        task->hasError = true;
+                        task->errorMsg = safety >= 100000 ? "读取超限(>10w次)" : "无法解析任何历元";
+                        task->loading = false; task->done = true; return;
+                    }
+                    task->totalEpochs = static_cast<int>(allObs.size());
+                    task->readProgress = 1.0f;
                 }
 
-                {
-                    std::lock_guard lock(task->mutex);
-                    task->solvingProgress = i + 1;
-                    const auto prevSize = static_cast<int>(task->epochs.size());
-                    task->plotData.insert(prevSize, data, task->refECEF);
-                    const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == prevSize - 1;
-                    task->epochs.push_back(data);
-                    if (wasAtEnd)
-                        task->selectedEpoch = prevSize;
+                // Phase 2: 解算（RINEX 星历表已完整，所有历元共用一张表）
+                task->phase = SppTask::Phase::Solving;
+                task->solvingProgress = 0;
+
+                SPPIFCode spp;
+                spp.setIFCodeTypes(ifCodeTypes);
+                spp.setEphemerisTable(&ephTable);
+
+                for (int i = 0; i < task->totalEpochs; ++i) {
+                    if (task->stop) break;
+                    ObsData &obs = allObs[i];
+                    spp.preprocess(obs);
+
+                    SppEpochData data;
+                    data.getFromObs(obs);
+                    try {
+                        spp.solve(obs);
+                        data.getFromSPP(spp);
+                        if (!task->initializedRefECEF) {
+                            task->refECEF = data.sppResult.xyz;
+                            task->initializedRefECEF = true;
+                        }
+                    } catch (const std::exception &) {
+                        data.solved = false;
+                    } catch (...) {
+                        data.solved = false;
+                    }
+
+                    {
+                        std::lock_guard lock(task->mutex);
+                        task->solvingProgress = i + 1;
+                        const auto prevSize = static_cast<int>(task->epochs.size());
+                        task->plotData.insert(prevSize, data, task->refECEF);
+                        const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == prevSize - 1;
+                        task->epochs.push_back(data);
+                        if (wasAtEnd) task->selectedEpoch = prevSize;
+                    }
+                }
+            } else {
+                // ================================================================
+                // OEM7 路径：readAll → 逐历元解算
+                // ================================================================
+                OEM7Reader oem7;
+                if (!oem7.open(path)) {
+                    task->hasError = true;
+                    task->errorMsg = "无法打开文件: " + path;
+                    task->loading = false; task->done = true;
+                    return;
+                }
+
+                task->phase = SppTask::Phase::Reading;
+
+                std::vector<EphemerisTable> ephSnapshots;
+                std::vector<ObsData> allObs;
+                oem7.readAll(allObs, ephSnapshots, &task->readProgress);
+                task->totalEpochs = static_cast<int>(allObs.size());
+
+                if (task->totalEpochs == 0) {
+                    task->loading = false; task->done = true; return;
+                }
+
+                task->phase = SppTask::Phase::Solving;
+                task->solvingProgress = 0;
+
+                SPPIFCode spp;
+                spp.setIFCodeTypes({{'G', {"C1","C2"}}, {'C', {"C2","C6"}}});
+
+                for (int i = 0; i < task->totalEpochs; ++i) {
+                    if (task->stop) break;
+                    spp.setEphemerisTable(&ephSnapshots[i]);
+                    ObsData &obs = allObs[i];
+                    spp.preprocess(obs);
+
+                    SppEpochData data;
+                    data.getFromObs(obs);
+                    try {
+                        spp.solve(obs);
+                        data.getFromSPP(spp);
+                        if (!task->initializedRefECEF) {
+                            task->refECEF = data.sppResult.xyz;
+                            task->initializedRefECEF = true;
+                        }
+                    } catch (...) { data.solved = false; }
+
+                    {
+                        std::lock_guard lock(task->mutex);
+                        task->solvingProgress = i + 1;
+                        const auto prevSize = static_cast<int>(task->epochs.size());
+                        task->plotData.insert(prevSize, data, task->refECEF);
+                        const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == prevSize - 1;
+                        task->epochs.push_back(data);
+                        if (wasAtEnd) task->selectedEpoch = prevSize;
+                    }
                 }
             }
         } catch (const std::exception &e) {
@@ -524,7 +688,7 @@ namespace GuiOem7Processor {
         OPENFILENAMEA ofn = {};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = "OEM7 Log Files (*.log)\0*.log\0";
+        ofn.lpstrFilter = "All Supported (*.log;*.??O)\0*.log;*.*O\0OEM7 Log Files (*.log)\0*.log\0RINEX Obs Files (*.??O)\0*.??O\0All Files (*.*)\0*.*\0";
         ofn.lpstrFile = filename;
         ofn.nMaxFile = MAX_PATH;
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -596,4 +760,4 @@ namespace GuiOem7Processor {
 
         out.close();
     }
-} // namespace GuiOem7Processor
+} // namespace GuiFileProcessor
