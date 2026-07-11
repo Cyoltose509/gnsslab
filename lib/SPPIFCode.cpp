@@ -46,9 +46,8 @@ void SPPIFCode::solve(ObsData &obsData) {
         }
         if (!isRover) break;
 
-        // ---- 位置解算 → 立即构建残差映射供下一轮 Baarda 检验 ----
+        // ---- 位置解算 ----
         posSolver.solve(posEquations);
-        buildResidualMap();
 
         // ---- 速度解算 ----
         velSolver.solve(velEquations);
@@ -79,6 +78,10 @@ void SPPIFCode::solve(ObsData &obsData) {
             break;
         }
         last_rms = rms;
+
+        // 还没收敛 → 计算 w 统计量供下一轮粗差探测
+        buildResidualMap();
+
         iter++;
     }
 

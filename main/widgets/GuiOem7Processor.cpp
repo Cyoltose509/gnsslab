@@ -44,6 +44,13 @@ namespace GuiOem7Processor {
     void SppEpochData::getFromObs(const ObsData &obs) {
         week = obs.weekSecond.week;
         sow = obs.weekSecond.sow;
+        const auto numSats = static_cast<int>(obs.satTypeValueData.size());
+        satIds.reserve(numSats);
+        elevations.reserve(numSats);
+        azimuths.reserve(numSats);
+        satPVTs.reserve(numSats);
+        rejected.reserve(numSats);
+        allObs.reserve(numSats);
         for (auto &[sat, typeMap]: obs.satTypeValueData) {
             satIds.push_back(sat);
             elevations.push_back(0.0);
