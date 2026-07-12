@@ -3,6 +3,7 @@
 #include "TimeConvert.h"
 #include "Exception.h"
 
+
 using namespace std;
 
 namespace {
@@ -130,6 +131,7 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     eph.IODE = static_cast<unsigned int>(IODE);
     eph.IODC = static_cast<unsigned int>(IODC);
     eph.tgd  = TGD;
+
 
     // 修正 week：RINEX 中的 week 是 TOE 所在周
     while (HOWtime < 0) { HOWtime += static_cast<long>(FULL_WEEK); eph.week--; }

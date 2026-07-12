@@ -36,6 +36,6 @@ public:
     long leapSeconds = 0, leapDelta = 0, leapWeek = 0, leapDay = 0;
 
 private:
-    void loadGPSEph(GPSEphem &eph, string &line, fstream &navFile);
+    static void loadGPSEph(GPSEphem &eph, string &line, fstream &navFile);
     void loadBDSEph(BDSEphem &eph, string &line, fstream &navFile);
 };

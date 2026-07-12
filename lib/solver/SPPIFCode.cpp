@@ -223,7 +223,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         if (satRejected.count(sat)) continue;
 
         // 只处理配置了 IF 类型的系统（GPS / BDS）
-        if (!ifTypeNames_.count(sat.system)) continue;
+        if (!ifTypeNames.count(sat.system)) continue;
 
         if (!satPVTRecTime.count(sat)) {
             satRejected.insert(sat);
@@ -250,7 +250,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 
         // IF 观测值有效性（同 computeSatPos 的兜底逻辑）
         const bool isGps = (sat.system == 'G');
-        const string ifType = ifTypeNames_.at(sat.system);
+        const string ifType = ifTypeNames.at(sat.system);
         double obsVal = 0.0;
         if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
             obsVal = itObs->second;
@@ -391,9 +391,9 @@ void SPPIFCode::buildVelEquation(
 void SPPIFCode::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        if (!ifTypeNames_.count(sat.system)) continue;
+        if (!ifTypeNames.count(sat.system)) continue;
 
-        Ephemeris *eph = ephTable_ ? ephTable_->find(sat) : nullptr;
+        Ephemeris *eph = ephTable ? ephTable->find(sat) : nullptr;
         if (!eph) {
             auto itEph = ephMap.find(sat);
             if (itEph == ephMap.end()) continue;
@@ -401,7 +401,7 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
         }
 
         const bool isGps = (sat.system == 'G');
-        const string ifType = ifTypeNames_[sat.system];
+        const string ifType = ifTypeNames[sat.system];
         double obsVal = 0.0;
         if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
             obsVal = itObs->second;

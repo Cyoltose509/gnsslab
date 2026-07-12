@@ -102,6 +102,7 @@ namespace GuiFileProcessor {
                     const string base = path.substr(0, path.size() - 1);
                     const string navExts[] = {"N", "G", "C"};
                     int navLoaded = 0;
+                    constexpr float navFracPerFile = 0.25f / 3.0f;  // nav 占总进度的 25%，均分到最多 3 个文件
                     for (const auto &ext : navExts) {
                         const string navPath = base + ext;
                         std::ifstream test(navPath);
@@ -110,6 +111,7 @@ namespace GuiFileProcessor {
                         try {
                             navStore.loadFile(navPath, ephTable);
                             navLoaded++;
+                            task->readProgress = navFracPerFile * static_cast<float>(navLoaded);
                         } catch (const std::exception &) {
                             // nav 文件解析失败不致命，继续
                         }
@@ -122,7 +124,7 @@ namespace GuiFileProcessor {
                         return;
                     }
                 }
-                task->readProgress = 0.8f;  // 导航文件读完
+                task->readProgress = 0.25f;  // nav 读完，obs 开始
 
                 // 自动检测 IF 码类型（先声明，后面 header 解析后填入）
                 std::map<char, std::pair<string,string>> ifCodeTypes;
@@ -145,12 +147,12 @@ namespace GuiFileProcessor {
                     // 读全部观测值（全量类型，不筛选）
                     int safety = 0, okCount = 0;
                     while (++safety < 100000) {
-                        task->readProgress = 0.8f + static_cast<float>(safety) * 0.00002f;
                         try {
                             ObsData obs = obsReader.parseRinexObs();
                             allObs.push_back(std::move(obs));
                             okCount++;
-                            task->readProgress = 0.8f + static_cast<float>(okCount) * 0.0002f;
+                            // 进度向 95% 逼近（不知道总历元数，用递减步长避免跳不满）
+                            task->readProgress = 0.25f + 0.70f * (1.0f - 1.0f / (1.0f + okCount * 0.005f));
 
                             // 第一次拿到 obs 后，header 已就绪，自动检测 IF
                             if (!headerCaptured) {
@@ -325,8 +327,8 @@ namespace GuiFileProcessor {
             selectedIdx = task->selectedEpoch;
         }
 
-        // --- 读取阶段进度 ---
-        if (isLoading && !hasError && task->phase == SppTask::Phase::Reading) {
+        // --- 读取阶段进度（仅文件模式，实时模式跳过） ---
+        if (!isRealtime && isLoading && !hasError && task->phase == SppTask::Phase::Reading) {
             const float frac = task->readProgress.load();
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "阶段 1/2: 正在读取文件...");
             ImGui::ProgressBar(frac, ImVec2(200.0f, 0.0f), "");

@@ -13,7 +13,7 @@ public:
     }
 
     /// 文件模式：传入星历表（数据由 EphemerisTable 拥有，SPPIFCode 不持所有权）
-    void setEphemerisTable(EphemerisTable *table) { ephTable_ = table; }
+    void setEphemerisTable(EphemerisTable *table) { ephTable = table; }
 
     /// 实时模式：从 ObsData 拷贝星历指针（兼容旧路径）
     void setEphemeris(const SatEphemerisMap &ephs) {
@@ -23,7 +23,7 @@ public:
     void setIFCodeTypes(const std::map<char, std::pair<string, string> > &ifTypes) {
         ifCodeTypes = ifTypes;
         for (const auto &[sys, pair] : ifCodeTypes) {
-            ifTypeNames_[sys] = "CC" + pair.first.substr(1, 1) + pair.second.substr(1, 1);
+            ifTypeNames[sys] = "CC" + pair.first.substr(1, 1) + pair.second.substr(1, 1);
         }
     }
 
@@ -74,10 +74,10 @@ protected:
     SolverLSQ velSolver{};
 
     SatEphemerisMap ephMap{};           // 实时模式：指向 ObsData 中的星历（后向兼容）
-    EphemerisTable *ephTable_ = nullptr;  // 文件模式：指向外部星历表
+    EphemerisTable *ephTable = nullptr;  // 文件模式：指向外部星历表
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
-    std::map<char, std::string> ifTypeNames_{};  // 预计算的 IF 类型名
+    std::map<char, std::string> ifTypeNames{};  // 预计算的 IF 类型名
 
 private:
     /// 解算完成后计算每颗卫星的 Baarda w 统计量

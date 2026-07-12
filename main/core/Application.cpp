@@ -5,6 +5,7 @@
 #include "widgets/GuiFileProcessor.h"
 #include "widgets/GuiRealtimeProcessor.h"
 #include "version.h"
+#include "Log.h"
 
 #include "imgui.h"
 
@@ -12,6 +13,9 @@ Application::Application() = default;
 
 void Application::Initialize()
 {
+    Log::init("gnsslab.log");
+    LOG_INFO("GnssLab v" PROJECT_VERSION " 启动");
+
     std::string title = "GnssLab v" PROJECT_VERSION;
     m_ui.Initialize(title.c_str(), 1280, 720);
 }
