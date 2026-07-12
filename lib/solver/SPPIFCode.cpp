@@ -1,6 +1,8 @@
 #include "SPPIFCode.h"
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
+#include <vector>
+#include <algorithm>
 
 #include "Log.h"
 
@@ -11,12 +13,14 @@ void SPPIFCode::preprocess(ObsData &obsData) {
 }
 
 void SPPIFCode::solve(ObsData &obsData) {
-    xyz = obsData.antennaPosition;
     result.reset();
-    lastWStats_.clear(); // 新历元：清空上一历元的 w 统计量
+    lastWStats_.clear();
+    rClockBias.clear();
+    vel = Vector3d(0, 0, 0);
+    rClockDrift = 0.0;
+    xyz = obsData.antennaPosition;
 
     int iter(0);
-    double last_rms = 1e9;
     while (iter < 10) {
         computeSatPos(obsData);
         earthRotation();
@@ -25,12 +29,10 @@ void SPPIFCode::solve(ObsData &obsData) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
                                  + to_string(satPVTRecTime.size()) + ")");
         }
-        // 高度角重算很便宜（arcsin/arctan），每轮都做
         satElevData.clear();
         satAzimData.clear();
         computeElevAzim();
 
-        // ---- 构建观测方程（前 2 轮跳过 w 检验，避免收敛前误伤） ----
         linearize(obsData, iter);
 
         if (posEquations.obsEquData.size() < 4) {
@@ -39,7 +41,7 @@ void SPPIFCode::solve(ObsData &obsData) {
         if (!isRover) break;
 
         posSolver.solve(posEquations);
-        // ---- 更新状态 ----
+
         const Vector3d dxyz = {
             posSolver.getSolution(Parameter::dX),
             posSolver.getSolution(Parameter::dY),
@@ -65,19 +67,16 @@ void SPPIFCode::solve(ObsData &obsData) {
             LOG_WARN << "速度解算失败";
         }
 
-        const double rms = posSolver.v.norm() / sqrt(posSolver.v.size());
-        if (fabs(rms - last_rms) < 1e-4) {
+        // 收敛判据：位置修正量 < 0.1mm 即停
+        if (iter >= 2 && dxyz.norm() < 1e-4) {
             break;
         }
-        last_rms = rms;
 
-        // 还没收敛 → 计算 w 统计量供下一轮粗差探测
         buildResidualMap();
-
         iter++;
     }
 
-    if (iter >= 10) {
+    if (iter >= 15) {
         throw InvalidSolver("too many iterations without convergence");
     }
     getResult();
@@ -87,13 +86,12 @@ void SPPIFCode::getResult() {
     auto &pD = posSolver.covMatrix;
     auto &vD = velSolver.covMatrix;
     result.pdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2));
-    // gdop / tdop：动态根据 varSet 中钟差参数的位置计算
     {
         double gdop_sq = result.pdop * result.pdop;  // PDOP²
         double tdop_sq = 0.0;
         int idx = 0;
         for (const auto &v : posSolver.currentUnkSet) {
-            if (const auto p = v.getParaType(); p == Parameter::cdt || p == Parameter::cdt2 || p == Parameter::cdt3) {
+            if (const auto p = v.getParaType(); p == Parameter::cdt || p == Parameter::cdt2) {
                 tdop_sq += pD(idx, idx);
                 gdop_sq += pD(idx, idx);
             }
@@ -408,13 +406,11 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
     }
 }
 
-// 根据可用观测类型自动选择最佳 IF 双频组合
 IFCodeTypes SPPIFCode::autoDetectIFTypes(const std::map<char, std::vector<string> > &availableTypes) {
     IFCodeTypes result;
 
     for (const auto &[sys, types]: availableTypes) {
         if (sys == 'G') {
-            // GPS: C1? + C2?
             string c1, c2;
             for (const auto &t: types) {
                 if (t.size() >= 2 && t[0] == 'C') {
@@ -423,9 +419,8 @@ IFCodeTypes SPPIFCode::autoDetectIFTypes(const std::map<char, std::vector<string
                 }
             }
             if (!c1.empty() && !c2.empty()) result['G'] = {c1, c2};
-            LOG_INFO << "Auto-detected IF types for " << sys << ": " << c1 << "/" << c2;
+            LOG_INFO << "Auto-detected IF types for G: " << c1 << "/" << c2;
         } else if (sys == 'C') {
-            // BDS: C2?/C1? + C6? (全星座 B1+B3), fallback C7?+C6? (BDS-3)
             string cl, c6;
             for (const auto &t: types) {
                 if (t.size() >= 2 && t[0] == 'C') {
@@ -442,7 +437,7 @@ IFCodeTypes SPPIFCode::autoDetectIFTypes(const std::map<char, std::vector<string
                 }
             }
             if (!cl.empty() && !c6.empty()) result['C'] = {cl, c6};
-            LOG_INFO << "Auto-detected IF types for " << sys << ": " << cl << "/" << c6;
+            LOG_INFO << "Auto-detected IF types for C: " << cl << "/" << c6;
         }
     }
     return result;
@@ -488,10 +483,8 @@ void SPPIFCode::earthRotation() {
 }
 
 void SPPIFCode::computeElevAzim() {
-    static int cnt = 0;
     for (auto const &[sat, pvt]: satPVTRecTime) {
         satElevData[sat] = elevation(xyz, pvt.p, frame);
         satAzimData[sat] = azimuth(xyz, pvt.p, frame);
     }
-    cnt++;
 }

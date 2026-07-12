@@ -25,7 +25,8 @@ public:
     void setIFCodeTypes(const IFCodeTypes &ifTypes) {
         ifCodeTypes = ifTypes;
         for (const auto &[sys, pair]: ifCodeTypes) {
-            ifTypeNames[sys] = "CC" + pair.first.substr(1, 1) + pair.second.substr(1, 1);
+            const string c2 = pair.second.empty() ? "" : pair.second.substr(1, 1);
+            ifTypeNames[sys] = "CC" + pair.first.substr(1, 1) + c2;
         }
     }
 
@@ -70,16 +71,15 @@ protected:
     bool isRover = true;
     double sigIFCode = 0.3;
 
-    double rClockDrift{}; // 接收机钟漂
+    double rClockDrift{};
 
-    /// 各系统钟差 [m]：key=系统标识(G=GPS, C=BDS, R=GLONASS, E=Galileo)
+    /// GPS 与 BDS 各自钟差 [m]
     std::map<char, double> rClockBias{};
 
-    /// 系统→钟差参数映射（未来加 GLONASS：{'R', Parameter::cdt3}）
+    /// 系统→钟差参数映射（仅 GPS + BDS）
     static inline std::map<char, Parameter> sysCdtParam = {
         {'G', Parameter::cdt},
         {'C', Parameter::cdt2},
-        {'R', Parameter::cdt3},  // GLONASS 预留
     };
 
     EquSys posEquations{};
@@ -87,13 +87,13 @@ protected:
     SolverLSQ posSolver{};
     SolverLSQ velSolver{};
 
-    SatEphemerisMap ephMap{}; // 实时模式：指向 ObsData 中的星历（后向兼容）
-    EphemerisTable *ephTable = nullptr; // 文件模式：指向外部星历表
+    SatEphemerisMap ephMap{};
+    EphemerisTable *ephTable = nullptr;
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
-    std::map<char, std::string> ifTypeNames{}; // 预计算的 IF 类型名
+    std::map<char, std::string> ifTypeNames{};
 
-    /// 当前历元有卫星的系统集合（用于避免 query 未参解算系统的钟差参数）
+    /// 当前历元有卫星的系统集合
     std::set<char> activeSystems;
 
 private:
@@ -116,4 +116,6 @@ private:
 
     /// 上一轮解算的标准化残差 |v|/σ₀ (SatID → 值)，用于粗差探测
     std::map<SatID, double> lastWStats_;
+    /// 上一轮解算的原始残差绝对值 (SatID → |v|)，用于整星座一致性校验
+    std::map<SatID, double> lastResidMag_;
 };

@@ -71,6 +71,8 @@ void convertTimeSystem(CommonTime &in_time, const TimeSystem targetSys) {
         return;
     if (inTS == TimeSystem::GPS) // GAL -> TAI
         dt = 19;
+    else if (inTS == TimeSystem::GAL) // GAL -> TAI (同 GPS，均为 TAI-19s)
+        dt = 19;
     else if (inTS == TimeSystem::UTC) // GLO -> TAI
         dt = getLeapSeconds(in_time + dt - getLeapSeconds(in_time));
     else if (inTS == TimeSystem::BDT) // BDT -> TAI
@@ -81,6 +83,8 @@ void convertTimeSystem(CommonTime &in_time, const TimeSystem targetSys) {
         throw InvalidRequest("Invalid input TimeSystem");
     }
     if (targetSys == TimeSystem::GPS) // TAI -> GAL
+        dt -= 19;
+    else if (targetSys == TimeSystem::GAL) // TAI -> GAL (同 GPS)
         dt -= 19;
     else if (targetSys == TimeSystem::UTC) {
         dt -= getLeapSeconds(in_time + dt - getLeapSeconds(in_time));

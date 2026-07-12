@@ -92,6 +92,7 @@ ObsData RinexObsReader::parseRinexObs() {
             }
 
             auto sat = SatID(satIndex[isv]);
+            // 仅解析已实现定位的星座：GPS/BDS
             if (sat.system != 'G' && sat.system != 'C') {
                 continue;
             }

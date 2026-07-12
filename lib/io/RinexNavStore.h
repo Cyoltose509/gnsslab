@@ -39,4 +39,5 @@ private:
     static void loadGPSEph(GPSEphem &eph, string &line, fstream &navFile);
 
     static void loadBDSEph(BDSEphem &eph, string &line, fstream &navFile);
+
 };

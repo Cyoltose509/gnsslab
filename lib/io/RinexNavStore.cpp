@@ -136,13 +136,20 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     eph.IODC = static_cast<unsigned int>(IODC);
     eph.tgd = TGD;
 
-    // 修正 week：RINEX 中的 week 是 TOE 所在周
-    while (HOWtime < 0) {
-        HOWtime += static_cast<long>(FULL_WEEK);
-        eph.week--;
+    // 修正 week：RINEX 中的 week 是 TOE 所在周。
+    // 关键修复：HOWtime 是第 8 行第 1 字段（GPS 周内秒，单位 s），合法取值必须落在 [0, FULL_WEEK)。
+    // 部分文件该字段为脏数据（例如 D032184H.26N 中 G05 读到 -1.7826e9），若不加以保护地进入
+    // while(HOWtime<0) 循环，会对 unsigned 的 eph.week 反复自减，导致严重下溢
+    // （2425 − 2948 = -523 → 4294966773），进而使 svPVT 的时间参考完全错误、
+    // 卫星钟差/位置全部爆炸、SPP 定位崩溃（sigma 达 1e5 量级）。
+    // 因此仅在 HOWtime 取值合法时才做 ±1 周修正，否则直接信任由 TOC 历元推导出的 eph.week。
+    if (HOWtime >= 0.0 && HOWtime < FULL_WEEK) {
+        if (HOWtime - eph.toe > HALF_WEEK && eph.week > 0) {
+            eph.week--;
+        } else if (eph.toe - HOWtime > HALF_WEEK) {
+            eph.week++;
+        }
     }
-    if (HOWtime - eph.toe > HALF_WEEK) eph.week--;
-    else if (eph.toe - HOWtime > HALF_WEEK) eph.week++;
 }
 
 // ============================================================================
@@ -246,9 +253,6 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     eph.tgd2 = tgdB2;
 }
 
-// ============================================================================
-// loadFile — 主入口：读 header → 循环读星历数据行 → 写入 EphemerisTable
-// ============================================================================
 void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
     if (file.empty()) {
         throw FileMissingException("nav file path is empty");
@@ -273,7 +277,10 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         if (const string label = strip(line.substr(60, 20)); label == "RINEX VERSION / TYPE") {
             version = safeStod(line.substr(0, 20));
             fileType = strip(line.substr(20, 20));
-            if (fileType[0] != 'N' && fileType[0] != 'n') {
+            // 导航文件类型字符：N=GPS, G=GLONASS, E=Galileo, M=混合, C=钟差…
+            const char c = fileType.empty() ? ' ' : fileType[0];
+            if (c != 'N' && c != 'n' && c != 'G' && c != 'g' &&
+                c != 'E' && c != 'e' && c != 'M' && c != 'm') {
                 throw FFStreamError("File type is not NAVIGATION: " + fileType);
             }
             fileSys = strip(line.substr(40, 20));
@@ -325,7 +332,5 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
             loadBDSEph(*eph, line, navFileStream);
             ephTable.bds[eph->prn].push_back(eph);   // 保留同一卫星的多条星历（不同 toe）
         }
-
-        // R/GLONASS、E/Galileo —— 暂未实现
     }
 }

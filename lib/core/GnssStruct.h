@@ -163,7 +163,8 @@ public:
         dZ,
         cdt,
         cdt2,
-        cdt3,       // GLONASS (预留)
+        cdt3,
+        cdt4,
         ifb,
         iono,
         ambiguity,
@@ -209,7 +210,7 @@ public:
 private:
     ParameterName paraName;
     inline static const std::string paraNameStrings[static_cast<int>(count)] = {
-        "Unknown", "dX", "dY", "dZ", "cdt", "cdt2", "cdt3", "ifb", "iono", "ambiguity",
+        "Unknown", "dX", "dY", "dZ", "cdt", "cdt2", "cdt3", "cdt4", "ifb", "iono", "ambiguity",
         "dVX", "dVY", "dVZ", "cdtr_dot"
     };
 };

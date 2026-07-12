@@ -20,7 +20,6 @@ namespace GuiFileProcessor {
         double sow = 0;
         bool solved = false;
 
-        // Observation data
         int numObs = 0;
         std::vector<SatID> satIds;
         std::vector<PVT> satPVTs;
@@ -46,7 +45,6 @@ namespace GuiFileProcessor {
         std::vector<double> enu_u;
         bool newed = false;
 
-        /// 每颗卫星的后验残差时序：satResTimes[satID] 和 satResVals[satID] 一一对应
         std::map<SatID, std::vector<double>> satResTimes;
         std::map<SatID, std::vector<double>> satResVals;
 
@@ -67,7 +65,6 @@ namespace GuiFileProcessor {
                 enu_n.push_back(0);
                 enu_u.push_back(0);
             }
-            // 记录各卫星后验残差
             if (solved) {
                 for (const auto &[satID, res]: result.postRes) {
                     satResTimes[satID].push_back(index);
@@ -109,38 +106,32 @@ namespace GuiFileProcessor {
     struct SppTask {
         std::string filePath;
         std::string fileName;
-        bool isRealtime = false; // Flag to distinguish file vs realtime
+        bool isRealtime = false;
 
         std::thread worker;
         std::atomic<bool> loading{false};
         std::atomic<bool> done{false};
-        std::atomic<bool> stop{false}; // New stop flag
+        std::atomic<bool> stop{false};
         bool hasError = false;
         std::mutex mutex;
 
-        // 两阶段进度
         enum class Phase { Reading, Solving };
         std::atomic<Phase> phase{Phase::Reading};
-        std::atomic<int> solvingProgress{0};  // 已解算历元数
-        std::atomic<float> readProgress{0.0f}; // 文件读取进度 (0.0~1.0)
-        int totalEpochs{0};                    // 总历元数
+        std::atomic<int> solvingProgress{0};
+        std::atomic<float> readProgress{0.0f};
+        int totalEpochs{0};
 
         std::vector<SppEpochData> epochs;
         PlotData plotData;
         XYZ refECEF{0, 0, 0};
         bool initializedRefECEF = false;
 
-
         int selectedEpoch = -1;
         int selectedSatIdx = -1;
 
         std::string errorMsg;
-        ~SppTask() {
-            stop = true;
-        }
+        ~SppTask() { stop = true; }
     };
-
-
 
     void SolveThread(const std::shared_ptr<SppTask> &task);
 

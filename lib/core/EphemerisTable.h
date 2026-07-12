@@ -15,8 +15,6 @@
 struct EphemerisTable {
     std::map<int, std::vector<std::shared_ptr<GPSEphem>>> gps;
     std::map<int, std::vector<std::shared_ptr<BDSEphem>>> bds;
-    // 未来: std::map<int, std::vector<GlonassEphem>> glo;
-    // 未来: std::map<int, std::vector<GalileoEphem>> gal;
 
     /// 按卫星 ID + 历元时间查星历：返回 toe 距该历元最近的一条。
     /// epoch 允许与星历使用不同时间系统（内部会对齐后比较）。
@@ -39,7 +37,9 @@ struct EphemerisTable {
         return nullptr;
     }
 
-    [[nodiscard]] bool empty() const { return gps.empty() && bds.empty(); }
+    [[nodiscard]] bool empty() const {
+        return gps.empty() && bds.empty();
+    }
 
 private:
     template<typename MapT>
