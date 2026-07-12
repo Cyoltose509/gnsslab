@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "Log.h"
 #include "RinexObsReader.h"
 #include "RinexNavStore.h"
 
@@ -70,25 +71,10 @@ namespace GuiFileProcessor {
         try {
             // ---- 文件格式识别（先看 magic bytes，再看后缀） ----
             const auto &path = task->filePath;
-            bool isRinex = false;
-            {
-                std::ifstream probe(path, std::ios::binary);
-                if (probe) {
-                    char head[3] = {};
-                    probe.read(head, 3);
-                    // OEM7 magic: 0xAA 0x44 0x12 → 二进制，不管后缀
-                    if (static_cast<unsigned char>(head[0]) == 0xAA &&
-                        static_cast<unsigned char>(head[1]) == 0x44 &&
-                        static_cast<unsigned char>(head[2]) == 0x12) {
-                        isRinex = false;
-                    } else {
-                        isRinex = (path.size() >= 4 &&
-                            isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
-                            toupper(path.back()) == 'O');
-                    }
-                }
-            }
-
+            LOG_INFO << "处理文件: " << path;
+            bool isRinex = (path.size() >= 4 &&
+                                   isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
+                                   toupper(path.back()) == 'O');
             if (isRinex) {
                 // ================================================================
                 // RINEX 路径：读 nav 文件 → 读 obs 文件 → 解算
@@ -100,34 +86,38 @@ namespace GuiFileProcessor {
                 {
                     RinexNavStore navStore;
                     const string base = path.substr(0, path.size() - 1);
-                    const string navExts[] = {"N", "G", "C"};
+                    // Novatel 等厂商可能用非标准后缀（F=GPS+BDS混合，I=IRNSS等）
+                    // 扫描所有可能的单字母后缀，找到就载入
+                    const string navExts[] = {"N", "G", "C", "E", "J", "F", "I", "L", "Q", "S"};
                     int navLoaded = 0;
-                    constexpr float navFracPerFile = 0.25f / 3.0f;  // nav 占总进度的 25%，均分到最多 3 个文件
-                    for (const auto &ext : navExts) {
+                    constexpr float navFracPerFile = 0.25f / 3.0f; // nav 占总进度的 25%，均分到最多 3 个文件
+                    for (const auto &ext: navExts) {
                         const string navPath = base + ext;
                         std::ifstream test(navPath);
                         if (test.good()) {
                             test.close();
-                        try {
-                            navStore.loadFile(navPath, ephTable);
-                            navLoaded++;
-                            task->readProgress = navFracPerFile * static_cast<float>(navLoaded);
-                        } catch (const std::exception &) {
-                            // nav 文件解析失败不致命，继续
-                        }
+                            try {
+                                LOG_INFO << "载入星历文件: " << navPath;
+                                navStore.loadFile(navPath, ephTable);
+                                navLoaded++;
+                                task->readProgress = navFracPerFile * static_cast<float>(navLoaded);
+                            } catch (const std::exception &) {
+                                // nav 文件解析失败不致命，继续
+                            }
                         }
                     }
                     if (navLoaded == 0) {
                         task->hasError = true;
-                        task->errorMsg = "未找到导航文件 (.??N/.??G/.??C)";
-                        task->loading = false; task->done = true;
+                        task->errorMsg = "未找到导航文件 (同目录下 .??N/.??G/.??C 等)";
+                        task->loading = false;
+                        task->done = true;
                         return;
                     }
                 }
-                task->readProgress = 0.25f;  // nav 读完，obs 开始
+                task->readProgress = 0.25f; // nav 读完，obs 开始
 
                 // 自动检测 IF 码类型（先声明，后面 header 解析后填入）
-                std::map<char, std::pair<string,string>> ifCodeTypes;
+                std::map<char, std::pair<string, string> > ifCodeTypes;
                 // Phase 1b: 读观测值
                 std::vector<ObsData> allObs;
                 {
@@ -136,7 +126,9 @@ namespace GuiFileProcessor {
                     if (!obsFile) {
                         task->hasError = true;
                         task->errorMsg = "无法打开 RINEX 文件: " + path;
-                        task->loading = false; task->done = true; return;
+                        task->loading = false;
+                        task->done = true;
+                        return;
                     }
                     obsReader.setFileStream(&obsFile);
 
@@ -154,52 +146,25 @@ namespace GuiFileProcessor {
                             // 进度向 95% 逼近（不知道总历元数，用递减步长避免跳不满）
                             task->readProgress = 0.25f + 0.70f * (1.0f - 1.0f / (1.0f + okCount * 0.005f));
 
-                            // 第一次拿到 obs 后，header 已就绪，自动检测 IF
+                            // 第一次拿到 obs，header 已就绪，让 SPPIFCode 自动选择 IF
                             if (!headerCaptured) {
                                 headerCaptured = true;
-                                const auto &obsTypes = obsReader.getHeader().mapObsTypes;
-                                for (const auto &[sys, types] : obsTypes) {
-                                    if (sys == 'G') {
-                                        string c1, c2;
-                                        for (const auto &t : types) {
-                                            if (t.size() >= 2 && t[0] == 'C') {
-                                                if (t[1] == '1' && c1.empty()) c1 = t;
-                                                if (t[1] == '2' && c2.empty()) c2 = t;
-                                            }
-                                        }
-                                        if (!c1.empty() && !c2.empty()) ifCodeTypes['G'] = {c1, c2};
-                                    } else if (sys == 'C') {
-                                        // BDS: pre C1?/C2?+C6? (B1+B3 for all sats), fallback C7?+C6? (BDS-3 only)
-                                        string cL, c6;
-                                        for (const auto &t : types) {
-                                            if (t.size() >= 2 && t[0] == 'C') {
-                                                if ((t[1] == '2' || t[1] == '1') && cL.empty()) cL = t;
-                                                if (t[1] == '6' && c6.empty()) c6 = t;
-                                            }
-                                        }
-                                        if (cL.empty() || c6.empty()) {
-                                            for (const auto &t : types) {
-                                                if (t.size() >= 2 && t[0] == 'C') {
-                                                    if (t[1] == '7' && cL.empty()) cL = t;
-                                                    if (t[1] == '6' && c6.empty()) c6 = t;
-                                                }
-                                            }
-                                        }
-                                        if (!cL.empty() && !c6.empty()) ifCodeTypes['C'] = {cL, c6};
-                                    }
-                                }
+                                ifCodeTypes = SPPIFCode::autoDetectIFTypes(obsReader.getHeader().mapObsTypes);
                             }
-                        } catch (const EndOfFile &) { break; }
-                        catch (const std::exception &e) {
+                        } catch (const EndOfFile &) { break; } catch (const std::exception &e) {
                             task->hasError = true;
                             task->errorMsg = "RINEX 解析错误 @" + std::to_string(okCount) + ": " + e.what();
-                            task->loading = false; task->done = true; return;
+                            task->loading = false;
+                            task->done = true;
+                            return;
                         }
                     }
                     if (okCount == 0) {
                         task->hasError = true;
                         task->errorMsg = safety >= 100000 ? "读取超限(>10w次)" : "无法解析任何历元";
-                        task->loading = false; task->done = true; return;
+                        task->loading = false;
+                        task->done = true;
+                        return;
                     }
                     task->totalEpochs = static_cast<int>(allObs.size());
                     task->readProgress = 1.0f;
@@ -251,7 +216,8 @@ namespace GuiFileProcessor {
                 if (!oem7.open(path)) {
                     task->hasError = true;
                     task->errorMsg = "无法打开文件: " + path;
-                    task->loading = false; task->done = true;
+                    task->loading = false;
+                    task->done = true;
                     return;
                 }
 
@@ -263,14 +229,16 @@ namespace GuiFileProcessor {
                 task->totalEpochs = static_cast<int>(allObs.size());
 
                 if (task->totalEpochs == 0) {
-                    task->loading = false; task->done = true; return;
+                    task->loading = false;
+                    task->done = true;
+                    return;
                 }
 
                 task->phase = SppTask::Phase::Solving;
                 task->solvingProgress = 0;
 
                 SPPIFCode spp;
-                spp.setIFCodeTypes({{'G', {"C1","C2"}}, {'C', {"C2","C6"}}});
+                spp.setIFCodeTypes({{'G', {"C1", "C2"}}, {'C', {"C2", "C6"}}});
 
                 for (int i = 0; i < task->totalEpochs; ++i) {
                     if (task->stop) break;
@@ -690,7 +658,8 @@ namespace GuiFileProcessor {
         OPENFILENAMEA ofn = {};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = "All Supported (*.log;*.??O)\0*.log;*.*O\0OEM7 Log Files (*.log)\0*.log\0RINEX Obs Files (*.??O)\0*.??O\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFilter =
+                "All Supported (*.log;*.??O)\0*.log;*.*O\0OEM7 Log Files (*.log)\0*.log\0RINEX Obs Files (*.??O)\0*.??O\0All Files (*.*)\0*.*\0";
         ofn.lpstrFile = filename;
         ofn.nMaxFile = MAX_PATH;
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;

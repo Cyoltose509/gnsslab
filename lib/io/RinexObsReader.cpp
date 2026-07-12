@@ -1,8 +1,9 @@
 #include "StringUtils.h"
 #include "RinexObsReader.h"
+
+#include "Log.h"
 #include "TimeConvert.h"
 
-#define debug 0
 
 void RinexObsReader::parseRinexHeader() {
     XYZ antennaPosition;

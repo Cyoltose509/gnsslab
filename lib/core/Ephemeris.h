@@ -125,6 +125,35 @@ private:
     CommonTime ct;
 };
 
+inline ostream &operator<<(ostream &os, const Ephemeris &eph) {
+    os << "prn:" << eph.prn
+            << " type:" << eph.type
+            << " week:" << eph.week
+            << " toe:" << eph.toe
+            << " toc:" << eph.toc
+            << " health:" << eph.health
+            << " ura:" << eph.ura
+            << " a0:" << eph.a0
+            << " a1:" << eph.a1
+            << " a2:" << eph.a2
+            << " m0:" << eph.m0
+            << " e:" << eph.e
+            << " rootA:" << eph.rootA
+            << " dn:" << eph.dn
+            << " i0:" << eph.i0
+            << " omega0:" << eph.omega0
+            << " omega:" << eph.omega
+            << " omegaDot:" << eph.omegaDot
+            << " idot:" << eph.idot
+            << " cuc:" << eph.cuc
+            << " cus:" << eph.cus
+            << " crc:" << eph.crc
+            << " crs:" << eph.crs
+            << " cic:" << eph.cic
+            << " cis:" << eph.cis;
+    return os;
+}
+
 // GPS 星历：特有 IODE, TGD, AS 等
 struct GPSEphem : Ephemeris {
     GPSEphem() {

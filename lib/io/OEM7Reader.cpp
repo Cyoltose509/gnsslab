@@ -7,6 +7,8 @@
 #include "GnssStruct.h"
 #include "OEM7Reader.h"
 
+#include "Log.h"
+
 #define ID_RANGE        43
 #define ID_GPSEPHEM     7
 #define ID_BDSEPHEMRIS  1696
@@ -47,17 +49,17 @@ void OEM7Reader::readAll(std::vector<ObsData> &epochs,
 
         // 仅星历消息才更新星历表
         if (currentHeader.type == ID_GPSEPHEM) {
-            for (const auto &[prn, eph] : latestGps)
+            for (const auto &[prn, eph]: latestGps)
                 currentTable.gps[prn] = std::make_shared<GPSEphem>(eph);
         } else if (currentHeader.type == ID_BDSEPHEMRIS) {
-            for (const auto &[prn, eph] : latestBds)
+            for (const auto &[prn, eph]: latestBds)
                 currentTable.bds[prn] = std::make_shared<BDSEphem>(eph);
         }
 
         // RANGE 观测：存为历元，同时快照此刻的星历表
         if (!currentObs.satTypeValueData.empty()) {
             epochs.push_back(std::move(currentObs));
-            ephSnapshots.push_back(currentTable);  // 逐历元快照
+            ephSnapshots.push_back(currentTable); // 逐历元快照
             currentObs.satTypeValueData.clear();
         }
     }
@@ -206,7 +208,7 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             continue;
         }
         if (freqIdx != -1) {
-            SatID sat(sys,prn);
+            SatID sat(sys, prn);
             std::string s_f = std::to_string(freqIdx);
             currentObs.satTypeValueData[sat]["C" + s_f] = codeLocked ? psr : 0;
             currentObs.satTypeValueData[sat]["L" + s_f] = phaseLocked ? adr : 0;
@@ -273,6 +275,7 @@ bool OEM7Reader::parseGpsEphem(const std::vector<uint8_t> &message) {
     off += 8;
     eph.a2 = R8(&message[off]);
     off += 8; //NOLINT
+
     latestGps[eph.prn] = std::move(eph);
     return true;
 }

@@ -2,6 +2,8 @@
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
 
+#include "Log.h"
+
 void SPPIFCode::preprocess(ObsData &obsData) {
     satRejected.clear();
     setEphemeris(obsData.satEphemerisData);
@@ -40,44 +42,37 @@ void SPPIFCode::solve(ObsData &obsData) {
         // ---- 构建观测方程（前 2 轮跳过 w 检验，避免收敛前误伤） ----
         linearize(obsData, iter);
 
-    if (posEquations.obsEquData.size() < 4 || velEquations.obsEquData.size() < 4) {
-        throw SVNumException("num of satellites after elevation cut is less than 4");
-    }
-    if (!isRover) break;
-
-    // ---- 位置解算（即使 dof <= 0 也解，sigma0 由 SolverLSQ 内部处理） ----
-    posSolver.solve(posEquations);
-
-    // ---- 速度解算（doft <= 0 时只解 vel 位置部分） ----
-    if (velEquations.obsEquData.size() > velEquations.varSet.size()) {
-        try {
-            velSolver.solve(velEquations);
-        } catch (const std::exception &) {
-            // 速度解算失败不影响位置
+        if (posEquations.obsEquData.size() < 4) {
+            throw SVNumException("num of satellites after elevation cut is less than 4");
         }
-    }
+        if (!isRover) break;
 
+        posSolver.solve(posEquations);
         // ---- 更新状态 ----
         const Vector3d dxyz = {
             posSolver.getSolution(Parameter::dX),
             posSolver.getSolution(Parameter::dY),
             posSolver.getSolution(Parameter::dZ)
         };
-        const double d_cdt = posSolver.getSolution(Parameter::cdt);
-        const double d_cdt2 = posSolver.getSolution(Parameter::cdt2);
-
-        const Vector3d dvel = {
-            velSolver.getSolution(Parameter::dVX),
-            velSolver.getSolution(Parameter::dVY),
-            velSolver.getSolution(Parameter::dVZ)
-        };
-        const double dcdt_dot = velSolver.getSolution(Parameter::cdtr_dot);
-
         xyz += dxyz;
-        rClockBias += d_cdt;
-        rClockBiasBDS += d_cdt2;
-        vel += dvel;
-        rClockDrift += dcdt_dot;
+        for (char sys : activeSystems) {
+            if (auto it = sysCdtParam.find(sys); it != sysCdtParam.end())
+                rClockBias[sys] += posSolver.getSolution(it->second);
+        }
+
+        if (velEquations.obsEquData.size() >= 4) {
+            velSolver.solve(velEquations);
+            const Vector3d dvel = {
+                velSolver.getSolution(Parameter::dVX),
+                velSolver.getSolution(Parameter::dVY),
+                velSolver.getSolution(Parameter::dVZ)
+            };
+            const double dcdt_dot = velSolver.getSolution(Parameter::cdtr_dot);
+            vel += dvel;
+            rClockDrift += dcdt_dot;
+        } else {
+            LOG_WARN << "速度解算失败";
+        }
 
         const double rms = posSolver.v.norm() / sqrt(posSolver.v.size());
         if (fabs(rms - last_rms) < 1e-4) {
@@ -101,22 +96,41 @@ void SPPIFCode::getResult() {
     auto &pD = posSolver.covMatrix;
     auto &vD = velSolver.covMatrix;
     result.pdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2));
-    result.gdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2) + pD(3, 3) + pD(4, 4));
-
-    result.tdop = sqrt(pD(3, 3) + pD(4, 4));
+    // gdop / tdop：动态根据 varSet 中钟差参数的位置计算
+    {
+        double gdop_sq = result.pdop * result.pdop;  // PDOP²
+        double tdop_sq = 0.0;
+        int idx = 0;
+        for (const auto &v : posSolver.currentUnkSet) {
+            const auto p = v.getParaType();
+            if (p == Parameter::cdt || p == Parameter::cdt2 || p == Parameter::cdt3) {
+                tdop_sq += pD(idx, idx);
+                gdop_sq += pD(idx, idx);
+            }
+            idx++;
+        }
+        result.gdop = sqrt(gdop_sq);
+        result.tdop = sqrt(tdop_sq);
+    }
 
     result.sigmaP = result.pdop * posSolver.sigma0;
-    result.sigmaV = sqrt(vD(0, 0) + vD(1, 1) + vD(2, 2)) * velSolver.sigma0;
     result.sigmaXYZ = {
         sqrt(pD(0, 0)) * posSolver.sigma0,
         sqrt(pD(1, 1)) * posSolver.sigma0,
         sqrt(pD(2, 2)) * posSolver.sigma0
     };
-    result.sigmaVel = {
-        sqrt(vD(0, 0)) * velSolver.sigma0,
-        sqrt(vD(1, 1)) * velSolver.sigma0,
-        sqrt(vD(2, 2)) * velSolver.sigma0
-    };
+    if (vD.rows() >= 3) {
+        result.sigmaV = sqrt(vD(0, 0) + vD(1, 1) + vD(2, 2)) * velSolver.sigma0;
+        result.sigmaVel = {
+            sqrt(vD(0, 0)) * velSolver.sigma0,
+            sqrt(vD(1, 1)) * velSolver.sigma0,
+            sqrt(vD(2, 2)) * velSolver.sigma0
+        };
+    }
+    else {
+        result.sigmaV = 0.0;
+        result.sigmaVel = {0.0, 0.0, 0.0};
+    }
     result.xyz = xyz;
     result.vel = vel;
     result.blh = XYZtoBLH(xyz, frame);
@@ -201,8 +215,10 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     const Variable dx(obsData.station, Parameter::dX);
     const Variable dy(obsData.station, Parameter::dY);
     const Variable dz(obsData.station, Parameter::dZ);
-    const Variable cdt(obsData.station, Parameter::cdt);
-    const Variable cdt2(obsData.station, Parameter::cdt2);
+    // 各系统钟差 Variable，按需构造
+    std::map<char, Variable> cdtVars;
+    for (auto &[sys, param] : sysCdtParam)
+        cdtVars.try_emplace(sys, obsData.station, param);
     const Variable dvx(obsData.station, Parameter::dVX);
     const Variable dvy(obsData.station, Parameter::dVY);
     const Variable dvz(obsData.station, Parameter::dVZ);
@@ -215,7 +231,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         refHgt = BLH[2];
     }
 
-    bool hasGps = false, hasBds = false;
+    activeSystems.clear();
     int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
@@ -249,14 +265,13 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         }
 
         // IF 观测值有效性（同 computeSatPos 的兜底逻辑）
-        const bool isGps = (sat.system == 'G');
         const string ifType = ifTypeNames.at(sat.system);
         double obsVal = 0.0;
         if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
             obsVal = itObs->second;
         } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
-                   itRaw != codeList.end() && itRaw->second > 0.0) {
-            obsVal = itRaw->second;   // 单频兜底
+            itRaw != codeList.end() && itRaw->second > 0.0) {
+            obsVal = itRaw->second; // 单频兜底
         } else {
             satRejected.insert(sat);
             nRejIF++;
@@ -286,13 +301,12 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 
         // ---- 逐卫星构建方程 ----
         buildPosEquation(sat, pvt, los, rho, trop,
-                         ifType, obsVal, weight, dx, dy, dz, cdt, cdt2);
+                         ifType, obsVal, weight, dx, dy, dz, cdtVars[sat.system]);
         // 速度方程与位置方程共用同一个 LOS（接收机→卫星方向）
         buildVelEquation(sat, codeList, pvt, los, elev, weight,
                          dvx, dvy, dvz, dcdt);
 
-        if (isGps) hasGps = true;
-        else hasBds = true;
+        activeSystems.insert(sat.system);
         nPass++;
     }
 
@@ -300,8 +314,10 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     posEquations.varSet.insert(dx);
     posEquations.varSet.insert(dy);
     posEquations.varSet.insert(dz);
-    if (hasGps) posEquations.varSet.insert(cdt);
-    if (hasBds) posEquations.varSet.insert(cdt2);
+    for (char sys : activeSystems) {
+        if (auto it = cdtVars.find(sys); it != cdtVars.end())
+            posEquations.varSet.insert(it->second);
+    }
     velEquations.varSet.insert(dvx);
     velEquations.varSet.insert(dvy);
     velEquations.varSet.insert(dvz);
@@ -309,38 +325,28 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 }
 
 
-// ============================================================================
-// buildPosEquation — 单颗卫星的位置观测方程
-// ============================================================================
 void SPPIFCode::buildPosEquation(
     const SatID &sat, const PVT &pvt, const Vector3d &los,
     const double rho, const double trop,
     const std::string &obsType, const double obsVal, const double weight,
     const Variable &dx, const Variable &dy, const Variable &dz,
-    const Variable &cdt, const Variable &cdt2) {
-    const bool isGps = (sat.system == 'G');
+    const Variable &cdtVar) {
     const double dts = pvt.clockBias * C_MPS;
     const double rel = pvt.relativityCorrection * C_MPS;
 
     const EquID eid(sat, obsType);
     EquData ed;
-    ed.prefit = obsVal - (rho + (isGps ? rClockBias : rClockBiasBDS) - dts - rel + trop);
+    ed.prefit = obsVal - (rho + rClockBias[sat.system] - dts - rel + trop);
 
     ed.varCoeffData[dx] = los[0];
     ed.varCoeffData[dy] = los[1];
     ed.varCoeffData[dz] = los[2];
-    if (isGps)
-        ed.varCoeffData[cdt] = 1.0;
-    else
-        ed.varCoeffData[cdt2] = 1.0;
+    ed.varCoeffData[cdtVar] = 1.0;
 
     ed.weight = weight;
     posEquations.obsEquData[eid] = ed;
 }
 
-// ============================================================================
-// buildVelEquation — 单颗卫星的速度观测方程（多普勒 D1）
-// ============================================================================
 void SPPIFCode::buildVelEquation(
     const SatID &sat, const TypeValueMap &codeList,
     const PVT &pvt, const Vector3d &los,
@@ -351,7 +357,7 @@ void SPPIFCode::buildVelEquation(
     // 简单做法：找任何以 "D1" 开头的键。
     double dopplerVal = 0.0;
     bool found = false;
-    for (const auto &[k, v] : codeList) {
+    for (const auto &[k, v]: codeList) {
         if (k.size() >= 2 && k[0] == 'D' && k[1] == '1') {
             dopplerVal = v;
             found = true;
@@ -385,9 +391,6 @@ void SPPIFCode::buildVelEquation(
     velEquations.obsEquData[eidVel] = ed;
 }
 
-// ============================================================================
-// computeSatPos — 卫星位置计算（发射时刻）
-// ============================================================================
 void SPPIFCode::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
@@ -400,24 +403,63 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
             eph = itEph->second;
         }
 
-        const bool isGps = (sat.system == 'G');
         const string ifType = ifTypeNames[sat.system];
         double obsVal = 0.0;
         if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
             obsVal = itObs->second;
         } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
-                   itRaw != codeList.end() && itRaw->second > 0.0) {
+            itRaw != codeList.end() && itRaw->second > 0.0) {
             obsVal = itRaw->second;
         } else {
             continue;
         }
 
-        const double tau_total = (obsVal - (isGps ? rClockBias : rClockBiasBDS)) / C_MPS;
+        const double tau_total = (obsVal - rClockBias[sat.system]) / C_MPS;
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
         satPVTTransTime[sat] = eph->svPVT(std::move(t_emit));
     }
+}
+
+// 根据可用观测类型自动选择最佳 IF 双频组合
+IFCodeTypes SPPIFCode::autoDetectIFTypes(const std::map<char, std::vector<string> > &availableTypes) {
+    IFCodeTypes result;
+
+    for (const auto &[sys, types]: availableTypes) {
+        if (sys == 'G') {
+            // GPS: C1? + C2?
+            string c1, c2;
+            for (const auto &t: types) {
+                if (t.size() >= 2 && t[0] == 'C') {
+                    if (t[1] == '1' && c1.empty()) c1 = t;
+                    if (t[1] == '2' && c2.empty()) c2 = t;
+                }
+            }
+            if (!c1.empty() && !c2.empty()) result['G'] = {c1, c2};
+            LOG_INFO << "Auto-detected IF types for " << sys << ": " << c1 << "/" << c2;
+        } else if (sys == 'C') {
+            // BDS: C2?/C1? + C6? (全星座 B1+B3), fallback C7?+C6? (BDS-3)
+            string cl, c6;
+            for (const auto &t: types) {
+                if (t.size() >= 2 && t[0] == 'C') {
+                    if ((t[1] == '2' || t[1] == '1') && cl.empty()) cl = t;
+                    if (t[1] == '6' && c6.empty()) c6 = t;
+                }
+            }
+            if (cl.empty() || c6.empty()) {
+                for (const auto &t: types) {
+                    if (t.size() >= 2 && t[0] == 'C') {
+                        if (t[1] == '7' && cl.empty()) cl = t;
+                        if (t[1] == '6' && c6.empty()) c6 = t;
+                    }
+                }
+            }
+            if (!cl.empty() && !c6.empty()) result['C'] = {cl, c6};
+            LOG_INFO << "Auto-detected IF types for " << sys << ": " << cl << "/" << c6;
+        }
+    }
+    return result;
 }
 
 void SPPIFCode::computeIF(ObsData &obsData) {
@@ -432,8 +474,9 @@ void SPPIFCode::computeIF(ObsData &obsData) {
                 const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
                 const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
                 codeList[ifCode] = ifVal;
+            } else {
+                satRejected.insert(sat);
             }
-            // 缺频点时不直接 reject，让 linearize 阶段用单频兜底
         }
     }
 }

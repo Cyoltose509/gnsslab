@@ -6,6 +6,8 @@
 #include "EphemerisTable.h"
 #include <Eigen/Eigen>
 
+typedef std::map<char, std::pair<string, string> > IFCodeTypes;
+
 class SPPIFCode {
 public:
     void setStationAsBase() {
@@ -20,12 +22,16 @@ public:
         ephMap = ephs;
     }
 
-    void setIFCodeTypes(const std::map<char, std::pair<string, string> > &ifTypes) {
+    void setIFCodeTypes(const IFCodeTypes &ifTypes) {
         ifCodeTypes = ifTypes;
-        for (const auto &[sys, pair] : ifCodeTypes) {
+        for (const auto &[sys, pair]: ifCodeTypes) {
             ifTypeNames[sys] = "CC" + pair.first.substr(1, 1) + pair.second.substr(1, 1);
         }
     }
+
+    /// 自动检测 IF 码类型：根据可用观测类型选择最佳双频组合
+    /// GPS: C1? + C2?    BDS: C2?/C1? + C6? (fallback C7?+C6?)
+    static IFCodeTypes autoDetectIFTypes(const std::map<char, std::vector<string>> &availableTypes);
 
     void preprocess(ObsData &obsData);
 
@@ -64,20 +70,31 @@ protected:
     bool isRover = true;
     double sigIFCode = 0.3;
 
-    double rClockBias{};   // 接收机钟差 (GPS)
-    double rClockDrift{};  // 接收机钟漂
-    double rClockBiasBDS{};// 接收机钟差 (BDS)
+    double rClockDrift{}; // 接收机钟漂
+
+    /// 各系统钟差 [m]：key=系统标识(G=GPS, C=BDS, R=GLONASS, E=Galileo)
+    std::map<char, double> rClockBias{};
+
+    /// 系统→钟差参数映射（未来加 GLONASS：{'R', Parameter::cdt3}）
+    static inline std::map<char, Parameter> sysCdtParam = {
+        {'G', Parameter::cdt},
+        {'C', Parameter::cdt2},
+        {'R', Parameter::cdt3},  // GLONASS 预留
+    };
 
     EquSys posEquations{};
     EquSys velEquations{};
     SolverLSQ posSolver{};
     SolverLSQ velSolver{};
 
-    SatEphemerisMap ephMap{};           // 实时模式：指向 ObsData 中的星历（后向兼容）
-    EphemerisTable *ephTable = nullptr;  // 文件模式：指向外部星历表
+    SatEphemerisMap ephMap{}; // 实时模式：指向 ObsData 中的星历（后向兼容）
+    EphemerisTable *ephTable = nullptr; // 文件模式：指向外部星历表
 
     std::map<char, std::pair<string, string> > ifCodeTypes{};
-    std::map<char, std::string> ifTypeNames{};  // 预计算的 IF 类型名
+    std::map<char, std::string> ifTypeNames{}; // 预计算的 IF 类型名
+
+    /// 当前历元有卫星的系统集合（用于避免 query 未参解算系统的钟差参数）
+    std::set<char> activeSystems;
 
 private:
     /// 解算完成后计算每颗卫星的 Baarda w 统计量
@@ -87,16 +104,15 @@ private:
     void buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
                           double rho, double trop,
                           const string &obsType, double obsVal, double weight,
-                          const class Variable &dx, const class Variable &dy,
-                          const class Variable &dz, const class Variable &cdt,
-                          const class Variable &cdt2);
+                          const Variable &dx, const Variable &dy,
+                          const Variable &dz, const Variable &cdtVar);
 
     /// 构建单颗卫星的速度观测方程
     void buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
                           const PVT &pvt, const Vector3d &los,
                           double elev, double posWeight,
-                          const class Variable &dvx, const class Variable &dvy,
-                          const class Variable &dvz, const class Variable &dcdt);
+                          const Variable &dvx, const Variable &dvy,
+                          const Variable &dvz, const Variable &dcdt);
 
     /// 上一轮解算的标准化残差 |v|/σ₀ (SatID → 值)，用于粗差探测
     std::map<SatID, double> lastWStats_;
