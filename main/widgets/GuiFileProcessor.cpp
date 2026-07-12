@@ -99,10 +99,13 @@ namespace GuiFileProcessor {
                             try {
                                 LOG_INFO << "载入星历文件: " << navPath;
                                 navStore.loadFile(navPath, ephTable);
+                                LOG_INFO << "  成功 " << navPath
+                                         << " GPS=" << ephTable.gps.size()
+                                         << " BDS=" << ephTable.bds.size();
                                 navLoaded++;
                                 task->readProgress = navFracPerFile * static_cast<float>(navLoaded);
-                            } catch (const std::exception &) {
-                                // nav 文件解析失败不致命，继续
+                            } catch (const std::exception &e) {
+                                LOG_ERROR << "  解析失败 " << navPath << ": " << e.what();
                             }
                         }
                     }
@@ -606,6 +609,32 @@ namespace GuiFileProcessor {
                     ImPlot::EndPlot();
                 }
                 ImGui::Separator();
+
+                // --- 卫星后验残差时序图 ---
+                if (ImPlot::BeginPlot("卫星后验残差时序", ImVec2(-1, 400))) {
+                    ImPlot::SetupAxes("Epoch", "残差 (m)");
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, -15, 15, ImPlotCond_Once);
+                    if (newed) {
+                        ImPlot::SetupAxisLimits(ImAxis_X1, 0, times.empty() ? 10 : times.back(),
+                                                ImPlotCond_Always);
+                    }
+                    for (const auto &[satID, vals] : task->plotData.satResVals) {
+                        auto it = task->plotData.satResTimes.find(satID);
+                        if (it == task->plotData.satResTimes.end() || vals.empty()) continue;
+                        ImPlot::PlotLine(satID.toString().c_str(),
+                                         it->second.data(), vals.data(),
+                                         static_cast<int>(vals.size()));
+                    }
+                    if (selectedIdx >= 0 && selectedIdx < static_cast<int>(times.size())) {
+                        double curTime = times[selectedIdx];
+                        if (ImPlot::DragLineX(1, &curTime, ImVec4(255, 0, 0, 255))) {
+                            task->selectedEpoch = static_cast<int>(std::clamp(curTime, 0.0, times.back()));
+                        }
+                    }
+                    ImPlot::EndPlot();
+                }
+                ImGui::Separator();
+
                 if (ImGui::BeginTable("##main_split", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
                     ImGui::TableSetupColumn("LeftPanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);
                     ImGui::TableSetupColumn("MiddlePanel", ImGuiTableColumnFlags_WidthStretch, 0.33f);

@@ -46,6 +46,10 @@ namespace GuiFileProcessor {
         std::vector<double> enu_u;
         bool newed = false;
 
+        /// 每颗卫星的后验残差时序：satResTimes[satID] 和 satResVals[satID] 一一对应
+        std::map<SatID, std::vector<double>> satResTimes;
+        std::map<SatID, std::vector<double>> satResVals;
+
         void insert(const int index, const SppEpochData &ep, const ENU &refECEF) {
             times.push_back(index);
             const auto &result = ep.sppResult;
@@ -62,6 +66,13 @@ namespace GuiFileProcessor {
                 enu_e.push_back(0);
                 enu_n.push_back(0);
                 enu_u.push_back(0);
+            }
+            // 记录各卫星后验残差
+            if (solved) {
+                for (const auto &[satID, res]: result.postRes) {
+                    satResTimes[satID].push_back(index);
+                    satResVals[satID].push_back(res);
+                }
             }
             newed = true;
         }
@@ -90,6 +101,8 @@ namespace GuiFileProcessor {
             enu_e.clear();
             enu_n.clear();
             enu_u.clear();
+            satResTimes.clear();
+            satResVals.clear();
         }
     };
 

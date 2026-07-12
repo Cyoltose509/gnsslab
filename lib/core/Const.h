@@ -6,14 +6,15 @@
 
 
 using namespace std;
-
-//  PI
+/// Baarda w 检验阈值 (α=0.001)
+static constexpr double W_THRESHOLD = 3.29;
+///  PI
 constexpr double PI = 3.141592653589793238462643383280;
-// m/s, speed of light; this value defined by GPS but applies to GAL and GLO.
+/// m/s, speed of light; this value defined by GPS but applies to GAL and GLO.
 constexpr double C_MPS = 2.99792458e8;
-// Conversion Factor from degrees to radians (unit: degrees^-1)
+/// Conversion Factor from degrees to radians (unit: degrees^-1)
 static constexpr double DEG_TO_RAD = 1.745329251994329576923691e-2;
-// Conversion Factor from radians to degrees (unit: degrees)
+/// Conversion Factor from radians to degrees (unit: degrees)
 static constexpr double RAD_TO_DEG = 57.29577951308232087679815;
 /// relativity constant (sec/sqrt(m))
 constexpr double REL_CONST = -4.442807633e-10;
@@ -50,7 +51,7 @@ constexpr long MS_PER_DAY = MS_PER_SEC * SEC_PER_DAY;
 /// Days per milliseconds.
 constexpr double DAY_PER_MS = 1.0 / MS_PER_DAY;
 
-// Nominal mean angular velocity of the Earth (rad/s)
+/// Nominal mean angular velocity of the Earth (rad/s)
 constexpr double OMEGA_EARTH = 7.292115e-5;
 
 constexpr double RADIUS_EARTH = 6378137.0;
@@ -84,26 +85,26 @@ constexpr long BDS_EPOCH_MJD = 53736L;
 constexpr long BDS_WEEK_PER_EPOCH = 8192L;
 
 
-// GPS L1 carrier frequency in Hz
+/// GPS L1 carrier frequency in Hz
 constexpr double L1_FREQ_GPS = 1575.42e6;
-// GPS L2 carrier frequency in Hz
+/// GPS L2 carrier frequency in Hz
 constexpr double L2_FREQ_GPS = 1227.60e6;
-// GPS L5 carrier frequency in Hz
+/// GPS L5 carrier frequency in Hz
 constexpr double L5_FREQ_GPS = 1176.45e6;
 
-// GPS L1 carrier wavelength in meters
+/// GPS L1 carrier wavelength in meters
 constexpr double L1_WAVELENGTH_GPS = 0.190293672798;
-// GPS L2 carrier wavelength in meters
+/// GPS L2 carrier wavelength in meters
 constexpr double L2_WAVELENGTH_GPS = 0.244210213425;
-// GPS L5 carrier wavelength in meters
+/// GPS L5 carrier wavelength in meters
 constexpr double L5_WAVELENGTH_GPS = 0.254828048791;
 
-constexpr double L5_FREQ_BDS = 1176.450e6; // B2a (BDS-3)
-constexpr double L8_FREQ_BDS = 1191.795e6; // B2=B21+B2b/2
-constexpr double L7_FREQ_BDS = 1207.140e6; // B2b (BDS-3/BDS-2)
-constexpr double L6_FREQ_BDS = 1268.520e6; // B3  (BDS-3/BDS-2)
-constexpr double L2_FREQ_BDS = 1561.098e6; // B1I (BDS-3/BDS-2)
-constexpr double L1_FREQ_BDS = 1575.420e6; // B1C (BDS-3)
+constexpr double L5_FREQ_BDS = 1176.450e6; /// B2a (BDS-3)
+constexpr double L8_FREQ_BDS = 1191.795e6; /// B2=B21+B2b/2
+constexpr double L7_FREQ_BDS = 1207.140e6; /// B2b (BDS-3/BDS-2)
+constexpr double L6_FREQ_BDS = 1268.520e6; /// B3  (BDS-3/BDS-2)
+constexpr double L2_FREQ_BDS = 1561.098e6; /// B1I (BDS-3/BDS-2)
+constexpr double L1_FREQ_BDS = 1575.420e6; /// B1C (BDS-3)
 
 constexpr double L1_WAVELENGTH_BDS = C_MPS / L1_FREQ_BDS;
 constexpr double L2_WAVELENGTH_BDS = C_MPS / L2_FREQ_BDS;
@@ -216,7 +217,7 @@ constexpr SatType getSatType(const char sys, const int prn, const bool old = fal
         case 'G': return SatType::MEO;
         case 'C': {
             if (prn >= 1 && prn <= 4) return SatType::GEO;
-            if (prn >= 59 && prn <= 62) return SatType::GEO;//假的，但是我就这样写了
+            if (prn >= 59 && prn <= 62) return SatType::GEO;
             if (prn >= 6 && prn <= 10) return SatType::IGSO;
             return SatType::MEO;
         }

@@ -47,13 +47,13 @@ void OEM7Reader::readAll(std::vector<ObsData> &epochs,
         if (progress) progress->store(this->progress());
         if (!parseMessage(message)) continue;
 
-        // 仅星历消息才更新星历表
+        // 仅星历消息才更新星历表（每颗星只保留最近广播的一条，逐历元快照）
         if (currentHeader.type == ID_GPSEPHEM) {
             for (const auto &[prn, eph]: latestGps)
-                currentTable.gps[prn] = std::make_shared<GPSEphem>(eph);
+                currentTable.gps[prn] = {std::make_shared<GPSEphem>(eph)};
         } else if (currentHeader.type == ID_BDSEPHEMRIS) {
             for (const auto &[prn, eph]: latestBds)
-                currentTable.bds[prn] = std::make_shared<BDSEphem>(eph);
+                currentTable.bds[prn] = {std::make_shared<BDSEphem>(eph)};
         }
 
         // RANGE 观测：存为历元，同时快照此刻的星历表

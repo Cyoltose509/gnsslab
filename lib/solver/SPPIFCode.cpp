@@ -10,11 +10,6 @@ void SPPIFCode::preprocess(ObsData &obsData) {
     computeIF(obsData);
 }
 
-// ============================================================================
-// solve — 主解算流程
-//   每轮迭代：卫星位置 → 地球自转 → 高度角 → 位置方程 → 速度方程 → LSQ
-//   粗差探测通过 Baarda w 检验自动在 buildPosEquations 中处理
-// ============================================================================
 void SPPIFCode::solve(ObsData &obsData) {
     xyz = obsData.antennaPosition;
     result.reset();
@@ -23,12 +18,8 @@ void SPPIFCode::solve(ObsData &obsData) {
     int iter(0);
     double last_rms = 1e9;
     while (iter < 10) {
-        // 卫星位置（Kepler 轨道）只在第 1 轮计算，后续迭代复用：
-        // 迭代间接收机位置变化 < 100m → 卫星位置变化 < 0.1m，对 SPP 精度无影响
-        if (iter == 0) {
-            computeSatPos(obsData);
-            earthRotation();
-        }
+        computeSatPos(obsData);
+        earthRotation();
 
         if (obsData.satTypeValueData.size() < 4) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
@@ -102,8 +93,7 @@ void SPPIFCode::getResult() {
         double tdop_sq = 0.0;
         int idx = 0;
         for (const auto &v : posSolver.currentUnkSet) {
-            const auto p = v.getParaType();
-            if (p == Parameter::cdt || p == Parameter::cdt2 || p == Parameter::cdt3) {
+            if (const auto p = v.getParaType(); p == Parameter::cdt || p == Parameter::cdt2 || p == Parameter::cdt3) {
                 tdop_sq += pD(idx, idx);
                 gdop_sq += pD(idx, idx);
             }
@@ -165,15 +155,14 @@ void SPPIFCode::buildResidualMap() {
 
         const double v = posSolver.v[i];
         const double w = data.weight;
-        const double invW = (w > 0.0) ? 1.0 / w : 0.0;
+        const double invW = w > 0.0 ? 1.0 / w : 0.0;
 
         // 设计矩阵第 i 行 (1 × numUnk)
         const auto hRow = posSolver.hMatrix.row(i);
 
         // q_vv = P⁻¹_ii - h_i · N⁻¹ · h_iᵀ
-        const double qvv = invW - (hRow * Ninv * hRow.transpose())(0, 0);
 
-        if (qvv > 0.0) {
+        if (const double qvv = invW - (hRow * Ninv * hRow.transpose())(0, 0); qvv > 0.0) {
             const double wStat = std::abs(v) / (sigma0 * std::sqrt(qvv));
             lastWStats_[eid.sat] = wStat;
         }
@@ -182,19 +171,12 @@ void SPPIFCode::buildResidualMap() {
     }
 }
 
-// ============================================================================
-// linearize — 单次遍历所有卫星，完成拒绝检查 + 共享几何计算 + 组装观测方程
-// ============================================================================
 void SPPIFCode::linearize(ObsData &obsData, const int iter) {
-    static constexpr double W_THRESHOLD = 3.29; // Baarda w 检验阈值 (α=0.001)
-
-    // 前 2 轮跳过 w 检验：此时位置可能远未收敛
-    const bool applyWTest = (iter >= 2);
 
     // ---- 先找本轮最可疑的卫星（w 统计量最大），只剔除一颗 ----
     SatID outlierSat;
     double worstW = 0.0;
-    if (applyWTest) {
+    if (iter >= 2) {
         for (auto const &[sat, codeList]: obsData.satTypeValueData) {
             if (satRejected.count(sat)) continue;
             if (auto itW = lastWStats_.find(sat);
@@ -204,7 +186,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
             }
         }
     }
-    const bool rejectOutlier = (worstW > W_THRESHOLD);
+    const bool rejectOutlier = worstW > W_THRESHOLD;
 
     posEquations.reset();
     velEquations.reset();
@@ -233,13 +215,16 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 
     activeSystems.clear();
     int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
+    static int dbgCnt = 0;  // 仅前几个历元输出拒绝原因
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        // ---- 拒绝检查 ----
-        if (satRejected.count(sat)) continue;
-
         // 只处理配置了 IF 类型的系统（GPS / BDS）
         if (!ifTypeNames.count(sat.system)) continue;
+
+        // ---- 拒绝检查 ----
+        if (satRejected.count(sat)) {
+            continue;
+        }
 
         if (!satPVTRecTime.count(sat)) {
             satRejected.insert(sat);
@@ -248,7 +233,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
         }
         const auto &pvt = satPVTRecTime.at(sat);
 
-        // Baarda w 检验：只剔除本轮最可疑的一颗卫星，避免异常星污染整个解
+        // Baarda w 检验
         if (rejectOutlier && sat == outlierSat) {
             satRejected.insert(sat);
             continue;
@@ -264,14 +249,14 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
             continue;
         }
 
-        // IF 观测值有效性（同 computeSatPos 的兜底逻辑）
+        // IF 观测值有效性
         const string ifType = ifTypeNames.at(sat.system);
         double obsVal = 0.0;
         if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
             obsVal = itObs->second;
         } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
             itRaw != codeList.end() && itRaw->second > 0.0) {
-            obsVal = itRaw->second; // 单频兜底
+            obsVal = itRaw->second;
         } else {
             satRejected.insert(sat);
             nRejIF++;
@@ -308,9 +293,8 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 
         activeSystems.insert(sat.system);
         nPass++;
+        dbgCnt++;
     }
-
-    // ---- varSet 统一插入（只做一次，不在循环内重复） ----
     posEquations.varSet.insert(dx);
     posEquations.varSet.insert(dy);
     posEquations.varSet.insert(dz);
@@ -345,6 +329,8 @@ void SPPIFCode::buildPosEquation(
 
     ed.weight = weight;
     posEquations.obsEquData[eid] = ed;
+
+
 }
 
 void SPPIFCode::buildVelEquation(
@@ -396,7 +382,7 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         if (!ifTypeNames.count(sat.system)) continue;
 
-        Ephemeris *eph = ephTable ? ephTable->find(sat) : nullptr;
+        Ephemeris *eph = ephTable ? ephTable->find(sat, obsData.epoch) : nullptr;
         if (!eph) {
             auto itEph = ephMap.find(sat);
             if (itEph == ephMap.end()) continue;
@@ -502,8 +488,10 @@ void SPPIFCode::earthRotation() {
 }
 
 void SPPIFCode::computeElevAzim() {
+    static int cnt = 0;
     for (auto const &[sat, pvt]: satPVTRecTime) {
         satElevData[sat] = elevation(xyz, pvt.p, frame);
         satAzimData[sat] = azimuth(xyz, pvt.p, frame);
     }
+    cnt++;
 }

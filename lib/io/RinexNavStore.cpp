@@ -48,8 +48,8 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     CommonTime ctToc = parseEpoch(line, TimeSystem::GPS);
     WeekSecond ws;
     CommonTime2WeekSecond(ctToc, ws);
-    eph.toe = ws.sow;
-    eph.week = ws.week; // 从 TOC 时间推算，不依赖数据字段
+    eph.toc = ws.sow;                          // 时间钟参数 (TOC)
+    eph.week = ws.week;                        // 从 TOC 时间推算
 
     eph.a0 = safeStod(line.substr(23, 19));
     eph.a1 = safeStod(line.substr(42, 19));
@@ -58,7 +58,7 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     // 读 7 行轨道参数（每行 4 个字段，各 19 列宽，起始列 4）
     double IODE, Crs, Delta_n, M0;
     double Cuc, ecc, Cus, sqrt_A;
-    double Toc, Cic, OMEGA_0, Cis;
+    double Toe, Cic, OMEGA_0, Cis;
     double i0, Crc, omega, OMEGA_DOT;
     double IDOT, L2Codes, GPSWeek, L2Pflag;
     double URA, SV_health, TGD, IODC;
@@ -80,7 +80,7 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     }
     {
         string l = nextLine(navFile);
-        Toc = safeStod(l.substr(4, 19));
+        Toe = safeStod(l.substr(4, 19));
         Cic = safeStod(l.substr(23, 19));
         OMEGA_0 = safeStod(l.substr(42, 19));
         Cis = safeStod(l.substr(61, 19));
@@ -113,8 +113,8 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     }
 
     // ---- 填入 GPSEphem 字段 ----
-    // eph.week already set from ws.week above (TOC time)
-    eph.toc = Toc;
+    // eph.week / eph.toc already set from ws above
+    eph.toe = Toe;
     eph.m0 = M0;
     eph.e = ecc;
     eph.rootA = sqrt_A;
@@ -155,7 +155,8 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     CommonTime ctToc = parseEpoch(line, TimeSystem::BDT);
     WeekSecond ws;
     CommonTime2WeekSecond(ctToc, ws);
-    eph.toe = ws.sow;
+    eph.toc = ws.sow;
+    eph.week = ws.week;
 
     eph.a0 = safeStod(line.substr(23, 19));
     eph.a1 = safeStod(line.substr(42, 19));
@@ -164,7 +165,7 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     // 行 1-4：轨道参数（与 GPS 完全相同的字段布局）
     double IODE, Crs, Delta_n, M0;
     double Cuc, ecc, Cus, sqrt_A;
-    double Toc, Cic, OMEGA_0, Cis;
+    double Toe, Cic, OMEGA_0, Cis;
     double i0, Crc, omega, OMEGA_DOT;
 
     {
@@ -183,7 +184,7 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     }
     {
         string l = nextLine(navFile);
-        Toc = safeStod(l.substr(4, 19));
+        Toe = safeStod(l.substr(4, 19));
         Cic = safeStod(l.substr(23, 19));
         OMEGA_0 = safeStod(l.substr(42, 19));
         Cis = safeStod(l.substr(61, 19));
@@ -206,13 +207,22 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     double SatH1 = safeStod(l6.substr(4, 19));
     double TGD1 = safeStod(l6.substr(23, 19));
     double TGD2 = safeStod(l6.substr(42, 19));
+    double TGD3 = safeStod(l6.substr(61, 19));  // 第 4 字段
+    // 部分 RINEX 文件（如 NovAtel 转换产物）在 SatH1 与 TGD 之间多出一个占位字段，
+    // 导致标准 TGD1 列读到 0、真正的 B1/B3 群时延落在 TGD2/TGD3 列。
+    // 此时用 TGD2、TGD3 作为真正的 B1/B3、B2/B3 群时延；
+    // 标准文件 TGD1 非零，仍走原逻辑。
+    bool shifted = (fabs(TGD1) < 1e-12) && (fabs(TGD2) > 1e-12 || fabs(TGD3) > 1e-12);
+    double tgdB1 = shifted ? TGD2 : TGD1;   // B1/B3 群时延
+    double tgdB2 = shifted ? TGD3 : TGD2;   // B2/B3 群时延
 
     // 行 7：(blank) × 4 — 跳过
     nextLine(navFile);
 
     // ---- 填入 BDSEphem 字段 ----
-    eph.week = static_cast<unsigned int>(BDSWeek);
-    eph.toc = Toc;
+    //eph.week = static_cast<unsigned int>(BDSWeek);
+    // eph.toc already set from ws.sow above
+    eph.toe = Toe;
     eph.m0 = M0;
     eph.e = ecc;
     eph.rootA = sqrt_A;
@@ -232,8 +242,8 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     eph.ura = 2.0; // RINEX BDS 无直接 URA 字段
     eph.AODE = static_cast<unsigned int>(IODE);
     eph.AODC = static_cast<unsigned int>(IODE); // 近似等同 AODE
-    eph.tgd1 = TGD1;
-    eph.tgd2 = TGD2;
+    eph.tgd1 = tgdB1;
+    eph.tgd2 = tgdB2;
 }
 
 // ============================================================================
@@ -309,11 +319,11 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         if (line[0] == 'G') {
             auto eph = std::make_shared<GPSEphem>();
             loadGPSEph(*eph, line, navFileStream);
-            ephTable.gps[eph->prn] = eph;
+            ephTable.gps[eph->prn].push_back(eph);   // 保留同一卫星的多条星历（不同 toe）
         } else if (line[0] == 'C') {
             auto eph = std::make_shared<BDSEphem>();
             loadBDSEph(*eph, line, navFileStream);
-            ephTable.bds[eph->prn] = eph;
+            ephTable.bds[eph->prn].push_back(eph);   // 保留同一卫星的多条星历（不同 toe）
         }
 
         // R/GLONASS、E/Galileo —— 暂未实现
