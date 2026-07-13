@@ -34,13 +34,13 @@ public:
     /// GPS: C1? + C2?    BDS: C2?/C1? + C6? (fallback C7?+C6?)
     static IFCodeTypes autoDetectIFTypes(const std::map<char, std::vector<string>> &availableTypes);
 
-    void preprocess(ObsData &obsData);
+    virtual void preprocess(ObsData &obsData);
 
-    void solve(ObsData &obsData);
+    virtual void solve(ObsData &obsData);
 
-    void getResult();
+    virtual void getResult();
 
-    void computeSatPos(ObsData &obsData);
+    virtual void computeSatPos(ObsData &obsData);
 
     void computeElevAzim();
 
@@ -48,10 +48,16 @@ public:
 
     void earthRotation();
 
-    void linearize(ObsData &obsData, int iter);
+    virtual void linearize(ObsData &obsData, int iter);
 
     void setFrame(const FrameInfo &f) {
         frame = f;
+    }
+
+    /// IF-code 解算的结果位置和钟差，供 UC 模式热启动
+    double getClockBias(char sys) const {
+        auto it = rClockBias.find(sys);
+        return it != rClockBias.end() ? it->second : 0.0;
     }
 
     ~SPPIFCode() = default;
@@ -96,26 +102,24 @@ protected:
     /// 当前历元有卫星的系统集合
     std::set<char> activeSystems;
 
-private:
+    /// 上一轮解算的标准化残差和原始残差，用于粗差探测
+    std::map<SatID, double> lastWStats_;
+    std::map<SatID, double> lastResidMag_;
+
     /// 解算完成后计算每颗卫星的 Baarda w 统计量
-    void buildResidualMap();
+    virtual void buildResidualMap();
 
-    /// 构建单颗卫星的位置观测方程
-    void buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
-                          double rho, double trop,
-                          const string &obsType, double obsVal, double weight,
-                          const Variable &dx, const Variable &dy,
-                          const Variable &dz, const Variable &cdtVar);
-
-    /// 构建单颗卫星的速度观测方程
     void buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
                           const PVT &pvt, const Vector3d &los,
                           double elev, double posWeight,
                           const Variable &dvx, const Variable &dvy,
                           const Variable &dvz, const Variable &dcdt);
 
-    /// 上一轮解算的标准化残差 |v|/σ₀ (SatID → 值)，用于粗差探测
-    std::map<SatID, double> lastWStats_;
-    /// 上一轮解算的原始残差绝对值 (SatID → |v|)，用于整星座一致性校验
-    std::map<SatID, double> lastResidMag_;
+private:
+    /// 构建单颗卫星的位置观测方程（IF 组合）
+    void buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
+                          double rho, double trop,
+                          const string &obsType, double obsVal, double weight,
+                          const Variable &dx, const Variable &dy,
+                          const Variable &dz, const Variable &cdtVar);
 };

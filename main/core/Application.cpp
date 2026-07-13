@@ -235,14 +235,21 @@ void Application::OpenOem7File()
     auto task = std::make_shared<GuiFileProcessor::SppTask>();
     task->filePath = filePath;
     task->fileName = fileName;
-    task->isRealtime = false;
-    task->loading = true;
 
-    task->worker = std::thread(GuiFileProcessor::SolveThread, task);
+    // RINEX: 扫描并列出伴生星历文件
+    if (filePath.size() >= 4 && std::isdigit(static_cast<unsigned char>(filePath[filePath.size()-3])) &&
+        std::toupper(filePath.back()) == 'O') {
+        task->navFiles = GuiFileProcessor::ScanNavFiles(filePath);
+    }
+
+    // 进入配置面板，等用户点击"开始处理"后才启动线程
+    task->state = GuiFileProcessor::SppTask::State::Config;
+    task->loading = false;
+    task->done = false;
 
     m_tasks.push_back(task);
     m_activeTask = static_cast<int>(m_tasks.size()) - 1;
-    m_taskToFocus = m_activeTask; // 设置选中标记
+    m_taskToFocus = m_activeTask;
 }
 
 void Application::ConnectToRealtime()

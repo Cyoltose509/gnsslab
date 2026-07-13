@@ -7,12 +7,13 @@
 #include <atomic>
 #include <mutex>
 
-struct HWND__; //NOLINT
+struct HWND__;
 typedef HWND__ *HWND;
 
 #include "GnssStruct.h"
 #include "SPPIFCode.h"
 #include "CoordConvert.h"
+#include "QualityControl.h"
 
 namespace GuiFileProcessor {
     struct SppEpochData {
@@ -31,7 +32,6 @@ namespace GuiFileProcessor {
         int numSatsResult;
 
         void getFromSPP(const SPPIFCode &spp);
-
         void getFromObs(const ObsData &obs);
     };
 
@@ -45,63 +45,20 @@ namespace GuiFileProcessor {
         std::vector<double> enu_u;
         bool newed = false;
 
+        // 后验残差图的稳健 Y 轴范围（解算完成后按数据计算一次，避免个别粗差把图压扁）
+        bool resRangeReady = false;
+        double resYlo = -8.0, resYhi = 8.0;
+
         std::map<SatID, std::vector<double>> satResTimes;
         std::map<SatID, std::vector<double>> satResVals;
 
-        void insert(const int index, const SppEpochData &ep, const ENU &refECEF) {
-            times.push_back(index);
-            const auto &result = ep.sppResult;
-            const bool solved = ep.solved;
-            sigmaPs.push_back(solved ? result.sigmaP : 0.0);
-            sigmaVs.push_back(solved ? result.sigmaV : 0.0);
-            pdops.push_back(solved ? result.pdop : 0.0);
-            if (solved) {
-                auto enu = XYZtoENU(result.xyz, refECEF);
-                enu_e.push_back(enu[0]);
-                enu_n.push_back(enu[1]);
-                enu_u.push_back(enu[2]);
-            } else {
-                enu_e.push_back(0);
-                enu_n.push_back(0);
-                enu_u.push_back(0);
-            }
-            if (solved) {
-                for (const auto &[satID, res]: result.postRes) {
-                    satResTimes[satID].push_back(index);
-                    satResVals[satID].push_back(res);
-                }
-            }
-            newed = true;
-        }
-
-        void refreshENU(const std::vector<SppEpochData> &ep, const ENU &refECEF) {
-            for (int i = 0; i < enu_e.size(); i++) {
-                const auto &result = ep[i].sppResult;
-                if (ep[i].solved) {
-                    auto enu = XYZtoENU(result.xyz, refECEF);
-                    enu_e[i] = enu[0];
-                    enu_n[i] = enu[1];
-                    enu_u[i] = enu[2];
-                } else {
-                    enu_e[i] = 0;
-                    enu_n[i] = 0;
-                    enu_u[i] = 0;
-                }
-            }
-        }
-
-        void clear() {
-            times.clear();
-            sigmaPs.clear();
-            sigmaVs.clear();
-            pdops.clear();
-            enu_e.clear();
-            enu_n.clear();
-            enu_u.clear();
-            satResTimes.clear();
-            satResVals.clear();
-        }
+        void insert(int index, const SppEpochData &ep, const XYZ &refECEF);
+        void refreshENU(const std::vector<SppEpochData> &ep, const XYZ &refECEF);
+        void clear();
     };
+
+    /// 扫描 RINEX obs 同目录下的伴生导航文件
+    std::vector<std::string> ScanNavFiles(const std::string &obsPath);
 
     struct SppTask {
         std::string filePath;
@@ -128,16 +85,28 @@ namespace GuiFileProcessor {
 
         int selectedEpoch = -1;
         int selectedSatIdx = -1;
-
         std::string errorMsg;
+
+        // ---- 配置（在解算开始前由 GUI 设定） ----
+        enum class State { Config, Running, Done };
+        std::atomic<State> state{State::Config};
+        bool useIF = true;                // true=IF 载波相位, false=IF-code 纯伪距
+        bool useKalman = true;           // true=Kalman 滤波, false=LSQ
+        std::set<char> enabledSystems{'G', 'C'};
+        std::vector<std::string> navFiles;  // RINEX 伴生文件列表（含状态标记）
+
+        // ---- 质量分析缓存 ----
+        bool qcReady = false;
+        long qcEpochCount = 0;
+        QualityReport qcReport;
+
         ~SppTask() { stop = true; }
     };
 
     void SolveThread(const std::shared_ptr<SppTask> &task);
-
     void RenderTask(const std::shared_ptr<SppTask> &task, bool isRealtime = false);
-
     std::string ShowOpenFileDialog(HWND hwnd);
-
     void ExportCsv(const std::shared_ptr<SppTask> &task, HWND hwnd);
+
+    void RenderConfigPanel(const std::shared_ptr<SppTask> &task);
 } // namespace GuiFileProcessor

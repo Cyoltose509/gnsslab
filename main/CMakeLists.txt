@@ -36,6 +36,7 @@ add_executable(GnssLab WIN32
         widgets/GuiLsqSolver.cpp
         widgets/GuiFileProcessor.cpp
         widgets/GuiRealtimeProcessor.cpp
+        widgets/QualityControl.cpp
     ${GNSSLAB_RESOURCES}
 )
 

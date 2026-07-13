@@ -26,10 +26,21 @@ set(LIB_SOURCES
         io/RinexNavStore.cpp
         solver/SPPIFCode.h
         solver/SPPIFCode.cpp
+        solver/SPPCodePhase.h
+        solver/SPPCodePhase.cpp
         solver/SolverLSQ.h
         solver/SolverLSQ.cpp
+        solver/KalmanFilter.h
+        solver/KalmanFilter.cpp
+        solver/SolverKalman.h
+        solver/SolverKalman.cpp
+        solver/ARLambda.h
+        solver/ARLambda.cpp
+        qc/QCProcessor.h
+        qc/QCProcessor.cpp
         util/StringUtils.h
         util/Exception.h
+        util/MathUtils.h
         util/Log.h
         util/Log.cpp
 )
@@ -44,6 +55,7 @@ target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/coord
         ${CMAKE_CURRENT_SOURCE_DIR}/io
         ${CMAKE_CURRENT_SOURCE_DIR}/solver
+        ${CMAKE_CURRENT_SOURCE_DIR}/qc
         ${CMAKE_CURRENT_SOURCE_DIR}/util
 )
 
