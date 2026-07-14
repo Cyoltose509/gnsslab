@@ -42,6 +42,7 @@ void OEM7Reader::close() {
 void OEM7Reader::readAll(std::vector<ObsData> &epochs,
                          std::vector<EphemerisTable> &ephSnapshots,
                          std::atomic<float> *progress) {
+    availableTypes_.clear();   // 重新统计本文件的可用观测量类型
     EphemerisTable currentTable;
     std::vector<uint8_t> message;
     while (getNextMessage(message)) {
@@ -212,6 +213,13 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             SatID sat(sys, prn);
             std::string s_f = std::to_string(freqIdx);
             currentObs.satTypeValueData[sat]["C" + s_f] = codeLocked ? psr : 0;
+            // 收集各系统实际出现的 C 类观测量代码，供上层 SPPIFCode::setIFCodeTypesAuto 自动选 IF 组合
+            {
+                const std::string ctype = "C" + s_f;
+                std::vector<std::string> &vec = availableTypes_[sys];
+                if (std::find(vec.begin(), vec.end(), ctype) == vec.end())
+                    vec.push_back(ctype);
+            }
             // OEM7 RANGE 的 adr 为「载波相位周数(cycles)」，而本工程管道(RINEX 读取、QC 与
             // SPP 解算)统一约定相位以「米(meters)」存储，且与伪距同号(均≈+几何距离 ρ)。故需：
             //   1) cycles × 波长 → 米；

@@ -406,7 +406,7 @@ void SPPIFCode::computeSatPos(ObsData &obsData) {
     }
 }
 
-IFCodeTypes SPPIFCode::autoDetectIFTypes(const std::map<char, std::vector<string> > &availableTypes) {
+IFCodeTypes SPPIFCode::detectIFTypes(const std::map<char, std::vector<string>> &availableTypes) {
     IFCodeTypes result;
 
     for (const auto &[sys, types]: availableTypes) {
@@ -441,6 +441,17 @@ IFCodeTypes SPPIFCode::autoDetectIFTypes(const std::map<char, std::vector<string
         }
     }
     return result;
+}
+
+void SPPIFCode::setIFCodeTypesAuto(const std::map<char, std::vector<string>> &availableTypes,
+                                   const IFCodeTypes &defaultTypes) {
+    IFCodeTypes detected = detectIFTypes(availableTypes);
+    if (detected.empty()) {
+        LOG_WARN << "未检测到可用的 IF 组合，回退到默认值";
+        setIFCodeTypes(defaultTypes);
+    } else {
+        setIFCodeTypes(detected);
+    }
 }
 
 void SPPIFCode::computeIF(ObsData &obsData) {

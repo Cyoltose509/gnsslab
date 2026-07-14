@@ -24,7 +24,6 @@
 #include <vector>
 #include <map>
 #include <string>
-#include <functional>
 #include "GnssStruct.h"   // SatID, TypeValueMap
 
 namespace QC {
@@ -73,9 +72,6 @@ struct SatQC {
     // 与 RTKLIB 对齐：SNR/EL/AZ 序列及统计
     std::vector<double> snr;      // dB-Hz, 与 t 对齐 (选中频点的 SNR)
     double snrMean = 0, snrMin = 0, snrMax = 0;
-    std::vector<double> elev;     // deg
-    std::vector<double> azim;     // deg
-    double elevMean = 0, elevMin = 0, elevMax = 0;
 };
 
 struct QualityReport {
@@ -91,22 +87,14 @@ struct QualityReport {
     std::map<char, double> sysSigRho, sysSigPhase;
     std::map<char, int> sysSlips, sysIonoJumps;
 
-    // 与 RTKLIB 对齐：系统级 SNR/EL/DOP/Nsat 聚合
-    std::map<char, double> sysSnr, sysElev;
-    std::map<char, int> sysNsat;
-    std::vector<double> t;          // sow (用于 DOP/Nsat 时序图)
-    std::vector<double> gdop, pdop, hdop, vdop;
-    std::vector<int> nsat;
-    double overallSnr = 0, overallElev = 0;
-    int overallNsat = 0;
-    double overallPDOP = 0, overallHDOP = 0, overallVDOP = 0, overallGDOP = 0;
+    std::map<char, double> sysSnr;
+    double overallSnr = 0;
 
     double overallCompleteness = 0;
 };
 
-/// 从逐历元观测数据计算质量分析报告
-/// @param progress 可选进度回调（0..1），由 UI 后台线程用于驱动进度条；不传则不报告。
-QualityReport compute(const std::vector<QCObsEpoch> &epochs,
-                      std::function<void(double)> progress = {});
+/// 从逐历元观测数据计算质量分析报告。
+/// 纯计算、无 GUI / 线程 / 进度回调依赖——进度展示完全由调用方（UI 层）负责。
+QualityReport compute(const std::vector<QCObsEpoch> &epochs);
 
 } // namespace QC

@@ -1,10 +1,20 @@
-
 #pragma once
 
 #include <iostream>
 #include <string>
 #include <stdexcept> // For std::invalid_argument and std::out_of_range
 #include <limits>    // For std::numeric_limits<double>::max()
+
+// 本文件直接使用 Win32 API（MultiByteToWideChar / CP_UTF8 等），需自行包含，
+// 不依赖调用方的间接包含；WIN32_LEAN_AND_MEAN 避免拉入 COM 头（其定义的全局 byte
+// 会与 std::byte 冲突），NOMINMAX 与本文件 std::min/std::max 用法一致。
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 using namespace std;
 
@@ -21,7 +31,7 @@ inline string strip(std::string s) {
     return s;
 }
 
-inline std::string& stripTrailing(std::string& line) {
+inline std::string &stripTrailing(std::string &line) {
     if (const size_t end = line.find_last_not_of(" \t\n\r\v\f"); end != std::string::npos) {
         line.resize(end + 1); // 修改字符串的长度，去掉后面的空白字符
     } else {
@@ -53,7 +63,7 @@ inline double safeStod(const std::string &str, const double defaultValue = 0.0) 
     }
 }
 
-inline int safeStoi(const std::string& str) {
+inline int safeStoi(const std::string &str) {
     if (str.empty()) {
         return 0; // 如果字符串为空，直接返回 0
     }
@@ -76,11 +86,33 @@ inline int safeStoi(const std::string& str) {
 
     try {
         return std::stoi(trimmedStr);
-    } catch ([[maybe_unused]] const std::invalid_argument& e) {
+    } catch ([[maybe_unused]] const std::invalid_argument &e) {
         return 0; // 如果转换失败，返回 0
-    } catch ([[maybe_unused]] const std::out_of_range& e) {
+    } catch ([[maybe_unused]] const std::out_of_range &e) {
         return 0; // 如果整数超出范围，返回 0
     }
 }
 
+// UTF-8 <-> 宽字符（用于路径拼接后传给截屏 API）
+inline std::wstring utf8ToWide(const std::string &s) {
+    if (s.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(n > 0 ? n - 1 : 0, L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+    return w;
+}
 
+inline std::string wideToUtf8(const std::wstring &w) {
+    if (w.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s(n > 0 ? n - 1 : 0, '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+inline std::string sanitizeId(const std::string &s) {
+    std::string r;
+    r.reserve(s.size());
+    for (char c: s) r += (std::isalnum((unsigned char) c) || c == '_' || c == '-') ? c : '_';
+    return r;
+}

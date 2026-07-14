@@ -34,8 +34,16 @@ public:
     std::map<int, GPSEphem> latestGps;
     std::map<int, BDSEphem> latestBds;
 
+    std::map<char, std::vector<std::string>> availableTypes_;  // 各系统出现的 C 类观测量代码
+
     // 获取解析出的天线位置
     [[nodiscard]] const Eigen::Vector3d& getAntennaPosition() const { return antennaPosition; }
+
+    /// 解析过程中收集到的「各系统可用观测量类型」（C 类伪距码），
+    /// 与 RINEX 头 file.mapObsTypes 语义一致，供上层 SPPIFCode::setIFCodeTypesAuto 自动选 IF 组合。
+    [[nodiscard]] const std::map<char, std::vector<std::string>>& getAvailableTypes() const {
+        return availableTypes_;
+    }
 
 protected:
     struct Header {

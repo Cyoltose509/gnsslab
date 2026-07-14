@@ -30,9 +30,14 @@ public:
         }
     }
 
-    /// 自动检测 IF 码类型：根据可用观测类型选择最佳双频组合
+    /// 根据可用观测类型自动检测并设置 IF 码组合；
+    /// 若检测结果为空（无可用的双频组合），则回退到 defaultTypes。
     /// GPS: C1? + C2?    BDS: C2?/C1? + C6? (fallback C7?+C6?)
-    static IFCodeTypes autoDetectIFTypes(const std::map<char, std::vector<string>> &availableTypes);
+    void setIFCodeTypesAuto(const std::map<char, std::vector<string>> &availableTypes,
+                            const IFCodeTypes &defaultTypes);
+
+    /// 读取当前已设置的 IF 码组合（含自动检测/默认兜底结果）
+    const IFCodeTypes &getIFCodeTypes() const { return ifCodeTypes; }
 
     virtual void preprocess(ObsData &obsData);
 
@@ -122,4 +127,7 @@ private:
                           const string &obsType, double obsVal, double weight,
                           const Variable &dx, const Variable &dy,
                           const Variable &dz, const Variable &cdtVar);
+
+    /// 纯检测：根据可用观测类型选择最佳双频组合（不修改实例状态）
+    static IFCodeTypes detectIFTypes(const std::map<char, std::vector<string>> &availableTypes);
 };
