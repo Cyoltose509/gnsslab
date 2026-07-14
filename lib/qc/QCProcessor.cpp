@@ -89,38 +89,18 @@ static double tripleStd(const std::vector<double> &x, const std::vector<double> 
     return std::sqrt(s / cnt / 20.0);
 }
 
-// 局部(单弧段)多项式最小二乘拟合并返回残差。x 归一化到 [0,1] 提升数值稳定性。
-static std::vector<double> polyDetrendLocal(const std::vector<double> &t, const std::vector<double> &y, int deg) {
-    int n = (int)t.size(); int m = deg + 1;
-    if (n < m) return y;
-    double t0 = t.front(), ts = (t.back() - t.front()); if (std::fabs(ts) < 1e-9) ts = 1;
-    std::vector<double> xx(n); for (int i = 0; i < n; i++) xx[i] = (t[i] - t0) / ts;
-    std::vector<std::vector<double>> A(m, std::vector<double>(m, 0));
-    std::vector<double> B(m, 0);
-    for (int i = 0; i < n; i++) {
-        std::vector<double> pows(2 * m - 1); double acc = 1;
-        for (int p = 0; p < 2 * m - 1; p++) { pows[p] = acc; acc *= xx[i]; }
-        for (int r = 0; r < m; r++) { B[r] += pows[r] * y[i]; for (int cc = 0; cc < m; cc++) A[r][cc] += pows[r + cc]; }
-    }
-    for (int col = 0; col < m; col++) {
-        int piv = col; for (int r = col + 1; r < m; r++) if (std::fabs(A[r][col]) > std::fabs(A[piv][col])) piv = r;
-        std::swap(A[col], A[piv]); std::swap(B[col], B[piv]);
-        if (std::fabs(A[col][col]) < 1e-15) continue;
-        for (int r = 0; r < m; r++) { if (r == col) continue; double f = A[r][col] / A[col][col];
-            for (int cc = col; cc < m; cc++) A[r][cc] -= f * A[col][cc]; B[r] -= f * B[col]; }
-    }
-    std::vector<double> c(m, 0); for (int r = 0; r < m; r++) c[r] = (std::fabs(A[r][r]) > 1e-15) ? B[r] / A[r][r] : 0;
-    std::vector<double> res(n);
-    for (int i = 0; i < n; i++) { double f = 0, acc = 1; for (int p = 0; p < m; p++) { f += c[p] * acc; acc *= xx[i]; } res[i] = y[i] - f; }
-    return res;
-}
+// (polyDetrendLocal 已移除：BD 420022—2019 不要求对 QC 序列做多项式去趋势；
+// 电离层残差变化率用有限差分，MP/L4 仅做逐弧段中心化。)
 
 struct Rec { int k; double sow, c1, l1, c2, l2; };
 
-QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
+QualityReport compute(const std::vector<QCObsEpoch> &epochs, std::function<void(double)> progress) {
+    auto emit = [&](double p) { if (progress) progress(std::max(0.0, std::min(1.0, p))); };
+    emit(0.0);
+
     QualityReport rep;
     rep.totalEpochs = (int)epochs.size();
-    if (rep.totalEpochs < 2) return rep;
+    if (rep.totalEpochs < 2) { emit(1.0); return rep; }
 
     // 历元间隔 (取中位历元差)
     {
@@ -133,8 +113,11 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
         else rep.interval = 1.0;
     }
 
-    // 与 RTKLIB 对齐：DOP/Nsat 时序（解算器提供时填充）
+    // 与 RTKLIB 对齐：DOP/Nsat 时序。这些是「几何量」，只有在解算器确实给出了
+    // 几何信息（nsat>0）的历元才有意义；未解算历元的 nsat/pdop=0 会污染平均值，故跳过。
+    // （MP/IOD/噪声/周跳/SNR 等观测质量指标不受此影响，已在上方全部历元上计算。）
     for (const auto &ep : epochs) {
+        if (ep.nsat <= 0) continue;
         rep.t.push_back(ep.sow);
         rep.gdop.push_back(ep.gdop);
         rep.pdop.push_back(ep.pdop);
@@ -145,6 +128,8 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
 
     std::map<SatID, std::vector<Rec>> recs;
     std::map<SatID, BandsInfo> bands;
+
+    emit(0.05);   // 已完成历元间隔估算与 DOP 时序聚合
 
     for (int k = 0; k < (int)epochs.size(); k++) {
         const auto &ep = epochs[k];
@@ -163,6 +148,8 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
         }
     }
 
+    const size_t totalSats = recs.size();
+    size_t satDone = 0;
     for (auto &[sat, R] : recs) {
         if (R.size() < 2) continue;
         char b1 = bands[sat].hi, b2 = bands[sat].lo;
@@ -191,8 +178,7 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
         for (int i = 0; i < n; i++) {
             double c1 = R[i].c1, l1 = R[i].l1, c2 = R[i].c2, l2 = R[i].l2;
             MW[i] = (f1 * l1 - f2 * l2) / (f1 - f2) - (f1 * c1 + f2 * c2) / (f1 + f2);
-            // 几何无关组合 (周)：L4 = φ1 - (f1/f2)·φ2，消去几何项，残余为电离层/模糊度常数
-            L4[i] = l1 / lam1 - (f1 / f2) * (l2 / lam2);
+            L4[i] = l1 / lam1 - (f1 / f2) * (l2 / lam2);   // 几何无关组合(周)，仅用于周跳探测，不对外展示
             mp1s[i] = c1 - a * l1 + b * l2;   // Estey-Meertens MP1 (m)
             mp2s[i] = c2 - c * l1 + d * l2;   // Estey-Meertens MP2 (m)
             ionos[i] = (f2 * f2 / (f1 * f1 - f2 * f2)) * (l1 - l2);
@@ -239,43 +225,45 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
         q.sigRho1 = tripleStd(c1s, tt, rep.interval, ok); q.sigRho2 = tripleStd(c2s, tt, rep.interval, ok);
         q.sigPh1 = tripleStd(l1cyc, tt, rep.interval, ok); q.sigPh2 = tripleStd(l2cyc, tt, rep.interval, ok);
 
-        // ===== 逐弧段处理：去该弧段模糊度常数(均值) + 二次去趋势 =====
-        // 仅做「全局」去趋势会失败：C10 的 178 万周台阶(非 gap 的失锁重锁)压不平，
-        // 二次拟合被迫弯曲 → 显示成「大抛物线」+ 巨量值。逐弧段处理可彻底消除台阶。
-        // doDetrend=false 用于「原始趋势」版(仅去模糊度常数，保留漂移斜率供检视)。
-        auto processArcs = [&](std::vector<double> &y, bool doDetrend) {
+        // ===== MP 去均值：按连续弧段(避开 gap/周跳)移除该弧段的整周模糊度常数(均值) =====
+        // 不做多项式「去趋势」(用户确认非标准所要求)。MP 组合含每弧段固定的整周模糊度常数
+        // (~1e5 m)，该常数随周跳/失锁跳变 → 单一全局均值无法消除(会残留台阶、RMS 失真到 8~7000 m)。
+        // 故按连续弧段去均值(= 该弧段 ambig 常数)，结果为围绕 0 的小波动，MP RMS 才有物理意义。
+        auto centerArcs = [&](std::vector<double> &y) {
             int i = 0;
             while (i < n) {
-                // i 为某弧段起点(0，或某断点历元——断点历元是有效数据，应作为新弧段起点被纳入，
-                // 切勿跳过，否则其原始 ~1.79e6 周模糊度常数会残留、撑爆 RMS)。
                 int j = i;
                 while (j < n && (j == i || ok[j] == 1)) j++;   // [i, j) 为一个弧段
                 int len = j - i;
                 if (len >= 1) {
                     double m = 0; for (int k = i; k < j; k++) m += y[k]; m /= len;
-                    for (int k = i; k < j; k++) y[k] -= m;          // 去该弧段模糊度常数
-                    if (doDetrend && len >= 3) {
-                        std::vector<double> ttA(len), yA(len);
-                        for (int k = 0; k < len; k++) { ttA[k] = tt[i + k]; yA[k] = y[i + k]; }
-                        auto r = polyDetrendLocal(ttA, yA, 2);
-                        for (int k = 0; k < len; k++) y[i + k] = r[k];
-                    }
+                    for (int k = i; k < j; k++) y[k] -= m;
                 }
                 i = j;
             }
         };
-        std::vector<double> mp1c = mp1s, mp2c = mp2s, L4c = L4, ionoc = ionos;
-        processArcs(mp1c, false); processArcs(mp2c, false); processArcs(L4c, false); processArcs(ionoc, false);
-        processArcs(mp1s, true);  processArcs(mp2s, true);  processArcs(L4, true);    processArcs(ionos, true);
+        centerArcs(mp1s); centerArcs(mp2s);
 
-        // 统计量在去趋势序列上计算，反映真实波动(不被整体漂移/台阶放大)
+        // 统计量在去均值序列上计算
         q.mp1Mean = mean(mp1s); q.mp1Rms = rms(mp1s);
         q.mp2Mean = mean(mp2s); q.mp2Rms = rms(mp2s);
-        q.ionoStd = rms(ionos);
+
+        // ===== 电离层残差变化率 IOD (BD 420022—2019 §6.2.3) =====
+        // IOD = ΔI/Δt, I = 几何无关相位组合 LGF = (f2²/(f1²−f2²))·(L1−L2) (m)。
+        // 有限差分天然消去整周模糊度常数与线性漂移 → 无需去趋势；跨断档/周跳不差分。
+        // 判定阈值 0.07 m/s (标准 §6.2.3)。
+        std::vector<double> ionoRate(n, 0.0);
         for (int i = 1; i < n; i++) {
+            if (!ok[i] || !ok[i - 1]) continue;            // 跨断档/周跳不差分
             double dt = tt[i] - tt[i - 1];
-            if (dt > 0 && std::fabs(ionos[i] - ionos[i - 1]) / dt > 0.07) q.ionoJumps++;
+            if (dt <= 0 || std::fabs(dt - rep.interval) > 0.5 * rep.interval) continue;
+            ionoRate[i] = (ionos[i] - ionos[i - 1]) / dt;
         }
+        double sr = 0; int nc = 0;
+        for (double v : ionoRate) if (v != 0.0) { sr += v * v; nc++; }
+        double ionoRateStd = nc > 0 ? std::sqrt(sr / nc) : 0.0;
+        int ionoJumps = 0;
+        for (int i = 1; i < n; i++) if (std::fabs(ionoRate[i]) > 0.07) ionoJumps++;
 
         // 从原始历元中找回 SNR/EL/AZ (与 satIds 同序)
         std::vector<double> snrs(n, 0), elevs(n, 0), azims(n, 0);
@@ -302,13 +290,20 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
 
         q.epIdx.reserve(n); q.t = tt;
         q.mp1 = std::move(mp1s); q.mp2 = std::move(mp2s);
-        q.l4 = std::move(L4); q.iono = std::move(ionos);
-        q.mp1Raw = std::move(mp1c); q.mp2Raw = std::move(mp2c);
-        q.l4Raw = std::move(L4c); q.ionoRaw = std::move(ionoc);
+        q.ionoRate = std::move(ionoRate);
+        q.ionoRateStd = ionoRateStd; q.ionoJumps = ionoJumps;
         for (int i = 0; i < n; i++) q.epIdx.push_back(R[i].k);
+
+        // 注意：高度角(几何量)缺失 ≠ 观测质量差。无高度角只影响高度角相关统计
+        // （系统/总体聚合已在下方用 q.elevMean>0 守卫，不会污染），绝不影响本卫星的
+        // MP/IOD/噪声/周跳/完整率/SNR 等观测质量指标。因此不再因 elevMean<=0 整星丢弃。
+        // （无观测的卫星早在上方 c1/l1/c2/l2==0 处被 continue 剔除，这里无需再判。）
 
         rep.sats[sat] = std::move(q);
         rep.satOrder.push_back(sat);
+
+        ++satDone;
+        emit(0.05 + 0.9 * (double)satDone / (double)std::max((size_t)1, totalSats));
     }
 
     // 系统 / 总体聚合
@@ -351,6 +346,7 @@ QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
         double s = 0; for (int v : rep.nsat) s += v;
         rep.overallNsat = (int)std::round(s / rep.nsat.size());
     }
+    emit(1.0);
     return rep;
 }
 

@@ -6,6 +6,7 @@
 #include "TimeConvert.h"
 #include "GnssStruct.h"
 #include "OEM7Reader.h"
+#include "Const.h"
 
 #include "Log.h"
 
@@ -211,7 +212,22 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             SatID sat(sys, prn);
             std::string s_f = std::to_string(freqIdx);
             currentObs.satTypeValueData[sat]["C" + s_f] = codeLocked ? psr : 0;
-            currentObs.satTypeValueData[sat]["L" + s_f] = phaseLocked ? adr : 0;
+            // OEM7 RANGE 的 adr 为「载波相位周数(cycles)」，而本工程管道(RINEX 读取、QC 与
+            // SPP 解算)统一约定相位以「米(meters)」存储，且与伪距同号(均≈+几何距离 ρ)。故需：
+            //   1) cycles × 波长 → 米；
+            //   2) 取负：Novatel 的 ADR 累加方向与 RINEX 相位相反，adr·λ≈-ρ；MP/电离层组合
+            //      (Estey-Meertens 等)只在 L 与 C 同号时消去几何距离，若不取负则 MP≈2ρ(数百米)失真。
+            //       (IOD 因 (L1-L2) 差值中几何项天然消去而不受符号影响。)
+            double freq = 0.0;
+            if (sys == 'G') {
+                if (freqIdx == 1) freq = 1575.42e6;       // GPS L1 C/A
+                else if (freqIdx == 2) freq = 1227.60e6;  // GPS L2 P(Y)
+            } else if (sys == 'C') {
+                if (freqIdx == 2) freq = 1561.098e6;      // BDS B1I
+                else if (freqIdx == 6) freq = 1268.520e6; // BDS B3I
+            }
+            double lam = (freq > 0) ? (C_MPS / freq) : 0.0;
+            currentObs.satTypeValueData[sat]["L" + s_f] = (phaseLocked && lam > 0) ? -adr * lam : 0;
             currentObs.satTypeValueData[sat]["D" + s_f] = static_cast<double>(doppler);
             currentObs.satTypeValueData[sat]["S" + s_f] = static_cast<double>(cn0);
         }

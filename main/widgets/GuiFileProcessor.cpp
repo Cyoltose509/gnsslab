@@ -3,14 +3,17 @@
 #include <windows.h>
 #include <commdlg.h>
 #include "GuiFileProcessor.h"
+#include "ui/Gui.h"        // 现代 IFileDialog 文件对话框（DPI 清晰）
 #include "imgui.h"
 #include "OEM7Reader.h"
 #include "SPPCodePhase.h"
 #include "QualityControl.h"
 #include "Const.h"
+#include "QCProcessor.h"     // namespace QC: QualityReport / QCObsEpoch / compute
 #include "implot.h"
 
 #include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <iostream>
 #include <set>
@@ -197,7 +200,9 @@ namespace GuiFileProcessor {
                   task->readProgress = 0.25f * navLoaded / (std::max)(1, (int)task->navFiles.size());
             } catch (const std::exception &e) { LOG_ERROR << "nav fail " << np << ": " << e.what(); }
         }
-        if (navLoaded == 0) { task->hasError = true; task->errorMsg = "未找到导航文件"; return false; }
+        task->hasNav = (navLoaded > 0);
+        if (navLoaded == 0)
+            LOG_WARN << "未找到伴生星历文件，将无法定位解算；质量分析（仅依赖原始观测）仍正常进行。";
         task->readProgress = 0.25f;
 
         RinexObsReader obsReader;
@@ -240,6 +245,57 @@ namespace GuiFileProcessor {
     }
 
     // ----------------------------------------------------------
+    // 质量分析（QC）后台计算：把 SppTask 的观测结果转成 QC 输入并调用 QC::compute。
+    // 质量分析与定位解算无因果关系——只依赖原始观测(C/L/S)，与是否解出定位无关。
+    // 每历元(无论 solved 与否)都喂给 QC；高度角/DOP/卫星数等几何量在 QCProcessor
+    // 内部仅在「解算器确实提供了几何信息(nsat>0)」时才纳入。
+    static QualityReport buildReport(SppTask &task) {
+        std::vector<QC::QCObsEpoch> qcEpochs;
+        {   // 读取 task->epochs 时加锁，避免与解算线程的逐历元写入竞争
+            std::lock_guard lk(task.mutex);
+            qcEpochs.reserve(task.epochs.size());
+            for (const auto &ep : task.epochs) {
+                QC::QCObsEpoch qe;
+                qe.sow = ep.sow;
+                qe.satIds = ep.satIds;
+                qe.allObs = ep.allObs;
+                // SppEpochData.elevations/azimuths 为弧度，QC 显示用角度，这里转为度
+                for (double e : ep.elevations) qe.elevations.push_back(e * RAD_TO_DEG);
+                for (double a : ep.azimuths) qe.azimuths.push_back(a * RAD_TO_DEG);
+                qe.pdop = ep.sppResult.pdop;
+                qe.hdop = ep.sppResult.hdop;
+                qe.vdop = ep.sppResult.vdop;
+                qe.gdop = ep.sppResult.gdop;
+                qe.nsat = ep.sppResult.numSats;
+                qcEpochs.push_back(std::move(qe));
+            }
+        }
+        QualityReport rep = QC::compute(qcEpochs, [&task](double p) { task.qcProgress = (float)p; });
+        rep.totalInputEpochs = (int)task.epochs.size();  // 全部读取历元（含未解算）
+        return rep;
+    }
+
+    // 在后台线程算一次 QC 并整体替换 task->qcReport。渲染线程只读缓存，绝不重算。
+    // 触发点：读完后(观测指标立即可见) 与 全部解算完(补上 DOP/卫星数) 各一次。
+    static void launchQC(const std::shared_ptr<SppTask> &task) {
+        if (task->qcWorker.joinable()) task->qcWorker.join();   // 确保上一轮已结束，再起新的一轮
+        task->qcComputing = true;
+        task->qcProgress = 0.0f;
+        task->qcWorker = std::thread([task]() {
+            try {
+                QualityReport rep = buildReport(*task);
+                { std::lock_guard lk(task->qcMutex);
+                  task->qcReport = std::make_shared<QualityReport>(std::move(rep)); }
+                task->qcProgress = 1.0f;
+                task->qcReady = true;
+            } catch (...) {
+                task->qcReady = true;   // 出错也标记 ready，避免渲染一直等待
+            }
+            task->qcComputing = false;
+        });
+    }
+
+    // ----------------------------------------------------------
     // SolveThread
     // ----------------------------------------------------------
     void SolveThread(const std::shared_ptr<SppTask> &task) {
@@ -265,11 +321,17 @@ namespace GuiFileProcessor {
                               : ReadOEM7(task, allObs, ifCodeTypes, ephSnaps);
             if (!ok) { task->loading = false; task->done = true; return; }
             task->readProgress = 1.0f;
+            launchQC(task);   // 读完后即可后台算一次 QC（观测指标立即可见，无需等解算）
 
             // ---- 阶段 2: 解算 ----
             task->phase = SppTask::Phase::Solving;
             task->solvingProgress = 0;
 
+            if (!task->hasNav && isRinex) {
+                // 无伴生星历：无法进行定位解算（逐历元都会因缺星历失败），直接跳过。
+                // 观测数据已在阶段 1 读入，质量分析（仅依赖原始观测）可正常进行。
+                task->noEphSolve = true;
+            } else {
             // 构建星座禁用集
             std::set<char> allSys = {'G', 'C'};
             IFCodeTypes useTypes = ifCodeTypes;
@@ -332,6 +394,7 @@ namespace GuiFileProcessor {
                       if (task->selectedEpoch == -1 || task->selectedEpoch == i - 1) task->selectedEpoch = i; }
                 }
             }
+            }   // 关闭「有星历才解算」的 else 分支
         } catch (const std::exception &e) {
             task->hasError = true;
             task->errorMsg = e.what();
@@ -372,8 +435,19 @@ namespace GuiFileProcessor {
         if (ImGui::BeginTabItem("概览")) {
         // 顶部状态
         if (hasError) ImGui::TextColored(ImVec4(1,0.3f,0.3f,1), "状态: %s", task->errorMsg.c_str());
-        else if (epochCount > 0) ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "处理完成: 共 %d 个历元 | 解法: %s%s", epochCount, task->useIF ? "IF-Phase" : "IF-code", task->useIF ? (task->useKalman ? "-Kalman" : "-LSQ") : "");
+        else if (epochCount > 0) {
+            if (task->noEphSolve)
+                ImGui::TextColored(ImVec4(1,0.6f,0.2f,1), "处理完成: 共 %d 个历元 | 无伴生星历，已跳过定位解算（质量分析基于原始观测可用）", epochCount);
+            else
+                ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "处理完成: 共 %d 个历元 | 解法: %s%s", epochCount, task->useIF ? "IF-Phase" : "IF-code", task->useIF ? (task->useKalman ? "-Kalman" : "-LSQ") : "");
+        }
         else if (isLoading) ImGui::Text("解算中...");
+
+        // 质量分析后台计算进度（与定位解算解耦；读完后即开始，无需等解算）
+        if (task->qcComputing && !task->qcReady) {
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "质量分析计算中…");
+            ImGui::ProgressBar(task->qcProgress.load(), ImVec2(220, 0), "%.0f%%");
+        }
 
         // epoch 导航
         if (epochCount > 0) {
@@ -499,7 +573,7 @@ namespace GuiFileProcessor {
                     ImGui::SeparatorText("DOP");
                     ImGui::Text("  PDOP:%.2f GDOP:%.2f HDOP:%.2f VDOP:%.2f TDOP:%.2f", r.pdop, r.gdop, r.hdop, r.vdop, r.tdop);
                     ImGui::Text("  卫星: %d/%d", cur.numSatsResult, cur.numObs);
-                } else ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "无定位解");
+                } else ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), task->noEphSolve ? "无定位解（缺少星历文件）" : "无定位解");
                 ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50);
                 if (isDone||isRealtime) { if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) { auto h = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw; if (!h) h=GetActiveWindow(); ExportCsv(task, h); } }
                 else ImGui::Button("解算中...", ImVec2(-FLT_MIN, 40));
@@ -584,31 +658,43 @@ namespace GuiFileProcessor {
     }
     }
 
-    std::string ShowOpenFileDialog(HWND hwnd) {
-        char filename[MAX_PATH] = "";
-        OPENFILENAMEA ofn = {};
-        ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = "All Supported (*.log;*.??O)\0*.log;*.*O\0OEM7 Log Files (*.log)\0*.log\0RINEX Obs Files (*.??O)\0*.??O\0All Files (*.*)\0*.*\0";
-        ofn.lpstrFile = filename; ofn.nMaxFile = MAX_PATH;
-        ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR; ofn.lpstrDefExt = "log";
-        if (GetOpenFileNameA(&ofn)) return filename;
+    // 宽字符路径 -> 系统 ANSI 代码页（保持与旧版 GetOpenFileNameA 一致，供 ifstream 使用）
+    static std::string WideToAcp(const std::wstring &w) {
+        if (w.empty()) return {};
+        int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string s(n > 0 ? n - 1 : 0, '\0');
+        if (n > 0) WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+        return s;
+    }
+
+    std::string ShowOpenFileDialog(HWND /*hwnd*/) {
+        // 现代 Explorer 风格对话框（高 DPI 清晰，归属主窗口）
+        static const GuiFileFilter filters[] = {
+            {L"所有支持 (*.log;*.??O)", L"*.log;*.??O"},
+            {L"OEM7 日志 (*.log)",      L"*.log"},
+            {L"RINEX 观测 (*.??O)",     L"*.??O"},
+            {L"所有文件 (*.*)",         L"*.*"}};
+        std::wstring path;
+        if (::ShowOpenFileDialog(path, filters, 4)) return WideToAcp(path);
         return "";
     }
 
-    void ExportCsv(const std::shared_ptr<SppTask> &task, HWND hwnd) {
-        char filename[MAX_PATH] = "";
+    void ExportCsv(const std::shared_ptr<SppTask> &task, HWND /*hwnd*/) {
         std::string dn = task->fileName;
         if (auto dp = dn.rfind('.'); dp != std::string::npos) dn = dn.substr(0, dp);
         dn += "_spp.csv"; if (dn.size() >= MAX_PATH) dn = "spp_results.csv";
-        strncpy_s(filename, MAX_PATH, dn.c_str(), _TRUNCATE);
-        OPENFILENAMEA ofn = {}; ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = "CSV (*.csv)\0*.csv\0All\0*.*\0";
-        ofn.lpstrFile = filename; ofn.nMaxFile = MAX_PATH;
-        ofn.Flags = OFN_OVERWRITEPROMPT; ofn.lpstrDefExt = "csv";
-        if (!GetSaveFileNameA(&ofn)) return;
+        // 默认文件名 -> 宽字符
+        int wn = MultiByteToWideChar(CP_ACP, 0, dn.c_str(), -1, nullptr, 0);
+        std::wstring wDefName(wn > 0 ? wn - 1 : 0, L'\0');
+        if (wn > 0) MultiByteToWideChar(CP_ACP, 0, dn.c_str(), -1, wDefName.data(), wn);
+
+        static const GuiFileFilter filters[] = {
+            {L"CSV (*.csv)", L"*.csv"}, {L"所有文件 (*.*)", L"*.*"}};
+        std::wstring path;
+        if (!ShowSaveFileDialog(path, filters, 2, wDefName.c_str(), L"csv")) return;
 
         std::lock_guard lk(task->mutex);
-        std::ofstream out(filename); if (!out.is_open()) return;
+        std::ofstream out(std::filesystem::path(path), std::ios::out); if (!out.is_open()) return;
         out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-X/m,REF-Y/m,REF-Z/m,EAST/m,NORTH/m,UP/m,B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
         for (auto &r: task->epochs) {
             out << r.week << ',' << std::fixed << std::setprecision(3) << r.sow << ',';

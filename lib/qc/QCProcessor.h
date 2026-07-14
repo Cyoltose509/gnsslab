@@ -14,11 +14,17 @@
  *   B. 周跳比统计       (MW 宽巷 + 几何无关 L4 联合探测；周跳比 = 历元数 / 周跳数)
  *   C. 多路径误差       (MP1 / MP2，Estey & Meertens 双频组合)
  *   D. 观测值噪声       (伪距/载波相位三次差标准差)
- *   E. 电离层残差       (几何无关电离层延迟 I 及其变化率 IOD)
+ *   E. 电离层残差变化率 IOD (m/s, BD 420022—2019 §6.2.3)
+ *
+ * 说明（用户 2026-07-14 要求）：
+ *   - 几何无关组合 L4 不再参与任何展示/统计（仅作为周跳探测的内部量保留，不对外暴露）。
+ *   - MP 仅做「全局去均值」(减去整段均值)，不再做逐弧段中心化/多项式去趋势。
+ *   - 无几何信息的卫星(全部历元 elevation=0，通常因无星历/无有效码)不计入 QC 统计。
  */
 #include <vector>
 #include <map>
 #include <string>
+#include <functional>
 #include "GnssStruct.h"   // SatID, TypeValueMap
 
 namespace QC {
@@ -54,19 +60,14 @@ struct SatQC {
     double sigPh1 = 0;       // 载波相位噪声 (周) @f1
     double sigPh2 = 0;       // 载波相位噪声 (周) @f2
 
-    int ionoJumps = 0;       // 电离层延迟变化率越界 (>0.07 m/s) 次数
-    double ionoStd = 0;      // 电离层残差 std (m)
+    int ionoJumps = 0;       // 电离层残差变化率 IOD 越界 (>0.07 m/s) 次数
+    double ionoRateStd = 0;  // IOD std (m/s)
 
     // 绘图序列 (按时间排序的逐历元记录)
     std::vector<int> epIdx;
     std::vector<double> t;        // sow
-    std::vector<double> mp1, mp2; // m  (去趋势版，默认显示)
-    std::vector<double> l4;       // 几何无关组合 (周)  (去趋势版)
-    std::vector<double> iono;     // m  (去趋势版)
-    // 原始(仅均值居中、保留整体线性漂移)版，供「显示原始趋势」开关对比
-    std::vector<double> mp1Raw, mp2Raw;
-    std::vector<double> l4Raw;
-    std::vector<double> ionoRaw;
+    std::vector<double> mp1, mp2; // m  (全局去均值版)
+    std::vector<double> ionoRate; // m/s 电离层残差变化率 IOD (逐历元差分)
     std::vector<char> slipFlag;   // 该历元是否发生周跳 (1=是)
 
     // 与 RTKLIB 对齐：SNR/EL/AZ 序列及统计
@@ -78,7 +79,8 @@ struct SatQC {
 };
 
 struct QualityReport {
-    int totalEpochs = 0;
+    int totalEpochs = 0;       // 已解算（用于统计）的历元数
+    int totalInputEpochs = 0;  // 文件读入的全部历元数（含未解算），供概览对照
     double interval = 0;       // 估计的历元间隔 (s)
     std::vector<SatID> satOrder;
     std::map<SatID, SatQC> sats;
@@ -103,6 +105,8 @@ struct QualityReport {
 };
 
 /// 从逐历元观测数据计算质量分析报告
-QualityReport compute(const std::vector<QCObsEpoch> &epochs);
+/// @param progress 可选进度回调（0..1），由 UI 后台线程用于驱动进度条；不传则不报告。
+QualityReport compute(const std::vector<QCObsEpoch> &epochs,
+                      std::function<void(double)> progress = {});
 
 } // namespace QC

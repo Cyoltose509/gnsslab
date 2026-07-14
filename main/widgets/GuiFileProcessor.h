@@ -95,12 +95,23 @@ namespace GuiFileProcessor {
         std::set<char> enabledSystems{'G', 'C'};
         std::vector<std::string> navFiles;  // RINEX 伴生文件列表（含状态标记）
 
-        // ---- 质量分析缓存 ----
-        bool qcReady = false;
-        long qcEpochCount = 0;
-        QualityReport qcReport;
+        // ---- 质量分析异步计算（后台线程，不阻塞渲染；与定位解算同模式）----
+        // 渲染线程只读取 qcReport（shared_ptr），绝不自己重算 → 大文件也不卡。
+        std::shared_ptr<QualityReport> qcReport;  // 后台线程算完后整体替换，渲染线程只读
+        std::atomic<bool> qcReady{false};
+        std::mutex qcMutex;          // 保护 qcReport 的读(渲染)/写(后台线程)
+        std::thread qcWorker;        // 后台计算线程（读完后、全部解算完各跑一次）
 
-        ~SppTask() { stop = true; }
+        // 质量分析计算进度（由后台 qcWorker 写入，渲染线程只读）
+        std::atomic<float> qcProgress{0.0f};   // 0..1，后台算 QC 的进度（用于进度条）
+        std::atomic<bool>  qcComputing{false}; // true = 正在后台算 QC（区别于「尚未开始」）
+        bool hasNav = false;                    // 是否成功加载到伴生星历（无星历仍可做质量分析，仅不能定位）
+        bool noEphSolve = false;                // 因缺星历而跳过定位解算
+
+        ~SppTask() {
+            stop = true;
+            if (qcWorker.joinable()) qcWorker.join();
+        }
     };
 
     void SolveThread(const std::shared_ptr<SppTask> &task);

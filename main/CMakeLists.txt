@@ -56,4 +56,6 @@ target_link_libraries(GnssLab PRIVATE
     d3d11
     dxgi
     comdlg32
+    windowscodecs
+    ole32
 )

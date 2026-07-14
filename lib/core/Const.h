@@ -172,7 +172,10 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
 
         case 'C':
             switch (band) {
-                case '1': return L1_FREQ_BDS;
+                // BDS B1 频段同时含 B1C(1575.420) 与 B1I(1561.098)，由第3字符(I/C)区分。
+                // 旧实现把 band '1' 一律当 B1C，导致 B1I 信号相位用错波长 → MP/电离层组合几何项
+                // 消不净（动态数据里 BDS 的 MP 表现为斜线）。仅 L1I 改判为 B1I，其余保持旧行为。
+                case '1': return (type.size() >= 3 && type[2] == 'I') ? L2_FREQ_BDS : L1_FREQ_BDS;
                 case '2': return L2_FREQ_BDS;
                 case '5': return L5_FREQ_BDS;
                 case '6': return L6_FREQ_BDS;
