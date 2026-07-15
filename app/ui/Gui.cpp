@@ -351,6 +351,15 @@ static bool CaptureBackBufferToPNG(const wchar_t *path) {
     hr = g_pd3dDevice->CreateTexture2D(&sdesc, nullptr, &staging);
     if (FAILED(hr)) { pBackBuffer->Release(); return false; }
     g_pd3dDeviceContext->CopyResource(staging, pBackBuffer);
+    // 等待 GPU 完成所有渲染，避免截到半帧/空图
+    {   ID3D11Query *q = nullptr;
+        D3D11_QUERY_DESC qd{D3D11_QUERY_EVENT, 0};
+        if (SUCCEEDED(g_pd3dDevice->CreateQuery(&qd, &q))) {
+            g_pd3dDeviceContext->End(q);
+            while (g_pd3dDeviceContext->GetData(q, nullptr, 0, 0) == S_FALSE) {}
+            q->Release();
+        }
+    }
     D3D11_MAPPED_SUBRESOURCE mapped;
     hr = g_pd3dDeviceContext->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
     bool ok = false;

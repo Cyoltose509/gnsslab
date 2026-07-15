@@ -113,3 +113,17 @@ inline std::string sanitizeId(const std::string &s) {
     for (const char c: s) r += std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' ? c : '_';
     return r;
 }
+
+// 剥离扩展名：NovatelOEM20211114-01.21O → NovatelOEM20211114-01
+inline std::string stripExt(const std::string &fn) {
+    auto pos = fn.rfind('.');
+    return (pos != std::string::npos && pos > 0) ? fn.substr(0, pos) : fn;
+}
+
+inline std::wstring makeWide(const std::string &s) {
+    if (s.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(n > 0 ? n - 1 : 0, L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
+    return w;
+}
