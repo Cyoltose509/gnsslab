@@ -371,7 +371,7 @@ namespace GuiFileProcessor {
 
     // 在后台线程算一次 QC 并整体替换 task->qcReport。渲染线程只读缓存，绝不重算。
     // 触发点：读完后(观测指标立即可见) 与 全部解算完(补上 DOP/卫星数) 各一次。
-    static void launchQC(const std::shared_ptr<SppTask> &task) {
+    void LaunchQC(const std::shared_ptr<SppTask> &task) {
         if (task->qcWorker.joinable()) task->qcWorker.join(); // 确保上一轮已结束，再起新的一轮
         task->qcComputing = true;
         task->qcWorker = std::thread([task]() {
@@ -563,7 +563,7 @@ namespace GuiFileProcessor {
                 return;
             }
             task->readProgress = 1.0f;
-            launchQC(task); // 读完后即可后台算一次 QC（观测指标立即可见，无需等解算）
+            LaunchQC(task); // 读完后即可后台算一次 QC（观测指标立即可见，无需等解算）
 
             // ---- 阶段 2: 解算 ----
             task->phase = SppTask::Phase::Solving;

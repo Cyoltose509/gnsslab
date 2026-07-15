@@ -114,6 +114,8 @@ namespace GuiFileProcessor {
 
     void SolveThread(const std::shared_ptr<SppTask> &task);
     void RenderTask(const std::shared_ptr<SppTask> &task, bool isRealtime = false);
+    /// 触发一次后台 QC 计算（文件/实时共用）：在后台线程算完整体替换 task->qcReport。
+    void LaunchQC(const std::shared_ptr<SppTask> &task);
     std::string ShowOpenFileDialog(HWND hwnd);
     void ExportCsv(const std::shared_ptr<SppTask> &task, HWND hwnd);
 

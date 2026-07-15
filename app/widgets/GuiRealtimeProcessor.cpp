@@ -20,6 +20,8 @@ namespace GuiRealtimeProcessor {
             {'C', {"C2", "C6"}}
         });
 
+        std::chrono::steady_clock::time_point lastQcTime; // QC 节流计时
+
         while (!task->stop) {
             try {
                 OEM7SocketReader reader;
@@ -43,6 +45,8 @@ namespace GuiRealtimeProcessor {
 
                             GuiFileProcessor::SppEpochData data;
                             data.getFromObs(obs);
+                            if (!task->hasNav && !obs.satEphemerisData.empty())
+                                task->hasNav = true;
 
                             try {
                                 spp.solve(obs);
@@ -64,6 +68,14 @@ namespace GuiRealtimeProcessor {
                                 if (wasAtEnd) {
                                     task->selectedEpoch = index+1;
                                 }
+                            }
+
+                            // 质量分析（QC）：节流触发后台计算（与文件处理共用 LaunchQC）。
+                            // LaunchQC 内部会 join 上一轮，故用时间节流避免阻塞解算线程。
+                            const auto nowQc = std::chrono::steady_clock::now();
+                            if (nowQc - lastQcTime > std::chrono::milliseconds(500)) {
+                                lastQcTime = nowQc;
+                                GuiFileProcessor::LaunchQC(task);
                             }
                         } else {
                             // 检查连接是否依然有效
@@ -90,6 +102,11 @@ namespace GuiRealtimeProcessor {
     }
 
     void RenderTask(const std::shared_ptr<SppTask> &task) {
+        // 实时任务没有文件配置阶段，直接进入运行态（防御旧任务/状态异常）
+        if (task->state == GuiFileProcessor::SppTask::State::Config) {
+            task->state = GuiFileProcessor::SppTask::State::Running;
+        }
+
         // 实时任务在顶部加一个"停止"按钮
         if (!task->done) {
             if (ImGui::Button("停止连接")) {

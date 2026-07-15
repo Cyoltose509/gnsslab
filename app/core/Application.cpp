@@ -261,6 +261,7 @@ void Application::ConnectToRealtime()
     auto task = std::make_shared<GuiRealtimeProcessor::SppTask>();
     task->fileName = config.ip + ":" + std::to_string(config.port);
     task->isRealtime = true;
+    task->state = GuiRealtimeProcessor::SppTask::State::Running;
     task->loading = true;
 
     task->worker = std::thread(GuiRealtimeProcessor::SolveRealtimeThread, task, config);
