@@ -27,16 +27,16 @@ public:
                         const Eigen::MatrixXd &qMatrix,
                         const Eigen::VectorXd &mVector,
                         const Eigen::MatrixXd &hMatrix,
-                        const Eigen::MatrixXd &wMatrix) noexcept(false);
+                        const Eigen::MatrixXd &wMatrix) ;
 
     virtual int TimeUpdate(const Eigen::MatrixXd &phiMatrix,
-                           const Eigen::MatrixXd &qMatrix) noexcept(false) {
+                           const Eigen::MatrixXd &qMatrix)  {
         return Predict(phiMatrix, xhat, qMatrix);
     }
 
     virtual int MeasUpdate(const Eigen::VectorXd &mVector,
                            const Eigen::MatrixXd &hMatrix,
-                           const Eigen::MatrixXd &wMatrix) noexcept(false) {
+                           const Eigen::MatrixXd &wMatrix)  {
         return Correct(mVector, hMatrix, wMatrix);
     }
 
@@ -45,7 +45,7 @@ public:
                            const Eigen::MatrixXd &wMatrix,
                            const Eigen::VectorXd &mVectorAug,
                            const Eigen::MatrixXd &hMatrixAug,
-                           const Eigen::MatrixXd &wMatrixAug) noexcept(false) {
+                           const Eigen::MatrixXd &wMatrixAug)  {
         int numMeas = static_cast<int>(mVector.size());
         int numUnks = static_cast<int>(hMatrix.cols());
         int numAug = static_cast<int>(mVectorAug.size());
@@ -77,17 +77,17 @@ public:
 private:
     virtual int Predict(const Eigen::MatrixXd &phiMatrix,
                         const Eigen::VectorXd &previousState,
-                        const Eigen::MatrixXd &qMatrix) noexcept(false);
+                        const Eigen::MatrixXd &qMatrix) ;
 
     virtual int Predict(const Eigen::MatrixXd &phiMatrix,
                         const Eigen::VectorXd &previousState,
                         const Eigen::MatrixXd &controlMatrix,
                         const Eigen::VectorXd &controlInput,
-                        const Eigen::MatrixXd &qMatrix) noexcept(false);
+                        const Eigen::MatrixXd &qMatrix) ;
 
     virtual int Correct(const Eigen::VectorXd &mVector,
                         const Eigen::MatrixXd &hMatrix,
-                        const Eigen::MatrixXd &wMatrix) noexcept(false);
+                        const Eigen::MatrixXd &wMatrix) ;
 };
 
 #endif

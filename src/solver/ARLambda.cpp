@@ -1,13 +1,6 @@
-/**
- * LAMBDA method implementation.
- * Ref: Teunissen, P.J.G. (1995)
- */
-
-#include <algorithm>
-#include <cmath>
 #include <iostream>
 #include "ARLambda.h"
-#include "../util/MathUtils.h"
+#include "MathUtils.h"
 
 using namespace Eigen;
 
@@ -19,23 +12,22 @@ VectorXd ARLambda::resolve(VectorXd &ambFloat,
         std::cout << "The dimension of input does not match." << std::endl;
         std::cout << "Cannot perform Ambiguity Resolution!" << std::endl;
         return ambFloat;
-    } else {
-        MatrixXd F;
-        VectorXd S;
-        if (lambda(ambFloat, ambCov, F, S, 2) == 0) {
-            VectorXd ambFixed = VectorXd::Zero(ambFloat.size());
-            for (int i = 0; i < ambFloat.size(); i++) {
-                ambFixed(i) = F(i, 0);
-            }
-            squaredRatio = (S(0) < 1e-12) ? 9999.9 : S(1) / S(0);
-            return ambFixed;
-        }
     }
-    return ambFloat;  // 固定失败：返回浮点解
+    MatrixXd F; //NOLINT
+    VectorXd S; //NOLINT
+    if (lambda(ambFloat, ambCov, F, S, 2) == 0) {
+        VectorXd ambFixed = VectorXd::Zero(ambFloat.size());
+        for (int i = 0; i < ambFloat.size(); i++) {
+            ambFixed(i) = F(i, 0);
+        }
+        squaredRatio = S(0) < 1e-12 ? 9999.9 : S(1) / S(0);
+        return ambFixed;
+    }
+    return ambFloat; // 固定失败：返回浮点解
 }
 
 
-int ARLambda::factorize(MatrixXd &Q, MatrixXd &L, VectorXd &D) {
+int ARLambda::factorize(const MatrixXd &Q, MatrixXd &L, VectorXd &D) {
     const int n = static_cast<int>(Q.rows());
     MatrixXd QC = MatrixXd::Zero(Q.rows(), Q.cols());
     QC = Q;
@@ -45,7 +37,7 @@ int ARLambda::factorize(MatrixXd &Q, MatrixXd &L, VectorXd &D) {
     for (int i = n - 1; i >= 0; i--) {
         D(i) = QC(i, i);
         if (D(i) <= 0.0) return -1;
-        double temp = std::sqrt(D(i));
+        const double temp = std::sqrt(D(i));
         for (int j = 0; j <= i; j++) L(i, j) = QC(i, j) / temp;
         for (int j = 0; j <= i - 1; j++) {
             for (int k = 0; k <= j; k++) QC(j, k) -= L(i, k) * L(i, j);
@@ -58,14 +50,13 @@ int ARLambda::factorize(MatrixXd &Q, MatrixXd &L, VectorXd &D) {
 
 void ARLambda::gauss(MatrixXd &L, MatrixXd &Z, int i, int j) {
     const int n = L.rows();
-    const int mu = (int) round(L(i, j));
-    if (mu != 0) {
-        for (int k = i; k < n; k++) L(k, j) -= (double) mu * L(k, i);
-        for (int k = 0; k < n; k++) Z(k, j) -= (double) mu * Z(k, i);
+    if (const int mu = static_cast<int>(round(L(i, j))); mu != 0) {
+        for (int k = i; k < n; k++) L(k, j) -= static_cast<double>(mu) * L(k, i);
+        for (int k = 0; k < n; k++) Z(k, j) -= static_cast<double>(mu) * Z(k, i);
     }
 }
 
-void ARLambda::permute(MatrixXd &L, VectorXd &D, int j, double del, MatrixXd &Z) {
+void ARLambda::permute(MatrixXd &L, VectorXd &D, int j, const double del, MatrixXd &Z) {
     const int n = L.rows();
     double eta = D(j) / del;
     double lam = D(j + 1) * L(j + 1, j) / del;
@@ -96,9 +87,7 @@ void ARLambda::reduction(MatrixXd &L, VectorXd &D, MatrixXd &Z) {
             }
         }
 
-        double del = D(j) + L(j + 1, j) * L(j + 1, j) * D(j + 1);
-
-        if (del + 1E-6 < D(j + 1)) {
+        if (const double del = D(j) + L(j + 1, j) * L(j + 1, j) * D(j + 1); del + 1E-6 < D(j + 1)) {
             permute(L, D, j, del, Z);
             k = j;
             j = n - 2;
@@ -117,7 +106,7 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
     // zs - nxn
     // zn - nxm
     // s  - m
-    const int LOOPMAX = 10000;
+    constexpr int LOOPMAX = 10000;
     const int n = L.rows();
 
     zn = MatrixXd::Zero(n, m);
@@ -138,7 +127,7 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
 
     int c(0), nn(0), imax(0);
     double maxdist = 1E99;
-    for (int c = 0; c < LOOPMAX; c++) {
+    for (; c < LOOPMAX; c++) {
         double newdist = dist(k) + y * y / D(k);
         if (newdist < maxdist) {
             if (k != 0) {
@@ -212,9 +201,8 @@ int ARLambda::lambda(VectorXd &a, MatrixXd &Q, MatrixXd &F, VectorXd &s, const i
         if (search(L, D, z, E, s, m) == 0) {
             try {
                 // F=Z'\E - Z nxn  E nxm F nxm
-                F = (Z.transpose().inverse()) * E;
-            }
-            catch (...) {
+                F = Z.transpose().inverse() * E;
+            } catch (...) {
                 return -1;
             }
         }
@@ -222,5 +210,3 @@ int ARLambda::lambda(VectorXd &a, MatrixXd &Q, MatrixXd &F, VectorXd &s, const i
 
     return 0;
 }
-
-

@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "Log.h"
+#include "MathUtils.h"
 
 void SPPIFCode::preprocess(ObsData &obsData) {
     satRejected.clear();
@@ -14,7 +15,7 @@ void SPPIFCode::preprocess(ObsData &obsData) {
 
 void SPPIFCode::solve(ObsData &obsData) {
     result.reset();
-    lastWStats_.clear();
+    lastWStats.clear();
     rClockBias.clear();
     vel = Vector3d(0, 0, 0);
     rClockDrift = 0.0;
@@ -141,7 +142,7 @@ void SPPIFCode::getResult() {
 //   q_vv_i = 1/w_i - h_i · N⁻¹ · h_iᵀ
 // ============================================================================
 void SPPIFCode::buildResidualMap() {
-    lastWStats_.clear();
+    lastWStats.clear();
 
     const auto &Ninv = posSolver.covMatrix; // N⁻¹ (order 5×5)
     const double sigma0 = posSolver.sigma0;
@@ -162,7 +163,7 @@ void SPPIFCode::buildResidualMap() {
 
         if (const double qvv = invW - (hRow * Ninv * hRow.transpose())(0, 0); qvv > 0.0) {
             const double wStat = std::abs(v) / (sigma0 * std::sqrt(qvv));
-            lastWStats_[eid.sat] = wStat;
+            lastWStats[eid.sat] = wStat;
         }
 
         ++i;
@@ -177,8 +178,8 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     if (iter >= 2) {
         for (auto const &[sat, codeList]: obsData.satTypeValueData) {
             if (satRejected.count(sat)) continue;
-            if (auto itW = lastWStats_.find(sat);
-                itW != lastWStats_.end() && itW->second > worstW) {
+            if (auto itW = lastWStats.find(sat);
+                itW != lastWStats.end() && itW->second > worstW) {
                 worstW = itW->second;
                 outlierSat = sat;
             }
@@ -348,7 +349,10 @@ void SPPIFCode::buildVelEquation(
             break;
         }
     }
-    if (!found) return;
+    if (!found) {
+        LOG_WARN << "No doppler code found for " << sat;
+        return;
+    }
 
     const double f = getFreq(sat.system, "L1");
     const double lambda = C_MPS / f;
@@ -445,9 +449,8 @@ IFCodeTypes SPPIFCode::detectIFTypes(const std::map<char, std::vector<string>> &
 
 void SPPIFCode::setIFCodeTypesAuto(const std::map<char, std::vector<string>> &availableTypes,
                                    const IFCodeTypes &defaultTypes) {
-    IFCodeTypes detected = detectIFTypes(availableTypes);
-    if (detected.empty()) {
-        LOG_WARN << "未检测到可用的 IF 组合，回退到默认值";
+    if (const IFCodeTypes detected = detectIFTypes(availableTypes); detected.empty()) {
+        LOG_WARN << "未检测到可用的 IF 组合";
         setIFCodeTypes(defaultTypes);
     } else {
         setIFCodeTypes(detected);
@@ -478,14 +481,7 @@ void SPPIFCode::earthRotation() {
     satPVTRecTime.clear();
     for (auto const &[sat, pvt]: satPVTTransTime) {
         const double tau = (pvt.p - xyz).norm() / C_MPS;
-
-        const double wt = OMEGA_EARTH * tau;
-        const double cos_wt = cos(wt);
-        const double sin_wt = sin(wt);
-        Matrix3d rot;
-        rot << cos_wt, sin_wt, 0.0,
-                -sin_wt, cos_wt, 0.0,
-                0.0, 0.0, 1.0;
+        Matrix3d rot=Math::rotationMatrix(OMEGA_EARTH * tau,3);
         PVT rotPvt = pvt;
         rotPvt.p = rot * pvt.p;
         rotPvt.v = rot * pvt.v;

@@ -5,9 +5,6 @@
 #include <stdexcept> // For std::invalid_argument and std::out_of_range
 #include <limits>    // For std::numeric_limits<double>::max()
 
-// 本文件直接使用 Win32 API（MultiByteToWideChar / CP_UTF8 等），需自行包含，
-// 不依赖调用方的间接包含；WIN32_LEAN_AND_MEAN 避免拉入 COM 头（其定义的全局 byte
-// 会与 std::byte 冲突），NOMINMAX 与本文件 std::min/std::max 用法一致。
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -41,7 +38,7 @@ inline std::string &stripTrailing(std::string &line) {
 }
 
 /// 安全的 substr：起始越界返回空串，长度超界自动截断
-inline std::string safeSubstr(const std::string &str, size_t pos, size_t len) {
+inline std::string safeSubstr(const std::string &str, const size_t pos, const size_t len) {
     if (pos >= str.size()) return {};
     return str.substr(pos, (std::min)(len, str.size() - pos));
 }
@@ -96,7 +93,7 @@ inline int safeStoi(const std::string &str) {
 // UTF-8 <-> 宽字符（用于路径拼接后传给截屏 API）
 inline std::wstring utf8ToWide(const std::string &s) {
     if (s.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
     std::wstring w(n > 0 ? n - 1 : 0, L'\0');
     if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
     return w;
@@ -104,7 +101,7 @@ inline std::wstring utf8ToWide(const std::string &s) {
 
 inline std::string wideToUtf8(const std::wstring &w) {
     if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::string s(n > 0 ? n - 1 : 0, '\0');
     if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
     return s;
@@ -113,6 +110,6 @@ inline std::string wideToUtf8(const std::wstring &w) {
 inline std::string sanitizeId(const std::string &s) {
     std::string r;
     r.reserve(s.size());
-    for (char c: s) r += (std::isalnum((unsigned char) c) || c == '_' || c == '-') ? c : '_';
+    for (const char c: s) r += std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' ? c : '_';
     return r;
 }

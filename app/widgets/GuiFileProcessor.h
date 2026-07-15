@@ -90,8 +90,7 @@ namespace GuiFileProcessor {
         // ---- 配置（在解算开始前由 GUI 设定） ----
         enum class State { Config, Running, Done };
         std::atomic<State> state{State::Config};
-        bool usePhase = false;                // true=IF 载波相位, false=IF-code 纯伪距
-        bool useKalman = true;           // true=Kalman 滤波, false=LSQ
+        bool usePhase = false;                // true=IF 载波相位(内置Kalman), false=IF-code 纯伪距
         std::set<char> enabledSystems{'G', 'C'};
         std::vector<std::string> navFiles;  // RINEX 伴生文件列表（含状态标记）
 

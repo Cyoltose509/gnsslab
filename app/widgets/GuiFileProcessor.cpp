@@ -176,7 +176,6 @@ namespace GuiFileProcessor {
     void RenderConfigPanel(const std::shared_ptr<SppTask> &task) {
         // 跨文件记住用户选择（static 在进程生命周期内有效；关闭重开则恢复默认）
         static bool s_usePhase = false;
-        static bool s_useKalman = true;
         static std::set s_systems = {'G', 'C'};
 
         ImGui::SetNextWindowFocus();
@@ -221,16 +220,10 @@ namespace GuiFileProcessor {
         ImGui::SameLine();
         ImGui::RadioButton(methods[1], &method, 1);
         s_usePhase = (method == 1);
-        ImGui::Spacing();
-        ImGui::Checkbox("Kalman 滤波", &s_useKalman);
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("启用 Kalman 滤波代替最小二乘");
         ImGui::Separator();
 
         if (ImGui::Button("开始处理", ImVec2(200, 40))) {
             task->usePhase = s_usePhase;
-            task->useKalman = s_useKalman;
             task->enabledSystems = s_systems;
             task->state = SppTask::State::Running;
             task->worker = std::thread(SolveThread, task);
@@ -594,7 +587,7 @@ namespace GuiFileProcessor {
 
                 if (task->usePhase) {
                     SPPCodePhase spp;
-                    spp.enableKalman(task->useKalman);
+                    spp.enableKalman(true);
                     spp.setIFCodeTypesAuto(availForDetect, defaultTypes);
                     for (int i = 0; i < N; ++i) {
                         if (task->stop) break;
@@ -711,8 +704,7 @@ namespace GuiFileProcessor {
                         ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), "处理完成: 共 %d 个历元 | 无伴生星历，已跳过定位解算（质量分析基于原始观测可用）", epochCount);
                     else
                         ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "处理完成: 共 %d 个历元 | 解法: %s%s", epochCount,
-                                           task->usePhase ? "IF-Phase" : "IF-code",
-                                           task->usePhase ? (task->useKalman ? "-Kalman" : "-LSQ") : "");
+                                           task->usePhase ? "IF-Phase" : "IF-code", "");
                 } else if (isLoading) ImGui::Text("解算中...");
 
                 // 质量分析后台计算进度（与定位解算解耦；读完后即开始，无需等解算）

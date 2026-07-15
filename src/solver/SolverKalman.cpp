@@ -9,7 +9,7 @@ using namespace Eigen;
 // ================================================================
 // solve: 完整一步 TimeUpdate + MeasUpdate
 // ================================================================
-void SolverKalman::solve(EquSys &equSys, VariableDataMap &csData) noexcept(false) {
+void SolverKalman::solve(EquSys &equSys, VariableDataMap &csData)  {
     timeUpdate(equSys.varSet, &csData);
     measUpdate(equSys);
 }
@@ -139,7 +139,7 @@ void SolverKalman::createIndex(const VariableSet &varSet) {
 
 double SolverKalman::getSolution(const Parameter &type,
                                  VariableSet &unkSet,
-                                 const VectorXd &stateVec) noexcept(false) {
+                                 const VectorXd &stateVec)  {
     auto it = unkSet.begin();
     int idx = 0;
     while (it != unkSet.end()) {

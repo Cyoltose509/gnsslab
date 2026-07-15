@@ -1,6 +1,6 @@
 #include "QCProcessor.h"
 #include "Const.h"   // getFreq, C_MPS
-#include "../util/StatsUtils.h"   // Stats::mean / rms / median
+#include "MathUtils.h"
 #include <algorithm>
 #include <tuple>
 
@@ -210,11 +210,11 @@ namespace QC {
                     dL4g.push_back(dL4[i]);
                     dMWg.push_back(dMW[i]);
                 }
-            double medL = Stats::median(dL4g), medW = Stats::median(dMWg);
+            double medL = Math::median(dL4g), medW = Math::median(dMWg);
             std::vector<double> aL, aW;
             for (double v: dL4g) aL.push_back(std::fabs(v - medL));
             for (double v: dMWg) aW.push_back(std::fabs(v - medW));
-            double madL = 1.4826 * Stats::median(aL), madW = 1.4826 * Stats::median(aW);
+            double madL = 1.4826 * Math::median(aL), madW = 1.4826 * Math::median(aW);
             double thrL = std::max(5.0 * madL, 20.0); // 周
             double thrW = std::max(5.0 * madW, 0.5 * lamWL); // m (宽巷)
             q.slipFlag.assign(n, 0);
@@ -247,10 +247,10 @@ namespace QC {
             centerArcs(mp2s, ok, n);
 
             // 统计量在去均值序列上计算
-            q.mp1Mean = Stats::mean(mp1s);
-            q.mp1Rms = Stats::rms(mp1s);
-            q.mp2Mean = Stats::mean(mp2s);
-            q.mp2Rms = Stats::rms(mp2s);
+            q.mp1Mean = Math::mean(mp1s);
+            q.mp1Rms = Math::rms(mp1s);
+            q.mp2Mean = Math::mean(mp2s);
+            q.mp2Rms = Math::rms(mp2s);
 
             // ===== 电离层残差变化率 IOD (BD 420022—2019 §6.2.3) =====
             // IOD = ΔI/Δt, I = 几何无关相位组合 LGF = (f2²/(f1²−f2²))·(L1−L2) (m)。

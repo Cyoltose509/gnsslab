@@ -53,8 +53,7 @@ void SolverLSQ::solve(EquSys &equSys) {
     }
 
     v = prefit - hMatrix * state;
-    const int dof = numObs - numUnk;
-    if (dof > 0) {
+    if (const int dof = numObs - numUnk; dof > 0) {
         const double sigma0_sq = (v.array() * weights.array() * v.array()).sum() / dof;
         sigma0 = sqrt(sigma0_sq);
     } else {

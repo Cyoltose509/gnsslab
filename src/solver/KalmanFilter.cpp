@@ -56,7 +56,7 @@ int KalmanFilter::Compute(const MatrixXd &phiMatrix,
                           const VectorXd &mVector,
                           const MatrixXd &hMatrix,
                           const MatrixXd &wMatrix)
-noexcept(false) {
+ {
 
     try {
         Predict(phiMatrix,
@@ -94,7 +94,7 @@ noexcept(false) {
 int KalmanFilter::Predict(const MatrixXd &phiMatrix,
                           const VectorXd &previousState,
                           const MatrixXd &qMatrix)
-noexcept(false) {
+ {
 
     // Create dummy matrices and vectors and call the full
     // Predict() method
@@ -132,7 +132,7 @@ int KalmanFilter::Predict(const MatrixXd &phiMatrix,
                           const MatrixXd &controlMatrix,
                           const VectorXd &controlInput,
                           const MatrixXd &qMatrix)
-noexcept(false) {
+ {
     // After checking sizes, lets' do the real prediction work
     try {
 
@@ -176,7 +176,7 @@ noexcept(false) {
 int KalmanFilter::Correct(const VectorXd &mVector,
                           const MatrixXd &hMatrix,
                           const MatrixXd &wMatrix)
-noexcept(false) {
+ {
 
     try {
         int n = static_cast<int>(mVector.size());

@@ -30,7 +30,7 @@ bool SPPCodePhase::computeCodeReference(const ObsData &rawObs, XYZ &outXyz, std:
 }
 
 void SPPCodePhase::solveLSQ(ObsData &obsData) {
-    result.reset(); lastWStats_.clear(); rClockBias.clear();
+    result.reset(); lastWStats.clear(); rClockBias.clear();
     vel = Vector3d(0,0,0); rClockDrift = 0.0;
 
     xyz = obsData.antennaPosition;
@@ -91,7 +91,7 @@ void SPPCodePhase::solveLSQ(ObsData &obsData) {
 }
 
 void SPPCodePhase::solveKalman(ObsData &obsData) {
-    result.reset(); lastWStats_.clear(); rClockBias.clear();
+    result.reset(); lastWStats.clear(); rClockBias.clear();
     vel = Vector3d(0,0,0); rClockDrift = 0.0;
 
     xyz = obsData.antennaPosition;
@@ -104,7 +104,7 @@ void SPPCodePhase::solveKalman(ObsData &obsData) {
         if (haveCode) xyz = xyz_code;
         else if (lastGoodXyz_.norm() > 1000.0) xyz = lastGoodXyz_;
     }
-    satRejected.clear(); lastWStats_.clear();
+    satRejected.clear(); lastWStats.clear();
     int iter(0);
     while(iter<3) {
         computeSatPos(obsData); earthRotation();
@@ -233,7 +233,7 @@ void SPPCodePhase::linearize(ObsData &obsData, int iter){
     if (iter >= 2) {
         for (auto const &[sat, cl] : obsData.satTypeValueData) {
             if (satRejected.count(sat)) continue;
-            if (auto itW = lastWStats_.find(sat); itW != lastWStats_.end() && itW->second > worstW) {
+            if (auto itW = lastWStats.find(sat); itW != lastWStats.end() && itW->second > worstW) {
                 worstW = itW->second;
                 outlierSat = sat;
             }

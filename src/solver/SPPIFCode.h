@@ -108,7 +108,7 @@ protected:
     std::set<char> activeSystems;
 
     /// 上一轮解算的标准化残差和原始残差，用于粗差探测
-    std::map<SatID, double> lastWStats_;
+    std::map<SatID, double> lastWStats;
     std::map<SatID, double> lastResidMag_;
 
     /// 解算完成后计算每颗卫星的 Baarda w 统计量
