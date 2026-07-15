@@ -43,7 +43,7 @@ add_executable(GnssLab WIN32
 target_include_directories(GnssLab PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${PROJECT_SOURCE_DIR}/lib
+    ${PROJECT_SOURCE_DIR}/src
 )
 
 target_link_libraries(GnssLab PRIVATE
