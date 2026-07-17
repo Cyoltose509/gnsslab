@@ -47,6 +47,10 @@ set(LIB_SOURCES
 
 add_library(gnss STATIC ${LIB_SOURCES})
 
+# QCProcessor.cpp 重写了完整质量分析（大量 Eigen/模板实例化），
+# Debug 下节数会超过 MSVC 对象文件格式限制(C1128)，需 /bigobj
+set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
+
 # 公共头文件路径：根目录 + 所有子目录，保持 #include 路径不变
 target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}

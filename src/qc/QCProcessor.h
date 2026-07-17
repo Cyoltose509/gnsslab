@@ -5,21 +5,22 @@
  * 此模块从 lib 层提供 GNSS 观测质量评估的全部算法，UI 层 (main/widgets) 只负责
  * 把解算结果转成 QCObsEpoch 并调用 QC::compute()，再渲染返回的 QualityReport。
  *
- * 参考：
+ * 参考（严格依据）：
  *   BD 420022—2019《北斗/GNSS 测量型接收机观测数据质量评估方法》
  *   Estey & Meertens (1999) 多路径组合
  *
- * 实现指标：
- *   A. 观测数据完整率   (单系统/单星，按频点有效历元数 / 理论历元数)
- *   B. 周跳比统计       (MW 宽巷 + 几何无关 L4 联合探测；周跳比 = 历元数 / 周跳数)
- *   C. 多路径误差       (MP1 / MP2，Estey & Meertens 双频组合)
- *   D. 观测值噪声       (伪距/载波相位三次差标准差)
- *   E. 电离层残差变化率 IOD (m/s, BD 420022—2019 §6.2.3)
- *
- * 说明（用户 2026-07-14 要求）：
- *   - 几何无关组合 L4 不再参与任何展示/统计（仅作为周跳探测的内部量保留，不对外暴露）。
- *   - MP 仅做「全局去均值」(减去整段均值)，不再做逐弧段中心化/多项式去趋势。
- *   - 无几何信息的卫星(全部历元 elevation=0，通常因无星历/无有效码)不计入 QC 统计。
+ * 实现指标（全部按 2019 标准条款）：
+ *   6.1 观测数据完整率     —— 频点级 DI_f 与系统级 DIs
+ *   6.2 周跳比
+ *        6.2.2 粗差探测     —— MW 组合递推均值/方差 + 4σ + 三历元判据区分粗差/周跳
+ *        6.2.3 周跳探测     —— MW(LMW) 与 GF(LGF) 联合探测
+ *        6.2.4 接收机钟跳探测 —— ΔL 探测 + 多星一致性确认
+ *   6.3 多路径误差         —— Estey-Meertens 双频组合 + 滑动窗口(默认 Nsw=50) RMS
+ *   6.4 电离层延迟变化率 IOD —— GF 组合 + 0.07 m/s 阈值
+ *   6.5 伪距噪声           —— 分弧段三次差，σ = √(Σ(ΔΔΔρ)² / (8(Nρ-1)))
+ *   6.6 载波相位噪声       —— 分弧段三次差(周)，同 6.5 分母
+ *   6.7 载噪比             —— 逐星均值再对星求平均
+ *   6.8 数据质量综合评估   —— 同趋势化 + 无量纲化 + 熵权 + TOPSIS(E 越小越好)
  */
 #include <vector>
 #include <map>
@@ -46,10 +47,16 @@ struct SatQC {
     char band1 = 0;          // 高频 (f1)
     char band2 = 0;          // 低频 (f2)
     int totalEpochs = 0;     // 文件总历元数 (理论历元)
-    int validDual = 0;       // 双频均有效的历元数
-    double completeness = 0; // 完整率 % = validDual / totalEpochs * 100
-    int slips = 0;           // 探测到的周跳次数
-    double slipRatio = 0;    // 周跳比 = totalEpochs / slips (历元/周跳)，无周跳时为 INF→用 totalEpochs 表示
+    int validDual = 0;       // 双频均有效的历元数 (用于 DIs)
+
+    double completeness = 0; // 系统级完整率 DIs % = validDual / totalEpochs * 100
+    double di_f1 = 0;        // 频点级完整率 DI_f % (band1 有效历元 / 总历元)
+    double di_f2 = 0;        // 频点级完整率 DI_f % (band2 有效历元 / 总历元)
+
+    int slips = 0;           // 探测到的周跳次数 (MW+GF，已剔除钟跳误报)
+    int outliers = 0;        // 探测到的粗差次数
+    int clockJumps = 0;      // 该星被判定为接收机钟跳的历元数
+    double slipRatio = 0;    // 周跳比 = totalEpochs / slips (历元/周跳)，无周跳时用 totalEpochs 表示
 
     double mp1Mean = 0, mp1Rms = 0;
     double mp2Mean = 0, mp2Rms = 0;
@@ -65,13 +72,25 @@ struct SatQC {
     // 绘图序列 (按时间排序的逐历元记录)
     std::vector<int> epIdx;
     std::vector<double> t;        // sow
-    std::vector<double> mp1, mp2; // m  (全局去均值版)
+    std::vector<double> mp1, mp2; // m  (按弧段去均值，便于观察)
     std::vector<double> ionoRate; // m/s 电离层残差变化率 IOD (逐历元差分)
     std::vector<char> slipFlag;   // 该历元是否发生周跳 (1=是)
+    std::vector<char> outlierFlag;// 该历元是否为粗差 (1=是)
+    std::vector<char> clockJumpFlag; // 该历元是否为接收机钟跳 (1=是)
 
     // 与 RTKLIB 对齐：SNR/EL/AZ 序列及统计
     std::vector<double> snr;      // dB-Hz, 与 t 对齐 (选中频点的 SNR)
     double snrMean = 0, snrMin = 0, snrMax = 0;
+};
+
+/// 6.8 数据质量综合评估结果
+struct ComprehensiveEval {
+    std::vector<std::string> indicators;            // 7 项指标名称
+    std::vector<double> weights;                    // 熵权 w_l (size = 7)
+    std::map<SatID, std::vector<double>> z;          // 各卫星无量纲化值 z_lm (size 7)
+    std::map<SatID, double> E;                       // 各卫星综合评估值 (越小越好)
+    std::map<char, double> sysE;                    // 各系统综合评估值（系统内卫星 E 的均值）
+    double overallE = 0;                            // 全部卫星 E 的均值
 };
 
 struct QualityReport {
@@ -81,16 +100,21 @@ struct QualityReport {
     std::vector<SatID> satOrder;
     std::map<SatID, SatQC> sats;
 
-    std::map<char, double> sysCompleteness; // 按系统均值
+    std::map<char, double> sysCompleteness; // 系统级完整率 DIs 均值
+    std::map<char, double> sysDI_f1, sysDI_f2; // 频点级完整率 DI_f 均值
     std::map<char, double> sysSlipRatio;
     std::map<char, double> sysMp1, sysMp2;
     std::map<char, double> sysSigRho, sysSigPhase;
-    std::map<char, int> sysSlips, sysIonoJumps;
+    std::map<char, int> sysSlips, sysIonoJumps, sysOutliers, sysClockJumps;
+    std::map<char, double> sysIonoRate;     // 各系统电离层变化率 std 均值
 
     std::map<char, double> sysSnr;
     double overallSnr = 0;
 
     double overallCompleteness = 0;
+
+    int clockJumpEpochs = 0;       // 全局确认发生接收机钟跳的历元数
+    ComprehensiveEval comprehensive;
 };
 
 /// 从逐历元观测数据计算质量分析报告。
