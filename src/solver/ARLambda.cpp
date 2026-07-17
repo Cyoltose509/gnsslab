@@ -6,7 +6,7 @@ using namespace Eigen;
 
 
 VectorXd ARLambda::resolve(VectorXd &ambFloat,
-                           MatrixXd &ambCov) {
+                           const MatrixXd &ambCov) {
     // Check input
     if (ambFloat.size() != ambCov.rows() || ambFloat.size() != ambCov.cols()) {
         std::cout << "The dimension of input does not match." << std::endl;
@@ -48,26 +48,26 @@ int ARLambda::factorize(const MatrixXd &Q, MatrixXd &L, VectorXd &D) {
     return 0;
 }
 
-void ARLambda::gauss(MatrixXd &L, MatrixXd &Z, int i, int j) {
-    const int n = L.rows();
+void ARLambda::gauss(MatrixXd &L, MatrixXd &Z, const int i, const int j) {
+    const auto n = static_cast<int>(L.rows());
     if (const int mu = static_cast<int>(round(L(i, j))); mu != 0) {
         for (int k = i; k < n; k++) L(k, j) -= static_cast<double>(mu) * L(k, i);
         for (int k = 0; k < n; k++) Z(k, j) -= static_cast<double>(mu) * Z(k, i);
     }
 }
 
-void ARLambda::permute(MatrixXd &L, VectorXd &D, int j, const double del, MatrixXd &Z) {
-    const int n = L.rows();
-    double eta = D(j) / del;
-    double lam = D(j + 1) * L(j + 1, j) / del;
+void ARLambda::permute(MatrixXd &L, VectorXd &D, const int j, const double del, MatrixXd &Z) {
+    const auto n = static_cast<int>(L.rows());
+    const double eta = D(j) / del;
+    const double lam = D(j + 1) * L(j + 1, j) / del;
 
     // *Changed D[j] to D(j) : [] may refer to row slice
 
     D(j) = eta * D(j + 1);
     D(j + 1) = del;
     for (int k = 0; k <= j - 1; k++) {
-        double a0 = L(j, k);
-        double a1 = L(j + 1, k);
+        const double a0 = L(j, k);
+        const double a1 = L(j + 1, k);
         L(j, k) = -L(j + 1, j) * a0 + a1;
         L(j + 1, k) = eta * a0 + lam * a1;
     }
@@ -77,7 +77,7 @@ void ARLambda::permute(MatrixXd &L, VectorXd &D, int j, const double del, Matrix
 }
 
 void ARLambda::reduction(MatrixXd &L, VectorXd &D, MatrixXd &Z) {
-    const int n = L.rows();
+    const auto n = static_cast<int>(L.rows());
     int j(n - 2), k(n - 2);
 
     while (j >= 0) {
@@ -107,6 +107,7 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
     // zn - nxm
     // s  - m
     constexpr int LOOPMAX = 10000;
+
     const int n = L.rows();
 
     zn = MatrixXd::Zero(n, m);
@@ -126,12 +127,11 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
     step(k) = sign(y);
 
     int c(0), nn(0), imax(0);
-    double maxdist = 1E99;
+    double maxDist = 1E99;
     for (; c < LOOPMAX; c++) {
-        double newdist = dist(k) + y * y / D(k);
-        if (newdist < maxdist) {
+        if (const double newDist = dist(k) + y * y / D(k); newDist < maxDist) {
             if (k != 0) {
-                dist(--k) = newdist;
+                dist(--k) = newDist;
                 for (int i = 0; i <= k; i++) {
                     S(k, i) = S(k + 1, i) + (z(k + 1) - zb(k + 1)) * L(k + 1, i);
                 }
@@ -141,16 +141,16 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
                 step(k) = sign(y);
             } else {
                 if (nn < m) {
-                    if (nn == 0 || newdist > s(imax)) imax = nn;
+                    if (nn == 0 || newDist > s(imax)) imax = nn;
                     for (int i = 0; i < n; i++) zn(i, nn) = z(i);
-                    s(nn++) = newdist;
+                    s(nn++) = newDist;
                 } else {
-                    if (newdist < s(imax)) {
+                    if (newDist < s(imax)) {
                         for (int i = 0; i < n; i++) zn(i, imax) = z(i);
-                        s(imax) = newdist;
+                        s(imax) = newDist;
                         for (int i = imax = 0; i < m; i++) if (s(imax) < s(i)) imax = i;
                     }
-                    maxdist = s(imax);
+                    maxDist = s(imax);
                 }
                 z(0) += step(0);
                 y = zb(0) - z(0);
@@ -158,12 +158,10 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
             }
         } else {
             if (k == n - 1) break;
-            else {
-                k++;
-                z(k) += step(k);
-                y = zb(k) - z(k);
-                step(k) = -step(k) - sign(step(k));
-            }
+            k++;
+            z(k) += step(k);
+            y = zb(k) - z(k);
+            step(k) = -step(k) - sign(step(k));
         }
     }
     for (int i = 0; i < m - 1; i++) {
@@ -181,8 +179,8 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
     return 0;
 }
 
-int ARLambda::lambda(VectorXd &a, MatrixXd &Q, MatrixXd &F, VectorXd &s, const int &m) {
-    if ((a.size() != Q.rows()) || (Q.rows() != Q.cols())) return -1;
+int ARLambda::lambda(const VectorXd &a, const MatrixXd &Q, MatrixXd &F, VectorXd &s, const int &m) {
+    if (a.size() != Q.rows() || Q.rows() != Q.cols()) return -1;
     if (m < 1) return -1;
 
     const int n = static_cast<int>(a.size());

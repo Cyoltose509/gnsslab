@@ -707,14 +707,6 @@ namespace GuiFileProcessor {
                                            task->usePhase ? "IF-Phase" : "IF-code", "");
                 } else if (isLoading) ImGui::Text("解算中...");
 
-                // 质量分析后台计算进度（与定位解算解耦；读完后即开始，无需等解算）
-                // 注意：QC 计算本身不报告进度（lib 层无线程/回调），这里用跑马灯表示“正在算”。
-                if (task->qcComputing && !task->qcReady) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "质量分析计算中…");
-                    float t = (float) fmod(ImGui::GetTime() * 0.6, 1.0);
-                    ImGui::ProgressBar(t, ImVec2(220, 0));
-                }
-
                 // epoch 导航
                 if (epochCount > 0) {
                     RenderEpochNav(task, epochCount, selectedIdx);

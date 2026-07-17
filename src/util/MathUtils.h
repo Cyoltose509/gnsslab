@@ -67,19 +67,6 @@ namespace Math {
         return y;
     } // end T LagrangeInterpolation(vector, vector, const T, T&)
 
-    // The following is a
-    // Straightforward implementation of Lagrange polynomial and its derivative
-    // { all sums are over index=0,N-1; Xi is short for X[i]; Lp is dL/dx;
-    //   y(x) is the function being approximated. }
-    // y(x) = SUM[Li(x)*Yi]
-    // Li(x) = PROD(j!=i)[x-Xj] / PROD(j!=i)[Xi-Xj]
-    // dy(x)/dx = SUM[Lpi(x)*Yi]
-    // Lpi(x) = SUM(k!=i){PROD(j!=i,j!=k)[x-Xj]} / PROD(j!=i)[Xi-Xj]
-    // Define Pi = PROD(j!=i)[x-Xj], Di = PROD(j!=i)[Xi-Xj],
-    // Qij = PROD(k!=i,k!=j)[x-Xk] and Si = SUM(j!=i)Qij.
-    // then Li(x) = Pi/Di, and Lpi(x) = Si/Di.
-    // Qij is symmetric, there are only N(N+1)/2 - N of them, so store them
-    // in a vector of length N(N+1)/2, where Qij==Q[i+j*(j+1)/2] (ignore i=j).
 
     /// Perform Lagrange interpolation on the data (X[i],Y[i]), i=1,N (N=X.size()),
     /// returning the value of Y(x) and dY(x)/dX.
@@ -169,6 +156,42 @@ namespace Math {
 
         return retVal;
     }
+
+    ///多项式最小二乘拟合
+    /// @param x 自变量
+    /// @param y 因变量
+    /// @param deg 多项式最高次幂
+    inline vector<double> polyFit(const vector<double> &x, const vector<double> &y, const int deg) {
+        const int n = static_cast<int>(x.size());
+        Eigen::MatrixXd A(n, deg + 1);
+        Eigen::VectorXd Y(n);
+        for (int i = 0; i < n; i++) {
+            double p = 1;
+            for (int j = 0; j <= deg; j++) {
+                A(i, j) = p;
+                p *= x[i];
+            }
+            Y(i) = y[i];
+        }
+        Eigen::VectorXd c = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(Y);
+        std::vector<double> r(deg + 1);
+        for (int j = 0; j <= deg; j++) r[j] = c(j);
+        return r;
+    }
+
+    ///多项式求值
+    /// @param c 多项式系数
+    /// @param x 自变量
+    /// @return 多项式值
+    inline double polyVal(const std::vector<double> &c, const double x) {
+        double r = 0, p = 1;
+        for (const double cc: c) {
+            r += cc * p;
+            p *= x;
+        }
+        return r;
+    }
+
 
 
     /// Perform the root sum square of aa, bb and cc

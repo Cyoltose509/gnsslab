@@ -9,14 +9,14 @@ public:
     ARLambda() : squaredRatio(0) {}
     virtual ~ARLambda() {}
 
-    Eigen::VectorXd resolve(Eigen::VectorXd &ambFloat, Eigen::MatrixXd &ambCov);
+    Eigen::VectorXd resolve(Eigen::VectorXd &ambFloat, const Eigen::MatrixXd &ambCov);
 
     [[nodiscard]] bool isFixed(const double threshold = 3.0) const { return squaredRatio > threshold; }
 
     double squaredRatio;
 
 protected:
-    int lambda(Eigen::VectorXd &a, Eigen::MatrixXd &Q,
+    int lambda(const Eigen::VectorXd &a, const Eigen::MatrixXd &Q,
                Eigen::MatrixXd &F, Eigen::VectorXd &s, const int &m = 2);
 
     static int factorize(const Eigen::MatrixXd &Q, Eigen::MatrixXd &L, Eigen::VectorXd &D);

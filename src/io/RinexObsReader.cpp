@@ -114,9 +114,6 @@ ObsData RinexObsReader::parseRinexObs() {
                 double data = safeStod(tmpStr);
 
                 if (obsTypeStr[0] == 'L') {
-                    // 用「真实信号频率」换算波长，而非仅按频点数字查表：
-                    // 北斗 B1 频段同时有 B1C(1575.420) 与 B1I(1561.098)，须由第3字符(I/C)区分，
-                    // 否则 B1I 会被错用 B1C 波长(差 ~0.9%) → 相位(米)偏差 → MP 几何项消不净。
                     double freq = getFreq(sat.system, obsTypeStr);
                     double wavelength = (freq > 0.0) ? (C_MPS / freq) : 0.0;
                     if (wavelength == 0.0) continue;

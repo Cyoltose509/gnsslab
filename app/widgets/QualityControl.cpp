@@ -41,7 +41,7 @@ namespace QualityControl {
             case 'C': return "BDS";
             case 'R': return "GLO";
             case 'E': return "GAL";
-            default:  return "?";
+            default: return "?";
         }
     }
 
@@ -63,10 +63,11 @@ namespace QualityControl {
         out << "GNSS 观测数据质量分析报告," << taskLabel << "\n";
         out << "总历元," << rep.totalEpochs << ",间隔(s)," << rep.interval
                 << ",可用卫星," << rep.sats.size() << ",总体完整率%," << rep.overallCompleteness
-                << ",平均SNR(dB)," << rep.overallSnr << "\n\n";
+                << ",平均CNR(dB-Hz)," << rep.overallCnr << "\n\n";
 
         out << "[系统汇总]\n";
-        out << "系统,完整率%,DI_f1%,DI_f2%,周跳数,周跳比,粗差数,钟跳数,MP1(m),MP2(m),伪距噪声(m),载波噪声(cyc),SNR(dB),综合E\n";
+        out << "系统,完整率%,DI_f1%,DI_f2%,周跳数,周跳比,粗差数,钟跳数,MP1(m),MP2(m),伪距噪声(m),载波噪声(cyc),"
+                "CNR_all(dB-Hz),CNR_f1(dB-Hz),CNR_f2(dB-Hz),IOD_std_all(m/s),IOD_std_f1(m/s),IOD_std_f2(m/s),IOD_跳变,IOD_跳变_f1,IOD_跳变_f2,综合E\n";
         for (auto &[s, comp]: rep.sysCompleteness) {
             out << sysName(s) << ","
                     << comp << ","
@@ -77,14 +78,23 @@ namespace QualityControl {
                     << (rep.sysClockJumps.count(s) ? rep.sysClockJumps.at(s) : 0) << ","
                     << rep.sysMp1.at(s) << "," << rep.sysMp2.at(s)
                     << "," << rep.sysSigRho.at(s) << "," << rep.sysSigPhase.at(s)
-                    << "," << (rep.sysSnr.count(s) ? rep.sysSnr.at(s) : 0.0) << ","
-                    << (rep.comprehensive.sysE.count(s) ? rep.comprehensive.sysE.at(s) : 0.0) << "\n";
+                    << "," << (rep.sysCnr.count(s) ? rep.sysCnr.at(s) : 0.0)
+                    << "," << (rep.sysCnr1.count(s) ? rep.sysCnr1.at(s) : 0.0)
+                    << "," << (rep.sysCnr2.count(s) ? rep.sysCnr2.at(s) : 0.0)
+                    << "," << (rep.sysIonoRate.count(s) ? rep.sysIonoRate.at(s) : 0.0)
+                    << "," << (rep.sysIonoRate1.count(s) ? rep.sysIonoRate1.at(s) : 0.0)
+                    << "," << (rep.sysIonoRate2.count(s) ? rep.sysIonoRate2.at(s) : 0.0)
+                    << "," << (rep.sysIonoJumps.count(s) ? rep.sysIonoJumps.at(s) : 0)
+                    << "," << (rep.sysIonoJumps1.count(s) ? rep.sysIonoJumps1.at(s) : 0)
+                    << "," << (rep.sysIonoJumps2.count(s) ? rep.sysIonoJumps2.at(s) : 0)
+                    << "," << (rep.comprehensive.sysE.count(s) ? rep.comprehensive.sysE.at(s) : 0.0) << "\n";
         }
         out << "\n";
 
         out << "[逐卫星统计]\n";
         out << "卫星,系统,频点f1,频点f2,完整率%,DI_f1%,DI_f2%,周跳数,周跳比,粗差数,钟跳数,MP1(m),MP2(m),"
-                "伪距噪声(m),载波噪声(cyc),SNR(dB),IOD_std(m/s),IOD_跳变\n";
+                "伪距噪声_f1(m),伪距噪声_f2(m),载波噪声_f1(cyc),载波噪声_f2(cyc),"
+                "CNR_f1(dB-Hz),CNR_f2(dB-Hz),IOD_std_f1(m/s),IOD_std_f2(m/s),IOD_跳变_f1,IOD_跳变_f2\n";
         for (auto &sat: rep.satOrder) {
             const auto &q = rep.sats.at(sat);
             out << q.sat.toString() << "," << sysName(q.sat.system) << ","
@@ -92,30 +102,32 @@ namespace QualityControl {
                     << q.completeness << "," << q.di_f1 << "," << q.di_f2 << ","
                     << q.slips << "," << q.slipRatio << "," << q.outliers << "," << q.clockJumps << ","
                     << q.mp1Rms << "," << q.mp2Rms
-                    << "," << (0.5 * (q.sigRho1 + q.sigRho2)) << "," << (0.5 * (q.sigPh1 + q.sigPh2))
-                    << "," << q.snrMean
-                    << "," << q.ionoRateStd << "," << q.ionoJumps << "\n";
+                    << "," << q.sigRho1 << "," << q.sigRho2
+                    << "," << q.sigPh1 << "," << q.sigPh2
+                    << "," << q.cnrMean << "," << q.cnrMean2
+                    << "," << q.ionoRateStd1 << "," << q.ionoRateStd2
+                    << "," << q.ionoJumps1 << "," << q.ionoJumps2 << "\n";
         }
         out << "\n";
 
         out << "[综合评估]\n";
         out << "整体综合E," << rep.comprehensive.overallE << "\n";
         out << "系统综合E,";
-        for (auto &[s, e] : rep.comprehensive.sysE) out << sysName(s) << "=" << e << ",";
+        for (auto &[s, e]: rep.comprehensive.sysE) out << sysName(s) << "=" << e << ",";
         out << "\n";
         out << "指标,";
-        for (auto &ind : rep.comprehensive.indicators) out << ind << ",";
+        for (auto &ind: rep.comprehensive.indicators) out << ind << ",";
         out << "\n权重,";
-        for (const double w : rep.comprehensive.weights) out << w << ",";
+        for (const double w: rep.comprehensive.weights) out << w << ",";
         out << "\n\n";
         out << "[逐卫星综合评估]\n";
         out << "卫星,系统";
-        for (auto &ind : rep.comprehensive.indicators) out << "," << ind;
+        for (auto &ind: rep.comprehensive.indicators) out << "," << ind;
         out << ",E\n";
-        for (auto &sat : rep.satOrder) {
+        for (auto &sat: rep.satOrder) {
             out << sat.toString() << "," << sysName(sat.system);
             if (rep.comprehensive.z.count(sat))
-                for (const double zv : rep.comprehensive.z.at(sat)) out << "," << zv;
+                for (const double zv: rep.comprehensive.z.at(sat)) out << "," << zv;
             else
                 for (size_t l = 0; l < rep.comprehensive.indicators.size(); l++) out << ",0";
             out << "," << (rep.comprehensive.E.count(sat) ? rep.comprehensive.E.at(sat) : 0.0) << "\n";
@@ -146,7 +158,6 @@ namespace QualityControl {
         if (!repPtr || !task->qcReady) {
             if (task->qcComputing) {
                 ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在计算质量分析…");
-                ImGui::ProgressBar(static_cast<float>(fmod(ImGui::GetTime() * 0.6, 1.0)), ImVec2(320, 0));
             } else {
                 ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在准备质量分析…");
             }
@@ -175,18 +186,15 @@ namespace QualityControl {
         ImGui::RadioButton("BDS", &sysSel, 2);
 
         ImGui::SeparatorText("总体概览");
-        if (rep.totalInputEpochs > rep.totalEpochs)
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.4f, 1.0f),
-                               "总历元 %d（已解算 %d，未解算 %d）| 间隔 %.2f s | 可用卫星 %d | 总体完整率 %.2f%% | SNR %.1f | 接收机钟跳 %d 历元",
-                               rep.totalInputEpochs, rep.totalEpochs, rep.totalInputEpochs - rep.totalEpochs, rep.interval,
-                               static_cast<int>(rep.sats.size()), rep.overallCompleteness, rep.overallSnr, rep.clockJumpEpochs);
-        else
-            ImGui::Text("总历元 %d | 间隔 %.2f s | 可用卫星 %d | 总体完整率 %.2f%% | SNR %.1f | 接收机钟跳 %d 历元",
-                        rep.totalEpochs, rep.interval, static_cast<int>(rep.sats.size()), rep.overallCompleteness, rep.overallSnr, rep.clockJumpEpochs);
+
+        ImGui::Text("总历元 %d | 间隔 %.2f s | 可用卫星 %d 接收机钟跳 %d 历元",
+                    rep.totalEpochs, rep.interval, static_cast<int>(rep.sats.size()), rep.clockJumpEpochs);
         // ScrollX 表必须给定 outer_size.y，否则会撑满父窗口全部高度（表现为超大空表）
         const float rowH = ImGui::GetTextLineHeightWithSpacing();
-        const int sysRows = static_cast<int>(rep.sysCompleteness.size());
-        if (const ImVec2 sysTblSize(0.0f, rowH * (sysRows + 1) + 8.0f); ImGui::BeginTable("##sys", 11, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX, sysTblSize)) {
+        const int sysRows = static_cast<int>(rep.sysCompleteness.size()) + 1; // +1 总体行
+        if (const ImVec2 sysTblSize(0.0f, rowH * static_cast<float>(sysRows + 1) + 8.0f); ImGui::BeginTable(
+            "##sys", 13, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
+                         ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit, sysTblSize)) {
             ImGui::TableSetupColumn("系统");
             ImGui::TableSetupColumn("完整率%");
             ImGui::TableSetupColumn("周跳数");
@@ -197,8 +205,20 @@ namespace QualityControl {
             ImGui::TableSetupColumn("MP2(m)");
             ImGui::TableSetupColumn("伪距噪声(m)");
             ImGui::TableSetupColumn("载波噪声(cyc)");
-            ImGui::TableSetupColumn("SNR(dB)");
+            ImGui::TableSetupColumn("CNR_f1(dB-Hz)");
+            ImGui::TableSetupColumn("CNR_f2(dB-Hz)");
+            ImGui::TableSetupColumn("综合评估 E");
             ImGui::TableHeadersRow();
+            // 在"综合评估 E"列头显示熵权 tooltip
+            if (ImGui::TableGetColumnFlags(12) & ImGuiTableColumnFlags_IsHovered) {
+                if (ImGui::BeginTooltip()) {
+                    const auto &ce = rep.comprehensive;
+                    ImGui::TextDisabled("熵权 (越小越好 E)");
+                    for (size_t l = 0; l < ce.indicators.size(); l++)
+                        ImGui::Text("%s: %.4f", ce.indicators[l].c_str(), ce.weights[l]);
+                    ImGui::EndTooltip();
+                }
+            }
             auto addSys = [&](const char s, const char *name) {
                 if (!rep.sysCompleteness.count(s)) return;
                 ImGui::TableNextRow();
@@ -224,42 +244,64 @@ namespace QualityControl {
                 ImGui::TableSetColumnIndex(9);
                 ImGui::Text("%.4f", rep.sysSigPhase.at(s));
                 ImGui::TableSetColumnIndex(10);
-                ImGui::Text("%.1f", rep.sysSnr.count(s) ? rep.sysSnr.at(s) : 0.0);
+                ImGui::Text("%.1f", rep.sysCnr1.count(s) ? rep.sysCnr1.at(s) : 0.0);
+                ImGui::TableSetColumnIndex(11);
+                ImGui::Text("%.1f", rep.sysCnr2.count(s) ? rep.sysCnr2.at(s) : 0.0);
+                ImGui::TableSetColumnIndex(12);
+                if (rep.comprehensive.sysE.count(s))
+                    ImGui::Text("%.4f", rep.comprehensive.sysE.at(s));
+                else
+                    ImGui::Text("-");
             };
             addSys('G', "GPS");
             addSys('C', "BDS");
+            // 总体行：计数按系统累加，连续指标按所有卫星直接平均（与顶部 CNR 一致）
+            if (!rep.sysCompleteness.empty()) {
+                int totalSlips = 0, totalOutliers = 0, totalClockJumps = 0;
+                for (const auto &[s, c]: rep.sysSlips) totalSlips += c;
+                for (const auto &[s, c]: rep.sysOutliers) totalOutliers += c;
+                for (const auto &[s, c]: rep.sysClockJumps) totalClockJumps += c;
+                double sumMp1 = 0, sumMp2 = 0, sumSigRho = 0, sumSigPh = 0;
+                int cnt = 0;
+                for (const auto &[sat, q]: rep.sats) {
+                    sumMp1 += q.mp1Rms;
+                    sumMp2 += q.mp2Rms;
+                    sumSigRho += 0.5 * (q.sigRho1 + q.sigRho2);
+                    sumSigPh += 0.5 * (q.sigPh1 + q.sigPh2);
+                    cnt++;
+                }
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("总体");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%.2f", rep.overallCompleteness);
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%d", totalSlips);
+                ImGui::TableSetColumnIndex(3);
+                if (totalSlips > 0) ImGui::Text("%.1f", static_cast<double>(rep.totalEpochs) / totalSlips);
+                else ImGui::Text("∞");
+                ImGui::TableSetColumnIndex(4);
+                ImGui::Text("%d", totalOutliers);
+                ImGui::TableSetColumnIndex(5);
+                ImGui::Text("%d", totalClockJumps);
+                ImGui::TableSetColumnIndex(6);
+                ImGui::Text("%.3f", cnt ? sumMp1 / cnt : 0.0);
+                ImGui::TableSetColumnIndex(7);
+                ImGui::Text("%.3f", cnt ? sumMp2 / cnt : 0.0);
+                ImGui::TableSetColumnIndex(8);
+                ImGui::Text("%.3f", cnt ? sumSigRho / cnt : 0.0);
+                ImGui::TableSetColumnIndex(9);
+                ImGui::Text("%.4f", cnt ? sumSigPh / cnt : 0.0);
+                ImGui::TableSetColumnIndex(10);
+                ImGui::Text("%.1f", rep.overallCnr1);
+                ImGui::TableSetColumnIndex(11);
+                ImGui::Text("%.1f", rep.overallCnr2);
+                ImGui::TableSetColumnIndex(12);
+                ImGui::Text("%.4f", rep.comprehensive.overallE);
+            }
             ImGui::EndTable();
         }
 
-        // ===== 6.8 综合评估（卫星为基本评价对象，熵权+TOPSIS） =====
-        {
-            const auto &ce = rep.comprehensive;
-            ImGui::SeparatorText("数据质量综合评估");
-            if (ce.indicators.empty() || ce.weights.empty() || rep.satOrder.size() < 2) {
-                ImGui::TextDisabled("综合评估不可用（需至少 2 颗卫星）。");
-            } else {
-                // 系统/整体 E（概况文字，详细逐星 E 见下方柱状图）
-                std::string sysEstr;
-                for (auto &[s, e]: ce.sysE) {
-                    if (!sysEstr.empty()) sysEstr += ", ";
-                    sysEstr += sysName(s);
-                    sysEstr += "=";
-                    sysEstr += std::to_string(e).substr(0, 6);
-                }
-                ImGui::Text("系统 E: %s", sysEstr.c_str());
-                ImGui::Text("整体综合评估 E = %.4f", ce.overallE);
-
-                // 熵权（单行，不展开）
-                std::string wstr;
-                for (size_t l = 0; l < ce.indicators.size(); l++) {
-                    if (l) wstr += ", ";
-                    wstr += ce.indicators[l];
-                    wstr += "=";
-                    wstr += std::to_string(ce.weights[l]).substr(0, 6);
-                }
-                ImGui::TextDisabled("熵权：%s", wstr.c_str());
-            }
-        }
 
         std::string baseName = stripExt(task->fileName);
         if (ImGui::Button("导出 CSV (系统汇总/逐卫星)")) {
@@ -310,7 +352,7 @@ namespace QualityControl {
 
         qs.curRect.clear();
         qs.lastIds.clear();
-        static std::map<std::string, std::pair<std::string, std::function<void()>>> plotDefs;
+        static std::map<std::string, std::pair<std::string, std::function<void()> > > plotDefs;
 
 
         auto drawPlot = [&](const char *id, const char *title, const float defH,
@@ -341,17 +383,17 @@ namespace QualityControl {
         };
 
         if (allView) {
-            drawPlot("mp1_all", "MP1", kPlotH, [&] {
+            drawPlot("mp1_all", "多路径误差 MP1", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "m");
                 for (const auto q: toPlot)
                     if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->mp1.data(), static_cast<int>(q->t.size()));
+                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->mp1Resid.data(), static_cast<int>(q->t.size()));
             });
-            drawPlot("mp2_all", "MP2", kPlotH, [&] {
+            drawPlot("mp2_all", "多路径误差 MP2", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "m");
                 for (const auto q: toPlot)
                     if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->mp2.data(), static_cast<int>(q->t.size()));
+                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->mp2Resid.data(), static_cast<int>(q->t.size()));
             });
             drawPlot("iod_all", "电离层残差变化率 IOD", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "m/s");
@@ -359,11 +401,11 @@ namespace QualityControl {
                     if (!q->t.empty())
                         ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->ionoRate.data(), static_cast<int>(q->t.size()));
             });
-            drawPlot("snr_all", "信噪比 SNR", kPlotH, [&] {
+            drawPlot("snr_all", "载噪比 CNR", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "dB-Hz");
                 for (const auto q: toPlot)
                     if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->snr.data(), static_cast<int>(q->t.size()));
+                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->cnr.data(), static_cast<int>(q->t.size()));
             });
 
             // ===== 逐卫星指标柱状图 =====
@@ -375,7 +417,10 @@ namespace QualityControl {
                 static std::vector<double> xs, ys;
                 static std::vector<std::string> labs;
                 static std::vector<const char *> labp;
-                xs.resize(M); ys.resize(M); labs.resize(M); labp.resize(M);
+                xs.resize(M);
+                ys.resize(M);
+                labs.resize(M);
+                labp.resize(M);
                 for (int i = 0; i < M; i++) {
                     const auto &q = rep.sats.at(list[i]);
                     xs[i] = i;
@@ -392,7 +437,10 @@ namespace QualityControl {
                 static std::vector<double> jx, jy;
                 static std::vector<std::string> jl;
                 static std::vector<const char *> jlp;
-                jx.clear(); jy.clear(); jl.clear(); jlp.clear();
+                jx.clear();
+                jy.clear();
+                jl.clear();
+                jlp.clear();
                 for (int i = 0; i < M; i++) {
                     if (const auto &q = rep.sats.at(list[i]); q.slips > 0) {
                         jx.push_back(static_cast<double>(jlp.size()));
@@ -418,8 +466,13 @@ namespace QualityControl {
                 static std::vector<double> xs, xsR, xsP, rho, ph;
                 static std::vector<std::string> labs;
                 static std::vector<const char *> labp;
-                xs.resize(M); xsR.resize(M); xsP.resize(M); rho.resize(M); ph.resize(M);
-                labs.resize(M); labp.resize(M);
+                xs.resize(M);
+                xsR.resize(M);
+                xsP.resize(M);
+                rho.resize(M);
+                ph.resize(M);
+                labs.resize(M);
+                labp.resize(M);
                 for (int i = 0; i < M; i++) {
                     const auto &q = rep.sats.at(list[i]);
                     xs[i] = i;
@@ -444,7 +497,10 @@ namespace QualityControl {
                 static std::vector<double> xs, ys;
                 static std::vector<std::string> labs;
                 static std::vector<const char *> labp;
-                xs.resize(M); ys.resize(M); labs.resize(M); labp.resize(M);
+                xs.resize(M);
+                ys.resize(M);
+                labs.resize(M);
+                labp.resize(M);
                 for (int i = 0; i < M; i++) {
                     const auto &q = rep.sats.at(list[i]);
                     xs[i] = i;
@@ -498,24 +554,26 @@ namespace QualityControl {
                 ImGui::Text("%.3f / %.3f m", q.mp1Rms, q.mp2Rms);
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Text("伪距噪声");
+                ImGui::Text("伪距噪声 f1 / f2");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%.3f / %.3f m", q.sigRho1, q.sigRho2);
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Text("载波相位噪声");
+                ImGui::Text("载波相位噪声 f1 / f2");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%.4f / %.4f cyc", q.sigPh1, q.sigPh2);
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Text("电离层残差变化率 IOD");
+                ImGui::Text("电离层残差变化率 IOD f1 / f2");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("std %.4f m/s, 跳变 %d 次", q.ionoRateStd, q.ionoJumps);
+                ImGui::Text("std %.4f / %.4f m/s, 跳变 %d / %d 次",
+                            q.ionoRateStd1, q.ionoRateStd2, q.ionoJumps1, q.ionoJumps2);
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Text("SNR (mean/min/max)");
+                ImGui::Text("CNR f1 / f2 (mean/min/max)");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%.1f / %.1f / %.1f dB-Hz", q.snrMean, q.snrMin, q.snrMax);
+                ImGui::Text("%.1f / %.1f / %.1f | %.1f / %.1f / %.1f dB-Hz",
+                            q.cnrMean, q.cnrMin, q.cnrMax, q.cnrMean2, q.cnrMin2, q.cnrMax2);
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::Text("综合评估 E");
@@ -527,9 +585,9 @@ namespace QualityControl {
                 ImGui::EndTable();
             }
             if (!q.t.empty()) {
-                const std::vector<double> &mp1v = q.mp1;
-                const std::vector<double> &mp2v = q.mp2;
-                drawPlot("s_mp", "多路径 MP1 / MP2", kPlotH, [&] {
+                const std::vector<double> &mp1v = q.mp1Resid;
+                const std::vector<double> &mp2v = q.mp2Resid;
+                drawPlot("s_mp", "多路径误差 MP1 / MP2", kPlotH, [&] {
                     ImPlot::SetupAxes("SOW (s)", "m");
                     ImPlot::PlotLine("MP1", q.t.data(), mp1v.data(), static_cast<int>(q.t.size()));
                     ImPlot::PlotLine("MP2", q.t.data(), mp2v.data(), static_cast<int>(q.t.size()));
@@ -547,12 +605,17 @@ namespace QualityControl {
                     });
                 drawPlot("s_iod", "电离层残差变化率 IOD", kPlotH, [&] {
                     ImPlot::SetupAxes("SOW (s)", "m/s");
-                    ImPlot::PlotLine("IOD", q.t.data(), q.ionoRate.data(), static_cast<int>(q.t.size()));
+                    ImPlot::PlotLine("IOD f1", q.t.data(), q.ionoRate.data(), static_cast<int>(q.t.size()));
+                    if (!q.ionoRate2.empty())
+                        ImPlot::PlotLine("IOD f2", q.t.data(), q.ionoRate2.data(), static_cast<int>(q.t.size()));
                 });
-                if (!q.snr.empty())
-                    drawPlot("s_snr", "信噪比 SNR", kPlotH, [&] {
+                if (!q.cnr.empty() || !q.cnr2.empty())
+                    drawPlot("s_snr", "载噪比 CNR", kPlotH, [&] {
                         ImPlot::SetupAxes("SOW (s)", "dB-Hz");
-                        ImPlot::PlotLine("SNR", q.t.data(), q.snr.data(), static_cast<int>(q.t.size()));
+                        if (!q.cnr.empty())
+                            ImPlot::PlotLine("CNR f1", q.t.data(), q.cnr.data(), static_cast<int>(q.t.size()));
+                        if (!q.cnr2.empty() && q.cnr2.size() == q.t.size())
+                            ImPlot::PlotLine("CNR f2", q.t.data(), q.cnr2.data(), static_cast<int>(q.t.size()));
                     });
             }
         }
@@ -580,7 +643,8 @@ namespace QualityControl {
                     const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
                     RequestCaptureRegionPNG(
                         utf8ToWide(qs.exportDir + "/" + baseName + "_" + sanitizeId(id) + ".png"),
-                        static_cast<int>(rmin.x), static_cast<int>(rmin.y), static_cast<int>(rmax.x - rmin.x), static_cast<int>(rmax.y - rmin.y));
+                        static_cast<int>(rmin.x), static_cast<int>(rmin.y), static_cast<int>(rmax.x - rmin.x),
+                        static_cast<int>(rmax.y - rmin.y));
                     qs.exportQueue.erase(qs.exportQueue.begin());
                     if (qs.exportQueue.empty()) qs.exporting = false;
                     ImGui::End();

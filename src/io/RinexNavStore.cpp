@@ -48,8 +48,8 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     CommonTime ctToc = parseEpoch(line, TimeSystem::GPS);
     WeekSecond ws;
     CommonTime2WeekSecond(ctToc, ws);
-    eph.toc = ws.sow;                          // 时间钟参数 (TOC)
-    eph.week = ws.week;                        // 从 TOC 时间推算
+    eph.toc = ws.sow; // 时间钟参数 (TOC)
+    eph.week = ws.week; // 从 TOC 时间推算
 
     eph.a0 = safeStod(line.substr(23, 19));
     eph.a1 = safeStod(line.substr(42, 19));
@@ -60,9 +60,9 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     double Cuc, ecc, Cus, sqrt_A;
     double Toe, Cic, OMEGA_0, Cis;
     double i0, Crc, omega, OMEGA_DOT;
-    double IDOT, L2Codes, GPSWeek, L2Pflag;
+    double IDOT;
     double URA, SV_health, TGD, IODC;
-    double HOWtime, fitInterval;
+    double HOWtime;
 
     {
         string l = nextLine(navFile);
@@ -95,9 +95,9 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     {
         string l = nextLine(navFile);
         IDOT = safeStod(l.substr(4, 19));
-        L2Codes = safeStod(l.substr(23, 19));
-        GPSWeek = safeStod(l.substr(42, 19));
-        L2Pflag = safeStod(l.substr(61, 19));
+        //L2Codes = safeStod(l.substr(23, 19));
+        //GPSWeek = safeStod(l.substr(42, 19));
+        //L2Pflag = safeStod(l.substr(61, 19));
     }
     {
         string l = nextLine(navFile);
@@ -109,7 +109,7 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     {
         string l = nextLine(navFile);
         HOWtime = safeStod(l.substr(4, 19));
-        fitInterval = safeStod(l.substr(23, 19));
+        //fitInterval = safeStod(l.substr(23, 19));
     }
 
     // ---- 填入 GPSEphem 字段 ----
@@ -136,13 +136,6 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     eph.IODC = static_cast<unsigned int>(IODC);
     eph.tgd = TGD;
 
-    // 修正 week：RINEX 中的 week 是 TOE 所在周。
-    // 关键修复：HOWtime 是第 8 行第 1 字段（GPS 周内秒，单位 s），合法取值必须落在 [0, FULL_WEEK)。
-    // 部分文件该字段为脏数据（例如 D032184H.26N 中 G05 读到 -1.7826e9），若不加以保护地进入
-    // while(HOWtime<0) 循环，会对 unsigned 的 eph.week 反复自减，导致严重下溢
-    // （2425 − 2948 = -523 → 4294966773），进而使 svPVT 的时间参考完全错误、
-    // 卫星钟差/位置全部爆炸、SPP 定位崩溃（sigma 达 1e5 量级）。
-    // 因此仅在 HOWtime 取值合法时才做 ±1 周修正，否则直接信任由 TOC 历元推导出的 eph.week。
     if (HOWtime >= 0.0 && HOWtime < FULL_WEEK) {
         if (HOWtime - eph.toe > HALF_WEEK && eph.week > 0) {
             eph.week--;
@@ -207,21 +200,21 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     // 行 5：IDOT, (blank), BDSWeek, (blank)
     string l5 = nextLine(navFile);
     double IDOT = safeStod(l5.substr(4, 19));
-    double BDSWeek = safeStod(l5.substr(42, 19));
+    //double BDSWeek = safeStod(l5.substr(42, 19));
 
     // 行 6：SatH1, TGD1, TGD2, TransTime (BDS 秒)
     string l6 = nextLine(navFile);
     double SatH1 = safeStod(l6.substr(4, 19));
     double TGD1 = safeStod(l6.substr(23, 19));
     double TGD2 = safeStod(l6.substr(42, 19));
-    double TGD3 = safeStod(l6.substr(61, 19));  // 第 4 字段
+    double TGD3 = safeStod(l6.substr(61, 19)); // 第 4 字段
     // 部分 RINEX 文件（如 NovAtel 转换产物）在 SatH1 与 TGD 之间多出一个占位字段，
     // 导致标准 TGD1 列读到 0、真正的 B1/B3 群时延落在 TGD2/TGD3 列。
     // 此时用 TGD2、TGD3 作为真正的 B1/B3、B2/B3 群时延；
     // 标准文件 TGD1 非零，仍走原逻辑。
-    bool shifted = (fabs(TGD1) < 1e-12) && (fabs(TGD2) > 1e-12 || fabs(TGD3) > 1e-12);
-    double tgdB1 = shifted ? TGD2 : TGD1;   // B1/B3 群时延
-    double tgdB2 = shifted ? TGD3 : TGD2;   // B2/B3 群时延
+    bool shifted = fabs(TGD1) < 1e-12 && (fabs(TGD2) > 1e-12 || fabs(TGD3) > 1e-12);
+    double tgdB1 = shifted ? TGD2 : TGD1; // B1/B3 群时延
+    double tgdB2 = shifted ? TGD3 : TGD2; // B2/B3 群时延
 
     // 行 7：(blank) × 4 — 跳过
     nextLine(navFile);
@@ -278,8 +271,8 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
             version = safeStod(line.substr(0, 20));
             fileType = strip(line.substr(20, 20));
             // 导航文件类型字符：N=GPS, G=GLONASS, E=Galileo, M=混合, C=钟差…
-            const char c = fileType.empty() ? ' ' : fileType[0];
-            if (c != 'N' && c != 'n' && c != 'G' && c != 'g' &&
+            if (const char c = fileType.empty() ? ' ' : fileType[0];
+                c != 'N' && c != 'n' && c != 'G' && c != 'g' &&
                 c != 'E' && c != 'e' && c != 'M' && c != 'm') {
                 throw FFStreamError("File type is not NAVIGATION: " + fileType);
             }
@@ -326,11 +319,11 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         if (line[0] == 'G') {
             auto eph = std::make_shared<GPSEphem>();
             loadGPSEph(*eph, line, navFileStream);
-            ephTable.gps[eph->prn].push_back(eph);   // 保留同一卫星的多条星历（不同 toe）
+            ephTable.gps[eph->prn].push_back(eph); // 保留同一卫星的多条星历（不同 toe）
         } else if (line[0] == 'C') {
             auto eph = std::make_shared<BDSEphem>();
             loadBDSEph(*eph, line, navFileStream);
-            ephTable.bds[eph->prn].push_back(eph);   // 保留同一卫星的多条星历（不同 toe）
+            ephTable.bds[eph->prn].push_back(eph); // 保留同一卫星的多条星历（不同 toe）
         }
     }
 }

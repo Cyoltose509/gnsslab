@@ -2,7 +2,6 @@
 #pragma once
 #include <fstream>
 #include "GnssStruct.h"
-#include "StringUtils.h"   // safeStod, safeStoi, safeSubstr
 
 class RinexObsReader {
 public:
@@ -24,7 +23,7 @@ public:
     ObsData parseRinexObs();
 
     /// 返回已解析的 RINEX header（含 mapObsTypes 可用于自动检测 IF 类型）
-    const RinexHeader &getHeader() const { return rinexHeader; }
+    [[nodiscard]] const RinexHeader &getHeader() const { return rinexHeader; }
 
     ObsData parseRinexObs(const CommonTime& syncEpoch)
     {

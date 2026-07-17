@@ -66,21 +66,29 @@ struct SatQC {
     double sigPh1 = 0;       // 载波相位噪声 (周) @f1
     double sigPh2 = 0;       // 载波相位噪声 (周) @f2
 
-    int ionoJumps = 0;       // 电离层残差变化率 IOD 越界 (>0.07 m/s) 次数
-    double ionoRateStd = 0;  // IOD std (m/s)
+    double ionoRateStd = 0;  // 两个频点 IOD std 的平均 (m/s)
+    double ionoRateStd1 = 0; // 频点1 IOD std (m/s)
+    double ionoRateStd2 = 0; // 频点2 IOD std (m/s)
+    int ionoJumps = 0;       // 两个频点 IOD 越界 (>0.07 m/s) 次数之和
+    int ionoJumps1 = 0;      // 频点1 IOD 越界次数
+    int ionoJumps2 = 0;      // 频点2 IOD 越界次数
 
     // 绘图序列 (按时间排序的逐历元记录)
     std::vector<int> epIdx;
     std::vector<double> t;        // sow
-    std::vector<double> mp1, mp2; // m  (按弧段去均值，便于观察)
-    std::vector<double> ionoRate; // m/s 电离层残差变化率 IOD (逐历元差分)
+    std::vector<double> mp1, mp2; // m  (原始 MP 组合，含整周模糊度)
+    std::vector<double> mp1Resid, mp2Resid; // m  (多路径误差：窗口去均值残差，公式17)
+    std::vector<double> ionoRate; // m/s 电离层残差变化率 IOD (f1 频点，逐历元差分)
+    std::vector<double> ionoRate2; // m/s 电离层残差变化率 IOD (f2 频点，逐历元差分)
     std::vector<char> slipFlag;   // 该历元是否发生周跳 (1=是)
     std::vector<char> outlierFlag;// 该历元是否为粗差 (1=是)
     std::vector<char> clockJumpFlag; // 该历元是否为接收机钟跳 (1=是)
 
     // 与 RTKLIB 对齐：SNR/EL/AZ 序列及统计
-    std::vector<double> snr;      // dB-Hz, 与 t 对齐 (选中频点的 SNR)
-    double snrMean = 0, snrMin = 0, snrMax = 0;
+    std::vector<double> cnr;      // dB-Hz, 与 t 对齐 (band1, 载噪比 C/N0)
+    std::vector<double> cnr2;     // dB-Hz, 与 t 对齐 (band2, 载噪比 C/N0)
+    double cnrMean = 0, cnrMin = 0, cnrMax = 0;   // band1 载噪比统计
+    double cnrMean2 = 0, cnrMin2 = 0, cnrMax2 = 0; // band2 载噪比统计
 };
 
 /// 6.8 数据质量综合评估结果
@@ -106,10 +114,18 @@ struct QualityReport {
     std::map<char, double> sysMp1, sysMp2;
     std::map<char, double> sysSigRho, sysSigPhase;
     std::map<char, int> sysSlips, sysIonoJumps, sysOutliers, sysClockJumps;
-    std::map<char, double> sysIonoRate;     // 各系统电离层变化率 std 均值
+    std::map<char, double> sysIonoRate;     // 各系统电离层变化率 std 均值 (双频平均)
+    std::map<char, double> sysIonoRate1;    // 各系统 f1 频点 IOD std 均值
+    std::map<char, double> sysIonoRate2;    // 各系统 f2 频点 IOD std 均值
+    std::map<char, int> sysIonoJumps1;       // 各系统 f1 频点 IOD 跳变次数
+    std::map<char, int> sysIonoJumps2;       // 各系统 f2 频点 IOD 跳变次数
 
-    std::map<char, double> sysSnr;
-    double overallSnr = 0;
+    std::map<char, double> sysCnr;
+    std::map<char, double> sysCnr1;
+    std::map<char, double> sysCnr2;
+    double overallCnr = 0;
+    double overallCnr1 = 0;
+    double overallCnr2 = 0;
 
     double overallCompleteness = 0;
 

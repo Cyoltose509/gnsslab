@@ -1,5 +1,5 @@
 #include "QCProcessor.h"
-#include "Const.h"   // getFreq, C_MPS
+#include "Const.h"
 #include "MathUtils.h"
 #include <algorithm>
 #include <tuple>
@@ -16,8 +16,8 @@ namespace QC {
         return 0.0;
     }
 
-    // 取某频点的信噪比；RINEX 中用 Sxx 表示（如 S1I, S2P, S6I）
-    static double getSnr(const TypeValueMap &m, const char b) {
+    // 取某频点的载噪比 C/N0；RINEX 中用 Sxx 表示（如 S1I, S2P, S6I），单位 dB-Hz
+    static double getCnr(const TypeValueMap &m, const char b) {
         for (auto &[k, v]: m) {
             if (k.size() >= 2 && k[0] == 'S' && k[1] == b && v > 0.0) return v;
         }
@@ -31,7 +31,6 @@ namespace QC {
         return "";
     }
 
-    // 在所有「同时有 C 与 L」的频点里，挑频率最高的两个做 IF 组合。
     struct BandsInfo {
         char hi = 0, lo = 0;
         double f1 = 0, f2 = 0;
@@ -45,45 +44,36 @@ namespace QC {
             if (!ct.empty() && !lt.empty()) cand.emplace_back(b, ct);
         }
         if (cand.size() < 2) return {};
-        std::sort(cand.begin(), cand.end(),
-                  [&](const std::pair<char, std::string> &a, const std::pair<char, std::string> &b) {
-                      return getFreq(sys, a.second) > getFreq(sys, b.second);
-                  });
+        // 多频时采用“频率相差较大”的两个频点
+        // 等价于在所有可用频点中选择频率差最大的一对
         BandsInfo r;
-        r.hi = cand[0].first;
-        r.lo = cand[1].first;
-        r.f1 = getFreq(sys, cand[0].second);
-        r.f2 = getFreq(sys, cand[1].second);
-        return r;
-    }
-
-    // ---------- 多项式最小二乘拟合 ----------
-    static std::vector<double> polyfit(const std::vector<double> &x, const std::vector<double> &y, const int deg) {
-        const int n = static_cast<int>(x.size());
-        MatrixXd A(n, deg + 1);
-        VectorXd Y(n);
-        for (int i = 0; i < n; i++) {
-            double p = 1;
-            for (int j = 0; j <= deg; j++) {
-                A(i, j) = p;
-                p *= x[i];
+        double bestDiff = -1.0;
+        for (size_t i = 0; i < cand.size(); ++i) {
+            for (size_t j = i + 1; j < cand.size(); ++j) {
+                const double fi = getFreq(sys, cand[i].second);
+                const double fj = getFreq(sys, cand[j].second);
+                if (fi <= 0.0 || fj <= 0.0) continue;
+                if (const double diff = std::fabs(fi - fj); diff > bestDiff) {
+                    bestDiff = diff;
+                    if (fi > fj) {
+                        r.hi = cand[i].first;
+                        r.lo = cand[j].first;
+                        r.f1 = fi;
+                        r.f2 = fj;
+                    } else {
+                        r.hi = cand[j].first;
+                        r.lo = cand[i].first;
+                        r.f1 = fj;
+                        r.f2 = fi;
+                    }
+                }
             }
-            Y(i) = y[i];
         }
-        VectorXd c = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(Y);
-        std::vector<double> r(deg + 1);
-        for (int j = 0; j <= deg; j++) r[j] = c(j);
         return r;
     }
 
-    static double polyVal(const std::vector<double> &c, const double x) {
-        double r = 0, p = 1;
-        for (const double cc: c) {
-            r += cc * p;
-            p *= x;
-        }
-        return r;
-    }
+
+
 
     // ---------- 观测值噪声：分弧段三次差标准差 ----------
     static double tripleStd(const std::vector<double> &x, const std::vector<double> &t,
@@ -132,8 +122,8 @@ namespace QC {
                 const double meanK = (cnt * mean + MW[k]) / (cnt + 1);
                 const double varK = (cnt * var + dev * dev) / (cnt + 1);
                 const double devNext = MW[k + 1] - meanK; //NOLINT
-                if (!(varK > 0.0 && std::fabs(devNext) >= 4.0 * std::sqrt(varK)) || MW[k + 1] - MW[k] > 1.0) {
-                    outlier[k] = 1; // ti+1 不超限，或两者均超限但 ΔMW>1m → 粗差
+                if (!(varK > 0.0 && std::fabs(devNext) >= 4.0 * std::sqrt(varK)) || std::fabs(MW[k + 1] - MW[k]) > 1.0) {
+                    outlier[k] = 1; // ti+1 不超限，或两者均超限但 |ΔMW|>1m → 粗差
                 } else {
                     slip[k] = 1; // 两者均超限且 ΔMW≤1m → 周跳，从 k 起新弧段
                     mean = MW[k];
@@ -155,7 +145,8 @@ namespace QC {
                          std::vector<char> &slip) {
         const int n = static_cast<int>(LGF.size());
         if (n < 6) return;
-        const double thr = 6.0 * (lam2 - lam1);
+        const double thrLarge = 6.0 * (lam2 - lam1);
+        const double thrSmall = std::fabs(lam2 - lam1);
         int i = 0;
         while (i < n) {
             if (!ok[i]) {
@@ -180,14 +171,13 @@ namespace QC {
                             xv[k - a] = k - a;
                             yv[k - a] = PGF[k];
                         }
-                        auto coef = polyfit(xv, yv, q);
+                        auto coef = Math::polyFit(xv, yv, q);
                         std::vector<double> r(len);
-                        for (int k = a; k < b; k++) r[k - a] = LGF[k] - polyVal(coef, k - a);
-                        // 连续两跳均超阈值 → 周跳
+                        for (int k = a; k < b; k++) r[k - a] = LGF[k] - Math::polyVal(coef, k - a);
                         for (int k = a + 1; k < b - 1; k++) {
                             if (slip[k]) continue;
                             const double jumpK = std::fabs(r[k - a] - r[k - 1 - a]);
-                            if (const double jumpK1 = std::fabs(r[k + 1 - a] - r[k - a]); jumpK > thr && jumpK1 > thr) slip[k] = 1;
+                            if (const double jumpK1 = std::fabs(r[k + 1 - a] - r[k - a]); jumpK > thrLarge && jumpK1 > thrSmall) slip[k] = 1;
                         }
                     }
                 }
@@ -197,12 +187,38 @@ namespace QC {
         }
     }
 
-    // ---------- 多路径滑动窗口 RMS ----------
-
+    // ---------- 多路径误差：滑动窗口去均值 RMS，Nsw=50 ----------
     static double slidingWindowMp(const std::vector<double> &mp, const std::vector<char> &ok, const int n) {
         double sum = 0;
         int cnt = 0;
-        for (int i = 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
+            constexpr int Nsw = 50;
+            if (!ok[i]) continue;
+            // 收集以 i 结尾、同弧段内连续有效的最多 Nsw 个历元
+            int a = i, len = 1;
+            while (a - 1 >= 0 && ok[a - 1] && len < Nsw) {
+                a--;
+                len++;
+            }
+            if (len < 2) continue; // 至少 2 点才能计算窗口均值和 N-1 分母
+            double mean = 0.0;
+            for (int t = 0; t < len; t++) mean += mp[a + t];
+            mean /= static_cast<double>(len);
+            double s = 0.0;
+            for (int t = 0; t < len; t++) {
+                const double r = mp[a + t] - mean;
+                s += r * r;
+            }
+            sum += std::sqrt(s / static_cast<double>(len - 1)); // 分母 Nsw-1
+            cnt++;
+        }
+        return cnt ? sum / cnt : 0.0;
+    }
+
+    // 滑动窗口去均值：返回每个有效点的多路径误差残差
+    static std::vector<double> mpDetrended(const std::vector<double> &mp, const std::vector<char> &ok, const int n) {
+        std::vector r(n, 0.0);
+        for (int i = 0; i < n; i++) {
             constexpr int Nsw = 50;
             if (!ok[i]) continue;
             int a = i, len = 1;
@@ -210,30 +226,13 @@ namespace QC {
                 a--;
                 len++;
             }
-            if (len < 3) continue; // 线性去趋势至少 3 点
-            double Sx = 0, Sy = 0, Sxx = 0, Sxy = 0;
-            for (int t = 0; t < len; t++) {
-                const double y = mp[a + t];
-                Sx += t;
-                Sy += y;
-                Sxx += t * t;
-                Sxy += t * y;
-            }
-            const double denom = static_cast<double>(len) * Sxx - Sx * Sx;
-            double p1 = 0, p0 = 0;
-            if (std::fabs(denom) > 1e-12) {
-                p1 = (static_cast<double>(len) * Sxy - Sx * Sy) / denom;
-                p0 = (Sy - p1 * Sx) / static_cast<double>(len);
-            }
-            double s = 0;
-            for (int t = 0; t < len; t++) {
-                const double r = mp[a + t] - (p0 + p1 * static_cast<double>(t));
-                s += r * r;
-            }
-            sum += std::sqrt(s / static_cast<double>(len)); // 去趋势残差 RMS = 多路径误差
-            cnt++;
+            if (len < 2) { r[i] = 0.0; continue; }
+            double mean = 0.0;
+            for (int t = 0; t < len; t++) mean += mp[a + t];
+            mean /= static_cast<double>(len);
+            r[i] = mp[i] - mean;
         }
-        return cnt ? sum / cnt : 0.0;
+        return r;
     }
 
     // ---------- 综合评估：同趋势化 + 无量纲化 + 熵权 + TOPSIS ----------
@@ -259,7 +258,7 @@ namespace QC {
             y[3][m] = 1.0 / (q.ionoRateStd + 1e-6); // 电离层变化率：取倒数
             y[4][m] = 1.0 / (rho + 1e-6); // 伪距噪声：取倒数
             y[5][m] = 1.0 / (ph + 1e-6); // 载波噪声：取倒数
-            y[6][m] = q.snrMean; // 载噪比：越大越好
+            y[6][m] = q.cnrMean; // 载噪比：越大越好
         }
 
         // 无量纲化
@@ -332,7 +331,7 @@ namespace QC {
     // 单星工作缓存
     struct Work {
         int n = 0;
-        std::vector<double> tt, c1s, c2s, l1m, l2m, l1cyc, l2cyc, MW, LGF, PGF, mp1s, mp2s, ionos, snrs;
+        std::vector<double> tt, c1s, c2s, l1m, l2m, l1cyc, l2cyc, MW, LGF, PGF, mp1s, mp2s, ionos, ionos2, cnrs, cnrs2;
         std::vector<int> epIdx;
         std::vector<char> gapOk;
         double lam1 = 0, lam2 = 0;
@@ -380,17 +379,17 @@ namespace QC {
             }
         }
 
-        // 第一遍：构造工作缓存 + MW/GF 周跳与粗差探测
+        // 构造工作缓存 + MW/GF 周跳与粗差探测
         std::map<SatID, Work> works;
         for (auto &[sat, R]: recs) {
             if (R.size() < 2) continue;
-            const BandsInfo &b = bands[sat]; //NOLINT
-            const double f1 = b.f1, f2 = b.f2;
+            const BandsInfo &band = bands[sat]; //NOLINT
+            const double f1 = band.f1, f2 = band.f2;
             if (f1 <= 0 || f2 <= 0) continue;
             const double lam1 = C_MPS / f1, lam2 = C_MPS / f2;
             const double alpha = f1 / f2 * (f1 / f2);
             const double a = (alpha + 1.0) / (alpha - 1.0); // MP1 中 L1 系数
-            const double bb = 2.0 / (alpha - 1.0); // MP1 中 L2 系数
+            const double b = 2.0 / (alpha - 1.0); // MP1 中 L2 系数
             const double c = 2.0 * alpha / (alpha - 1.0); // MP2 中 L1 系数
             const double d = (alpha + 1.0) / (alpha - 1.0); // MP2 中 L2 系数
 
@@ -409,7 +408,9 @@ namespace QC {
             w.mp1s.resize(w.n);
             w.mp2s.resize(w.n);
             w.ionos.resize(w.n);
-            w.snrs.resize(w.n);
+            w.ionos2.resize(w.n);
+            w.cnrs.resize(w.n);
+            w.cnrs2.resize(w.n);
             w.epIdx.resize(w.n);
             w.gapOk.assign(w.n, 1);
 
@@ -422,12 +423,13 @@ namespace QC {
                 w.l2m[i] = l2;
                 w.l1cyc[i] = l1 / lam1;
                 w.l2cyc[i] = l2 / lam2;
-                w.MW[i] = (f1 * l1 - f2 * l2) / (f1 - f2) - (f1 * c1 + f2 * c2) / (f1 + f2); // MW (m)
-                w.LGF[i] = l2 - l1; // GF 组合 (m)
-                w.PGF[i] = c2 - c1; // 伪距 GF 组合 (m)
-                w.mp1s[i] = c1 - a * l1 + bb * l2; // Estey-Meertens MP1 (m)
-                w.mp2s[i] = c2 - c * l1 + d * l2; // Estey-Meertens MP2 (m)
-                w.ionos[i] = f2 * f2 / (f1 * f1 - f2 * f2) * (l1 - l2); // 电离层 GF 组合 (m)
+                w.MW[i] = (f1 * l1 - f2 * l2) / (f1 - f2) - (f1 * c1 + f2 * c2) / (f1 + f2); // MW
+                w.LGF[i] = l2 - l1; // GF 组合
+                w.PGF[i] = c2 - c1; // 伪距 GF 组合
+                w.mp1s[i] = c1 - a * l1 + b * l2; // Estey-Meertens MP1
+                w.mp2s[i] = c2 - c * l1 + d * l2; // Estey-Meertens MP2
+                w.ionos[i] = f2 * f2 / (f1 * f1 - f2 * f2) * (l1 - l2); //  I_k1
+                w.ionos2[i] = f1 * f1 / (f1 * f1 - f2 * f2) * (l1 - l2); //  I_k2
                 w.epIdx[i] = kk;
             }
             // 断档标记
@@ -437,8 +439,8 @@ namespace QC {
             //周跳/粗差探测
             SatQC q;
             q.sat = sat;
-            q.band1 = b.hi;
-            q.band2 = b.lo;
+            q.band1 = band.hi;
+            q.band2 = band.lo;
             q.totalEpochs = rep.totalEpochs;
             q.validDual = w.n;
             detectMW(w.MW, w.gapOk, q.slipFlag, q.outlierFlag);
@@ -447,8 +449,8 @@ namespace QC {
             q.slips = static_cast<int>(std::count(q.slipFlag.begin(), q.slipFlag.end(), 1));
             q.outliers = static_cast<int>(std::count(q.outlierFlag.begin(), q.outlierFlag.end(), 1));
             q.slipRatio = q.slips > 0
-                              ? static_cast<double>(rep.totalEpochs) / q.slips
-                              : static_cast<double>(rep.totalEpochs);
+                              ? static_cast<double>(w.n) / q.slips
+                              : static_cast<double>(w.n);
             q.di_f1 = 100.0 * freq1Valid[sat] / rep.totalEpochs;
             q.di_f2 = 100.0 * freq2Valid[sat] / rep.totalEpochs;
             q.completeness = 100.0 * w.n / rep.totalEpochs;
@@ -461,7 +463,7 @@ namespace QC {
         // 接收机钟跳探测 (全局跨星)
         {
             constexpr double c = C_MPS;
-            constexpr double xi = 4.0; // 经验观测噪声 (m)
+            constexpr double xi = 4.0; // 经验观测噪声
             constexpr double msLo = 1e-7 * c - 3.0 * xi, msHi = 1e-5 * c + 3.0 * xi; // 毫秒级
             constexpr double usThr = 1e-3 * c - 3.0 * xi; // 微秒级
             // 建立 卫星→全局历元 索引表
@@ -470,12 +472,20 @@ namespace QC {
                 locAt[sat].assign(rep.totalEpochs, -1);
                 for (int i = 0; i < w.n; i++) locAt[sat][w.epIdx[i]] = i;
             }
+            // 已发现周跳的卫星不参与后续钟跳探测
+            std::map<SatID, bool> hasSlip;
+            for (auto &[sat, w]: works) {
+                const SatQC &q = rep.sats.at(sat);
+                hasSlip[sat] = std::any_of(q.slipFlag.begin(), q.slipFlag.end(),
+                                           [](const char v) { return v == 1; });
+            }
             for (int gi = 0; gi + 1 < rep.totalEpochs; gi++) {
                 int nms = 0, nus = 0, totalValid = 0;
                 for (auto &[sat, w]: works) {
+                    if (hasSlip[sat]) continue; // 周跳卫星不参与钟跳探测
                     const int li = locAt[sat][gi], lj = locAt[sat][gi + 1];
                     if (li < 0 || lj < 0) continue;
-                    if (const double dL = w.c1s[lj] - w.c1s[li] - (w.l1m[lj] - w.l1m[li]); dL > msLo && dL < msHi) nms++;
+                    if (const double dL = std::fabs(w.c1s[lj] - w.c1s[li] - (w.l1m[lj] - w.l1m[li])); dL > msLo && dL < msHi) nms++;
                     else if (dL > usThr) nus++;
                     totalValid++;
                 }
@@ -483,7 +493,7 @@ namespace QC {
                     for (auto &[sat, w]: works) {
                         const int lj = locAt[sat][gi + 1];
                         if (lj < 0) continue;
-                        rep.sats[sat].slipFlag[lj] = 0; // 钟跳导致的"周跳"为误报，撤销
+                        rep.sats[sat].slipFlag[lj] = 0; // 钟跳导致的误报周跳反消
                         rep.sats[sat].outlierFlag[lj] = 0;
                         rep.sats[sat].clockJumpFlag[lj] = 1;
                         rep.sats[sat].clockJumps++;
@@ -514,27 +524,40 @@ namespace QC {
             q.mp1Mean = Math::mean(w.mp1s);
             q.mp2Mean = Math::mean(w.mp2s);
 
-            // 电离层延迟变化率 IOD
-            std::vector ionoRate(n, 0.0);
+            // 电离层延迟变化率 IOD：两个频点分别计算
+            std::vector ionoRate(n, 0.0), ionoRate2(n, 0.0);
             for (int i = 1; i < n; i++) {
                 if (!ok[i] || !ok[i - 1]) continue;
                 const double dt = w.tt[i] - w.tt[i - 1];
                 if (dt <= 0 || std::fabs(dt - rep.interval) > 0.5 * rep.interval) continue;
-                ionoRate[i] = (w.ionos[i] - w.ionos[i - 1]) / dt;
+                ionoRate[i] = (w.ionos[i] - w.ionos[i - 1]) / dt;     // IOD_k1
+                ionoRate2[i] = (w.ionos2[i] - w.ionos2[i - 1]) / dt; // IOD_k2
             }
-            double sr = 0;
-            int nc = 0, ionoJumps = 0;
+            double sr = 0, sr2 = 0;
+            int nc = 0, nc2 = 0, ionoJumps1 = 0, ionoJumps2 = 0;
             for (int i = 0; i < n; i++) {
                 if (ionoRate[i] != 0.0) {
                     sr += ionoRate[i] * ionoRate[i];
                     nc++;
                 }
-                if (std::fabs(ionoRate[i]) > 0.07) ionoJumps++;
+                if (ionoRate2[i] != 0.0) {
+                    sr2 += ionoRate2[i] * ionoRate2[i];
+                    nc2++;
+                }
+                if (std::fabs(ionoRate[i]) > 0.07) ionoJumps1++;
+                if (std::fabs(ionoRate2[i]) > 0.07) ionoJumps2++;
             }
-            q.ionoRateStd = nc > 0 ? std::sqrt(sr / nc) : 0.0;
-            q.ionoJumps = ionoJumps;
+            const double std1 = nc > 0 ? std::sqrt(sr / nc) : 0.0;
+            const double std2 = nc2 > 0 ? std::sqrt(sr2 / nc2) : 0.0;
+            q.ionoRateStd1 = std1;
+            q.ionoRateStd2 = std2;
+            q.ionoRateStd = (std1 + std2) / 2.0;
+            q.ionoJumps1 = ionoJumps1;
+            q.ionoJumps2 = ionoJumps2;
+            q.ionoJumps = ionoJumps1 + ionoJumps2;
 
-            // 载噪比 (逐星均值)
+            // 载噪比 (逐星均值，按频点分别统计)
+            std::vector<double> cnr1v, cnr2v;
             for (int i = 0; i < n; i++) {
                 const auto &ep = epochs[w.epIdx[i]];
                 int idx = -1;
@@ -543,46 +566,46 @@ namespace QC {
                         idx = j;
                         break;
                     }
-                if (idx >= 0) w.snrs[i] = getSnr(ep.allObs[idx], q.band1);
-            }
-            {
-                double s = 0, mn = 1e300, mx = -1e300;
-                int cnt = 0;
-                for (double v: w.snrs)
-                    if (v > 0) {
-                        s += v;
-                        cnt++;
-                        mn = std::min(mn, v);
-                        mx = std::max(mx, v);
-                    }
-                if (cnt == 0) {
-                    q.snrMean = 0;
-                    q.snrMin = 0;
-                    q.snrMax = 0;
-                } else {
-                    q.snrMean = s / cnt;
-                    q.snrMin = mn;
-                    q.snrMax = mx;
+                if (idx >= 0) {
+                    const double v1 = getCnr(ep.allObs[idx], q.band1);
+                    const double v2 = getCnr(ep.allObs[idx], q.band2);
+                    w.cnrs[i] = v1;
+                    w.cnrs2[i] = v2;
+                    if (v1 > 0) cnr1v.push_back(v1);
+                    if (v2 > 0) cnr2v.push_back(v2);
                 }
             }
-            q.snr = w.snrs;
+            auto stats = [](const std::vector<double> &v) -> std::tuple<double, double, double> {
+                if (v.empty()) return {0.0, 0.0, 0.0};
+                double s = 0, mn = 1e300, mx = -1e300;
+                for (double x: v) { s += x; mn = std::min(mn, x); mx = std::max(mx, x); }
+                return {s / static_cast<double>(v.size()), mn, mx};
+            };
+            std::tie(q.cnrMean, q.cnrMin, q.cnrMax) = stats(cnr1v);
+            std::tie(q.cnrMean2, q.cnrMin2, q.cnrMax2) = stats(cnr2v);
+            q.cnr = w.cnrs;
+            q.cnr2 = w.cnrs2;
 
 
             // 绘图序列
             q.epIdx = w.epIdx;
             q.t = w.tt;
-            // 保存原始 MP 序列
+            // 保存原始 MP_k 组合，含多路径+整周模糊度等信息
             q.mp1 = std::move(w.mp1s);
             q.mp2 = std::move(w.mp2s);
+            // 多路径误差
+            q.mp1Resid = mpDetrended(q.mp1, ok, n);
+            q.mp2Resid = mpDetrended(q.mp2, ok, n);
             q.ionoRate = std::move(ionoRate);
+            q.ionoRate2 = std::move(ionoRate2);
 
             rep.satOrder.push_back(sat);
         }
 
         // 系统 / 总体聚合
         std::map<char, double> sumComp, sumDI1, sumDI2, sumSlipRatio, sumMp1, sumMp2;
-        std::map<char, double> sumSigRho, sumSigPh, sumSnr, sumIonoRate;
-        std::map<char, int> cnt, sumSlips, sumIono, sumOut, sumClk, cntSnr, cntIono;
+        std::map<char, double> sumSigRho, sumSigPh, sumCnr, sumCnr1, sumCnr2, sumIonoRate, sumIonoRate1, sumIonoRate2;
+        std::map<char, int> cnt, sumSlips, sumIono, sumIono1, sumIono2, sumOut, sumClk, cntCnr, cntCnr1, cntCnr2, cntIono, cntIono1, cntIono2;
         for (auto &[sat, q]: rep.sats) {
             const char s = sat.system;
             sumComp[s] += q.completeness;
@@ -595,13 +618,27 @@ namespace QC {
             sumSigPh[s] += 0.5 * (q.sigPh1 + q.sigPh2);
             sumSlips[s] += q.slips;
             sumIono[s] += q.ionoJumps;
+            sumIono1[s] += q.ionoJumps1;
+            sumIono2[s] += q.ionoJumps2;
             sumOut[s] += q.outliers;
             sumClk[s] += q.clockJumps;
             sumIonoRate[s] += q.ionoRateStd;
             cntIono[s]++;
-            if (q.snrMean > 0) {
-                sumSnr[s] += q.snrMean;
-                cntSnr[s]++;
+            sumIonoRate1[s] += q.ionoRateStd1;
+            cntIono1[s]++;
+            sumIonoRate2[s] += q.ionoRateStd2;
+            cntIono2[s]++;
+            if (q.cnrMean > 0) {
+                sumCnr[s] += q.cnrMean;   // band1
+                cntCnr[s]++;
+                sumCnr1[s] += q.cnrMean;  // band1 explicit
+                cntCnr1[s]++;
+            }
+            if (q.cnrMean2 > 0) {
+                sumCnr[s] += q.cnrMean2;  // band2 contributes to overall sysCnr
+                cntCnr[s]++;
+                sumCnr2[s] += q.cnrMean2; // band2 explicit
+                cntCnr2[s]++;
             }
             cnt[s]++;
         }
@@ -616,25 +653,41 @@ namespace QC {
             rep.sysSigPhase[s] = sumSigPh[s] / c;
             rep.sysSlips[s] = sumSlips[s];
             rep.sysIonoJumps[s] = sumIono[s];
+            rep.sysIonoJumps1[s] = sumIono1[s];
+            rep.sysIonoJumps2[s] = sumIono2[s];
             rep.sysOutliers[s] = sumOut[s];
             rep.sysClockJumps[s] = sumClk[s];
             rep.sysIonoRate[s] = cntIono.count(s) ? sumIonoRate[s] / cntIono[s] : 0.0;
-            if (cntSnr.count(s)) rep.sysSnr[s] = sumSnr[s] / cntSnr[s];
+            rep.sysIonoRate1[s] = cntIono1.count(s) ? sumIonoRate1[s] / cntIono1[s] : 0.0;
+            rep.sysIonoRate2[s] = cntIono2.count(s) ? sumIonoRate2[s] / cntIono2[s] : 0.0;
+            if (cntCnr.count(s)) rep.sysCnr[s] = sumCnr[s] / cntCnr[s];
+            if (cntCnr1.count(s)) rep.sysCnr1[s] = sumCnr1[s] / cntCnr1[s];
+            if (cntCnr2.count(s)) rep.sysCnr2[s] = sumCnr2[s] / cntCnr2[s];
         }
-        double allComp = 0, allSnr = 0;
-        int allCnt = 0, allSnrCnt = 0;
+        double allComp = 0, allCnr = 0, allCnr1 = 0, allCnr2 = 0;
+        int allCnt = 0, allCnrCnt = 0, allCnr1Cnt = 0, allCnr2Cnt = 0;
         for (auto &[sat, q]: rep.sats) {
             allComp += q.completeness;
             allCnt++;
-            if (q.snrMean > 0) {
-                allSnr += q.snrMean;
-                allSnrCnt++;
+            if (q.cnrMean > 0) {
+                allCnr += q.cnrMean;
+                allCnrCnt++;
+                allCnr1 += q.cnrMean;
+                allCnr1Cnt++;
+            }
+            if (q.cnrMean2 > 0) {
+                allCnr += q.cnrMean2;
+                allCnrCnt++;
+                allCnr2 += q.cnrMean2;
+                allCnr2Cnt++;
             }
         }
         rep.overallCompleteness = allCnt ? allComp / allCnt : 0;
-        rep.overallSnr = allSnrCnt ? allSnr / allSnrCnt : 0;
+        rep.overallCnr = allCnrCnt ? allCnr / allCnrCnt : 0;
+        rep.overallCnr1 = allCnr1Cnt ? allCnr1 / allCnr1Cnt : 0;
+        rep.overallCnr2 = allCnr2Cnt ? allCnr2 / allCnr2Cnt : 0;
 
-        // 6综合评估
+        // 综合评估
         computeComprehensive(rep);
         return rep;
     }
