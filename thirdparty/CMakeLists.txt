@@ -9,13 +9,9 @@ target_include_directories(
 
 # ---- ImGui（header-only + backends）----
 # ImGui 主库（imgui.cpp 需要参与编译）
-add_library(thirdparty_imgui STATIC
-        imgui/imgui.cpp
-        imgui/imgui_demo.cpp
-        imgui/imgui_draw.cpp
-        imgui/imgui_tables.cpp
-        imgui/imgui_widgets.cpp
-)
+# 用 GLOB 自动收集 imgui 主库源文件；第三方库更新新增 .cpp 后需重新 configure (cmake --fresh) 才会纳入编译
+file(GLOB IMGUI_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/imgui/*.cpp)
+add_library(thirdparty_imgui STATIC ${IMGUI_SRCS})
 target_include_directories(thirdparty_imgui
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/imgui
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/imgui
@@ -52,11 +48,9 @@ target_include_directories(thirdparty_imgui_impl_dx11
 target_link_libraries(thirdparty_imgui_impl_dx11 PRIVATE thirdparty_imgui d3d11 dxgi)
 
 # ---- ImPlot ----
-add_library(thirdparty_implot STATIC
-        implot/implot.cpp
-        implot/implot_items.cpp
-        implot/implot_demo.cpp
-)
+# 用 GLOB 自动收集 implot 主库源文件；更新新增 .cpp 后需 cmake --fresh
+file(GLOB IMPLOT_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/implot/*.cpp)
+add_library(thirdparty_implot STATIC ${IMPLOT_SRCS})
 target_include_directories(thirdparty_implot
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/implot
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/imgui
@@ -64,12 +58,9 @@ target_include_directories(thirdparty_implot
 target_link_libraries(thirdparty_implot PRIVATE thirdparty_imgui)
 
 # ---- ImPlot3D ----
-add_library(thirdparty_implot3d STATIC
-        implot3d/implot3d.cpp
-        implot3d/implot3d_items.cpp
-        implot3d/implot3d_meshes.cpp
-        implot3d/implot3d_demo.cpp
-)
+# 用 GLOB 自动收集 implot3d 主库源文件；更新新增 .cpp 后需 cmake --fresh
+file(GLOB IMPLOT3D_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/implot3d/*.cpp)
+add_library(thirdparty_implot3d STATIC ${IMPLOT3D_SRCS})
 target_include_directories(thirdparty_implot3d
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/implot3d
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/imgui ${CMAKE_CURRENT_SOURCE_DIR}/implot

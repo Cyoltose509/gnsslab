@@ -1,0 +1,52 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ninja-x64-release",
+      "displayName": "Windows (Ninja, x64, Release) — 推荐",
+      "description": "",
+      "generator": "Ninja",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/.cmake-build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Visual Studio"
+        }
+      }
+    },
+    {
+      "name": "ninja-x64-debug",
+      "displayName": "Windows (Ninja, x64, Debug)",
+      "description": "",
+      "generator": "Ninja",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/.cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Visual Studio"
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ninja-x64-release",
+      "configurePreset": "ninja-x64-release"
+    },
+    {
+      "name": "ninja-x64-debug",
+      "configurePreset": "ninja-x64-debug"
+    }
+  ]
+}
