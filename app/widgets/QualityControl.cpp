@@ -401,7 +401,7 @@ namespace QualityControl {
                     if (!q->t.empty())
                         ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->ionoRate.data(), static_cast<int>(q->t.size()));
             });
-            drawPlot("snr_all", "载噪比 CNR", kPlotH, [&] {
+            drawPlot("cnr_all", "载噪比 CNR", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "dB-Hz");
                 for (const auto q: toPlot)
                     if (!q->t.empty())
@@ -610,7 +610,7 @@ namespace QualityControl {
                         ImPlot::PlotLine("IOD f2", q.t.data(), q.ionoRate2.data(), static_cast<int>(q.t.size()));
                 });
                 if (!q.cnr.empty() || !q.cnr2.empty())
-                    drawPlot("s_snr", "载噪比 CNR", kPlotH, [&] {
+                    drawPlot("s_cnr", "载噪比 CNR", kPlotH, [&] {
                         ImPlot::SetupAxes("SOW (s)", "dB-Hz");
                         if (!q.cnr.empty())
                             ImPlot::PlotLine("CNR f1", q.t.data(), q.cnr.data(), static_cast<int>(q.t.size()));
