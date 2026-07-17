@@ -4,3 +4,9 @@
 [submodule "thirdparty/implot3d"]
 	path = thirdparty/implot3d
 	url = https://github.com/brenocq/implot3d.git
+[submodule "thirdparty/imgui"]
+	path = thirdparty/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "thirdparty/eigen-3.4.0"]
+	path = thirdparty/eigen-3.4.0
+	url = https://gitlab.com/libeigen/eigen.git
