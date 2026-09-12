@@ -18,8 +18,12 @@ using QC::QualityReport;
 
 // 前向声明，避免在头文件引入 GUI 依赖
 namespace GuiFileProcessor { struct SppTask; struct SppEpochData; }
+namespace GuiPppProcessor { struct PppTask; }
 
 namespace QualityControl {
-    /// 在主程序中渲染质量分析界面 (需在 ImGui 上下文内调用)
-    void render(const std::shared_ptr<GuiFileProcessor::SppTask> &task);
+    /// 在主程序中渲染质量分析界面 (需在 ImGui 上下文内调用)。
+    /// 模板化以便 SPP 与 PPP 共用同一套质量分析渲染（二者均暴露 qcReport / qcMutex /
+    /// qcReady / qcComputing / fileName / isRealtime / readDone 等成员）。
+    template<typename TaskT>
+    void render(const std::shared_ptr<TaskT> &task);
 }

@@ -3,14 +3,14 @@
 #include <windows.h>
 #include <commdlg.h>
 #include "GuiFileProcessor.h"
+#include "GuiHelpers.h"   // InputTextStd（绑定 std::string）
+#include "core/AppConfig.h"   // 项目外 ini 记忆（不同页面用不同 key/group）
 #include "ui/Gui.h"        // 现代 IFileDialog 文件对话框（DPI 清晰）
 #include "imgui.h"
 #include "OEM7Reader.h"
-#include "SPPCodePhase.h"
 #include "QualityControl.h"
 #include "Const.h"
 #include "QCProcessor.h"     // namespace QC: QualityReport / QCObsEpoch / compute
-#include "implot.h"
 
 #include <fstream>
 #include <filesystem>
@@ -18,24 +18,21 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
-#include <cmath>
 #include <cctype>
-#include <chrono>
 #include <thread>
 #include <utility>
 
 #include "Log.h"
 #include "RinexObsReader.h"
 #include "RinexNavStore.h"
+#include "GuiRealtimeProcessor.h"   // 配置面板「实时」页用到其 ConnectionConfig / SolveRealtimeThread
+#include "StringUtils.h"
 
 namespace GuiFileProcessor {
-    auto oldTime = CommonTime(61120);
-
-    void SppEpochData::getFromSPP(const SPPIFCode &spp) {
+    void SppEpochData::getFromSPP(const SPP &spp) {
         if (auto &result = spp.result; result.numSats > 0) {
             solved = true;
             sppResult = result;
-            numSatsResult = result.numSats;
             const auto size = static_cast<int>(satIds.size());
             for (int i = 0; i < size; i++) {
                 if (auto it = spp.satElevData.find(satIds[i]); it != spp.satElevData.end())
@@ -44,11 +41,16 @@ namespace GuiFileProcessor {
                     azimuths[i] = it2->second;
                 if (auto it3 = spp.satPVTTransTime.find(satIds[i]); it3 != spp.satPVTTransTime.end())
                     satPVTs[i] = it3->second;
-                if (spp.satRejected.count(satIds[i])) {
+                if (spp.satRejected.count(satIds[i]))
                     rejected[i] = true;
-                    numSatsResult--;
-                }
+                // 没有有效星历/位置的卫星也标记为排除，避免 GUI 显示"参与"但坐标全 0
+                if (!rejected[i] && satPVTs[i].p.squaredNorm() <= 1.0)
+                    rejected[i] = true;
             }
+            // 实际参与解算的卫星数 = 未被排除的观测卫星（避免 result.numSats 与 rejected 重复扣减）
+            numSatsResult = 0;
+            for (int i = 0; i < size; i++)
+                if (!rejected[i]) numSatsResult++;
         } else { solved = false; }
     }
 
@@ -128,29 +130,6 @@ namespace GuiFileProcessor {
         resYhi = 8.0;
     }
 
-    // 由当前所有后验残差估计稳健 Y 轴范围（忽略极端粗差，使主体散点清晰可见）
-    static void computeRobustResRange(PlotData &pp) {
-        std::vector<double> allv;
-        for (auto &[sat, vals]: pp.satResVals)
-            for (double v: vals) allv.push_back(v);
-        if (allv.size() < 2) {
-            pp.resYlo = -8;
-            pp.resYhi = 8;
-            pp.resRangeReady = true;
-            return;
-        }
-        std::sort(allv.begin(), allv.end());
-        size_t n = allv.size();
-        double lo = allv[(size_t) (0.01 * n)];
-        double hi = allv[(size_t) (0.99 * n)];
-        double half = 0.5 * (hi - lo);
-        if (!(half > 0.0)) half = 1.0;
-        half = std::max(1.0, std::min(half, 20.0));
-        pp.resYlo = -half;
-        pp.resYhi = half;
-        pp.resRangeReady = true;
-    }
-
     // ----------------------------------------------------------
     // 伴生文件扫描
     // ----------------------------------------------------------
@@ -170,214 +149,356 @@ namespace GuiFileProcessor {
         return result;
     }
 
+    // 把单历元原始观测转成 QC 输入由 QC::makeQCObsEpoch 统一完成（见 QCProcessor.h），三端共用。
+
     // ----------------------------------------------------------
-    // 配置面板
+    // 配置面板：文件 / 实时 双标签页
     // ----------------------------------------------------------
     void RenderConfigPanel(const std::shared_ptr<SppTask> &task) {
-        // 跨文件记住用户选择（static 在进程生命周期内有效；关闭重开则恢复默认）
-        static bool s_usePhase = false;
-        static std::set s_systems = {'G', 'C'};
+        // 每帧强制夺焦：避免点击背景失焦；但弹窗(历史下拉等)打开时让出焦点，否则会抢走下拉菜单。
+        GuiHelpers::beginConfigWindow("处理配置###cfg_", task.get());
 
-        ImGui::SetNextWindowFocus();
-        ImGui::Begin("处理配置", nullptr, ImGuiWindowFlags_NoCollapse);
-        ImGui::Text("文件: %s", task->fileName.c_str());
-        ImGui::Separator();
+        if (ImGui::BeginTabBar("##cfg_tabs")) {
+            // ===================== 文件标签页 =====================
+            if (ImGui::BeginTabItem("文件")) {
+                // ini key 必须用 "obs_path"，与 Application::OpenSppSolve 读回的 key 一致，
+                // 否则 obs 文件选择不会被记住（PPP 正是用一致的 "ppp_obs" 键写/读，故 PPP 能记忆）。
+                GuiHelpers::fileRow("观测文件 (RINEX .??O / OEM7 .log)", &task->obsPathBuf, "obs_path",
+                                    GuiHelpers::fObs, 3,
+                                    [&](const std::string &p) { task->navFiles = ScanNavFiles(p); });
+                ImGui::Separator();
+                ImGui::Text("广播星历文件:");
+                if (task->navFiles.empty()) {
+                    ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                                       "未识别到伴生星历（同目录下 .??N/.??G/.??C 等）。可手动添加。");
+                } else {
+                    for (size_t i = 0; i < task->navFiles.size(); i++) {
+                        ImGui::Bullet();
+                        std::string shortName = task->navFiles[i];
+                        if (const auto pos = shortName.find_last_of("\\/"); pos != std::string::npos)
+                            shortName = shortName.substr(pos + 1);
+                        ImGui::Text("%s", shortName.c_str());
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(("删除##nav" + std::to_string(i)).c_str()))
+                            task->navFiles.erase(task->navFiles.begin() + i);
+                    }
+                }
+                if (ImGui::Button("添加星历(多选)...")) {
+                    std::vector<std::wstring> wpaths;
+                    if (ShowOpenFilesDialog(wpaths, GuiHelpers::fRnx, 2)) {
+                        for (auto &wp: wpaths) {
+                            std::string p = wideToAcp(wp);
+                            if (std::find(task->navFiles.begin(), task->navFiles.end(), p) == task->navFiles.end())
+                                task->navFiles.push_back(p);
+                            AppConfig::instance().addRecent("nav", p);
+                        }
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("从记录添加")) ImGui::OpenPopup("##nav_hist_pop");
+                if (ImGui::BeginPopup("##nav_hist_pop")) {
+                    auto recent = AppConfig::instance().getRecent("nav");
+                    if (recent.empty()) ImGui::TextDisabled("(暂无记录)");
+                    for (auto &r: recent) {
+                        if (ImGui::Selectable(r.c_str())) {
+                            if (std::find(task->navFiles.begin(), task->navFiles.end(), r) == task->navFiles.end())
+                                task->navFiles.push_back(r);
+                            AppConfig::instance().addRecent("nav", r);
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::Separator();
 
-        // 伴生文件
-        if (!task->navFiles.empty()) {
-            ImGui::Text("检测到伴生星历文件:");
-            for (auto &f: task->navFiles) {
-                size_t pos = f.rfind('/');
-                if (pos == std::string::npos) pos = f.rfind('\\');
-                ImGui::BulletText("%s", pos != std::string::npos ? f.c_str() + pos + 1 : f.c_str());
+                GuiHelpers::renderCutoffAndSystems(&task->cutoffDeg, &task->enabledSystems);
+
+                ImGui::Separator();
+
+                if (ImGui::Button("开始解算", ImVec2(200, 40))) {
+                    if (std::string path = task->obsPathBuf; path.empty()) {
+                        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "请先选择观测文件");
+                    } else {
+                        task->filePath = path;
+                        task->fileName = GuiHelpers::baseName(path);
+                        task->isRinex = path.size() >= 4 &&
+                                        std::isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
+                                        std::toupper(path.back()) == 'O';
+                        task->state = SppTask::State::Running;
+                        task->loading = true;
+                        task->worker = std::thread(SolveThread, task);
+                    }
+                }
+                ImGui::SameLine();
+                GuiHelpers::renderCancelButton(task);
+                ImGui::EndTabItem();
             }
-        } else if (task->filePath.size() >= 4 && std::isdigit(static_cast<unsigned char>(task->filePath[task->filePath.size() - 3]))) {
-            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "未找到伴生星历文件（同目录下 .??N/.??G/.??C 等）");
-        }
-        ImGui::Separator();
 
-        // 星座（绑定到 static，跨文件保持）
-        ImGui::Text("选择星座:");
-        struct {
-            char ch;
-            const char *label;
-        } cons[] = {{'G', "GPS"}, {'C', "BDS"}};
-        for (auto &c: cons) {
-            bool on = s_systems.count(c.ch) > 0;
-            ImGui::SameLine();
-            ImGui::Checkbox(c.label, &on);
-            if (on) s_systems.insert(c.ch);
-            else s_systems.erase(c.ch);
-        }
-        ImGui::NewLine();
-        ImGui::Separator();
+            // ===================== 实时标签页 =====================
+            if (ImGui::BeginTabItem("实时")) {
+                ImGui::Text("连接到 Oem7 实时流 (socket):");
+                ImGui::PushItemWidth(200);
+                GuiHelpers::inputTextStd("IP 地址", &task->rtIpBuf);
+                GuiHelpers::inputTextStd("端口", &task->rtPortBuf);
+                ImGui::PopItemWidth();
+                ImGui::Separator();
 
-        // 解法
-        ImGui::Text("选择解法:");
-        static const char *methods[] = {"IF-code 纯伪距 (SPP)", "IF 组合载波相位"};
-        int method = s_usePhase ? 1 : 0;
-        ImGui::RadioButton(methods[0], &method, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton(methods[1], &method, 1);
-        s_usePhase = (method == 1);
-        ImGui::Separator();
+                // 截止高度角 + 星座选择（文件页与实时页共用同一控件，保证一致）
+                GuiHelpers::renderCutoffAndSystems(&task->cutoffDeg, &task->enabledSystems);
 
-        if (ImGui::Button("开始处理", ImVec2(200, 40))) {
-            task->usePhase = s_usePhase;
-            task->enabledSystems = s_systems;
-            task->state = SppTask::State::Running;
-            task->worker = std::thread(SolveThread, task);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(80, 40))) {
-            task->state = SppTask::State::Done;
-            task->hasError = true;
-            task->errorMsg = "用户取消";
+                ImGui::Separator();
+                if (ImGui::Button("开始解算", ImVec2(200, 40))) {
+                    std::string &ip = task->rtIpBuf;
+                    std::string &port = task->rtPortBuf;
+                    task->isRealtime = true;
+                    task->fileName = ip + ":" + port;
+                    AppConfig::instance().set("rt_ip", ip);
+                    AppConfig::instance().set("rt_port", port);
+                    GuiRealtimeProcessor::ConnectionConfig config;
+                    config.ip = ip;
+                    config.port = std::atoi(port.c_str()); //NOLINT
+                    task->state = SppTask::State::Running;
+                    task->loading = true;
+                    task->worker = std::thread(GuiRealtimeProcessor::SolveRealtimeThread, task, config);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("取消", ImVec2(80, 40))) {
+                    task->state = SppTask::State::Done;
+                    task->hasError = true;
+                    task->errorMsg = "用户取消";
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
         ImGui::End();
     }
 
     // ----------------------------------------------------------
-    // 读取 RINEX 数据
+    // 读取线程（生产者）：加载星历 → navReady → 流式把历元喂入队列
     // ----------------------------------------------------------
-    static bool ReadRinex(const std::shared_ptr<SppTask> &task,
-                          std::vector<ObsData> &allObs,
-                          std::map<char, std::vector<string> > &availableTypes,
-                          EphemerisTable &ephTable) {
-        task->phase = SppTask::Phase::Reading;
-        RinexNavStore navStore;
-        int navLoaded = 0;
-        for (auto &np: task->navFiles) {
-            try {
-                navStore.loadFile(np, ephTable);
-                navLoaded++;
-                task->readProgress = 0.25f * navLoaded / (std::max)(1, (int) task->navFiles.size());
-            } catch (const std::exception &e) { LOG_ERROR << "nav fail " << np << ": " << e.what(); }
-        }
-        task->hasNav = (navLoaded > 0);
-        if (navLoaded == 0)
-            LOG_WARN << "未找到伴生星历文件，将无法定位解算；质量分析（仅依赖原始观测）仍正常进行。";
-        task->readProgress = 0.25f;
+    static void ReaderThread(const std::shared_ptr<SppTask> &task) {
+        try {
+            const auto &path = task->filePath;
+            const bool isRinex = task->isRinex;
+            LOG_INFO << "读取文件: " << path;
+            task->qcInput.clear(); // 重新收集原始观测，供质量分析（与解算解耦）
 
-        RinexObsReader obsReader;
-        std::fstream obsFile(task->filePath.c_str(), std::ios::in);
-        if (!obsFile) {
-            task->hasError = true;
-            task->errorMsg = "无法打开 RINEX";
-            return false;
-        }
-        obsReader.setFileStream(&obsFile);
-        bool hdr = false;
-        int safety = 0, ok = 0;
-        while (++safety < 100000) {
-            try {
-                ObsData o = obsReader.parseRinexObs();
-                allObs.push_back(std::move(o));
-                ok++;
-                task->readProgress = 0.25f + 0.70f * (1.0f - 1.0f / (1.0f + ok * 0.005f));
-                if (!hdr) {
-                    hdr = true;
-                    availableTypes = obsReader.getHeader().mapObsTypes;
+            if (isRinex) {
+                // 广播星历改由解算线程 SPP::loadBrdc 在类内加载（与 PPP 一致），读取线程仅发 navReady 信号
+                {
+                    std::lock_guard lk(task->queueMutex);
+                    task->navReady = true;
                 }
-            } catch (const EndOfFile &) { break; } catch (const std::exception &e) {
-                task->hasError = true;
-                task->errorMsg = "RINEX parse err: " + std::string(e.what());
-                return false;
+                task->queueCv.notify_all();
+
+                RinexObsReader obsReader;
+                std::fstream obsFile(path.c_str(), std::ios::in);
+                if (!obsFile) {
+                    task->hasError = true;
+                    task->errorMsg = "无法打开 RINEX";
+                    task->readDone = true;
+                    task->queueCv.notify_all();
+                    task->loading = false;
+                    return;
+                }
+                obsReader.pFileStream = &obsFile;
+                int safety = 0, ok = 0;
+                while (++safety < 100000) {
+                    if (task->stop) break;
+                    try {
+                        ObsData o = obsReader.parseRinexObs();
+                        task->qcInput.push_back(QC::makeQCObsEpoch(o, o.weekSecond.sow)); // 原始观测 → QC 输入
+                        {
+                            std::lock_guard lk(task->queueMutex);
+                            task->obsQueue.push({std::move(o), nullptr});
+                        }
+                        task->queueCv.notify_one();
+                        ok++;
+                    } catch (const EndOfFile &) { break; } catch (const std::exception &e) {
+                        task->hasError = true;
+                        task->errorMsg = "RINEX parse err: " + std::string(e.what());
+                        task->readDone = true;
+                        task->queueCv.notify_all();
+                        task->loading = false;
+                        return;
+                    }
+                }
+                if (ok == 0) {
+                    task->hasError = true;
+                    task->errorMsg = "RINEX 无历元";
+                    task->readDone = true;
+                    task->queueCv.notify_all();
+                    task->loading = false;
+                    return;
+                }
+                task->totalEpochs = ok;
+            } else {
+                OEM7Reader oem7;
+                if (!oem7.open(path)) {
+                    task->hasError = true;
+                    task->errorMsg = "无法打开 OEM7";
+                    task->readDone = true;
+                    task->queueCv.notify_all();
+                    task->loading = false;
+                    return;
+                }
+                {
+                    std::lock_guard lk(task->queueMutex);
+                    task->navReady = true;
+                }
+                task->queueCv.notify_all();
+
+                ObsData obs;
+                int ok = 0;
+                while (oem7.getNextEpoch(obs)) {
+                    if (task->stop) break;
+                    auto eph = std::make_shared<EphemerisTable>();
+                    for (auto &[prn, e]: oem7.latestGps) eph->gps[prn] = {std::make_shared<GPSEphem>(e)};
+                    for (auto &[prn, e]: oem7.latestBds) eph->bds[prn] = {std::make_shared<BDSEphem>(e)};
+                    task->qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
+                    {
+                        std::lock_guard lk(task->queueMutex);
+                        task->obsQueue.push({std::move(obs), std::move(eph)});
+                    }
+                    task->queueCv.notify_one();
+                    ok++;
+                }
+                if (ok == 0) {
+                    task->hasError = true;
+                    task->errorMsg = "OEM7 无历元";
+                }
+                task->totalEpochs = ok;
+                task->hasNav = ok > 0; // OEM7 内含星历
+                task->readDone = true;
+                task->queueCv.notify_all();
+                LaunchQC(task);
             }
-        }
-        if (ok == 0) {
+
+            task->readDone = true;
+            task->queueCv.notify_all();
+
+            LaunchQC(task);
+        } catch (const std::exception &e) {
             task->hasError = true;
-            task->errorMsg = "RINEX 无历元";
-            return false;
+            task->errorMsg = e.what();
         }
-        task->totalEpochs = ok;
-        {
-            std::lock_guard lock(task->mutex);
-            task->epochs.clear();
-            task->epochs.reserve(allObs.size());
-            for (auto &obs: allObs) {
-                SppEpochData data;
-                data.getFromObs(obs);
-                task->epochs.push_back(std::move(data));
-            }
-        }
-        return true;
+        task->loading = false;
     }
 
-    // ----------------------------------------------------------
-    // 读取 OEM7 数据
-    // ----------------------------------------------------------
-    static bool ReadOEM7(const std::shared_ptr<SppTask> &task,
-                         std::vector<ObsData> &allObs,
-                         std::map<char, std::vector<string> > &availableTypes,
-                         std::vector<EphemerisTable> &ephSnapshots) {
-        task->phase = SppTask::Phase::Reading;
-        OEM7Reader oem7;
-        if (!oem7.open(task->filePath)) {
-            task->hasError = true;
-            task->errorMsg = "无法打开 OEM7";
-            return false;
-        }
-        oem7.readAll(allObs, ephSnapshots, &task->readProgress);
-        task->totalEpochs = static_cast<int>(allObs.size());
-        if (task->totalEpochs == 0) return false;
-        {
-            std::lock_guard lock(task->mutex);
-            task->epochs.clear();
-            task->epochs.reserve(allObs.size());
-            for (auto &obs: allObs) {
+    static void SolverThread(const std::shared_ptr<SppTask> &task) {
+        try {
+            {
+                std::unique_lock lk(task->queueMutex);
+                task->queueCv.wait(lk, [&] { return task->navReady.load() || task->stop.load(); });
+            }
+            if (task->stop) {
+                task->solvingDone = true;
+                return;
+            }
+
+            SPP spp;
+            spp.setCutoffElevDeg(task->cutoffDeg); // 截止高度角：低于该仰角的卫星在解算中被剔除
+            spp.enabledSystems = task->enabledSystems; // IF 组合由 SPP::solve 每历元从观测自探测（与 PPP/LEO 同构）
+
+            // 文件模式广播星历：由 SPP 类内加载（与 PPP 一致），GUI 不再直达 ephTable
+            for (auto &np : task->navFiles) {
+                try { spp.loadBrdc(np); task->hasNav = true; }
+                catch (const std::exception &e) { LOG_ERROR << "nav fail " << np << ": " << e.what(); }
+            }
+
+            std::shared_ptr<EphemerisTable> lastGoodEph;  // 持有最近一份有效星历，避免指向已销毁 item.eph 的裸指针悬垂
+
+            while (true) {
+                ObsItem item;
+                {
+                    std::unique_lock lk(task->queueMutex);
+                    task->queueCv.wait(lk, [&] {
+                        return !task->obsQueue.empty() || task->readDone.load() || task->stop.load();
+                    });
+                    if (task->obsQueue.empty() && (task->readDone.load() || task->stop.load())) break;
+                    if (task->obsQueue.empty()) continue;
+                    item = std::move(task->obsQueue.front());
+                    task->obsQueue.pop();
+                }
+                if (task->stop) break;
+
+                ObsData &obs = item.obs;
+                // ephTable 为值存储：流式模式每历元把 item.eph 拷入并覆盖，文件模式保留 loadBrdc 已加载的广播星历
+                if (item.eph) {
+                    EphemerisTable *tbl = item.eph.get();
+                    if (tbl->gps.empty() && tbl->bds.empty() && lastGoodEph) tbl = lastGoodEph.get();
+                    else if (!tbl->gps.empty() || !tbl->bds.empty()) lastGoodEph = item.eph;
+                    spp.ephTable = *tbl;   // 逐历元覆盖（shared_ptr 元素深拷贝廉价）
+                }
+                EphemerisTable *eph = &spp.ephTable;   // 统一指向类内值成员
+                spp.preprocess(obs);
+
                 SppEpochData data;
                 data.getFromObs(obs);
-                task->epochs.push_back(std::move(data));
+                bool solve_ok = false;
+                if (eph) {
+                    try {
+                        spp.solve(obs);
+                        solve_ok = true;
+                    } catch (...) { solve_ok = false; }
+                }
+
+                if (!task->isRinex) task->hasNav = task->hasNav || item.eph != nullptr;
+                if (task->isRinex && !task->hasNav) task->noEphSolve = true;
+
+                {
+                    std::lock_guard lk(task->mutex);
+                    if (solve_ok) {
+                        data.getFromSPP(spp);
+                        if (!task->initializedRefECEF) {
+                            task->refECEF = data.sppResult.xyz;
+                            task->initializedRefECEF = true;
+                        }
+                    } else {
+                        data.solved = false;
+                    }
+                    const int idx = static_cast<int>(task->epochs.size());
+                    task->epochs.push_back(std::move(data));
+                    {
+                        std::lock_guard plk(task->plotMutex);
+                        task->plotData.insert(idx, task->epochs.back(), task->refECEF);
+                    }
+                    if (task->selectedEpoch == -1 || task->selectedEpoch == idx - 1) task->selectedEpoch = idx;
+                    task->solvingProgress = idx + 1;
+                    task->solvedCount = static_cast<int>(task->epochs.size());
+                }
             }
+        } catch (const std::exception &e) {
+            task->hasError = true;
+            task->errorMsg = e.what();
         }
-        // OEM7 没有 RINEX 头，但可用观测量类型已在读取时收集（availableTypes_），
-        // 与 RINEX 完全一致地交由 SPPIFCode::setIFCodeTypesAuto 处理（含默认兜底）。
-        availableTypes = oem7.getAvailableTypes();
-        return true;
+        task->solvingDone = true;
     }
 
-    // ----------------------------------------------------------
-    // 质量分析（QC）后台计算：把 SppTask 的观测结果转成 QC 输入并调用 QC::compute。
-    // 质量分析与定位解算无因果关系——只依赖原始观测(C/L/S)，与是否解出定位无关。
-    // 每历元(无论 solved 与否)都喂给 QC；高度角/DOP/卫星数等几何量在 QCProcessor
-    // 内部仅在「解算器确实提供了几何信息(nsat>0)」时才纳入。
-    static QualityReport buildReport(SppTask &task) {
-        std::vector<QC::QCObsEpoch> qcEpochs;
-        {
-            // 读取 task->epochs 时加锁，避免与解算线程的逐历元写入竞争
-            std::lock_guard lk(task.mutex);
-            qcEpochs.reserve(task.epochs.size());
-            for (const auto &ep: task.epochs) {
-                QC::QCObsEpoch qe;
-                qe.sow = ep.sow;
-                qe.satIds = ep.satIds;
-                qe.allObs = ep.allObs;
-                // SppEpochData.elevations/azimuths 为弧度，QC 显示用角度，这里转为度
-                for (double e: ep.elevations) qe.elevations.push_back(e * RAD_TO_DEG);
-                for (double a: ep.azimuths) qe.azimuths.push_back(a * RAD_TO_DEG);
-                qe.pdop = ep.sppResult.pdop;
-                qe.hdop = ep.sppResult.hdop;
-                qe.vdop = ep.sppResult.vdop;
-                qe.gdop = ep.sppResult.gdop;
-                qe.nsat = ep.sppResult.numSats;
-                qcEpochs.push_back(std::move(qe));
-            }
-        }
+    void SolveThread(const std::shared_ptr<SppTask> &task) {
+        std::thread thRead(ReaderThread, task);
+        std::thread thSolve(SolverThread, task);
+        thRead.join();
+        thSolve.join();
+        task->state = SppTask::State::Done;
+        task->done = true;
+        task->loading = false;
+    }
+
+    static QualityReport buildReport(const SppTask &task) {
+        const std::vector<QC::QCObsEpoch> qcEpochs = task.qcInput;
         QualityReport rep = QC::compute(qcEpochs);
-        rep.totalInputEpochs = (int) task.epochs.size(); // 全部读取历元（含未解算）
+        rep.totalInputEpochs = static_cast<int>(qcEpochs.size());
         return rep;
     }
 
-    // 在后台线程算一次 QC 并整体替换 task->qcReport。渲染线程只读缓存，绝不重算。
-    // 触发点：读完后(观测指标立即可见) 与 全部解算完(补上 DOP/卫星数) 各一次。
     void LaunchQC(const std::shared_ptr<SppTask> &task) {
         if (task->qcWorker.joinable()) task->qcWorker.join(); // 确保上一轮已结束，再起新的一轮
         task->qcComputing = true;
-        task->qcWorker = std::thread([task]() {
+        task->qcWorker = std::thread([task] {
             try {
-                QualityReport rep = buildReport(*task);
                 {
+                    QualityReport rep = buildReport(*task);
                     std::lock_guard lk(task->qcMutex);
                     task->qcReport = std::make_shared<QualityReport>(std::move(rep));
                 }
@@ -389,677 +510,318 @@ namespace GuiFileProcessor {
         });
     }
 
-    // 概览 / Skyplot 共用的历元导航（箭头 + 滑块 + 当前历元信息）。
-    // selectedIdx 由调用方在锁外计算后传入；滑块只改 task->selectedEpoch（原子）。
-    static void RenderEpochNav(const std::shared_ptr<SppTask> &task, int epochCount, int selectedIdx) {
-        if (ImGui::Button("<<")) task->selectedEpoch = 0;
-        ImGui::SameLine();
-        if (ImGui::Button("<")) { if (task->selectedEpoch > 0) task->selectedEpoch--; }
-        ImGui::SameLine();
-        ImGui::PushItemWidth(150);
-        int ep = selectedIdx + 1;
-        if (ImGui::SliderInt("##es", &ep, 1, epochCount)) task->selectedEpoch = ep - 1;
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        if (ImGui::Button(">")) { if (task->selectedEpoch < epochCount - 1) task->selectedEpoch++; }
-        ImGui::SameLine();
-        if (ImGui::Button(">>")) task->selectedEpoch = epochCount - 1;
-        ImGui::SameLine();
-        if (selectedIdx >= 0) {
-            std::lock_guard lock(task->mutex);
-            auto &c = task->epochs[selectedIdx];
-            ImGui::TextDisabled("| Wk %u SOW %.3f | %s", c.week, c.sow, c.solved ? "定位" : "无解");
-        }
-    }
-
-    // Skyplot（天顶图，RTKLIB 风格）——轨迹版本：
-    // 所有历元卫星位置画细线/小点（轨迹）；选中历元的卫星画大点+标签、按系统着色。
-    static void DrawSkyplotTracks(const std::shared_ptr<SppTask> &task, int sel) {
-        // ---- 读取所有历元的卫星位置 ----
-        struct SatPt {
-            int epIdx;
-            float azDeg, elDeg;
-            bool used;
-        };
-        std::map<SatID, std::vector<SatPt> > tracks;
-        int totalEp = 0;
+    static void EnsureSkyTracksBuilt(const std::shared_ptr<SppTask> &task) {
         {
+            int totalEp = 0;
             std::lock_guard lk(task->mutex);
-            totalEp = (int) task->epochs.size();
-            for (int e = 0; e < totalEp; ++e) {
+            totalEp = static_cast<int>(task->epochs.size());
+            for (int e = task->skyTracksBuilt; e < totalEp; ++e) {
                 auto &ep = task->epochs[e];
-                for (int j = 0; j < (int) ep.satIds.size(); ++j) {
-                    double el = ep.elevations[j] * RAD_TO_DEG;
-                    if (el <= 0.0) continue; // 无几何信息
-                    tracks[ep.satIds[j]].push_back({
-                        e,
-                        (float) (ep.azimuths[j] * RAD_TO_DEG),
-                        (float) el,
-                        ep.solved && !ep.rejected[j]
-                    });
+                for (int j = 0; j < static_cast<int>(ep.satIds.size()); ++j) {
+                    const double el = ep.elevations[j] * RAD_TO_DEG;
+                    if (el <= 0.0) continue;
+                    task->skyTracks[ep.satIds[j]].push_back(
+                        {e, static_cast<float>(ep.azimuths[j] * RAD_TO_DEG), static_cast<float>(el), ep.solved && !ep.rejected[j]});
                 }
             }
-        }
-
-        // ---- 布局（约束为方形 — 填满可用宽度，高度由 AutoResizeY 跟随） ----
-        const float availW = ImGui::GetContentRegionAvail().x;
-        const float sizeW = std::max(220.0f, std::min(availW, 600.0f));
-        const float pad = 30.0f;
-        const float R = std::max(70.0f, (sizeW - 2.0f * pad) / 2.0f);
-        ImVec2 c0 = ImGui::GetCursorScreenPos();
-        const float cx = c0.x + pad + R, cy = c0.y + pad + R;
-        ImGui::Dummy(ImVec2(sizeW, sizeW));
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-
-        // ---- 网格 ----
-        const ImU32 grid = IM_COL32(90, 90, 110, 255);
-        const ImU32 gridFaint = IM_COL32(70, 70, 85, 200);
-        dl->AddCircle(ImVec2(cx, cy), R, grid, 64, 1.5f);
-        for (int el = 30; el < 90; el += 30) {
-            const float r = R * (1.0f - (float) el / 90.0f);
-            dl->AddCircle(ImVec2(cx, cy), r, gridFaint, 64, 1.0f);
-        }
-        const char *dirs[4] = {"N", "E", "S", "W"};
-        for (int d = 0; d < 4; ++d) {
-            const float a = (float) d * 90.0f * (float) DEG_TO_RAD;
-            const float x = cx + R * std::sin(a), y = cy - R * std::cos(a);
-            dl->AddLine(ImVec2(cx, cy), ImVec2(x, y), gridFaint, 1.0f);
-            const float lx = cx + (R + 14.0f) * std::sin(a), ly = cy - (R + 14.0f) * std::cos(a);
-            dl->AddText(ImVec2(lx - 4.0f, ly - 8.0f), IM_COL32(200, 200, 220, 255), dirs[d]);
-        }
-
-        // ---- 系统着色 ----
-        auto satCol = [](char s) -> ImU32 {
-            switch (s) {
-                case 'G': return IM_COL32(80, 220, 120, 255);
-                case 'C': return IM_COL32(255, 130, 60, 255);
-                case 'R': return IM_COL32(80, 200, 255, 255);
-                case 'E': return IM_COL32(240, 220, 70, 255);
-                default: return IM_COL32(220, 220, 220, 255);
-            }
-        };
-        auto pt = [&](float azDeg, float elDeg) -> ImVec2 {
-            const float r = R * (1.0f - elDeg / 90.0f);
-            const float a = azDeg * (float) DEG_TO_RAD;
-            return {cx + r * std::sin(a), cy - r * std::cos(a)};
-        };
-
-        // ---- 轨迹（按卫星系统着色的折线 + 稀疏采样小点） ----
-        for (auto &[sat, pts]: tracks) {
-            if (pts.size() < 2) continue;
-            ImU32 trkCol = satCol(sat.system);
-            // 降低 alpha 使轨迹半透明但不至于看不见
-            trkCol = IM_COL32((trkCol >> IM_COL32_R_SHIFT) & 0xFF,
-                              (trkCol >> IM_COL32_G_SHIFT) & 0xFF,
-                              (trkCol >> IM_COL32_B_SHIFT) & 0xFF, 120);
-            int segStart = 0;
-            for (size_t i = 1; i <= pts.size(); ++i) {
-                if (i == pts.size() || (pts[i].epIdx - pts[i - 1].epIdx > 10)) {
-                    if (i - segStart >= 2) {
-                        std::vector<ImVec2> seg;
-                        for (size_t k = segStart; k < i; ++k)
-                            seg.push_back(pt(pts[k].azDeg, pts[k].elDeg));
-                        dl->AddPolyline(seg.data(), (int) seg.size(), trkCol, ImDrawFlags_None, 1.5f);
-                        // 每隔 5 个点画一个小圆点，使轨迹更容易看到
-                        for (size_t k = segStart; k < i; k += 5)
-                            dl->AddCircleFilled(seg[k - segStart], 1.5f, trkCol);
-                    }
-                    segStart = (int) i;
-                }
-            }
-        }
-
-        // ---- 选中历元（大点 + 标签） ----
-        {
-            std::lock_guard lk(task->mutex);
-            if (sel >= 0 && sel < totalEp) {
-                auto &ep = task->epochs[sel];
-                for (int j = 0; j < (int) ep.satIds.size(); ++j) {
-                    double elDeg = ep.elevations[j] * RAD_TO_DEG;
-                    if (elDeg <= 0.0) continue;
-                    double azDeg = ep.azimuths[j] * RAD_TO_DEG;
-                    ImVec2 p = pt((float) azDeg, (float) elDeg);
-                    bool used = ep.solved && !ep.rejected[j];
-                    ImU32 col = satCol(ep.satIds[j].system);
-                    if (used) {
-                        dl->AddCircleFilled(p, 6.0f, col);
-                        dl->AddText(ImVec2(p.x - 10.0f, p.y - 24.0f), col, ep.satIds[j].toString().c_str());
-                    } else {
-                        dl->AddCircle(p, 4.5f, IM_COL32(150, 150, 160, 200), 12, 1.0f);
-                    }
-                }
-            }
+            task->skyTracksBuilt = totalEp;
         }
     }
 
-    // ----------------------------------------------------------
-    // SolveThread
-    // ----------------------------------------------------------
-    void SolveThread(const std::shared_ptr<SppTask> &task) {
-        try {
-            const auto &path = task->filePath;
-            LOG_INFO << "处理文件: " << path;
-
-            const bool isRinex = (path.size() >= 4 &&
-                                  std::isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
-                                  std::toupper(path.back()) == 'O');
-
-            task->loading = true;
-            task->hasError = false;
-            task->errorMsg.clear();
-
-            // ---- 阶段 1: 读数据 ----
-            std::vector<ObsData> allObs;
-            std::map<char, std::vector<string> > availableTypes;
-            EphemerisTable ephTable;
-            std::vector<EphemerisTable> ephSnaps;
-
-            bool ok = isRinex
-                          ? ReadRinex(task, allObs, availableTypes, ephTable)
-                          : ReadOEM7(task, allObs, availableTypes, ephSnaps);
-            if (!ok) {
-                task->loading = false;
-                task->done = true;
-                return;
-            }
-            task->readProgress = 1.0f;
-            LaunchQC(task); // 读完后即可后台算一次 QC（观测指标立即可见，无需等解算）
-
-            // ---- 阶段 2: 解算 ----
-            task->phase = SppTask::Phase::Solving;
-            task->solvingProgress = 0;
-
-            if (!task->hasNav && isRinex) {
-                // 无伴生星历：无法进行定位解算（逐历元都会因缺星历失败），直接跳过。
-                // 观测数据已在阶段 1 读入，质量分析（仅依赖原始观测）可正常进行。
-                task->noEphSolve = true;
-            } else {
-                // 仅保留启用系统，供自动检测 / 默认兜底使用
-                std::map<char, std::vector<string> > availForDetect;
-                for (auto &[sys, types]: availableTypes)
-                    if (task->enabledSystems.count(sys)) availForDetect[sys] = types;
-                IFCodeTypes defaultTypes;
-                if (task->enabledSystems.count('G')) defaultTypes['G'] = {"C1", "C2"};
-                if (task->enabledSystems.count('C')) defaultTypes['C'] = {"C2", "C6"};
-
-                const int N = task->totalEpochs;
-                EphemerisTable *lastGoodEph = nullptr; // OEM7 无星历回退
-
-                if (task->usePhase) {
-                    SPPCodePhase spp;
-                    spp.enableKalman(true);
-                    spp.setIFCodeTypesAuto(availForDetect, defaultTypes);
-                    for (int i = 0; i < N; ++i) {
-                        if (task->stop) break;
-                        ObsData &obs = allObs[i];
-                        if (isRinex) spp.setEphemerisTable(&ephTable);
-                        else {
-                            auto *cur = &ephSnaps[i];
-                            if (cur->gps.empty() && cur->bds.empty() && lastGoodEph) cur = lastGoodEph;
-                            else if (!cur->gps.empty() || !cur->bds.empty()) lastGoodEph = cur;
-                            spp.setEphemerisTable(cur);
-                        }
-                        spp.preprocess(obs);
-                        bool solve_ok = false;
-                        try {
-                            spp.solve(obs);
-                            solve_ok = true;
-                        } catch (...) { solve_ok = false; }
-                        {
-                            std::lock_guard lock(task->mutex);
-                            SppEpochData &data = task->epochs[i];
-                            if (solve_ok) {
-                                data.getFromSPP(spp);
-                                if (!task->initializedRefECEF) {
-                                    task->refECEF = data.sppResult.xyz;
-                                    task->initializedRefECEF = true;
-                                }
-                            } else { data.solved = false; }
-                            task->solvingProgress = i + 1;
-                            task->plotData.insert(i, data, task->refECEF);
-                            if (task->selectedEpoch == -1 || task->selectedEpoch == i - 1) task->selectedEpoch = i;
-                        }
-                    }
-                } else {
-                    // ---- IF-code 纯伪距 ----
-                    SPPIFCode spp;
-                    spp.setIFCodeTypesAuto(availForDetect, defaultTypes);
-                    for (int i = 0; i < N; ++i) {
-                        if (task->stop) break;
-                        ObsData &obs = allObs[i];
-                        if (isRinex) spp.setEphemerisTable(&ephTable);
-                        else {
-                            auto *cur = &ephSnaps[i];
-                            if (cur->gps.empty() && cur->bds.empty() && lastGoodEph) cur = lastGoodEph;
-                            else if (!cur->gps.empty() || !cur->bds.empty()) lastGoodEph = cur;
-                            spp.setEphemerisTable(cur);
-                        }
-                        spp.preprocess(obs);
-                        bool solve_ok = false;
-                        try {
-                            spp.solve(obs);
-                            solve_ok = true;
-                        } catch (...) { solve_ok = false; }
-                        {
-                            std::lock_guard lock(task->mutex);
-                            SppEpochData &data = task->epochs[i];
-                            if (solve_ok) {
-                                data.getFromSPP(spp);
-                                if (!task->initializedRefECEF) {
-                                    task->refECEF = data.sppResult.xyz;
-                                    task->initializedRefECEF = true;
-                                }
-                            } else { data.solved = false; }
-                            task->solvingProgress = i + 1;
-                            task->plotData.insert(i, data, task->refECEF);
-                            if (task->selectedEpoch == -1 || task->selectedEpoch == i - 1) task->selectedEpoch = i;
-                        }
-                    }
-                }
-            } // 关闭「有星历才解算」的 else 分支
-        } catch (const std::exception &e) {
-            task->hasError = true;
-            task->errorMsg = e.what();
-        }
-        task->loading = false;
-        task->state = SppTask::State::Done;
-        task->done = true;
+    static std::vector<std::pair<SatID, GuiCharts::SkyPoint> > BuildCurrentSkyPoints(
+        const std::shared_ptr<SppTask> &task, const int sel) {
+        std::vector<std::pair<SatID, GuiCharts::SkyPoint> > curPts;
+        std::lock_guard lk(task->mutex);
+        if (sel < 0 || sel >= static_cast<int>(task->epochs.size())) return curPts;
+        auto &ep = task->epochs[sel];
+        return GuiCharts::buildCurSkyPoints(sel, ep.satIds.size(),
+                                            [&](size_t i) {
+                                                GuiCharts::SkyView v;
+                                                v.sat = ep.satIds[i];
+                                                v.azimRad = ep.azimuths[i];
+                                                v.elevRad = ep.elevations[i];
+                                                v.used = ep.solved && !ep.rejected[i];
+                                                return v;
+                                            }, 0.0);
     }
 
-    // ----------------------------------------------------------
-    // RenderTask
-    // ----------------------------------------------------------
+    namespace {
+        int SehFilter(EXCEPTION_POINTERS *ep, DWORD &outCode, uintptr_t &outAddr) {
+            outCode = ep->ExceptionRecord->ExceptionCode;
+            outAddr = reinterpret_cast<uintptr_t>(ep->ExceptionRecord->ExceptionAddress);
+            return EXCEPTION_EXECUTE_HANDLER;
+        }
+    }
+
+    void RenderTaskImpl(const std::shared_ptr<SppTask> &task, const bool isRealtime);
+
     void RenderTask(const std::shared_ptr<SppTask> &task, const bool isRealtime) {
+        DWORD code = 0;
+        uintptr_t addr = 0;
+        __try {
+            RenderTaskImpl(task, isRealtime);
+        } __except(SehFilter(GetExceptionInformation(), code, addr)) {
+            // 调试器下会 first-chance 暂停；点"继续"后才会进入此处。
+            // 直接退出本帧渲染，让外层 EndTabItem/EndTabBar 恢复栈。
+            ImGui::TextColored(ImVec4(1, 0.2f, 0.2f, 1),
+                               "定位页结构化异常 SEH 0x%08X @ 0x%p", code, reinterpret_cast<void *>(addr));
+            ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1),
+                               "调试器弹窗请点\"继续\"，本帧会被安全跳过。");
+        }
+    }
+
+    void RenderTaskImpl(const std::shared_ptr<SppTask> &task, const bool isRealtime) {
         if (task->state == SppTask::State::Config) {
             RenderConfigPanel(task);
             return;
         }
 
-        int epochCount = 0;
-        int selectedIdx = -1;
         const bool isLoading = task->loading.load();
         const bool isDone = task->done.load();
         const bool hasError = task->hasError;
+        auto [epochCount, selectedIdx] = GuiHelpers::readEpochView(task);
 
-        {
-            std::lock_guard lock(task->mutex);
-            epochCount = (int) task->epochs.size();
-            if (task->selectedEpoch >= epochCount) task->selectedEpoch = epochCount - 1;
-            if (task->selectedEpoch < 0 && epochCount > 0) task->selectedEpoch = 0;
-            selectedIdx = task->selectedEpoch;
-        }
+        // 把 selectedEpoch 从共享状态解耦：渲染期间只操作局部副本，
+        // 避免解算线程在渲染中途改写 selectedEpoch 导致 Slider/DragLine 越界或数据不一致。
+        int selectedEpochLocal = selectedIdx;
 
-        if (!isRealtime && isLoading && !hasError && task->phase == SppTask::Phase::Reading) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "阶段 1/2: 正在读取文件...");
-            ImGui::ProgressBar(task->readProgress.load(), ImVec2(200, 0), "");
-            return;
+        if (!isRealtime && isLoading && !hasError) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f),
+                               "正在处理 [%s]: 已解算 %d 历元",
+                               task->fileName.c_str(), task->solvedCount.load());
         }
 
         if (ImGui::BeginTabBar("##qa_tabs")) {
             if (ImGui::BeginTabItem("定位解算")) {
-                // 顶部状态
-                if (hasError) ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "状态: %s", task->errorMsg.c_str());
-                else if (epochCount > 0) {
-                    if (task->noEphSolve)
-                        ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), "处理完成: 共 %d 个历元 | 无伴生星历，已跳过定位解算（质量分析基于原始观测可用）", epochCount);
-                    else
-                        ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "处理完成: 共 %d 个历元 | 解法: %s%s", epochCount,
-                                           task->usePhase ? "IF-Phase" : "IF-code", "");
-                } else if (isLoading) ImGui::Text("解算中...");
+                GuiCharts::PosTabView v;
+                v.epochCount = epochCount;
+                v.selectedEpoch = &selectedEpochLocal;
+                v.selectedSatIdx = &task->selectedSatIdx;
+                v.refECEF = &task->refECEF;
+                v.onRefChanged = [&] { task->plotData.refreshENU(task->epochs, task->refECEF); };
 
-                // epoch 导航
-                if (epochCount > 0) {
-                    RenderEpochNav(task, epochCount, selectedIdx);
+                if (hasError) {
+                    v.statusText = std::string("状态: ") + task->errorMsg;
+                    v.statusColor = ImVec4(1, 0.3f, 0.3f, 1);
+                } else if (epochCount > 0) {
+                    v.statusText = "解算：共 " + std::to_string(epochCount) + " 个历元";
+                    v.statusColor = ImVec4(1, 0.6f, 0.2f, 1);
+                } else if (isLoading) {
+                    v.statusText = "等待加载... ";
                 }
 
-                // 参考真值
-                {
-                    ImGui::Text("参考真值:");
-                    ImGui::SameLine();
-                    ImGui::PushItemWidth(200);
-                    if (ImGui::InputDouble("X/m", &task->refECEF[0])) task->plotData.refreshENU(task->epochs, task->refECEF);
-                    ImGui::SameLine();
-                    if (ImGui::InputDouble("Y/m", &task->refECEF[1])) task->plotData.refreshENU(task->epochs, task->refECEF);
-                    ImGui::SameLine();
-                    if (ImGui::InputDouble("Z/m", &task->refECEF[2])) task->plotData.refreshENU(task->epochs, task->refECEF);
-                    ImGui::SameLine();
-                    if (ImGui::Button("剪贴板")) {
-                        if (const char *c = ImGui::GetClipboardText()) {
-                            double v[3] = {};
-                            char *e;
-                            const char *p = c;
-                            int cnt = 0;
-                            while (*p && cnt < 3) {
-                                while (*p && !(*p == '-' || (*p >= '0' && *p <= '9')))p++;
-                                if (!*p)break;
-                                v[cnt] = strtod(p, &e);
-                                if (p == e)break;
-                                p = e;
-                                cnt++;
-                            }
-                            if (cnt >= 1) task->refECEF[0] = v[0];
-                            if (cnt >= 2) task->refECEF[1] = v[1];
-                            if (cnt >= 3) task->refECEF[2] = v[2];
-                            task->plotData.refreshENU(task->epochs, task->refECEF);
-                        }
-                    }
-                }
+                // 天顶图轨迹增量构建（独立于下方锁，内部自行持锁）
+                if (epochCount > 0) EnsureSkyTracksBuilt(task);
 
-                ImGui::Separator();
-
-                if (epochCount == 0) {
-                    ImGui::Text("无历元数据。");
-                    ImGui::EndTabItem();
-                    if (ImGui::BeginTabItem("质量分析")) {
-                        QualityControl::render(task);
-                        ImGui::EndTabItem();
-                    }
-                    ImGui::EndTabBar();
-                    return;
-                }
-
-                // 主分栏
-                const float availY = ImGui::GetContentRegionAvail().y;
-                const float plotH = 380;
-                float th = availY - plotH - ImGui::GetStyle().ItemSpacing.y;
-                if (th < 200) th = 200;
-
-                if (ImGui::BeginTable("##ms", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-                    ImGui::TableSetupColumn("L", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-                    ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                    ImGui::TableNextRow(ImGuiTableRowFlags_None, th);
-
-                    // 左: 卫星列表
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::BeginChild("##sat");
-                    if (epochCount > 0 && selectedIdx >= 0) {
-                        SppEpochData cur;
-                        {
-                            std::lock_guard lk(task->mutex);
-                            cur = task->epochs[selectedIdx];
-                        }
-                        ImGui::SeparatorText("卫星概览");
-                        if (ImGui::BeginTable(
-                            "##sm", 9,
-                            ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-                            ImVec2(0, ImGui::GetContentRegionAvail().y * 0.8f))) {
-                            ImGui::TableSetupColumn("序", ImGuiTableColumnFlags_WidthFixed, 50);
-                            ImGui::TableSetupColumn("星", ImGuiTableColumnFlags_WidthFixed, 50);
-                            ImGui::TableSetupColumn("X(m)");
-                            ImGui::TableSetupColumn("Y(m)");
-                            ImGui::TableSetupColumn("Z(m)");
-                            ImGui::TableSetupColumn("仰(°)", ImGuiTableColumnFlags_WidthFixed, 80);
-                            ImGui::TableSetupColumn("方(°)", ImGuiTableColumnFlags_WidthFixed, 80);
-                            ImGui::TableSetupColumn("态", ImGuiTableColumnFlags_WidthFixed, 50);
-                            ImGui::TableSetupColumn("残(m)", ImGuiTableColumnFlags_WidthFixed, 80);
-                            ImGui::TableHeadersRow();
-                            for (int i = 0; i < (int) cur.satIds.size(); i++) {
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::Text("%d", i + 1);
-                                ImGui::TableSetColumnIndex(1);
-                                if (ImGui::Selectable(cur.satIds[i].toString().c_str(), task->selectedSatIdx == i,
-                                                      ImGuiSelectableFlags_SpanAllColumns)) task->selectedSatIdx = i;
-                                auto sh = [](double v) {
-                                    if (v != 0) ImGui::Text("%.1f", v);
-                                    else ImGui::TextUnformatted("?");
-                                };
-                                ImGui::TableSetColumnIndex(2);
-                                sh(cur.satPVTs[i].p[0]);
-                                ImGui::TableSetColumnIndex(3);
-                                sh(cur.satPVTs[i].p[1]);
-                                ImGui::TableSetColumnIndex(4);
-                                sh(cur.satPVTs[i].p[2]);
-                                ImGui::TableSetColumnIndex(5);
-                                sh(cur.elevations[i] * RAD_TO_DEG);
-                                ImGui::TableSetColumnIndex(6);
-                                sh(cur.azimuths[i] * RAD_TO_DEG);
-                                ImGui::TableSetColumnIndex(7);
-                                if (cur.rejected[i] || !cur.solved) ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "排除");
-                                else ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "参与");
-                                ImGui::TableSetColumnIndex(8);
-                                if (auto it = cur.sppResult.postRes.find(cur.satIds[i]); it != cur.sppResult.postRes.end()) ImGui::Text(
-                                    "%.4f", it->second);
-                                else ImGui::TextDisabled("-");
-                            }
-                            ImGui::EndTable();
-                        }
-                        // 观测详情
-                        if (task->selectedSatIdx >= 0 && task->selectedSatIdx < (int) cur.satIds.size()) {
-                            int si = task->selectedSatIdx;
-                            ImGui::SeparatorText(("观测详情 (" + cur.satIds[si].toString() + ")").c_str());
-                            if (ImGui::BeginTable("##od", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                                ImGui::TableSetupColumn("频", ImGuiTableColumnFlags_WidthFixed, 60);
-                                ImGui::TableSetupColumn("伪距(m)");
-                                ImGui::TableSetupColumn("载波(cyc)");
-                                ImGui::TableSetupColumn("Doppler(Hz)");
-                                ImGui::TableSetupColumn("强度");
-                                ImGui::TableHeadersRow();
-                                std::set<std::string> freqs;
-                                for (auto &[t,v]: cur.allObs[si]) if (t.size() > 1) freqs.insert(t.substr(1));
-                                if (freqs.empty()) freqs.insert("?");
-                                for (auto &f: freqs) {
-                                    ImGui::TableNextRow();
-                                    ImGui::TableSetColumnIndex(0);
-                                    std::string l = f;
-                                    if (cur.satIds[si].system == 'G') l = "L" + f;
-                                    else if (cur.satIds[si].system == 'C') l = "B" + f;
-                                    ImGui::Text("%s", l.c_str());
-                                    auto show = [&](const char *p) {
-                                        auto it = cur.allObs[si].find(p + f);
-                                        if (it != cur.allObs[si].end()) ImGui::Text("%.3f", it->second);
-                                        else ImGui::TextDisabled("-");
-                                    };
-                                    ImGui::TableSetColumnIndex(1);
-                                    show("C");
-                                    ImGui::TableSetColumnIndex(2);
-                                    show("L");
-                                    ImGui::TableSetColumnIndex(3);
-                                    show("D");
-                                    ImGui::TableSetColumnIndex(4);
-                                    show("S");
-                                }
-                                ImGui::EndTable();
-                            }
-                        }
-                    }
-                    ImGui::EndChild();
-
-                    // 右: 结果
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::BeginChild("##res");
-                    if (epochCount > 0 && selectedIdx >= 0) {
-                        SppEpochData cur;
-                        {
-                            std::lock_guard lk(task->mutex);
-                            cur = task->epochs[selectedIdx];
-                        }
-                        if (cur.solved) {
-                            auto &r = cur.sppResult;
-                            auto enu = XYZtoENU(r.xyz, task->refECEF);
-                            ImGui::SeparatorText("位置 (WGS84)");
-                            ImGui::Text("ECEF: (%.4f, %.4f, %.4f)", r.xyz[0], r.xyz[1], r.xyz[2]);
-                            ImGui::Text("  REF: (%.4f, %.4f, %.4f)", task->refECEF[0], task->refECEF[1], task->refECEF[2]);
-                            ImGui::Text("  ENU: (%.4f, %.4f, %.4f)", enu[0], enu[1], enu[2]);
-                            ImGui::Text("  BLH: (%.8f, %.8f, %.4f)", r.blh[0] * RAD_TO_DEG, r.blh[1] * RAD_TO_DEG, r.blh[2]);
-                            ImGui::Text("  σP: %.3f", r.sigmaP);
-                            ImGui::SeparatorText("速度");
-                            ImGui::Text("  (%.4f, %.4f, %.4f) m/s", r.vel[0], r.vel[1], r.vel[2]);
-                            ImGui::SeparatorText("DOP");
-                            ImGui::Text("  PDOP:%.2f GDOP:%.2f HDOP:%.2f VDOP:%.2f TDOP:%.2f", r.pdop, r.gdop, r.hdop, r.vdop, r.tdop);
-                            ImGui::Text("  卫星: %d/%d", cur.numSatsResult, cur.numObs);
-                        } else ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), task->noEphSolve ? "无定位解（缺少星历文件）" : "无定位解");
-                        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50);
-                        if (isDone || isRealtime) {
-                            if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) {
-                                auto h = (HWND) ImGui::GetMainViewport()->PlatformHandleRaw;
-                                if (!h) h = GetActiveWindow();
-                                ExportCsv(task, h);
-                            }
-                        } else ImGui::Button("解算中...", ImVec2(-FLT_MIN, 40));
-                    }
-                    ImGui::EndChild();
-                    ImGui::EndTable();
-                }
-
-                // ENU（全宽）
-                if (epochCount > 0) {
-                    auto &pp = task->plotData;
-                    ImGui::Separator();
-                    if (ImPlot::BeginPlot("ENU", ImVec2(-1, 400))) {
-                        ImPlot::SetupAxes("Epoch", "E/N/U (m)");
-                        ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-                        if (pp.newed) ImPlot::SetupAxisLimits(ImAxis_X1, 0, pp.times.empty() ? 10 : pp.times.back(), ImPlotCond_Always);
-                        pp.newed = false;
-                        if (!pp.times.empty()) {
-                            ImPlot::PlotLine("E", pp.times.data(), pp.enu_e.data(), (int) pp.times.size());
-                            ImPlot::PlotLine("N", pp.times.data(), pp.enu_n.data(), (int) pp.times.size());
-                            ImPlot::PlotLine("U", pp.times.data(), pp.enu_u.data(), (int) pp.times.size());
-                        }
-                        double sx = (double) task->selectedEpoch;
-                        ImPlot::DragLineX(0, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
-                        int se = (int) std::lround(sx);
-                        if (se < 0) se = 0;
-                        if (se >= epochCount) se = epochCount - 1;
-                        task->selectedEpoch = se;
-                        ImPlot::EndPlot();
-                    }
-                }
-
-                // Skyplot (左 1/3) + 后验残差 (右 2/3)，同高
                 if (epochCount > 0 && selectedIdx >= 0) {
-                    ImGui::Separator();
-                    auto &pp = task->plotData;
-                    // 按窗口宽度 30% 估算天顶图高度，使方形 Skyplot 与残差图等齐
-                    float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
+                    std::lock_guard lk(task->mutex);
+                    auto &cur = task->epochs[selectedIdx]; //NOLINT
 
-                    ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV);
-                    ImGui::TableSetupColumn("Sky", ImGuiTableColumnFlags_WidthStretch, 0.33f);
-                    ImGui::TableSetupColumn("Res", ImGuiTableColumnFlags_WidthStretch, 0.67f);
-                    ImGui::TableNextRow();
+                    v.satRows = GuiCharts::buildSatRows(cur.satIds.size(),
+                                                        [&](const size_t i) {
+                                                            GuiCharts::SatRowView _v;
+                                                            _v.sat = cur.satIds[i];
+                                                            _v.used = !cur.rejected[i] && cur.solved;
+                                                            _v.elevRad = cur.elevations[i];
+                                                            _v.azimRad = cur.azimuths[i];
+                                                            const bool haveXYZ = cur.satPVTs[i].p.squaredNorm() > 1.0;
+                                                            _v.hasXYZ = haveXYZ;
+                                                            if (haveXYZ) {
+                                                                _v.x = cur.satPVTs[i].p[0];
+                                                                _v.y = cur.satPVTs[i].p[1];
+                                                                _v.z = cur.satPVTs[i].p[2];
+                                                            }
+                                                            return _v;
+                                                        },
+                                                        [&](GuiCharts::SatRow &sr, size_t i) {
+                                                            const auto it = cur.sppResult.postRes.find(cur.satIds[i]);
+                                                            sr.extra.emplace_back(
+                                                                "伪距残差(m)", it != cur.sppResult.postRes.end()
+                                                                               ? fmt4(it->second)
+                                                                               : std::string("-"));
+                                                        });
+                    v.hasSatRows = true;
 
-                    ImGui::TableSetColumnIndex(0);
-                    if (ImGui::BeginChild("Skyplot", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                        DrawSkyplotTracks(task, selectedIdx);
+                    if (task->selectedSatIdx >= 0 && task->selectedSatIdx < static_cast<int>(cur.satIds.size())) {
+                        int si = task->selectedSatIdx;
+                        v.showObsDetail = true;
+                        v.detailSystem = cur.satIds[si].system;
+                        v.detailObs = cur.allObs[si];
                     }
-                    ImGui::EndChild();
 
-                    ImGui::TableSetColumnIndex(1);
-                    if (ImPlot::BeginPlot("后验残差", ImVec2(-1, rowH))) {
-                        ImPlot::SetupAxes("Epoch", "残差 (m)");
-                        bool setLim = pp.newed;
+                    if (cur.solved) {
+                        const auto &r = cur.sppResult;
+                        v.solved = true;
+                        v.xyz = r.xyz;
+                        v.enu = XYZtoENU(r.xyz, task->refECEF);
+                        v.blh = r.blh;
+                        v.sigmaP = r.sigmaP;
+                        v.showVelDop = true;
+                        v.showVel = (r.vel.squaredNorm() > 1e-4);
+                        v.vel = r.vel;
+                        v.pdop = r.pdop;
+                        v.gdop = r.gdop;
+                        v.hdop = r.hdop;
+                        v.vdop = r.vdop;
+                        v.tdop = r.tdop;
+                        v.numSatsResult = cur.numSatsResult;
+                        v.numObs = cur.numObs;
+                    } else {
+                        v.noSolveMsg = task->noEphSolve ? "无定位解（缺少星历文件）" : "无定位解";
+                    }
+
+                    char buf[160];
+                    snprintf(buf, sizeof buf, "Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? "定位" : "无解");
+                    v.epochInfo = buf;
+                }
+
+                // 图表数据：在各自锁内快照为值，避免渲染期与解算线程竞争
+                if (epochCount > 0 && selectedIdx >= 0) {
+                    bool sigmaVNonZero = false;
+                    {
+                        std::lock_guard plk(task->plotMutex);
+                        auto &pp = task->plotData; //NOLINT
+                        v.times = pp.times;
+                        v.enu_e = pp.enu_e;
+                        v.enu_n = pp.enu_n;
+                        v.enu_u = pp.enu_u;
+                        v.newed = pp.newed;
+                        v.fixedY = true; // SPP 收敛到米级，固定 Y 轴 ±1m 便于观察微小漂移
+                        v.resT = pp.satResTimes;
+                        v.resV = pp.satResVals;
                         if (isDone && !pp.resRangeReady) {
-                            computeRobustResRange(pp);
-                            setLim = true;
+                            auto r = GuiHelpers::computeRobustResRange(pp.satResVals);
+                            pp.resYlo = r.lo;
+                            pp.resYhi = r.hi;
+                            pp.resRangeReady = true;
                         }
-                        if (setLim) {
-                            double xmax = pp.times.empty() ? 10.0 : (double) pp.times.back();
-                            double ylo = pp.resRangeReady ? pp.resYlo : -8.0;
-                            double yhi = pp.resRangeReady ? pp.resYhi : 8.0;
-                            ImPlot::SetupAxesLimits(0, xmax, ylo, yhi, ImPlotCond_Always);
-                        }
-                        for (auto &[sat, vals]: pp.satResVals) {
-                            auto it = pp.satResTimes.find(sat);
-                            if (it == pp.satResTimes.end() || vals.empty()) continue;
-                            ImPlot::PlotLine(sat.toString().c_str(), it->second.data(), vals.data(), (int) vals.size());
-                        }
-                        double sx = (double) task->selectedEpoch;
-                        ImPlot::DragLineX(1, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
-                        int se = (int) std::lround(sx);
-                        if (se < 0) se = 0;
-                        if (se >= epochCount) se = epochCount - 1;
-                        task->selectedEpoch = se;
-                        ImPlot::EndPlot();
+                        v.robustRes = pp.resRangeReady;
+                        v.resYlo = pp.resYlo;
+                        v.resYhi = pp.resYhi;
+                        v.sigmaPs = pp.sigmaPs;
+                        v.sigmaVs = pp.sigmaVs;
+                        sigmaVNonZero = std::any_of(pp.sigmaVs.begin(), pp.sigmaVs.end(),
+                                                    [](double x) { return x > 1e-6; });
+                        v.pdops = pp.pdops;
                     }
-                    ImGui::EndTable();
-                }
-
-                // SigmaP / SigmaV / PDOP（全宽）
-                if (epochCount > 0) {
-                    auto &pp = task->plotData;
-                    ImGui::Separator();
-                    if (ImGui::BeginTable("##bp3", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-                        ImGui::TableSetupColumn("A", ImGuiTableColumnFlags_WidthStretch, 0.33f);
-                        ImGui::TableSetupColumn("B", ImGuiTableColumnFlags_WidthStretch, 0.33f);
-                        ImGui::TableSetupColumn("C", ImGuiTableColumnFlags_WidthStretch, 0.33f);
-                        ImGui::TableNextRow();
-                        const vector<double> *d[3] = {&pp.sigmaPs, &pp.sigmaVs, &pp.pdops};
-                        const char *dn[3] = {"SigmaP", "SigmaV", "PDOP"};
-                        for (int k = 0; k < 3; k++) {
-                            ImGui::TableSetColumnIndex(k);
-                            if (ImPlot::BeginPlot(dn[k], ImVec2(-1, 350), ImPlotFlags_NoLegend)) {
-                                ImPlot::SetupAxes("Epoch", "m");
-                                ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-                                if (pp.newed) ImPlot::SetupAxisLimits(ImAxis_X1, 0, pp.times.empty() ? 10 : pp.times.back(),
-                                                                      ImPlotCond_Always);
-                                if (!pp.times.empty()) ImPlot::PlotLine(dn[k], pp.times.data(), d[k]->data(), (int) pp.times.size());
-                                ImPlot::EndPlot();
-                            }
+                    {
+                        std::lock_guard lk(task->mutex);
+                        v.skyTracks = task->skyTracks;
+                        // 仅当实际估计了速度（>5% 历元有非零速度）时才显示 SigmaV；
+                        // PPP / 静态 SPP 速度为 0，避免画出单个尖峰。
+                        int solvedCnt = 0, velCnt = 0;
+                        for (const auto &ep : task->epochs) {
+                            if (!ep.solved) continue;
+                            ++solvedCnt;
+                            if (ep.sppResult.vel.squaredNorm() > 1e-4) ++velCnt;
                         }
-                        ImGui::EndTable();
+                        v.showSigmaV = (solvedCnt > 0 && static_cast<double>(velCnt) / solvedCnt > 0.05)
+                                       && sigmaVNonZero;
                     }
-                }
-                ImGui::EndTabItem();
+                v.curSkyPts = BuildCurrentSkyPoints(task, selectedIdx); // 内部自行持锁
+                v.showSigmaDop = true;
             }
+
+            // LEO 定轨：把解算器填写的 3D 轨迹 / 参考轨道 / RTN 偏差序列注入 PosTabView。
+            // 必须在 task->mutex 下快照：SolverThread 在相同 mutex 内写这些字段。
+            {
+                std::lock_guard lk(task->mutex);
+                if (task->hasLeo) {
+                    v.show3d = true;
+                    v.showRtn = !task->leoRefTraj.empty();   // 无参考轨道则不画 RTN 序列
+                    v.hasRef  = !task->leoRefTraj.empty();    // 无参考轨道则不显示 RTN 面板
+                    v.showRefEnu = false;                     // LEO 不编辑/显示参考真值
+                    v.leoPos3d = task->leoPos3d;
+                    v.leoRef3d = task->leoRef3d;
+                    v.leoTraj = task->leoTraj;
+                    v.leoRefTraj = task->leoRefTraj;
+                    v.gnssVis = task->gnssVis;
+                    v.gnssTraj = task->gnssTraj;
+                    v.rtnTimes = task->rtnTimes;
+                    v.rtn_r = task->rtn_r;
+                    v.rtn_t = task->rtn_t;
+                    v.rtn_n = task->rtn_n;
+                    v.rtn_d3 = task->rtn_d3;
+                }
+            }
+
+            v.isDone = isDone || isRealtime;
+            v.onExportCsv = [&] {
+                auto h = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
+                if (!h) h = GetActiveWindow();
+                ExportCsv(task, h);
+            };
+
+            try {
+                GuiCharts::RenderPositioningTab(v);
+            } catch (const std::exception &e) {
+                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "渲染异常: %s", e.what());
+            } catch (...) {
+                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "渲染发生未知异常");
+            }
+            // 把局部选中的历元写回共享状态（锁内），保证下一帧 readEpochView 读取的是一致值。
+            if (selectedEpochLocal != selectedIdx) {
+                std::lock_guard lk(task->mutex);
+                if (selectedEpochLocal >= 0 && selectedEpochLocal < static_cast<int>(task->epochs.size()))
+                    task->selectedEpoch = selectedEpochLocal;
+            }
+            ImGui::EndTabItem();
+        }
             if (ImGui::BeginTabItem("质量分析")) {
-                QualityControl::render(task);
+                try {
+                    QualityControl::render(task);
+                } catch (const std::exception &e) {
+                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "质量分析渲染异常: %s", e.what());
+                } catch (...) {
+                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "质量分析渲染发生未知异常");
+                }
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
         }
     }
 
-    // 宽字符路径 -> 系统 ANSI 代码页（保持与旧版 GetOpenFileNameA 一致，供 ifstream 使用）
-    static std::string WideToAcp(const std::wstring &w) {
-        if (w.empty()) return {};
-        int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        std::string s(n > 0 ? n - 1 : 0, '\0');
-        if (n > 0) WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
-        return s;
-    }
-
-    std::string ShowOpenFileDialog(HWND /*hwnd*/) {
-        // 现代 Explorer 风格对话框（高 DPI 清晰，归属主窗口）
-        static const GuiFileFilter filters[] = {
-            {L"所有支持 (*.log;*.??O)", L"*.log;*.??O"},
-            {L"OEM7 日志 (*.log)", L"*.log"},
-            {L"RINEX 观测 (*.??O)", L"*.??O"},
-            {L"所有文件 (*.*)", L"*.*"}
-        };
-        std::wstring path;
-        if (::ShowOpenFileDialog(path, filters, 4)) return WideToAcp(path);
-        return "";
-    }
 
     void ExportCsv(const std::shared_ptr<SppTask> &task, HWND /*hwnd*/) {
         std::string dn = task->fileName;
-        if (auto dp = dn.rfind('.'); dp != std::string::npos) dn = dn.substr(0, dp);
-        dn += "_spp.csv";
-        if (dn.size() >= MAX_PATH) dn = "spp_results.csv";
-        // 默认文件名 -> 宽字符
-        int wn = MultiByteToWideChar(CP_ACP, 0, dn.c_str(), -1, nullptr, 0);
-        std::wstring wDefName(wn > 0 ? wn - 1 : 0, L'\0');
-        if (wn > 0) MultiByteToWideChar(CP_ACP, 0, dn.c_str(), -1, wDefName.data(), wn);
-
-        static const GuiFileFilter filters[] = {
-            {L"CSV (*.csv)", L"*.csv"}, {L"所有文件 (*.*)", L"*.*"}
-        };
+        if (const auto dp = dn.rfind('.'); dp != std::string::npos) dn = dn.substr(0, dp);
+        dn += "_" + task->processorLabel + "_result.csv";
+        if (dn.size() >= MAX_PATH) dn = task->processorLabel + "_result.csv";
         std::wstring path;
-        if (!ShowSaveFileDialog(path, filters, 2, wDefName.c_str(), L"csv")) return;
+        if (!GuiHelpers::saveCSVDialog(dn, path)) return;
 
         std::lock_guard lk(task->mutex);
         std::ofstream out(std::filesystem::path(path), std::ios::out);
         if (!out.is_open()) return;
-        out <<
-                "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-X/m,REF-Y/m,REF-Z/m,EAST/m,NORTH/m,UP/m,B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
+        // LEO 导出：逐历元参考轨道(SP3)位置作 REF，ENU 改为 RTN(径向/沿迹/法向)；
+        // 无参考轨道时不输出 REF 与 RTN 列。SPP/PPP 保持原 ENU + 常数 REF 行为。
+        const bool isLeo = (task->processorLabel == "LEO");
+        const bool leoRef = task->hasRefOrbit;
+        if (isLeo) {
+            if (leoRef)
+                out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-X/m,REF-Y/m,REF-Z/m,R/m,T/m,N/m,B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
+            else
+                out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
+        } else {
+            out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-X/m,REF-Y/m,REF-Z/m,EAST/m,NORTH/m,UP/m,B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
+        }
         for (auto &r: task->epochs) {
             out << r.week << ',' << std::fixed << std::setprecision(3) << r.sow << ',';
             if (r.solved) {
                 auto &res = r.sppResult;
-                auto enu = XYZtoENU(res.xyz, task->refECEF);
-                out << std::setprecision(4) << res.xyz[0] << ',' << res.xyz[1] << ',' << res.xyz[2] << ',' << task->refECEF.X() << ',' <<
-                        task->refECEF.Y() << ',' << task->refECEF.Z() << ',' << enu.E() << ',' << enu.N() << ',' << enu.U() << ',' <<
-                        std::setprecision(8) << res.blh[0] * RAD_TO_DEG << ',' << res.blh[1] * RAD_TO_DEG << ',' << std::setprecision(3) <<
+                out << std::setprecision(4) << res.xyz[0] << ',' << res.xyz[1] << ',' << res.xyz[2];
+                if (isLeo) {
+                    // LEO：输出逐历元参考轨道(REF)与 RTN；无参考轨道则两者均略过
+                    if (leoRef) {
+                        out << ',' << r.refECEF[0] << ',' << r.refECEF[1] << ',' << r.refECEF[2];
+                        out << ',' << r.rtnR << ',' << r.rtnT << ',' << r.rtnN;
+                    }
+                } else {
+                    auto enu = XYZtoENU(res.xyz, task->refECEF);
+                    out << ',' << task->refECEF.X() << ',' << task->refECEF.Y() << ',' << task->refECEF.Z();
+                    out << ',' << enu.E() << ',' << enu.N() << ',' << enu.U();
+                }
+                out << ',' << std::setprecision(8) << res.blh[0] * RAD_TO_DEG << ',' << res.blh[1] * RAD_TO_DEG << ',' << std::setprecision(3) <<
                         res.blh[2] << ',' << res.vel[0] << ',' << res.vel[1] << ',' << res.vel[2] << ',' << std::setprecision(4) << res.pdop
                         << ',' << res.gdop << ',' << res.hdop << ',' << res.vdop << ',' << res.tdop << ',' << res.sigmaP << ',' << res.
                         sigmaV << ',' << r.numSatsResult;
@@ -1067,4 +829,4 @@ namespace GuiFileProcessor {
             out << '\n';
         }
     }
-} // namespace GuiFileProcessor
+}

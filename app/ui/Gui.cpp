@@ -448,6 +448,47 @@ bool ShowOpenFileDialog(std::wstring &out, const GuiFileFilter *filters, int nFi
     return ShowFileDialogImpl(false, out, filters, nFilters, nullptr, nullptr);
 }
 
+bool ShowOpenFilesDialog(std::vector<std::wstring> &out, const GuiFileFilter *filters, int nFilters) {
+    IFileOpenDialog *pfd = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                 IID_IFileOpenDialog, reinterpret_cast<void **>(&pfd));
+    if (FAILED(hr) || !pfd) return false;
+
+    std::vector<COMDLG_FILTERSPEC> specs;
+    specs.reserve(nFilters);
+    for (int i = 0; i < nFilters; i++)
+        specs.push_back({filters[i].name, filters[i].spec});
+    if (!specs.empty())
+        pfd->SetFileTypes((UINT)specs.size(), specs.data());
+
+    FILEOPENDIALOGOPTIONS opts = 0;
+    if (SUCCEEDED(pfd->GetOptions(&opts)))
+        pfd->SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM);
+
+    hr = pfd->Show(g_mainHwnd);
+    if (FAILED(hr)) { pfd->Release(); return false; }   // 用户取消或出错
+
+    IShellItemArray *items = nullptr;
+    if (SUCCEEDED(pfd->GetResults(&items)) && items) {
+        DWORD count = 0;
+        items->GetCount(&count);
+        for (DWORD i = 0; i < count; i++) {
+            IShellItem *item = nullptr;
+            if (SUCCEEDED(items->GetItemAt(i, &item)) && item) {
+                PWSTR psz = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &psz)) && psz) {
+                    out.emplace_back(psz);
+                    CoTaskMemFree(psz);
+                }
+                item->Release();
+            }
+        }
+        items->Release();
+    }
+    pfd->Release();
+    return !out.empty();
+}
+
 bool ShowFolderDialog(std::wstring &out) {
     IFileDialog *pfd = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,

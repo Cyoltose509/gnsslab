@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <string>
+#include <vector>
 
 /// 请求把当前帧渲染结果（整个客户区）保存为 PNG。
 /// 真正的截屏在 Gui::EndFrame 中、ImGui 绘制完成后、Present 之前执行，
@@ -26,6 +27,10 @@ bool ShowSaveFileDialog(std::wstring &out, const GuiFileFilter *filters, int nFi
 
 /// 现代 Explorer 风格打开对话框（IFileOpenDialog，高 DPI 清晰）。
 bool ShowOpenFileDialog(std::wstring &out, const GuiFileFilter *filters, int nFilters);
+
+/// 现代 Explorer 风格多选打开对话框（IFileOpenDialog + FOS_ALLOWMULTISELECT）。
+/// 成功返回 true，out 为所选完整路径列表（宽字符，可多选）。
+bool ShowOpenFilesDialog(std::vector<std::wstring> &out, const GuiFileFilter *filters, int nFilters);
 
 /// 现代文件夹选择对话框（IFileOpenDialog + FOS_PICKFOLDERS，高 DPI 清晰）。
 /// 成功返回 true，out 为所选文件夹的完整路径。

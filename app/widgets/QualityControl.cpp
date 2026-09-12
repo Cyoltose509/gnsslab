@@ -5,6 +5,7 @@
 #include "QualityControl.h"
 #include "ui/Gui.h"
 #include "GuiFileProcessor.h"
+#include "GuiPppProcessor.h"
 #include "imgui.h"
 #include "implot.h"
 #include "Const.h"
@@ -52,7 +53,7 @@ namespace QualityControl {
             {L"CSV 文件 (*.csv)", L"*.csv"}, {L"所有文件 (*.*)", L"*.*"}
         };
         std::wstring path;
-        const std::wstring def = makeWide(stripExt(taskLabel) + "_qc.csv");
+        const std::wstring def = utf8ToWide(stripExt(taskLabel) + "_qc.csv");
         if (!ShowSaveFileDialog(path, filters, 2, def.c_str(), L"csv")) return; // 用户取消
 
         std::ofstream out(std::filesystem::path(path), std::ios::out);
@@ -143,13 +144,20 @@ namespace QualityControl {
             static constexpr GuiFileFilter filters[] = {
                 {L"PNG 文件 (*.png)", L"*.png"}, {L"所有文件 (*.*)", L"*.*"}
             };
-            const std::wstring def = makeWide(base + "_" + uid + ".png");
+            const std::wstring def = utf8ToWide(base + "_" + uid + ".png");
             if (std::wstring path; ShowSaveFileDialog(path, filters, 2, def.c_str(), L"png"))
                 RequestCaptureRegionPNG(path, static_cast<int>(p0.x), static_cast<int>(p0.y), static_cast<int>(w), static_cast<int>(h));
         }
     }
 
-    void render(const std::shared_ptr<GuiFileProcessor::SppTask> &task) {
+    template<typename TaskT>
+    void render(const std::shared_ptr<TaskT> &task) {
+        // 文件模式：必须等所有历元读取完毕，质量分析才算（QC 不依赖定位解算，读取完即可）
+        if (!task->isRealtime && !task->readDone) {
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在等待历元读取完全…");
+            return;
+        }
+
         std::shared_ptr<QualityReport> repPtr;
         {
             std::lock_guard lk(task->qcMutex);
@@ -157,7 +165,7 @@ namespace QualityControl {
         }
         if (!repPtr || !task->qcReady) {
             if (task->qcComputing) {
-                ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在计算质量分析…");
+                ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在解算…");
             } else {
                 ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在准备质量分析…");
             }
@@ -654,4 +662,8 @@ namespace QualityControl {
             }
         }
     } // render
+
+    // 显式实例化：SPP 与 PPP 共用同一套质量分析渲染
+    template void render<GuiFileProcessor::SppTask>(const std::shared_ptr<GuiFileProcessor::SppTask> &);
+
 } // namespace QualityControl

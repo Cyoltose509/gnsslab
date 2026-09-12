@@ -6,7 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include "GuiRealtimeProcessor.h"
 #include "OEM7SocketReader.h"
-#include "SPPIFCode.h"
+#include "SPP.h"
 #include "imgui.h"
 #include "Const.h"
 #include <chrono>
@@ -14,11 +14,9 @@
 
 namespace GuiRealtimeProcessor {
     void SolveRealtimeThread(const std::shared_ptr<SppTask> &task, const ConnectionConfig &config) {
-        SPPIFCode spp;
-        spp.setIFCodeTypes({
-            {'G', {"C1", "C2"}},
-            {'C', {"C2", "C6"}}
-        });
+        SPP spp;
+        spp.setCutoffElevDeg(task->cutoffDeg); // 截止高度角：低于该仰角的卫星在解算中被剔除
+        spp.enabledSystems = task->enabledSystems; // IF 组合由 SPP::solve 每历元从观测自探测（与文件模式一致）
 
         std::chrono::steady_clock::time_point lastQcTime; // QC 节流计时
 
@@ -61,7 +59,10 @@ namespace GuiRealtimeProcessor {
                             {
                                 std::lock_guard lock(task->mutex);
                                 const auto index = static_cast<int>(task->epochs.size()) - 1;
-                                task->plotData.insert(index, data, task->refECEF);
+                                {
+                                    std::lock_guard plk(task->plotMutex);
+                                    task->plotData.insert(index, data, task->refECEF);
+                                }
                                 const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == index;
                                 task->epochs.push_back(data);
 
@@ -70,8 +71,6 @@ namespace GuiRealtimeProcessor {
                                 }
                             }
 
-                            // 质量分析（QC）：节流触发后台计算（与文件处理共用 LaunchQC）。
-                            // LaunchQC 内部会 join 上一轮，故用时间节流避免阻塞解算线程。
                             const auto nowQc = std::chrono::steady_clock::now();
                             if (nowQc - lastQcTime > std::chrono::milliseconds(500)) {
                                 lastQcTime = nowQc;
@@ -121,4 +120,4 @@ namespace GuiRealtimeProcessor {
         // 复用 GuiFileProcessor 的渲染逻辑
         GuiFileProcessor::RenderTask(task, true);
     }
-} // namespace GuiRealtimeProcessor
+}
