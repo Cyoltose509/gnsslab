@@ -1,25 +1,36 @@
-#include "SPPIFCode.h"
+#include "SPP.h"
+#include "RinexNavStore.h"
 #include "CoordConvert.h"
+#include "FreqCombo.h"
 #include <Eigen/Eigen>
 #include <vector>
 #include <algorithm>
 
 #include "Log.h"
 #include "MathUtils.h"
+#include "CoordStruct.h"
 
-void SPPIFCode::preprocess(ObsData &obsData) {
+void SPP::preprocess(ObsData &obsData) {
     satRejected.clear();
     setEphemeris(obsData.satEphemerisData);
-    computeIF(obsData);
 }
 
-void SPPIFCode::solve(ObsData &obsData) {
+bool SPP::loadBrdc(const std::string &path) {
+    RinexNavStore store;
+    store.loadFile(path, ephTable);
+    return !ephTable.gps.empty() || !ephTable.bds.empty();
+}
+
+void SPP::solve(ObsData &obsData) {
     result.reset();
     lastWStats.clear();
     rClockBias.clear();
     vel = Vector3d(0, 0, 0);
     rClockDrift = 0.0;
     xyz = obsData.antennaPosition;
+
+    // 每历元就地探测 IF 组合（SPP/PPP/LEO 统一入口：收集各系统码 → 统一探测）
+    detectIFCombinations(obsData);
 
     int iter(0);
     while (iter < 10) {
@@ -49,7 +60,7 @@ void SPPIFCode::solve(ObsData &obsData) {
             posSolver.getSolution(Parameter::dZ)
         };
         xyz += dxyz;
-        for (char sys : activeSystems) {
+        for (char sys: activeSystems) {
             if (auto it = sysCdtParam.find(sys); it != sysCdtParam.end())
                 rClockBias[sys] += posSolver.getSolution(it->second);
         }
@@ -80,18 +91,18 @@ void SPPIFCode::solve(ObsData &obsData) {
     if (iter >= 15) {
         throw InvalidSolver("too many iterations without convergence");
     }
-    getResult();
+    readback(obsData);
 }
 
-void SPPIFCode::getResult() {
+void SPP::readback(const ObsData &/*obsData*/) {
     auto &pD = posSolver.covMatrix;
     auto &vD = velSolver.covMatrix;
     result.pdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2));
     {
-        double gdop_sq = result.pdop * result.pdop;  // PDOP²
+        double gdop_sq = result.pdop * result.pdop; // PDOP²
         double tdop_sq = 0.0;
         int idx = 0;
-        for (const auto &v : posSolver.currentUnkSet) {
+        for (const auto &v: posSolver.currentUnkSet) {
             if (const auto p = v.getParaType(); p == Parameter::cdt || p == Parameter::cdt2) {
                 tdop_sq += pD(idx, idx);
                 gdop_sq += pD(idx, idx);
@@ -115,8 +126,7 @@ void SPPIFCode::getResult() {
             sqrt(vD(1, 1)) * velSolver.sigma0,
             sqrt(vD(2, 2)) * velSolver.sigma0
         };
-    }
-    else {
+    } else {
         result.sigmaV = 0.0;
         result.sigmaVel = {0.0, 0.0, 0.0};
     }
@@ -136,31 +146,19 @@ void SPPIFCode::getResult() {
     }
 }
 
-// ============================================================================
-// buildResidualMap — 解算完成后计算 Baarda w 统计量
-//   w_i = |v_i| / (σ₀ · √q_vv_i)
-//   q_vv_i = 1/w_i - h_i · N⁻¹ · h_iᵀ
-// ============================================================================
-void SPPIFCode::buildResidualMap() {
+void SPP::buildResidualMap() {
     lastWStats.clear();
 
     const auto &Ninv = posSolver.covMatrix; // N⁻¹ (order 5×5)
     const double sigma0 = posSolver.sigma0;
     if (sigma0 <= 0.0) return;
-
     int i = 0;
     for (const auto &[eid, data]: posEquations.obsEquData) {
         if (i >= posSolver.v.size()) break;
-
         const double v = posSolver.v[i];
         const double w = data.weight;
         const double invW = w > 0.0 ? 1.0 / w : 0.0;
-
-        // 设计矩阵第 i 行 (1 × numUnk)
         const auto hRow = posSolver.hMatrix.row(i);
-
-        // q_vv = P⁻¹_ii - h_i · N⁻¹ · h_iᵀ
-
         if (const double qvv = invW - (hRow * Ninv * hRow.transpose())(0, 0); qvv > 0.0) {
             const double wStat = std::abs(v) / (sigma0 * std::sqrt(qvv));
             lastWStats[eid.sat] = wStat;
@@ -170,9 +168,7 @@ void SPPIFCode::buildResidualMap() {
     }
 }
 
-void SPPIFCode::linearize(ObsData &obsData, const int iter) {
-
-    // ---- 先找本轮最可疑的卫星（w 统计量最大），只剔除一颗 ----
+void SPP::linearize(ObsData &obsData, const int iter) {
     SatID outlierSat;
     double worstW = 0.0;
     if (iter >= 2) {
@@ -192,20 +188,17 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     posEquations.station = obsData.station;
     velEquations.station = obsData.station;
 
-    // ---- 未知参数（只构造一次，所有卫星共用） ----
     const Variable dx(obsData.station, Parameter::dX);
     const Variable dy(obsData.station, Parameter::dY);
     const Variable dz(obsData.station, Parameter::dZ);
-    // 各系统钟差 Variable，按需构造
     std::map<char, Variable> cdtVars;
-    for (auto &[sys, param] : sysCdtParam)
+    for (auto &[sys, param]: sysCdtParam)
         cdtVars.try_emplace(sys, obsData.station, param);
     const Variable dvx(obsData.station, Parameter::dVX);
     const Variable dvy(obsData.station, Parameter::dVY);
     const Variable dvz(obsData.station, Parameter::dVZ);
     const Variable dcdt(obsData.station, Parameter::cdtr_dot);
 
-    // ---- BLH 提到循环外 ----
     double refHgt = 0.0;
     if (xyz.norm() > 1000.0) {
         const auto BLH = XYZtoBLH(xyz, frame);
@@ -214,13 +207,11 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 
     activeSystems.clear();
     int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
-    static int dbgCnt = 0;  // 仅前几个历元输出拒绝原因
+    static int dbgCnt = 0;
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        // 只处理配置了 IF 类型的系统（GPS / BDS）
-        if (!ifTypeNames.count(sat.system)) continue;
+        if (!ifCodeTypes.count(sat.system)) continue;
 
-        // ---- 拒绝检查 ----
         if (satRejected.count(sat)) {
             continue;
         }
@@ -248,19 +239,13 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
             continue;
         }
 
-        // IF 观测值有效性
-        const string ifType = ifTypeNames.at(sat.system);
-        double obsVal = 0.0;
-        if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
-            obsVal = itObs->second;
-        } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
-            itRaw != codeList.end() && itRaw->second > 0.0) {
-            obsVal = itRaw->second;
-        } else {
+        const FreqCombo &def = ifCodeTypes.at(sat.system);
+        if (!codeList.count(def.code1) || !codeList.count(def.code2)) {
             satRejected.insert(sat);
             nRejIF++;
             continue;
         }
+        const double obsVal = def.combineCodeFromObs(codeList);
 
         // ---- 共享几何量 ----
         double rho = (pvt.p - xyz).norm();
@@ -285,7 +270,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 
         // ---- 逐卫星构建方程 ----
         buildPosEquation(sat, pvt, los, rho, trop,
-                         ifType, obsVal, weight, dx, dy, dz, cdtVars[sat.system]);
+                         def.code1 + "+" + def.code2, obsVal, weight, dx, dy, dz, cdtVars[sat.system]);
         // 速度方程与位置方程共用同一个 LOS（接收机→卫星方向）
         buildVelEquation(sat, codeList, pvt, los, elev, weight,
                          dvx, dvy, dvz, dcdt);
@@ -297,7 +282,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
     posEquations.varSet.insert(dx);
     posEquations.varSet.insert(dy);
     posEquations.varSet.insert(dz);
-    for (char sys : activeSystems) {
+    for (char sys: activeSystems) {
         if (auto it = cdtVars.find(sys); it != cdtVars.end())
             posEquations.varSet.insert(it->second);
     }
@@ -308,8 +293,7 @@ void SPPIFCode::linearize(ObsData &obsData, const int iter) {
 }
 
 
-void SPPIFCode::buildPosEquation(
-    const SatID &sat, const PVT &pvt, const Vector3d &los,
+void SPP::buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
     const double rho, const double trop,
     const std::string &obsType, const double obsVal, const double weight,
     const Variable &dx, const Variable &dy, const Variable &dz,
@@ -328,18 +312,13 @@ void SPPIFCode::buildPosEquation(
 
     ed.weight = weight;
     posEquations.obsEquData[eid] = ed;
-
-
 }
 
-void SPPIFCode::buildVelEquation(
-    const SatID &sat, const TypeValueMap &codeList,
-    const PVT &pvt, const Vector3d &los,
-    const double elev, const double posWeight,
-    const Variable &dvx, const Variable &dvy,
-    const Variable &dvz, const Variable &dcdt) {
-    // 多普勒代码：L1 频段，可能是 D1C (GPS C/A)、D1I (BDS B1I) 等。
-    // 简单做法：找任何以 "D1" 开头的键。
+void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
+                           const PVT &pvt, const Vector3d &los,
+                           const double elev, const double posWeight,
+                           const Variable &dvx, const Variable &dvy,
+                           const Variable &dvz, const Variable &dcdt) {
     double dopplerVal = 0.0;
     bool found = false;
     for (const auto &[k, v]: codeList) {
@@ -360,7 +339,6 @@ void SPPIFCode::buildVelEquation(
 
     const double rho_dot_model = (vel - pvt.v).dot(los) + rClockDrift;
 
-    const EquID eidVel(sat, "D1");
     EquData ed;
     ed.prefit = rho_dot_obs - rho_dot_model;
 
@@ -376,120 +354,70 @@ void SPPIFCode::buildVelEquation(
     }
     ed.weight = velWeight;
 
+    const EquID eidVel(sat, "D1");
     velEquations.obsEquData[eidVel] = ed;
 }
 
-void SPPIFCode::computeSatPos(ObsData &obsData) {
+void SPP::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        if (!ifTypeNames.count(sat.system)) continue;
+        if (!ifCodeTypes.count(sat.system)) continue;
 
-        Ephemeris *eph = ephTable ? ephTable->find(sat, obsData.epoch) : nullptr;
+        Ephemeris *eph = ephTable.find(sat, obsData.epoch);
         if (!eph) {
             auto itEph = ephMap.find(sat);
             if (itEph == ephMap.end()) continue;
             eph = itEph->second;
         }
 
-        const string ifType = ifTypeNames[sat.system];
-        double obsVal = 0.0;
-        if (auto itObs = codeList.find(ifType); itObs != codeList.end() && itObs->second > 0.0) {
-            obsVal = itObs->second;
-        } else if (auto itRaw = codeList.find(ifCodeTypes.at(sat.system).first);
-            itRaw != codeList.end() && itRaw->second > 0.0) {
-            obsVal = itRaw->second;
-        } else {
-            continue;
-        }
+        const FreqCombo &def = ifCodeTypes.at(sat.system);
+        if (!codeList.count(def.code1) || !codeList.count(def.code2)) continue;
+        const double obsVal = def.combineCodeFromObs(codeList);
 
         const double tau_total = (obsVal - rClockBias[sat.system]) / C_MPS;
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
-        satPVTTransTime[sat] = eph->svPVT(std::move(t_emit));
+        satPVTTransTime[sat] = eph->getPVT(std::move(t_emit));
     }
 }
 
-IFCodeTypes SPPIFCode::detectIFTypes(const std::map<char, std::vector<string>> &availableTypes) {
-    IFCodeTypes result;
+void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaultTypes) {
+    // 每历元从观测自探测 IF 组合。SPP(伪距即可组组合，相位可缺)
+    std::map<char, std::vector<string> > sysCodes;
+    for (const auto &[sat, tv]: obsData.satTypeValueData)
+        for (const auto &[code, v]: tv) sysCodes[sat.system].push_back(code);
 
-    for (const auto &[sys, types]: availableTypes) {
-        if (sys == 'G') {
-            string c1, c2;
-            for (const auto &t: types) {
-                if (t.size() >= 2 && t[0] == 'C') {
-                    if (t[1] == '1' && c1.empty()) c1 = t;
-                    if (t[1] == '2' && c2.empty()) c2 = t;
-                }
-            }
-            if (!c1.empty() && !c2.empty()) result['G'] = {c1, c2};
-            LOG_INFO << "Auto-detected IF types for G: " << c1 << "/" << c2;
-        } else if (sys == 'C') {
-            string cl, c6;
-            for (const auto &t: types) {
-                if (t.size() >= 2 && t[0] == 'C') {
-                    if ((t[1] == '2' || t[1] == '1') && cl.empty()) cl = t;
-                    if (t[1] == '6' && c6.empty()) c6 = t;
-                }
-            }
-            if (cl.empty() || c6.empty()) {
-                for (const auto &t: types) {
-                    if (t.size() >= 2 && t[0] == 'C') {
-                        if (t[1] == '7' && cl.empty()) cl = t;
-                        if (t[1] == '6' && c6.empty()) c6 = t;
-                    }
-                }
-            }
-            if (!cl.empty() && !c6.empty()) result['C'] = {cl, c6};
-            LOG_INFO << "Auto-detected IF types for C: " << cl << "/" << c6;
+    IFCodeTypes detected;
+    for (const auto &[sys, types]: sysCodes) {
+        if (!enabledSystems.empty() && !enabledSystems.count(sys)) continue;
+        if (FreqCombo def = FreqCombo::detect(sys, types, mRequirePhaseForIF);
+            !def.code1.empty() && !def.code2.empty()) {
+            detected[sys] = def;
+            LOG_INFO << "Auto-detected IF types for " << sys << ": " << def.code1 << "/" << def.code2;
         }
     }
-    return result;
-}
-
-void SPPIFCode::setIFCodeTypesAuto(const std::map<char, std::vector<string>> &availableTypes,
-                                   const IFCodeTypes &defaultTypes) {
-    if (const IFCodeTypes detected = detectIFTypes(availableTypes); detected.empty()) {
-        LOG_WARN << "未检测到可用的 IF 组合";
-        setIFCodeTypes(defaultTypes);
+    if (detected.empty()) {
+        if (defaultTypes.empty())
+            LOG_WARN << "未检测到可用的 IF 组合";
+        else
+            LOG_WARN << "未检测到可用的 IF 组合，回退默认";
+        ifCodeTypes = defaultTypes;
     } else {
-        setIFCodeTypes(detected);
+        ifCodeTypes = detected;
     }
 }
 
-void SPPIFCode::computeIF(ObsData &obsData) {
-    for (auto &[sat, codeList]: obsData.satTypeValueData) {
-        if (const char sys = sat.system; ifCodeTypes.count(sys)) {
-            const auto [code1, code2] = ifCodeTypes.at(sys);
-            if (codeList.count(code1) && codeList.count(code2)) {
-                const double f1 = getFreq(sys, code1);
-                const double f2 = getFreq(sys, code2);
-                const double v1 = codeList.at(code1);
-                const double v2 = codeList.at(code2);
-                const double ifVal = (f1 * f1 * v1 - f2 * f2 * v2) / (f1 * f1 - f2 * f2);
-                const string ifCode = "CC" + code1.substr(1, 1) + code2.substr(1, 1);
-                codeList[ifCode] = ifVal;
-            } else {
-                satRejected.insert(sat);
-            }
-        }
-    }
-}
-
-
-void SPPIFCode::earthRotation() {
+void SPP::earthRotation() {
     satPVTRecTime.clear();
     for (auto const &[sat, pvt]: satPVTTransTime) {
-        const double tau = (pvt.p - xyz).norm() / C_MPS;
-        Matrix3d rot=Math::rotationMatrix(OMEGA_EARTH * tau,3);
         PVT rotPvt = pvt;
-        rotPvt.p = rot * pvt.p;
-        rotPvt.v = rot * pvt.v;
+        applyEarthRotation(rotPvt.p, rotPvt.v, xyz);
         satPVTRecTime[sat] = rotPvt;
     }
 }
 
-void SPPIFCode::computeElevAzim() {
+void SPP::computeElevAzim() {
     for (auto const &[sat, pvt]: satPVTRecTime) {
         satElevData[sat] = elevation(xyz, pvt.p, frame);
         satAzimData[sat] = azimuth(xyz, pvt.p, frame);

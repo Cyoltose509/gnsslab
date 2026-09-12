@@ -1,57 +1,87 @@
-// SolverKalman 把 EquSys 方程系统转为 Kalman Filter 矩阵形式求解。
-// 可作为 SolverLSQ 的 Kalman 替代品。
-#ifndef GNSSLAB_SOLVERKALMAN_H
-#define GNSSLAB_SOLVERKALMAN_H
+#pragma once
+
 
 #include <Eigen/Eigen>
-#include "GnssStruct.h"
-#include "KalmanFilter.h"
 
 class SolverKalman {
 public:
-    SolverKalman() : firstTime(true) {}
+    SolverKalman() = default;
 
-    /// 完整一步：TimeUpdate + MeasUpdate（适用每历元行一次）
-    virtual void solve(EquSys &equSys, VariableDataMap &csData);
+    SolverKalman(const Eigen::VectorXd &initialState,
+                 const Eigen::MatrixXd &initialErrorCovariance)
+            : xhat(initialState), P(initialErrorCovariance) {
+        xhatminus = Eigen::VectorXd::Zero(initialState.size());
+        Pminus = Eigen::MatrixXd::Zero(initialErrorCovariance.rows(), initialErrorCovariance.cols());
+    }
 
-    /// 仅时间更新（预测到当前历元），不依赖观测方程
-    void timeUpdate(const VariableSet &varSet, VariableDataMap *csData = nullptr);
+    virtual void reset(const Eigen::VectorXd &initialState,
+                 const Eigen::MatrixXd &initialErrorCovariance);
 
-    /// 仅测量更新（校正），使用 equSys 中的观测方程
-    void measUpdate(EquSys &equSys);
+    virtual int compute(const Eigen::MatrixXd &phiMatrix,
+                        const Eigen::MatrixXd &qMatrix,
+                        const Eigen::VectorXd &mVector,
+                        const Eigen::MatrixXd &hMatrix,
+                        const Eigen::MatrixXd &wMatrix) ;
 
-    void createIndex(const VariableSet &varSet);
+    virtual int timeUpdate(const Eigen::MatrixXd &phiMatrix,
+                           const Eigen::MatrixXd &qMatrix)  {
+        return predict(phiMatrix, xhat, qMatrix);
+    }
 
-    double getSolution(const Parameter &type,
-                       VariableSet &currentUnkSet,
-                       const Eigen::VectorXd &stateVec);
+    virtual int measUpdate(const Eigen::VectorXd &mVector,
+                           const Eigen::MatrixXd &hMatrix,
+                           const Eigen::MatrixXd &wMatrix)  {
+        return correct(mVector, hMatrix, wMatrix);
+    }
 
-    Eigen::VectorXd getState() { return solution; }
-    Eigen::MatrixXd getCovMatrix() { return covMatrix; }
-    Eigen::Vector3d getdxyz() const { return dxyz; }
-    Eigen::VectorXd getPostfitResidual() const { return postfitResidual; }
+    virtual int measUpdate(const Eigen::VectorXd &mVector,
+                           const Eigen::MatrixXd &hMatrix,
+                           const Eigen::MatrixXd &wMatrix,
+                           const Eigen::VectorXd &mVectorAug,
+                           const Eigen::MatrixXd &hMatrixAug,
+                           const Eigen::MatrixXd &wMatrixAug)  {
+        const int numMeas = static_cast<int>(mVector.size());
+        const int numUnks = static_cast<int>(hMatrix.cols());
+        const int numAug = static_cast<int>(mVectorAug.size());
+        const int numMeasExt = numMeas + numAug;
 
-    /// 强制下次 timeUpdate 重新初始化状态（抛弃已累积的偏置）。
-    /// 当检测到位置突跳/回退后调用，避免滤波器“卡死”在陈旧状态上。
-    void reset() { firstTime = true; solution = Eigen::VectorXd(); covMatrix = Eigen::MatrixXd(); }
+        Eigen::VectorXd mVectorExt = Eigen::VectorXd::Zero(numMeasExt);
+        mVectorExt.head(numMeas) = mVector;
+        mVectorExt.tail(numAug) = mVectorAug;
 
-    virtual ~SolverKalman() {}
+        Eigen::MatrixXd hMatrixExt = Eigen::MatrixXd::Zero(numMeasExt, numUnks);
+        hMatrixExt.block(0, 0, numMeas, numUnks) = hMatrix;
+        hMatrixExt.block(numMeas, 0, numAug, numUnks) = hMatrixAug;
 
-    VariableSet currentUnkSet;
-    VariableIntMap currentIndexData;
+        Eigen::MatrixXd wMatrixExt = Eigen::MatrixXd::Zero(numMeasExt, numMeasExt);
+        wMatrixExt.block(0, 0, numMeas, numMeas) = wMatrix;
+        wMatrixExt.block(numMeas, numMeas, numAug, numAug) = wMatrixAug;
+
+        return correct(mVectorExt, hMatrixExt, wMatrixExt);
+    }
+
+    virtual ~SolverKalman() = default;
+
+    Eigen::VectorXd xhat;
+    Eigen::MatrixXd P;
+    Eigen::VectorXd xhatminus;
+    Eigen::MatrixXd Pminus;
+    Eigen::VectorXd postfitResidual;
 
 private:
-    bool firstTime;
+    virtual int predict(const Eigen::MatrixXd &phiMatrix,
+                        const Eigen::VectorXd &previousState,
+                        const Eigen::MatrixXd &qMatrix) ;
 
-    Eigen::VectorXd solution, xhat;
-    Eigen::MatrixXd covMatrix, P;
-    Eigen::VectorXd postfitResidual;
-    Eigen::Vector3d dxyz;
+    virtual int predict(const Eigen::MatrixXd &phiMatrix,
+                        const Eigen::VectorXd &previousState,
+                        const Eigen::MatrixXd &controlMatrix,
+                        const Eigen::VectorXd &controlInput,
+                        const Eigen::MatrixXd &qMatrix) ;
 
-    VariableSet oldUnkSet;
-    VariableIntMap oldIndexData;
-
-    KalmanFilter kalmanFilter;
+    virtual int correct(const Eigen::VectorXd &mVector,
+                        const Eigen::MatrixXd &hMatrix,
+                        const Eigen::MatrixXd &wMatrix) ;
 };
 
-#endif
+
