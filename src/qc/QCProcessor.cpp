@@ -1,6 +1,8 @@
 #include "QCProcessor.h"
+#include "FreqCombo.h"
 #include "Const.h"
 #include "MathUtils.h"
+#include "CycleSlip.h"   // 周跳/粗差探测（独立类 CycleSlip）：detectMW/detectGF 复用同一套逻辑
 #include <algorithm>
 #include <tuple>
 #include <Eigen/Dense>
@@ -99,93 +101,6 @@ namespace QC {
         return std::sqrt(s / (8.0 * (cnt - 1.0)));
     }
 
-    // ---------- 粗差 / 周跳探测 (MW 组合递推) ----------
-    static void detectMW(const std::vector<double> &MW, const std::vector<char> &ok,
-                         std::vector<char> &slip, std::vector<char> &outlier) {
-        const int n = static_cast<int>(MW.size());
-        slip.assign(n, 0);
-        outlier.assign(n, 0);
-        if (n < 2) return;
-        double mean = MW[0], var = 0.0;
-        int cnt = 1;
-        for (int k = 1; k < n; k++) {
-            if (!ok[k]) {
-                // 断档：新弧段，重置递推
-                mean = MW[k];
-                var = 0.0;
-                cnt = 1;
-                continue;
-            }
-            const double dev = MW[k] - mean;
-            if (var > 0.0 && std::fabs(dev) >= 4.0 * std::sqrt(var) && k + 1 < n && ok[k + 1]) {
-                // 递推更新到历元 k，用于预测 k+1 是否超限
-                const double meanK = (cnt * mean + MW[k]) / (cnt + 1);
-                const double varK = (cnt * var + dev * dev) / (cnt + 1);
-                const double devNext = MW[k + 1] - meanK; //NOLINT
-                if (!(varK > 0.0 && std::fabs(devNext) >= 4.0 * std::sqrt(varK)) || std::fabs(MW[k + 1] - MW[k]) > 1.0) {
-                    outlier[k] = 1; // ti+1 不超限，或两者均超限但 |ΔMW|>1m → 粗差
-                } else {
-                    slip[k] = 1; // 两者均超限且 ΔMW≤1m → 周跳，从 k 起新弧段
-                    mean = MW[k];
-                    var = 0.0;
-                    cnt = 1;
-                    continue;
-                }
-            }
-            // 正常递推更新
-            mean = (cnt * mean + MW[k]) / (cnt + 1);
-            var = (cnt * var + dev * dev) / (cnt + 1);
-            cnt++;
-        }
-    }
-
-    // ---------- 周跳补充探测 (GF 组合) ----------
-    static void detectGF(const std::vector<double> &LGF, const std::vector<double> &PGF,
-                         const std::vector<char> &ok, const double lam1, const double lam2,
-                         std::vector<char> &slip) {
-        const int n = static_cast<int>(LGF.size());
-        if (n < 6) return;
-        const double thrLarge = 6.0 * (lam2 - lam1);
-        const double thrSmall = std::fabs(lam2 - lam1);
-        int i = 0;
-        while (i < n) {
-            if (!ok[i]) {
-                i++;
-                continue;
-            }
-            int j = i;
-            while (j < n && (j == i || ok[j])) j++; // [i, j) 为连续弧段
-            // 弧段内进一步按已探测周跳切片，逐片拟合 PGF 并检测
-            int a = i;
-            while (a < j) {
-                while (a < j && slip[a]) a++; // 跳过前导周跳边界，避免死循环
-                if (a >= j) break;
-                int b = a;
-                while (b < j && !slip[b]) b++; // [a, b) 片内无周跳
-                if (const int len = b - a; len >= 6) {
-                    int q = len / 100 >= 6 ? 6 : len / 100 + 1;
-                    if (q >= len) q = len - 1;
-                    if (q >= 1) {
-                        std::vector<double> xv(len), yv(len);
-                        for (int k = a; k < b; k++) {
-                            xv[k - a] = k - a;
-                            yv[k - a] = PGF[k];
-                        }
-                        auto coef = Math::polyFit(xv, yv, q);
-                        std::vector<double> r(len);
-                        for (int k = a; k < b; k++) r[k - a] = LGF[k] - Math::polyVal(coef, k - a);
-                        for (int k = a + 1; k < b - 1; k++) {
-                            if (slip[k]) continue;
-                            const double jumpK = std::fabs(r[k - a] - r[k - 1 - a]);
-                            if (const double jumpK1 = std::fabs(r[k + 1 - a] - r[k - a]); jumpK > thrLarge && jumpK1 > thrSmall) slip[k] = 1;
-                        }
-                    }
-                }
-                a = b;
-            }
-            i = j;
-        }
-    }
 
     // ---------- 多路径误差：滑动窗口去均值 RMS，Nsw=50 ----------
     static double slidingWindowMp(const std::vector<double> &mp, const std::vector<char> &ok, const int n) {
@@ -387,6 +302,7 @@ namespace QC {
             const double f1 = band.f1, f2 = band.f2;
             if (f1 <= 0 || f2 <= 0) continue;
             const double lam1 = C_MPS / f1, lam2 = C_MPS / f2;
+            const FreqCombo fc = FreqCombo::fromFreq(band.f1, band.f2);
             const double alpha = f1 / f2 * (f1 / f2);
             const double a = (alpha + 1.0) / (alpha - 1.0); // MP1 中 L1 系数
             const double b = 2.0 / (alpha - 1.0); // MP1 中 L2 系数
@@ -423,9 +339,9 @@ namespace QC {
                 w.l2m[i] = l2;
                 w.l1cyc[i] = l1 / lam1;
                 w.l2cyc[i] = l2 / lam2;
-                w.MW[i] = (f1 * l1 - f2 * l2) / (f1 - f2) - (f1 * c1 + f2 * c2) / (f1 + f2); // MW
-                w.LGF[i] = l2 - l1; // GF 组合
-                w.PGF[i] = c2 - c1; // 伪距 GF 组合
+                w.MW[i] = fc.MW_meter(c1, c2, l1, l2); // MW (米) = Melbourne-Wübbena 宽巷，与 PPP 同源
+                w.LGF[i] = FreqCombo::GF_phase(l1, l2); // GF 相位组合 (L2-L1, 米)
+                w.PGF[i] = FreqCombo::GF_code(c1, c2);  // GF 伪距组合 (P2-P1, 米)
                 w.mp1s[i] = c1 - a * l1 + b * l2; // Estey-Meertens MP1
                 w.mp2s[i] = c2 - c * l1 + d * l2; // Estey-Meertens MP2
                 w.ionos[i] = f2 * f2 / (f1 * f1 - f2 * f2) * (l1 - l2); //  I_k1
@@ -443,8 +359,8 @@ namespace QC {
             q.band2 = band.lo;
             q.totalEpochs = rep.totalEpochs;
             q.validDual = w.n;
-            detectMW(w.MW, w.gapOk, q.slipFlag, q.outlierFlag);
-            detectGF(w.LGF, w.PGF, w.gapOk, lam1, lam2, q.slipFlag);
+            CycleSlip::detectMW(w.MW, w.gapOk, q.slipFlag, q.outlierFlag);
+            CycleSlip::detectGF(w.LGF, w.PGF, w.gapOk, lam1, lam2, q.slipFlag);
             q.clockJumpFlag.assign(w.n, 0); // 钟跳标记，初始化为 0
             q.slips = static_cast<int>(std::count(q.slipFlag.begin(), q.slipFlag.end(), 1));
             q.outliers = static_cast<int>(std::count(q.outlierFlag.begin(), q.outlierFlag.end(), 1));
