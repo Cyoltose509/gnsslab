@@ -30,16 +30,23 @@ endif()
 add_executable(GnssLab WIN32
     main.cpp
     core/Application.cpp
+    core/AppConfig.cpp
     ui/Gui.cpp
         widgets/GuiTimeConverter.cpp
         widgets/GuiCoordConverter.cpp
         widgets/GuiLsqSolver.cpp
         widgets/GuiFileProcessor.cpp
+        widgets/GuiPppProcessor.cpp
+        widgets/GuiLeoProcessor.cpp
+        widgets/GuiCharts.cpp
+        widgets/GuiHelpers.cpp
         widgets/GuiRealtimeProcessor.cpp
         widgets/QualityControl.cpp
     ${GNSSLAB_RESOURCES}
 )
 
+# 结构化异常处理：启用 /EHa，使 __try/__except 能捕获 ImPlot/ImPlot3D 内部断言(0x80000003)
+# 并允许在 SEH 块内正确调用含 C++ 析构的代码。
 target_include_directories(GnssLab PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}

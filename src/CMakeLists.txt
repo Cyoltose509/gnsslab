@@ -1,5 +1,4 @@
-# lib/CMakeLists.txt
-# 构建 gnss 静态库，链接进 exe 无需额外 DLL
+
 
 set(LIB_SOURCES
         core/Const.h
@@ -13,7 +12,7 @@ set(LIB_SOURCES
         time/TimeConvert.cpp
         time/TimeStruct.h
         time/TimeStruct.cpp
-        coord/CoordConvert.h
+        core/CoordConvert.h
         io/OEM7Reader.h
         io/OEM7Reader.cpp
         io/OEM7SocketReader.h
@@ -24,16 +23,30 @@ set(LIB_SOURCES
         io/RinexObsReader.cpp
         io/RinexNavStore.h
         io/RinexNavStore.cpp
-        solver/SPPIFCode.h
-        solver/SPPIFCode.cpp
-        solver/SPPCodePhase.h
-        solver/SPPCodePhase.cpp
+        io/Sp3OrbitReader.h
+        io/Sp3OrbitReader.cpp
+        io/ClkReader.h
+        io/ClkReader.cpp
+        io/OsbBias.h
+        io/OsbBias.cpp
+        io/AntxReader.h
+        io/AntxReader.cpp
+        core/FreqCombo.h
+        core/FreqCombo.cpp
+        core/CycleSlip.h
+        core/CycleSlip.cpp
+        solver/SPP.h
+        solver/SPP.cpp
+        solver/PPP.h
+        solver/PPP.cpp
+        solver/LEO.h
+        solver/LEO.cpp
         solver/SolverLSQ.h
         solver/SolverLSQ.cpp
-        solver/KalmanFilter.h
-        solver/KalmanFilter.cpp
         solver/SolverKalman.h
         solver/SolverKalman.cpp
+        solver/GnssEKF.h
+        solver/GnssEKF.cpp
         solver/ARLambda.h
         solver/ARLambda.cpp
         qc/QCProcessor.h
@@ -47,21 +60,17 @@ set(LIB_SOURCES
 
 add_library(gnss STATIC ${LIB_SOURCES})
 
-# QCProcessor.cpp 重写了完整质量分析（大量 Eigen/模板实例化），
-# Debug 下节数会超过 MSVC 对象文件格式限制(C1128)，需 /bigobj
 set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
+set_source_files_properties(core/CycleSlip.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 
-# 公共头文件路径：根目录 + 所有子目录，保持 #include 路径不变
 target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/core
         ${CMAKE_CURRENT_SOURCE_DIR}/time
-        ${CMAKE_CURRENT_SOURCE_DIR}/coord
         ${CMAKE_CURRENT_SOURCE_DIR}/io
         ${CMAKE_CURRENT_SOURCE_DIR}/solver
         ${CMAKE_CURRENT_SOURCE_DIR}/qc
         ${CMAKE_CURRENT_SOURCE_DIR}/util
 )
 
-# 链接第三方库（由主 CMakeLists.txt 保证 thirdparty 先被 add_subdirectory）
 target_link_libraries(gnss PUBLIC thirdparty_eigen)

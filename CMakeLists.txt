@@ -7,6 +7,12 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# MSVC：启用异步结构化异常处理 (/EHa)，使 __try/__except 能捕获 ImPlot/ImPlot3D 内部断言
+# (0x80000003)，并允许在 SEH 块内执行 C++ 析构。CMake 默认 /EHsc 会与本项目冲突。
+if(MSVC)
+    string(REPLACE "/EHsc" "/EHa" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
+
 # 输出目录：仅 Release 落到 lib/ bin/，Debug 留在 cmake-build-debug（CLion 默认）
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${PROJECT_SOURCE_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PROJECT_SOURCE_DIR}/bin)

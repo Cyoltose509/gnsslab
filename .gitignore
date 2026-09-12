@@ -8,3 +8,6 @@ data
 report
 /test/
 /lib/
+/bin/gnsslab.log
+/bin/imgui.ini
+/bin/gnsslab.ini
