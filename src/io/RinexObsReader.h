@@ -9,15 +9,7 @@ public:
     : pFileStream(nullptr), isHeaderRead(false)
     {}
 
-    void setFileStream(std::fstream* pStream)
-    {
-        pFileStream = pStream;
-    }
-
-    void setSelectedTypes(const std::map<char, std::set<string>>& systemTypes)
-    {
-        sysTypes = systemTypes;
-    }
+    std::fstream* pFileStream = nullptr;   // 观测文件流；由调用方直接赋值（替代 setFileStream）
 
     void parseRinexHeader();
     ObsData parseRinexObs();
@@ -60,7 +52,6 @@ public:
 
 
 private:
-    std::fstream* pFileStream;
     RinexHeader rinexHeader;
     std::map<char, std::set<string>> sysTypes;
     bool isHeaderRead;

@@ -21,7 +21,7 @@ bool OEM7Reader::open(const std::string &filename) {
     if (!ifs) return false;
 
     // 记录文件总大小用于进度显示
-    fileSize_ = static_cast<size_t>(ifs.tellg());
+    fileSize = static_cast<size_t>(ifs.tellg());
     ifs.seekg(0, std::ios::beg);
 
     buffer.clear();
@@ -42,7 +42,7 @@ void OEM7Reader::close() {
 void OEM7Reader::readAll(std::vector<ObsData> &epochs,
                          std::vector<EphemerisTable> &ephSnapshots,
                          std::atomic<float> *progress) {
-    availableTypes_.clear();   // 重新统计本文件的可用观测量类型
+    availableTypes.clear();   // 重新统计本文件的可用观测量类型
     EphemerisTable currentTable;
     std::vector<uint8_t> message;
     while (getNextMessage(message)) {
@@ -213,10 +213,10 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
             SatID sat(sys, prn);
             std::string s_f = std::to_string(freqIdx);
             currentObs.satTypeValueData[sat]["C" + s_f] = codeLocked ? psr : 0;
-            // 收集各系统实际出现的 C 类观测量代码，供上层 SPPIFCode::setIFCodeTypesAuto 自动选 IF 组合
+            // 收集各系统实际出现的 C 类观测量代码，供上层 SPP::detectIFCombinations 自动选 IF 组合
             {
                 const std::string ctype = "C" + s_f;
-                std::vector<std::string> &vec = availableTypes_[sys];
+                std::vector<std::string> &vec = availableTypes[sys];
                 if (std::find(vec.begin(), vec.end(), ctype) == vec.end())
                     vec.push_back(ctype);
             }

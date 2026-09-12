@@ -28,23 +28,15 @@ public:
 
     /// 文件读取进度（0.0 ~ 1.0）
     [[nodiscard]] double progress() const {
-        return fileSize_ > 0 ? static_cast<double>(bufferIndex) / static_cast<double>(fileSize_) : 0.0;
+        return fileSize > 0 ? static_cast<double>(bufferIndex) / static_cast<double>(fileSize) : 0.0;
     }
 
     std::map<int, GPSEphem> latestGps;
     std::map<int, BDSEphem> latestBds;
 
-    std::map<char, std::vector<std::string>> availableTypes_;  // 各系统出现的 C 类观测量代码
-
-    // 获取解析出的天线位置
-    [[nodiscard]] const Eigen::Vector3d& getAntennaPosition() const { return antennaPosition; }
+    std::map<char, std::vector<std::string>> availableTypes;  // 各系统出现的 C 类观测量代码
 
     /// 解析过程中收集到的「各系统可用观测量类型」（C 类伪距码），
-    /// 与 RINEX 头 file.mapObsTypes 语义一致，供上层 SPPIFCode::setIFCodeTypesAuto 自动选 IF 组合。
-    [[nodiscard]] const std::map<char, std::vector<std::string>>& getAvailableTypes() const {
-        return availableTypes_;
-    }
-
 protected:
     struct Header {
         int type;
@@ -56,7 +48,7 @@ protected:
 
     std::vector<unsigned char> buffer;
     size_t bufferIndex = 0;  // 当前读取位置，替代 buffer.erase 避免 O(N²) 搬迁
-    size_t fileSize_ = 0;    // 文件总字节数（用于进度显示）
+    size_t fileSize = 0;    // 文件总字节数（用于进度显示）
     ObsData currentObs;
     Eigen::Vector3d antennaPosition{0, 0, 0};  // 默认值
 

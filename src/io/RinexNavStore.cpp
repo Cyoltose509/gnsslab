@@ -260,6 +260,8 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
     while (true) {
         string line;
         getline(navFileStream, line);
+        // 文件为空/截断(无 END OF HEADER 即遇 EOF)：安全退出，避免空行 continue 死循环。
+        if (navFileStream.eof() && line.empty()) break;
         stripTrailing(line);
 
         if (line.empty()) continue;

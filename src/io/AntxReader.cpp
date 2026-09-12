@@ -1,0 +1,154 @@
+#include "AntxReader.h"
+#include <fstream>
+#include <sstream>
+#include <cctype>
+#include <cstdlib>
+
+namespace {
+    // 卫星号：系统字符(G/C/R/E/J/S/I) + 1..3 位数字
+    bool isSatId(const std::string &s) {
+        if (s.empty() || s.size() > 4 || !std::isalpha(static_cast<unsigned char>(s[0])))
+            return false;
+        for (size_t i = 1; i < s.size(); ++i)
+            if (!std::isdigit(static_cast<unsigned char>(s[i]))) return false;
+        return s.size() >= 2;
+    }
+
+    // 系统 -> ATX 中该系统的 IF 双频点码
+    std::pair<std::string, std::string> ifBandCodes(char sys) {
+        switch (sys) {
+            case 'G': return {"G01", "G02"}; // L1, L2
+            case 'C': return {"C01", "C02"}; // B1I, B2I
+            case 'R': return {"R01", "R02"}; // G1, G2
+            case 'E': return {"E01", "E07"}; // E1, E5b
+            case 'J': return {"J01", "J02"}; // L1, L2
+            default:  return {"", ""};
+        }
+    }
+}
+
+bool AntxReader::read(const std::string &path) {
+    std::ifstream in(path);
+    if (!in) return false;
+
+    std::string line;
+    SatID curSat;
+    std::string curRcv;
+    std::string curBand;
+    bool curIsSat = false;
+    Eigen::Vector3d curPCO(0, 0, 0);
+    bool gotPCO = false;
+
+    auto consumePCO = [&]() {
+        if (!gotPCO) return;
+        if (curIsSat) {
+            if (!curBand.empty())
+                satPCO[curSat][curBand] = curPCO;
+        } else if (!curRcv.empty()) {
+            if (rcvPCO.find(curRcv) == rcvPCO.end())
+                rcvPCO[curRcv] = curPCO;
+        }
+        gotPCO = false;
+    };
+
+    while (std::getline(in, line)) {
+        if (size_t p = line.find_first_not_of(" \t"); p != std::string::npos) line = line.substr(p);
+
+        if (line.find("TYPE / SERIAL NO") != std::string::npos ||
+            line.find("TYPE/SERIAL") != std::string::npos) {
+            consumePCO();
+            curSat = SatID();
+            curRcv.clear();
+            curBand.clear();
+            std::istringstream ss(line);
+            std::string tok;
+            SatID lastSat; bool hasSat = false;
+            std::vector<std::string> rcvParts;
+            while (ss >> tok) {
+                if (isSatId(tok)) {
+                    lastSat = SatID(tok[0], std::stoi(tok.substr(1)));
+                    hasSat = true;
+                } else if (tok != "TYPE" && tok != "/" && tok != "SERIAL" && tok != "NO") {
+                    rcvParts.push_back(tok);
+                }
+            }
+            if (hasSat) {
+                curSat = lastSat;
+                curIsSat = true;
+                curRcv.clear();
+            } else {
+                std::string key;
+                for (size_t i = 0; i < rcvParts.size() && i < 2; ++i) {
+                    if (i) key += ' ';
+                    key += rcvParts[i];
+                }
+                curRcv = key;
+                curIsSat = false;
+                curSat = SatID();
+            }
+        } else if (line.find("START OF FREQUENCY") != std::string::npos) {
+            consumePCO();
+            std::istringstream ss(line);
+            if (ss >> curBand) { /* e.g. "C01" */ }
+            else curBand.clear();
+        } else if (line.find("NORTH / EAST / UP") != std::string::npos) {
+            std::istringstream ss(line);
+            double a, b, c;
+            if (ss >> a >> b >> c) {
+                curPCO = Eigen::Vector3d(a, b, c) * 1e-3;
+                gotPCO = true;
+            }
+        } else if (line.find("END OF FREQUENCY") != std::string::npos) {
+            // 频点结束：先把当前频点 PCO 落库，再清空频点（避免最后一个频点 PCO 丢失）
+            consumePCO();
+            curBand.clear();
+        } else if (line.find("END OF ANTENNA") != std::string::npos) {
+            consumePCO();
+            curSat = SatID();
+            curRcv.clear();
+            curBand.clear();
+        }
+    }
+    consumePCO();
+    return !satPCO.empty() || !rcvPCO.empty();
+}
+
+Eigen::Vector3d AntxReader::getSatPCO(const SatID &sat, const std::string &band) const {
+    const auto it = satPCO.find(sat);
+    if (it == satPCO.end()) return {0, 0, 0};
+    const auto jt = it->second.find(band);
+    if (jt == it->second.end()) return {0, 0, 0};
+    return jt->second;
+}
+
+
+Eigen::Vector3d AntxReader::getRcvPCOENU(const std::string &rcvType) const {
+    std::istringstream ss(rcvType);
+    std::string a, b;
+    ss >> a >> b;
+    const std::string key = a + (b.empty() ? "" : " " + b);
+    const auto it = rcvPCO.find(key);
+    if (it == rcvPCO.end()) return {0, 0, 0};
+    const Eigen::Vector3d neu = it->second;
+    return {neu.y(), neu.x(), neu.z()};
+}
+
+void AntxReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const Eigen::Vector3d &vTx,
+                            const CommonTime &epoch, const FreqCombo &def) const {
+    auto [b1, b2] = ifBandCodes(sat.system);
+    const Eigen::Vector3d pco1 = getSatPCO(sat, b1);
+    const Eigen::Vector3d pco2 = getSatPCO(sat, b2);
+    if (pco1.squaredNorm() < 1e-12 && pco2.squaredNorm() < 1e-12) return;
+
+    const Eigen::Vector3d pco = def.c1 * pco1 + def.c2 * pco2; // 机体 (X,Y,Z)，单位 m
+    if (pco.squaredNorm() < 1e-12) return;
+
+    double gmst;
+    Eigen::Vector3d rsun, rmoon;
+    Geodesy::sunMoonECEF(epoch, rsun, rmoon, gmst);
+    Eigen::Vector3d ex, ey, ez;
+    Geodesy::satelliteBodyFrame(pTx, rsun, ex, ey, ez);
+
+    const Eigen::Vector3d pcoEcef = ex * pco.x() + ey * pco.y() + ez * pco.z();
+    pTx += pcoEcef;
+}

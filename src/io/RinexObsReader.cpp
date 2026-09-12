@@ -2,14 +2,17 @@
 #include "Const.h"
 #include "RinexObsReader.h"
 
-#include "Log.h"
 #include "TimeConvert.h"
+#include "CoordConvert.h"
 
 
 void RinexObsReader::parseRinexHeader() {
     XYZ antennaPosition;
     char satSys;
     std::map<char, std::vector<string> > mapObsTypes;
+    // 天线偏心（marker -> 天线参考点 ARP），RINEX: ANTENNA: DELTA H/E/N（本地 E/N/U 偏移）
+    bool haveAntDelta = false;
+    double antDh = 0.0, antDe = 0.0, antDn = 0.0;
     while (true) {
         string line;
         getline(*pFileStream, line);
@@ -38,6 +41,12 @@ void RinexObsReader::parseRinexHeader() {
             antennaPosition[1] = safeStod(safeSubstr(line, 14, 14));
             antennaPosition[2] = safeStod(safeSubstr(line, 28, 14));
             rinexHeader.antennaPosition = antennaPosition;
+        } else if (label == "ANTENNA: DELTA H/E/N") {
+            // RINEX: 天线参考点相对 marker 的偏移 (Up, East, North)
+            antDh = safeStod(safeSubstr(line, 0, 14));
+            antDe = safeStod(safeSubstr(line, 14, 14));
+            antDn = safeStod(safeSubstr(line, 28, 14));
+            haveAntDelta = true;
         } else if (label == "SYS / # / OBS TYPES") {
             const char sysStr= line[0];
             const int numObs = safeStoi(safeSubstr(line, 3, 3));
@@ -47,8 +56,20 @@ void RinexObsReader::parseRinexHeader() {
                 mapObsTypes[sysStr].push_back(typeStr);
             }
             rinexHeader.mapObsTypes = mapObsTypes;
+        } else if (label == "ANT # / TYPE") {
+            // RINEX: 天线型号在列 20-40（REC # / TYPE 同列，此处取列 20 起字段）
+            if (std::string t = strip(safeSubstr(line, 20, 20)); !t.empty()) rinexHeader.antType = t;
         }
     }
+
+    // RINEX 的 APPROX POSITION XYZ 即天线参考点(ARP)坐标，天线高已含其中；
+    // marker = ARP - DELTA(本地 E/N/U)。此处仅记录 DELTA，供解算结果按 rtkpost
+    // 约定回算 marker 高程，切勿再叠加到 APPROX（那会重复计入天线高）。
+    if (haveAntDelta) {
+        rinexHeader.antDeltaENU = Eigen::Vector3d(antDe, antDn, antDh);   // (East, North, Up)
+    }
+
+    isHeaderRead = true;
 }
 
 ObsData RinexObsReader::parseRinexObs() {
@@ -57,16 +78,19 @@ ObsData RinexObsReader::parseRinexObs() {
         isHeaderRead = true;
     }
 
-    // 读取观测值
+    // 读取观测值（跳过空行以及可能被污染的尾部非 epoch 行）
     std::string line;
-    getline(*pFileStream, line);
-
-    if (pFileStream->eof()) {
-        throw EndOfFile("EOF encountered!");
-    }
-
-    if (line[0] != '>' || line[1] != ' ') {
-        throw FFStreamError("Bad epoch line: >" + line + "<");
+    while (true) {
+        getline(*pFileStream, line);
+        if (pFileStream->eof()) {
+            throw EndOfFile("EOF encountered!");
+        }
+        // 去除 Windows 换行残留的 \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // 跳过空行
+        if (strip(line).empty()) continue;
+        // 正常 epoch 行以 "> " 开头；遇到其它内容视为文件污染，尝试再读一行继续
+        if (line.size() >= 2 && line[0] == '>' && line[1] == ' ') break;
     }
 
     int epochFlag = safeStoi(safeSubstr(line, 31, 1));
@@ -86,6 +110,7 @@ ObsData RinexObsReader::parseRinexObs() {
             if (pFileStream->eof()) {
                 throw EndOfFile("EOF encountered!");
             }
+            if (!line.empty() && line.back() == '\r') line.pop_back();
             try {
                 satIndex[isv] = SatID(safeSubstr(line, 0, 3));
             } catch (std::exception &e) {
@@ -115,7 +140,7 @@ ObsData RinexObsReader::parseRinexObs() {
 
                 if (obsTypeStr[0] == 'L') {
                     double freq = getFreq(sat.system, obsTypeStr);
-                    double wavelength = (freq > 0.0) ? (C_MPS / freq) : 0.0;
+                    double wavelength = freq > 0.0 ? C_MPS / freq : 0.0;
                     if (wavelength == 0.0) continue;
                     data = data * wavelength;
                 }
@@ -136,6 +161,7 @@ ObsData RinexObsReader::parseRinexObs() {
     CommonTime2WeekSecond(currEpoch, obsData.weekSecond);
     obsData.satTypeValueData = stvData;
     obsData.antennaPosition = rinexHeader.antennaPosition;
+    obsData.antType = rinexHeader.antType;
 
     chooseObs(obsData);
     return obsData;
