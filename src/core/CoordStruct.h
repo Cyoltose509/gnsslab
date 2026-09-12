@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Eigen>
+#include "Const.h"   // OMEGA_EARTH, C_MPS（applyEarthRotation 需要）
 
 using namespace std;
 
@@ -115,3 +116,17 @@ public:
     [[nodiscard]] double N() const { return this->y(); }
     [[nodiscard]] double U() const { return this->z(); }
 };
+
+// 地球自转(Sagnac)改正：将卫星在发射时刻 tTx 的 ECEF 位置/速度旋转到接收时刻 tRx 的 ECEF 框架。
+inline void applyEarthRotation(Eigen::Vector3d &pTx, Eigen::Vector3d &vTx,
+                              const Eigen::Vector3d &recv) {
+    const double tau = (pTx - recv).norm() / C_MPS;   // 信号传播时间
+    const double ang = OMEGA_EARTH * tau;             // +ωτ
+    const double c = std::cos(ang), s = std::sin(ang);
+    Eigen::Matrix3d rot;                              // R(−ωτ)
+    rot <<  c, s, 0,
+           -s, c, 0,
+            0, 0, 1;
+    pTx = rot * pTx;
+    vTx = rot * vTx;
+}

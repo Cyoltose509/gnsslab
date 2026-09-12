@@ -12,6 +12,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <cstdio>   // snprintf (fmt3/fmt4)
 
 using namespace std;
 
@@ -90,7 +91,6 @@ inline int safeStoi(const std::string &str) {
     }
 }
 
-// UTF-8 <-> 宽字符（用于路径拼接后传给截屏 API）
 inline std::wstring utf8ToWide(const std::string &s) {
     if (s.empty()) return {};
     const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -114,16 +114,34 @@ inline std::string sanitizeId(const std::string &s) {
     return r;
 }
 
-// 剥离扩展名：NovatelOEM20211114-01.21O → NovatelOEM20211114-01
 inline std::string stripExt(const std::string &fn) {
     auto pos = fn.rfind('.');
     return (pos != std::string::npos && pos > 0) ? fn.substr(0, pos) : fn;
 }
 
-inline std::wstring makeWide(const std::string &s) {
+static std::string wideToAcp(const std::wstring &w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s(n > 0 ? n - 1 : 0, '\0');
+    if (n > 0) WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+inline std::wstring ansiToWide(const std::string &s) {
     if (s.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    int n = MultiByteToWideChar(CP_ACP, 0, s.c_str(), -1, nullptr, 0);
     std::wstring w(n > 0 ? n - 1 : 0, L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
+    if (n > 0) MultiByteToWideChar(CP_ACP, 0, s.c_str(), -1, &w[0], n);
     return w;
+}
+
+inline std::string fmt4(const double x) {
+    char b[32];
+    snprintf(b, sizeof b, "%.4f", x);
+    return b;
+}
+inline std::string fmt3(const double x) {
+    char b[32];
+    snprintf(b, sizeof b, "%.3f", x);
+    return b;
 }

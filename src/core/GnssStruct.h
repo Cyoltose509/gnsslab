@@ -39,7 +39,7 @@ struct SatID {
         }
         system = substr[0];
         id = std::stoi(substr.substr(1, 2));
-    };
+    }
 
     bool operator==(const SatID &other) const {
         return this->system == other.system && this->id == other.id;
@@ -78,7 +78,9 @@ inline ostream &operator<<(ostream &os, const SatID &sat_id) {
 struct RinexHeader {
     string station;
     double version; //< RINEX 3 version/type
-    XYZ antennaPosition; //< APPROX POSITION XYZ
+    string antType; //< 接收机天线型号（RINEX "ANT # / TYPE"），用于 ATX 查 PCO/PCV
+    XYZ antennaPosition; //< APPROX POSITION XYZ（RINEX 此处即天线参考点 ARP，已含天线高）
+    Eigen::Vector3d antDeltaENU{0, 0, 0}; //< ANTENNA: DELTA H/E/N（本地 E/N/U，Up=天线高于 marker）
     std::map<char, std::vector<string> > mapObsTypes; //< SYS / # / OBS TYPES
     RinexHeader() : version(0) {
     }
@@ -120,6 +122,8 @@ inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satType
 struct ObsData {
     //接收机天线位置
     Eigen::Vector3d antennaPosition{0, 0, 0};
+    //接收机天线型号（RINEX "ANT # / TYPE"），用于 ATX 查 PCO/PCV
+    string antType;
     //接收站名
     string station;
     //接收机接收信号的时刻
@@ -172,6 +176,8 @@ public:
         dVY,
         dVZ,
         cdtr_dot,
+        ztd,
+        dOX, dOY, dOZ,   // 接收机天线/参考点常值 ECEF 偏移
         count
     };
 
@@ -211,7 +217,7 @@ private:
     ParameterName paraName;
     inline static const std::string paraNameStrings[static_cast<int>(count)] = {
         "Unknown", "dX", "dY", "dZ", "cdt", "cdt2", "cdt3", "cdt4", "ifb", "iono", "ambiguity",
-        "dVX", "dVY", "dVZ", "cdtr_dot"
+        "dVX", "dVY", "dVZ", "cdtr_dot", "ztd", "dOX", "dOY", "dOZ"
     };
 };
 
@@ -332,7 +338,7 @@ typedef std::map<Variable, int> VariableIntMap;
 class EquID {
 public:
     SatID sat; // 卫星标识（假设 SatID 已定义）
-    std::string_view obsType; // 观测类型
+    std::string obsType; // 观测类型（拥有式；勿用 string_view，否则临时串会悬垂）
     //    std::string station; // 站点标识
 
     // 默认构造函数

@@ -204,6 +204,17 @@ JulianDate CommonTime2JulianDate(const CommonTime &ct) {
     return jd;
 }
 
+double gmstFromTime(const CommonTime &t) {
+    const double jdFull = static_cast<double>(CommonTime2JulianDate(t).jd);
+    const double jdStart = std::floor(jdFull + 0.5) - 0.5;   // 当日 00:00 UTC 的 JD
+    const double ut = (jdFull - jdStart) * SEC_PER_DAY;       // 当日秒数
+    const double t1 = (jdStart - 2451545.0) / 36525.0;
+    const double t2 = t1 * t1, t3 = t2 * t1;
+    const double gmst0 = 24110.54841 + 8640184.812866 * t1 + 0.093104 * t2 - 6.2e-6 * t3;
+    const double gmst = gmst0 + 1.002737909350795 * ut;
+    return std::fmod(gmst, SEC_PER_DAY) * PI / 43200.0;
+}
+
 
 CommonTime YDSTime2CommonTime(const YDSTime &ydst) {
     CommonTime ct;

@@ -24,6 +24,10 @@ CommonTime JulianDate2CommonTime(const JulianDate &jd);
 
 JulianDate CommonTime2JulianDate(const CommonTime &ct);
 
+// 平格林尼治恒星时 GMST(rad)，IAU 1980 公式（UT1=UTC、忽略极移）。
+// 供 ECI↔ECEF 与固体潮/相位缠绕使用（见 core/Geodesy.h）。
+double gmstFromTime(const CommonTime &t);
+
 void CommonTime2MJD(const CommonTime &ct, MJD &mjd);
 
 void MJD2CommonTime(const MJD &mjd, CommonTime &ct);

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <vector>
+#include <algorithm>
 #include "Exception.h"
 #include <Eigen/Eigen>
 using namespace std;
@@ -10,23 +11,43 @@ namespace Math {
     /// This is a straightforward version of Lagrange Interpolation.
     /// Y must have size at least as large as X, and X.size() must be >= 2;
     /// x should lie within the range of X.
-    template<class T>
-    T SimpleLagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T x) {
-        if (Y.size() < X.size()) {
-            throw InvalidRequest("Input vectors must be of same size");
+    /// 节点横坐标 X(如时间) 与纵坐标 Y(如矢量) 类型可不同：YType 需支持 YType(0) 与 (double * YType) 的累加。
+    /// 例：X=vector<double>(时间), Y=vector<Eigen::Vector3d>(位置) → 直接插值矢量。
+    template<class XType, class YType>
+    YType simpleLagrangeInterpolation(const vector<XType> &X, const vector<YType> &Y, const XType &x) {
+        if (X.empty() || Y.size() < X.size()) {
+            throw InvalidRequest("Input vectors must be non-empty and of same size");
         }
-        T Yx(0);
+        // 对 Eigen 固定大小向量，YType(0) / Ytype(0.0) 都会匹配到 Matrix(Index rows) 构造函数，
+        // 触发 resize(0) 导致断言崩溃；用 Y[0]-Y[0] 得到类型正确的零，对 double/Eigen 均安全。
+        YType Yx = Y[0] - Y[0];
         for (size_t i = 0; i < X.size(); i++) {
             if (x == X[i]) return Y[i];
 
-            T Li(1);
+            XType Li(1);
             for (size_t j = 0; j < X.size(); j++)
                 if (i != j) Li *= (x - X[j]) / (X[i] - X[j]);
 
             Yx += Li * Y[i];
         }
         return Yx;
-    } // end T LagrangeInterpolation(const vector, const vector, const T)
+    } // end YType SimpleLagrangeInterpolation(const vector<XType>, const vector<YType>, const XType)
+
+    template<class T>
+    T lerp(const T &a, const T &b, const T &t) {
+        return a + (b - a) * t;
+    }
+
+    /// 升序序列二分查找：返回最大的 i 使 x[i] <= t（lower-bound 索引），越界 clamp 到 [0, n-1]。
+    /// 底层委托 C++ 标准库 std::lower_bound（要求 x 升序）；本函数仅做「取 int 索引 + 边界兜底」的薄封装，
+    /// 调用方据结果 i 与 i+1 取「包围区间」或「最近点」（如 SP3/CLK 历元插值）。
+    template<class T>
+    int lowerBoundIndex(const std::vector<T> &x, const T &t) {
+        if (x.empty()) return 0;
+        auto it = std::lower_bound(x.begin(), x.end(), t); // 第一个 >= t 的迭代器
+        const int i = static_cast<int>(it - x.begin());
+        return std::max(0, i - 1); // 回退一位 = 最后一个 <= t（无重复键时即包围区间左端点）
+    }
 
     /// Lagrange interpolation on data (X[i],Y[i]), i=0,N-1 to compute Y(x).
     /// Also return an estimate of the estimation error in 'err'.
@@ -36,7 +57,7 @@ namespace Math {
     /// ephemerides have shown that N=4 yields m-level errors, N=6 cm-level,
     /// N=8 ~0.1mm level and N=10 ~numerical noise errors; best to use N>=8.
     template<class T>
-    T LagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T &x, T &err) {
+    T lagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T &x, T &err) {
         if (Y.size() < X.size() || X.size() < 4) {
             throw InvalidRequest("Input vectors must be of same length, at least 4");
         }
@@ -74,7 +95,7 @@ namespace Math {
     /// Warning: for use with the precise (SP3) ephemeris only when velocity is not
     /// available; estimates of velocity, and especially clock drift, not as accurate.
     template<class T>
-    void LagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T &x, T &y, T &dydx) {
+    void lagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T &x, T &y, T &dydx) {
         if (Y.size() < X.size() || X.size() < 4) {
             throw InvalidRequest("Input vectors must be of same length, at least 4");
         }
@@ -112,7 +133,7 @@ namespace Math {
 
     /// Returns the second derivative of Lagrange interpolation.
     template<class T>
-    T LagrangeInterpolating2ndDerivative(const vector<T> &pos, const vector<T> &val, const T desiredPos) {
+    T lagrangeInterpolating2ndDerivative(const vector<T> &pos, const vector<T> &val, const T desiredPos) {
         int degree(pos.size());
         int i, j;
 
@@ -240,6 +261,22 @@ namespace Math {
         toReturn(i3, i2) = -(toReturn(i2, i3) = ::sin(angle));
         return toReturn;
     }
+
+    // 绕 X/Y/Z 轴的 3x3 旋转矩阵（固定大小，避免上面的动态 MatrixXd）。
+    // 符号约定与 RTKLIB rtkcmn.c 的 Rx/Ry/Rz 宏一致：RTKLIB 用列主序数组，
+    // 其 Rx/Ry/Rz(t) 等效于标准旋转 Rx(-t)/Ry(-t)/Rz(-t)（即三个轴均为负向旋转）。
+    // 此处用 AngleAxisd 显式写出该等效旋转，便于直接阅读而不必再想列主序。
+    inline Eigen::Matrix3d rotationX(double t) {
+        return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitX()).toRotationMatrix();
+    }
+    inline Eigen::Matrix3d rotationY(double t) {
+        return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    }
+    inline Eigen::Matrix3d rotationZ(double t) {
+        return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    }
+
+    // 地球自转(Sagnac)改正统一复用 src/core/CoordStruct.h 的 applyEarthRotation(...)，PPP/LEO/SPP 三端共用。
 
     inline double frobenius(const Eigen::MatrixXd &m) {
         double sum(0);

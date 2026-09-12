@@ -12,9 +12,8 @@ inline double c_Ek(const double M, const double e) {
     return E;
 }
 
-constexpr double lonPRN[6] = {0.0, 1.027, 1.396, 1.931, 2.443, 2.793};
 
-PVT Ephemeris::svPVT(CommonTime t) {
+PVT Ephemeris::getPVT(CommonTime t) {
     convertTimeSystem(t, timeSystem);
     PVT sv;
     const double tk = t - getCommonTime();

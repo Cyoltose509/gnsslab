@@ -8,25 +8,25 @@
 #include <windows.h>
 #endif
 
-std::mutex Log::mutex_;
-std::string Log::path_;
+std::mutex Log::mutex;
+std::string Log::path;
 
 void Log::init(const std::string &path) {
 #ifdef _WIN32
     char absPath[MAX_PATH] = {};
     if (GetFullPathNameA(path.c_str(), MAX_PATH, absPath, nullptr) > 0)
-        path_ = absPath;
+        Log::path = absPath;
     else
-        path_ = path;
+        Log::path = path;
 #else
-    path_ = path;
+    Log::path = path;
 #endif
-    std::ofstream f(path_, std::ios::trunc);
+    std::ofstream f(path, std::ios::trunc);
 }
 
 void Log::write(const Level lvl, const std::string &msg) {
-    std::lock_guard lock(mutex_);
-    std::ofstream f(path_, std::ios::app);
+    std::lock_guard lock(mutex);
+    std::ofstream f(path, std::ios::app);
     if (!f) return;
 
     const auto now = std::chrono::system_clock::now();

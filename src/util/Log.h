@@ -14,8 +14,8 @@ public:
     static void write(Level lvl,  const std::string &msg);
 
 private:
-    static std::mutex mutex_;
-    static std::string path_;
+    static std::mutex mutex;
+    static std::string path;
     static const char *levelStr(Level lvl);
 };
 
@@ -23,14 +23,14 @@ private:
 class LogStream {
 public:
     LogStream(const Log::Level lvl)
-        : lvl_(lvl) {}
-    ~LogStream() { Log::write(lvl_, ss_.str()); }
+        : lvl(lvl) {}
+    ~LogStream() { Log::write(lvl, ss.str()); }
 
-    std::ostringstream &stream() { return ss_; }
+    std::ostringstream &stream() { return ss; }
 
 private:
-    Log::Level lvl_;
-    std::ostringstream ss_;
+    Log::Level lvl;
+    std::ostringstream ss;
 };
 
 /// 流式日志宏：LOG_INFO << "msg" << val;
