@@ -42,7 +42,7 @@ void RinexObsReader::parseRinexHeader() {
             antennaPosition[2] = safeStod(safeSubstr(line, 28, 14));
             rinexHeader.antennaPosition = antennaPosition;
         } else if (label == "ANTENNA: DELTA H/E/N") {
-            // RINEX: 天线参考点相对 marker 的偏移 (Up, East, North)
+
             antDh = safeStod(safeSubstr(line, 0, 14));
             antDe = safeStod(safeSubstr(line, 14, 14));
             antDn = safeStod(safeSubstr(line, 28, 14));
@@ -57,16 +57,13 @@ void RinexObsReader::parseRinexHeader() {
             }
             rinexHeader.mapObsTypes = mapObsTypes;
         } else if (label == "ANT # / TYPE") {
-            // RINEX: 天线型号在列 20-40（REC # / TYPE 同列，此处取列 20 起字段）
-            if (std::string t = strip(safeSubstr(line, 20, 20)); !t.empty()) rinexHeader.antType = t;
+            const std::string type = strip(safeSubstr(line, 20, 20));
+            const std::string radome = strip(safeSubstr(line, 40, 20));
+            if (!type.empty()) rinexHeader.antType = radome.empty() ? type : type + " " + radome;
         }
     }
-
-    // RINEX 的 APPROX POSITION XYZ 即天线参考点(ARP)坐标，天线高已含其中；
-    // marker = ARP - DELTA(本地 E/N/U)。此处仅记录 DELTA，供解算结果按 rtkpost
-    // 约定回算 marker 高程，切勿再叠加到 APPROX（那会重复计入天线高）。
     if (haveAntDelta) {
-        rinexHeader.antDeltaENU = Eigen::Vector3d(antDe, antDn, antDh);   // (East, North, Up)
+        rinexHeader.antDeltaENU = Eigen::Vector3d(antDe, antDn, antDh);
     }
 
     isHeaderRead = true;

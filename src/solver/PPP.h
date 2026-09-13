@@ -42,6 +42,7 @@ public:
     bool mKinematic = false;
     bool mApplySatPCO = true; // 卫星天线 PCO
     bool mApplyRcvPCO = true; // 接收机天线 PCO
+    bool mApplyPcv = true;    // 相位中心变化 PCV（接收机 + 卫星）
     bool mApplyWindup = true; // 相位缠绕
     bool mApplySolidTide = true; // 固体潮
 
@@ -58,12 +59,12 @@ public:
     double mPosNoise = 0.0;
     double mAmbNoise = 1.0E-8;
     double mClockNoise = 0.0;
-    double mSigmaPhase = 0.005; // IF 相位量测噪声(m)
+    double mSigmaPhase = 0.005; // IF 相位量测噪声
 
     bool mHasTropo = true; // 估计 ZTD
-    double mZtdInitValue = 0.0; // ZTD 初始均值(m)
-    double mZtdInitVar = 0.04; // ZTD 初始方差(m²)
-    double mZtdProcNoise = 1.0E-6; // ZTD 随机游走过程噪声(m²/历元)
+    double mZtdInitValue = 0.0; // ZTD 初始均值
+    double mZtdInitVar = 0.04; // ZTD 初始方差
+    double mZtdProcNoise = 1.0E-6; // ZTD 随机游走过程噪声
 
     bool mFirstEpochSPP = false;
 
@@ -95,8 +96,13 @@ protected:
 
     void readback(const ObsData &obsData) override;
 
+    /// 天线相位中心变化改正(m)：接收机 PCV 由本地天顶距+方位角查表，卫星 PCV 由星下点角查表
+    double pcvCorrection(const SatID &sat, const FreqCombo &def, const PVT &pvt,
+                         const Vector3d &xyzEst, const Vector3d &tideDisp,
+                         const Vector3d &recvPCOe, double elev, double azim) const;
+
     void addSatelliteEquations(const SatID &sat, const FreqCombo &def, const TypeValueMap &tv,
-                               const PVT &pvt, const Vector3d &xyzEst, double elev, double map,
+                               const PVT &pvt, const Vector3d &xyzEst, double elev, double azim, double map,
                                const Variable &vclk, const Variable &vdx, const Variable &vdy,
                                const Variable &vdz, const Variable &vamb,
                                const Vector3d &tideDisp, const Vector3d &recvPCOe,

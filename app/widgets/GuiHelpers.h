@@ -82,6 +82,9 @@ namespace GuiHelpers {
     // 路径取文件名（去掉目录部分）
     std::string baseName(const std::string &p);
 
+    // 判断路径是否为 RINEX 观测文件（.??O / .rnx / .obs）
+    bool isRinexObsPath(const std::string &path);
+
     // 判断路径是否为 SP3 精密轨道文件
     bool isSp3Path(const std::string &path);
 

@@ -117,6 +117,20 @@ std::string GuiHelpers::baseName(const std::string &p) {
     return pos != std::string::npos ? p.substr(pos + 1) : p;
 }
 
+// 判断路径是否为 RINEX 观测文件（.??O / .rnx / .obs）
+bool GuiHelpers::isRinexObsPath(const std::string &path) {
+    if (path.size() < 4) return false;
+    std::string low = path;
+    std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+    if (low.size() >= 4 && low.compare(low.size() - 4, 4, ".rnx") == 0) return true;
+    if (low.size() >= 4 && low.compare(low.size() - 4, 4, ".obs") == 0) return true;
+    // RINEX 2 约定：.??O，倒数第 3 个字符为数字，末尾为 'O'
+    if (std::isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
+        std::toupper(path.back()) == 'O')
+        return true;
+    return false;
+}
+
 // 判断路径是否为 SP3 精密轨道文件
 bool GuiHelpers::isSp3Path(const std::string &path) {
     std::string low = path;

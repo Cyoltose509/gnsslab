@@ -68,7 +68,7 @@ void PPP::computeSatPos(ObsData &obsData) {
             }
             pvt = eph->getPVT(t_emit);
         }
-        if (mApplySatPCO) mAntx.applySatPCO(sat, pvt.p, pvt.v, t_emit, def);
+        if (mApplySatPCO) mAntx.applySatPCO(sat, pvt.p, t_emit, def);
         satPVTTransTime[sat] = pvt;
     }
 }
@@ -114,8 +114,25 @@ void PPP::resetSlipDetectors(const ObsData &obsData) {
 }
 
 // 单星码/相位两个方程
+double PPP::pcvCorrection(const SatID &sat, const FreqCombo &def, const PVT &pvt,
+                          const Vector3d &xyzEst, const Vector3d &tideDisp,
+                          const Vector3d &recvPCOe, double elev, double azim) const {
+    if (!mApplyPcv) return 0.0;
+    constexpr double R2D = 180.0 / PI;
+    // 接收机 PCV：以本地天顶距(90°-高度角)和方位角查表
+    const double zenDeg = 90.0 - elev * R2D;
+    const double azDeg = azim * R2D;
+    // 卫星 PCV：以星下点角（卫星天底方向与"卫星->接收机"方向的夹角）查表
+    const Vector3d recvEff = xyzEst + tideDisp + recvPCOe;
+    const Vector3d nadir = -pvt.p.normalized();
+    const Vector3d toRecv = (recvEff - pvt.p).normalized();
+    const double nadirDeg = std::acos(std::clamp(nadir.dot(toRecv), -1.0, 1.0)) * R2D;
+    return mAntx.rcvPcvIF(mRcvAntenna, sat.system, def, zenDeg, azDeg)
+           + mAntx.satPcvIF(sat, def, nadirDeg);
+}
+
 void PPP::addSatelliteEquations(const SatID &sat, const FreqCombo &def, const TypeValueMap &tv,
-                                const PVT &pvt, const Vector3d &xyzEst, double elev, double map,
+                                const PVT &pvt, const Vector3d &xyzEst, double elev, double azim, double map,
                                 const Variable &vclk, const Variable &vdx, const Variable &vdy,
                                 const Variable &vdz, const Variable &vamb,
                                 const Vector3d &tideDisp, const Vector3d &recvPCOe,
@@ -123,13 +140,16 @@ void PPP::addSatelliteEquations(const SatID &sat, const FreqCombo &def, const Ty
                                 const Variable *vox, const Variable *voy, const Variable *voz) {
     const double cb = mOsb.codeBias(def, sat);
     const double pb = mOsb.phaseBias(def, sat);
-    const double P_IF = def.combineCodeFromObs(tv) - cb;
+    const double pcv = pcvCorrection(sat, def, pvt, xyzEst, tideDisp, recvPCOe, elev, azim);
+    const double P_IF = def.combineCodeFromObs(tv) - cb + pcv;
     const double L1m = tv.at(def.phase1);
     const double L2m = tv.at(def.phase2);
-    const double L_IF = def.combinePhase(L1m, L2m) - pb;
+    const double L_IF = def.combinePhase(L1m, L2m) - pb + pcv;
 
     const double clkMean = mEkfInit ? (mClkEstimate.count(sat.system) ? mClkEstimate.at(sat.system) : 0.0) : 0.0;
-    const double ztdMean = mEkfInit ? mZtdEstimate : 0.0;
+    // 首历元用 ZTD 先验(= Hopfield 干+湿天顶延迟)建模对流层，避免 ztd 误差灌进位置导致 UP 大幅偏差；
+    // 收敛后(mEkfInit)沿用 ZTD 后验 mZtdEstimate。模糊度 bootstrap 的 ztd0 保持 0，ztd 只经此处 prefit，不双重计数。
+    const double ztdMean = mEkfInit ? mZtdEstimate : mZtdInitValue;
     const double ambMean = mAmbEstimate.count(sat) ? mAmbEstimate.at(sat) : 0.0;
 
     const double dts = pvt.clockBias * C_MPS;
@@ -262,7 +282,9 @@ void PPP::buildEquSys(ObsData &obsData, const Vector3d &xyzEst, VariableDataMap 
         }
 
         const PVT &pvt = satPVTRecTime.at(sat);
-        const double map = 1.0 / std::sin(std::max(elev, 0.02));
+        double azim = 0.0;
+        if (auto it = satAzimData.find(sat); it != satAzimData.end()) azim = it->second;
+        const double map = 1.0 / std::sin(std::sqrt(std::max(elev, 0.02) * std::max(elev, 0.02) + TROPO_MAP_EPS));
         satMap[sat] = map;
         const Parameter clkPar = sat.system == 'G' ? Parameter::cdt : Parameter::cdt2;
         const Variable vclk(obsData.station, clkPar);
@@ -298,15 +320,16 @@ void PPP::buildEquSys(ObsData &obsData, const Vector3d &xyzEst, VariableDataMap 
             const double dts0 = pvt.clockBias * C_MPS;
             const double rel0 = pvt.relativityCorrection * C_MPS;
             const double L1m0 = tv.at(def.phase1), L2m0 = tv.at(def.phase2);
-            const double L_IF0 = def.combinePhase(L1m0, L2m0) - mOsb.phaseBias(def, sat);
+            const double L_IF0 = def.combinePhase(L1m0, L2m0) - mOsb.phaseBias(def, sat)
+                                 + pcvCorrection(sat, def, pvt, xyzEst, tideDisp, recvPCOe, elev, azim);
             const double clk0 = mEkfInit ? (mClkEstimate.count(sat.system) ? mClkEstimate.at(sat.system) : 0.0) : 0.0;
             const double ztd0 = mEkfInit ? mZtdEstimate : 0.0;
-            const double map0 = 1.0 / std::sin(std::max(elev, 0.02));
+            const double map0 = 1.0 / std::sin(std::sqrt(std::max(elev, 0.02) * std::max(elev, 0.02) + TROPO_MAP_EPS));
             mAmbEstimate[sat] = L_IF0 - (rho0 - dts0 - rel0) - clk0 - ztd0 * map0;
         }
         currentSatSet.insert(sat);
 
-        addSatelliteEquations(sat, def, tv, pvt, xyzEst, elev, map, vclk, vdx, vdy, vdz, vamb,
+        addSatelliteEquations(sat, def, tv, pvt, xyzEst, elev, azim, map, vclk, vdx, vdy, vdz, vamb,
                               tideDisp, recvPCOe, obsData.epoch,
                               mEstimateConstOffset ? &vox : nullptr,
                               mEstimateConstOffset ? &voy : nullptr,
@@ -462,6 +485,12 @@ void PPP::solve(ObsData &obsData) {
         const Vector3d xyzRef = mFirstEpochSPP
                                     ? predictPosition(0.0, obsData.epoch)
                                     : mRefPos;
+        // 对流层 ZTD 先验：默认用 Hopfield 干+湿天顶延迟（与站高相关）作初值，
+        // 避免 ZTD 从 0 起始造成 UP 方向十几米级的收敛摆荡。用户显式 setZtdInitValue(>0) 时保留其设定。
+        if (mZtdInitValue <= 0.0) {
+            const double H = XYZtoBLH(xyzRef, Frame::WGS84).H();
+            mZtdInitValue = tropoHopfieldDry(H) + tropoHopfieldWet(H);
+        }
         buildEquSys(obsData, xyzRef, csData, true);
         mFilterFrozen = static_cast<int>(mEq.obsEquData.size()) / 2 < mMinSatsForUpdate;
         if (!mFilterFrozen) {

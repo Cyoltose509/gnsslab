@@ -220,9 +220,7 @@ namespace GuiFileProcessor {
                     } else {
                         task->filePath = path;
                         task->fileName = GuiHelpers::baseName(path);
-                        task->isRinex = path.size() >= 4 &&
-                                        std::isdigit(static_cast<unsigned char>(path[path.size() - 3])) &&
-                                        std::toupper(path.back()) == 'O';
+                        task->isRinex = GuiHelpers::isRinexObsPath(path);
                         task->state = SppTask::State::Running;
                         task->loading = true;
                         task->worker = std::thread(SolveThread, task);

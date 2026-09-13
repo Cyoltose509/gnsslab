@@ -234,6 +234,7 @@ constexpr SatType getSatType(const char sys, const int prn, const bool old = fal
     }
 }
 
+static constexpr double TROPO_MAP_EPS = 3.0e-3;
 
 // 干/湿天顶延迟拆分
 inline double tropoHopfieldDry(const double H) {
