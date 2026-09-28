@@ -24,6 +24,8 @@
 #include "GnssStruct.h"  // SatID
 #include "StringUtils.h" // ansiToWide / 全局 fmt3/fmt4
 
+namespace GnssTask { struct SolverTaskBase; }
+
 namespace GuiHelpers {
     bool inputTextStd(const char *label, std::string *str, ImGuiInputTextFlags flags = 0);
 
@@ -34,41 +36,53 @@ namespace GuiHelpers {
     void renderCutoffAndSystems(double *cutoffDeg, std::set<char> *sysMask,
                                 const std::function<void()> &extraSameLine = {});
 
-    static constexpr GuiFileFilter fClk[] = {
+    inline constexpr GuiFileFilter fClk[] = {
         {L"精密钟差 CLK (*.CLK;*.clk)", L"*.CLK;*.clk"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fOsb[] = {
+    inline constexpr GuiFileFilter fOsb[] = {
         {L"码偏差 OSB/BIA (*.BIA;*.bia;*.OSB)", L"*.BIA;*.bia;*.OSB"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fAtx[] = {
+    inline constexpr GuiFileFilter fAtx[] = {
         {L"天线文件 ATX (*.atx;*.ATX)", L"*.atx;*.ATX"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fSp3[] = {
+    inline constexpr GuiFileFilter fSp3[] = {
         {L"精密轨道 SP3 (*.SP3;*.sp3)", L"*.SP3;*.sp3"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fOrb[] = {
+    inline constexpr GuiFileFilter fOrb[] = {
         {L"精密/广播星历 (*.SP3;*.sp3;*.??N;*.??G;*.??C;*.nav;*.rnx)", L"*.SP3;*.sp3;*.??N;*.??G;*.??C;*.nav;*.rnx"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fRnx[] = {
+    inline constexpr GuiFileFilter fRnx[] = {
         {L"广播星历 (*.??N;*.??G;*.??C;*.nav;*.rnx)", L"*.??N;*.??G;*.??C;*.nav;*.rnx"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fObs[] = {
-        {L"LEO 星载 RINEX (*.??O;*.rnx)", L"*.??O;*.rnx"},
+    inline constexpr GuiFileFilter fObs[] = {
+        {L"RINEX 观测 (*.??O;*.rnx)", L"*.??O;*.rnx"},
         {L"OEM7 日志 (*.log)", L"*.log"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fHdr[] = {
+    inline constexpr GuiFileFilter fHdr[] = {
         {L"辅助文件 (*.HDR;*.hdr)", L"*.HDR;*.hdr"},
         {L"所有文件 (*.*)", L"*.*"}
     };
-    static constexpr GuiFileFilter fCsv[] = {
+    inline constexpr GuiFileFilter fCsv[] = {
         {L"CSV (*.csv)", L"*.csv"},
+        {L"所有文件 (*.*)", L"*.*"}
+    };
+    inline constexpr GuiFileFilter fErp[] = {
+        {L"地球自转参数 ERP (*.ERP;*.erp)", L"*.ERP;*.erp"},
+        {L"所有文件 (*.*)", L"*.*"}
+    };
+    inline constexpr GuiFileFilter fTro[] = {
+        {L"对流层 TRO (*.TRO;*.tro)", L"*.TRO;*.tro"},
+        {L"所有文件 (*.*)", L"*.*"}
+    };
+    inline constexpr GuiFileFilter fIonex[] = {
+        {L"电离层 IONEX (*.ION;*.ion;*.IONEX;*.ionex)", L"*.ION;*.ion;*.IONEX;*.ionex"},
         {L"所有文件 (*.*)", L"*.*"}
     };
 
@@ -97,15 +111,22 @@ namespace GuiHelpers {
     // 调用方直接用 fmt4/fmt3 即可（GuiHelpers.h 已包含 StringUtils.h）。
 
     // 配置窗口通用开头
-    void beginConfigWindow(const std::string &idBase, void *task);
+    void beginConfigWindow(const std::string &idBase, const GnssTask::SolverTaskBase &task);
 
     // 「取消」按钮
     template<class Task>
-    void renderCancelButton(const std::shared_ptr<Task> &task) {
+    void renderCancelButton(Task *task) {
         if (ImGui::Button("取消", ImVec2(80, 40))) {
+            // 必须置 stop：各 Processor 的读取/解算线程都靠它退出循环。
+            // 原先只置 state/hasError，线程仍会跑完整个文件，取消形同虚设。
+            // 两套 stop 都要置：SolverTaskBase::stop 是状态机/取消信号入口，
+            // SolveTask::stop（经 solveResult() 取到的 core）才是 SPP 的读取/解算线程与
+            // 实时线程实际在 watch 的标志——Application 清理、GuiSolverPanel「停止连接」改的都是它。
+            // 只置其一，另一处的循环就收不到停止信号。
+            task->stop = true;
+            if (auto c = task->solveResult()) c->stop = true;
             task->state = Task::State::Done;
-            task->hasError = true;
-            task->errorMsg = "用户取消";
+            task->setError("用户取消");
         }
     }
 

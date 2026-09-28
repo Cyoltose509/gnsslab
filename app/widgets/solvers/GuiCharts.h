@@ -6,9 +6,8 @@
 #include <utility>
 #include <functional>
 
-#include "GnssStruct.h"
-#include "CoordConvert.h"
-#include "Const.h"      // RAD_TO_DEG（构造 SkyPoint/SatRow 时弧度→度）
+#include "Const.h"
+#include "SolverTask.h"
 #include "imgui.h"
 
 /// 跨页面复用的 GNSS 可视化 widget（SPP / PPP 共用，避免各处理器重复实现）。
@@ -39,14 +38,6 @@ namespace GuiCharts {
                                const double *yLo = nullptr, const double *yHi = nullptr,
                                float plotH = 320.0f);
 
-    struct SkyPoint {
-        int epIdx;
-        float azDeg, elDeg;
-        bool used;
-    };
-
-    // —— 统一构造辅助：消除 SPP/PPP/LEO 三端 GUI 中重复的 SatRow / SkyPoint 构造循环 ——
-    // 各处理器只需提供"逐卫星视图"(索引 i → 字段映射)，公共的弧度→度、类型转换、字段赋值在此完成。
     struct SatRowView {
         SatID sat;
         bool used = true;
@@ -60,8 +51,7 @@ namespace GuiCharts {
         bool used = true;
     };
 
-    /// 由逐卫星视图构造 SatRow 列表。proj(i) 返回第 i 颗星的 SatRowView；fill(sr,i) 追加各处理器特有 extra 残差行。
-    template<typename Proj, typename Fill>
+  template<typename Proj, typename Fill>
     std::vector<SatRow> buildSatRows(const size_t n, Proj &&proj, Fill &&fill) {
         std::vector<SatRow> rows;
         rows.reserve(n);
@@ -83,7 +73,6 @@ namespace GuiCharts {
         return rows;
     }
 
-    /// 把逐卫星视图聚合进天顶轨迹 map（如 task->skyTracks）。
     template<typename Proj>
     void buildSkyTracks(std::map<SatID, std::vector<SkyPoint>> &tracks, const int epIdx, const size_t n, Proj &&proj) {
         for (size_t i = 0; i < n; ++i) {
@@ -93,8 +82,7 @@ namespace GuiCharts {
         }
     }
 
-    /// 构造当前历元天顶点列表（RenderSkyplot 的 curPts）。minElevDeg>0 时低于该仰角(度)的卫星被跳过。
-    template<typename Proj>
+  template<typename Proj>
     std::vector<std::pair<SatID, SkyPoint> > buildCurSkyPoints(const int epIdx, const size_t n, Proj &&proj, const double minElevDeg = -1.0) {
         std::vector<std::pair<SatID, SkyPoint> > pts;
         for (size_t i = 0; i < n; ++i) {
@@ -111,17 +99,7 @@ namespace GuiCharts {
                        const std::vector<std::pair<SatID, SkyPoint>> &curPts,
                        float sizePx = 360.0f);
 
-    struct SatVis {
-        SatID sat;
-        char sys = 0;
-        Eigen::Vector3d pos{0, 0, 0};
-        bool used = true;
-    };
-    struct TrajPoint {
-        int epIdx = 0;              // 历元序号（0-based）
-        Eigen::Vector3d pos{0, 0, 0}; // ECEF (m)
-    };
-    void RenderLeo3D(const Eigen::Vector3d &leoPos,
+    void RenderLeo3D(const Vector3d &leoPos,
                      const std::vector<TrajPoint> &leoTraj,
                      const std::vector<TrajPoint> &refTraj,
                      float sizePx = 460.0f);
@@ -137,10 +115,11 @@ namespace GuiCharts {
 
     struct PosTabView {
         int epochCount = 0;
+        bool busy = false; // 仍在读观测/加载产品；epochCount==0 时用于区分"尚未产出历元"与"真无解算历元"
         int selectedIdx = -1;
         int *selectedEpoch = nullptr;
         int *selectedSatIdx = nullptr;
-        Eigen::Vector3d *refECEF = nullptr;
+        Vector3d *refECEF = nullptr;
         std::function<void()> onRefChanged;
         bool showRefEnu = true;
         bool showRefInput = true;
@@ -164,12 +143,12 @@ namespace GuiCharts {
 
         // 位置面板
         bool solved = false;
-        Eigen::Vector3d xyz{0, 0, 0}, enu{0, 0, 0}, blh{0, 0, 0};
+        Vector3d xyz{0, 0, 0}, enu{0, 0, 0}, blh{0, 0, 0};
         double sigmaP = 0;
         bool showZtd = false; double ztd = 0;
         bool showVelDop = false;
         bool showVel = true;
-        Eigen::Vector3d vel{0, 0, 0};
+        Vector3d vel{0, 0, 0};
         double pdop = 0, gdop = 0, hdop = 0, vdop = 0, tdop = 0;
         int numSatsResult = 0, numObs = 0;
         std::string noSolveMsg;
@@ -190,15 +169,15 @@ namespace GuiCharts {
 
         bool showRtn = false;
         bool hasRef = false;
-        std::vector<double> rtnTimes, rtn_r, rtn_t, rtn_n, rtn_d3;
+        std::vector<double> rtnTimes, rtnR, rtnT, rtnN, rtnD3;
 
         bool showRms = false;
         std::vector<double> rmsCode, rmsPhase;
 
         bool show3d = false;
         ChartVisibility *renderToggles = nullptr;
-        Eigen::Vector3d leoPos3d{0, 0, 0};     // LEO 解算位置 ECEF (m)
-        Eigen::Vector3d leoRef3d{0, 0, 0};     // LEO 参考轨道位置 ECEF (m)
+        Vector3d leoPos3d{0, 0, 0};     // LEO 解算位置 ECEF (m)
+        Vector3d leoRef3d{0, 0, 0};     // LEO 参考轨道位置 ECEF (m)
         std::vector<SatVis> gnssVis;           // 当前历元各 GNSS 卫星 ECEF (m)
         std::vector<TrajPoint> leoTraj;        // LEO 解算历史轨迹（米）
         std::vector<TrajPoint> leoRefTraj;     // 参考轨道历史轨迹（米）

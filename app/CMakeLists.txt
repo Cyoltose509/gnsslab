@@ -32,16 +32,19 @@ add_executable(GnssLab WIN32
     core/Application.cpp
     core/AppConfig.cpp
     ui/Gui.cpp
-        widgets/GuiTimeConverter.cpp
-        widgets/GuiCoordConverter.cpp
-        widgets/GuiLsqSolver.cpp
-        widgets/GuiFileProcessor.cpp
-        widgets/GuiPppProcessor.cpp
-        widgets/GuiLeoProcessor.cpp
-        widgets/GuiCharts.cpp
-        widgets/GuiHelpers.cpp
-        widgets/GuiRealtimeProcessor.cpp
-        widgets/QualityControl.cpp
+        widgets/tools/GuiTimeConverter.cpp
+        widgets/tools/GuiCoordConverter.cpp
+        widgets/tools/GuiLsqSolver.cpp
+        widgets/solvers/GuiSolverPanel.cpp
+        widgets/solvers/GuiSppProcessor.cpp
+        widgets/solvers/SolverTask.cpp
+        widgets/solvers/GuiPppProcessor.cpp
+        widgets/solvers/GuiLeoProcessor.cpp
+        widgets/solvers/GuiRtkProcessor.cpp
+        widgets/solvers/GuiCharts.cpp
+        widgets/solvers/GuiHelpers.cpp
+        widgets/solvers/GuiRealtimeProcessor.cpp
+        widgets/solvers/QualityControl.cpp
     ${GNSSLAB_RESOURCES}
 )
 
@@ -51,6 +54,8 @@ target_include_directories(GnssLab PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${PROJECT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/widgets/tools
+    ${CMAKE_CURRENT_SOURCE_DIR}/widgets/solvers
 )
 
 target_link_libraries(GnssLab PRIVATE

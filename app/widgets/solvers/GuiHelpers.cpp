@@ -3,10 +3,13 @@
 #include <windows.h>
 
 #include "GuiHelpers.h"
+#include "SolverTask.h"   // GnssTask::SolverTaskBase 完整定义（beginConfigWindow 读 cfgIndex）
 #include "core/AppConfig.h"
 
 #include "StringUtils.h"
 #include <algorithm>
+#include <map>
+#include <mutex>
 
 
 // 由逐星伪距残差估计稳健 Y 轴范围
@@ -121,7 +124,7 @@ std::string GuiHelpers::baseName(const std::string &p) {
 bool GuiHelpers::isRinexObsPath(const std::string &path) {
     if (path.size() < 4) return false;
     std::string low = path;
-    std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+    std::transform(low.begin(), low.end(), low.begin(), tolower);
     if (low.size() >= 4 && low.compare(low.size() - 4, 4, ".rnx") == 0) return true;
     if (low.size() >= 4 && low.compare(low.size() - 4, 4, ".obs") == 0) return true;
     // RINEX 2 约定：.??O，倒数第 3 个字符为数字，末尾为 'O'
@@ -134,7 +137,7 @@ bool GuiHelpers::isRinexObsPath(const std::string &path) {
 // 判断路径是否为 SP3 精密轨道文件
 bool GuiHelpers::isSp3Path(const std::string &path) {
     std::string low = path;
-    std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+    std::transform(low.begin(), low.end(), low.begin(), tolower);
     return low.size() >= 4 && low.compare(low.size() - 4, 4, ".sp3") == 0;
 }
 
@@ -152,11 +155,13 @@ std::set<char> GuiHelpers::resolveNavSystems(const std::set<char> &mask,
 }
 
 // 配置窗口通用开头
-void GuiHelpers::beginConfigWindow(const std::string &idBase, void *task) {
+void GuiHelpers::beginConfigWindow(const std::string &idBase, const GnssTask::SolverTaskBase &task) {
     if (!ImGui::IsPopupOpen(reinterpret_cast<const char *>(static_cast<ImGuiID>(0)),
                             ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         ImGui::SetNextWindowFocus();
-    const std::string winId = idBase + std::to_string(reinterpret_cast<uintptr_t>(task));
+    // 窗口名即 imgui.ini 里的持久化键([Window][名字])，跨运行必须稳定。
+    // 旧实现拼对象地址 → 每次运行键都变 → 拖过的尺寸记不住；改用任务创建序号(SolverTaskBase::cfgIndex)。
+    const std::string winId = idBase + std::to_string(task.cfgIndex);
     ImGui::Begin(winId.c_str(), nullptr, ImGuiWindowFlags_NoCollapse);
 }
 
