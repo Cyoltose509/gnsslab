@@ -5,10 +5,25 @@
 #include <Eigen/Eigen>
 #include <vector>
 #include <algorithm>
+#include <set>
 
 #include "Log.h"
 #include "MathUtils.h"
 #include "CoordStruct.h"
+#include "Troposphere.h"
+#include "Weight.h"
+#include <cmath>
+
+bool SPP::processEpoch(ObsData &obsData) {
+    try {
+        preprocess(obsData);
+        solve(obsData);
+    } catch (const std::exception &e) {
+        LOG_ERROR << "[SPP] solve 异常: " << e.what();
+        return false;
+    }
+    return true;
+}
 
 void SPP::preprocess(ObsData &obsData) {
     satRejected.clear();
@@ -33,7 +48,7 @@ void SPP::solve(ObsData &obsData) {
     detectIFCombinations(obsData);
 
     int iter(0);
-    while (iter < 10) {
+    while (iter < mConfig.maxIter) {
         computeSatPos(obsData);
         earthRotation();
 
@@ -80,7 +95,7 @@ void SPP::solve(ObsData &obsData) {
         }
 
         // 收敛判据：位置修正量 < 0.1mm 即停
-        if (iter >= 2 && dxyz.norm() < 1e-4) {
+        if (iter >= mConfig.minCheckIter && dxyz.norm() < mConfig.convEps) {
             break;
         }
 
@@ -97,21 +112,16 @@ void SPP::solve(ObsData &obsData) {
 void SPP::readback(const ObsData &/*obsData*/) {
     auto &pD = posSolver.covMatrix;
     auto &vD = velSolver.covMatrix;
-    result.pdop = sqrt(pD(0, 0) + pD(1, 1) + pD(2, 2));
-    {
-        double gdop_sq = result.pdop * result.pdop; // PDOP²
-        double tdop_sq = 0.0;
-        int idx = 0;
-        for (const auto &v: posSolver.currentUnkSet) {
-            if (const auto p = v.getParaType(); p == Parameter::cdt || p == Parameter::cdt2) {
-                tdop_sq += pD(idx, idx);
-                gdop_sq += pD(idx, idx);
-            }
-            idx++;
+    double clockVar = 0.0;
+    int idx = 0;
+    for (const auto &v: posSolver.currentUnkSet) {
+        if (const auto p = v.getParaType(); p == Parameter::cdt || p == Parameter::cdt2) {
+            clockVar += pD(idx, idx);
         }
-        result.gdop = sqrt(gdop_sq);
-        result.tdop = sqrt(tdop_sq);
+        idx++;
     }
+    result.blh = XYZtoBLH(xyz, frame);
+    computePositionDops(result, pD.topLeftCorner(3, 3), clockVar, result.blh);
 
     result.sigmaP = result.pdop * posSolver.sigma0;
     result.sigmaXYZ = {
@@ -132,11 +142,6 @@ void SPP::readback(const ObsData &/*obsData*/) {
     }
     result.xyz = xyz;
     result.vel = vel;
-    result.blh = XYZtoBLH(xyz, frame);
-    auto mt = getBLMatrix(result.blh[0], result.blh[1]);
-    Matrix3d C_enu = mt * pD.topLeftCorner(3, 3) * mt.transpose();
-    result.hdop = sqrt(C_enu(0, 0) + C_enu(1, 1));
-    result.vdop = sqrt(C_enu(2, 2));
 
     result.numSats = static_cast<int>(satPVTRecTime.size());
 
@@ -183,6 +188,14 @@ void SPP::linearize(ObsData &obsData, const int iter) {
     }
     const bool rejectOutlier = worstW > W_THRESHOLD;
 
+    // 高度角随机模型：a²+b²/sin²E，与 RTK/PPP 共用 Weight 类。
+    // a=b=sigIFCode/√2 使高仰角权 ≈ 1/sigIFCode²；首轮解算惰性初始化一次，迭代内复用。
+    if (!mWeightInit) {
+        mWeight = Weight(mConfig.sigIFCode / std::sqrt(2.0), mConfig.sigIFCode / std::sqrt(2.0),
+                         std::sin(mConfig.cutoffElevRad));
+        mWeightInit = true;
+    }
+
     posEquations.reset();
     velEquations.reset();
     posEquations.station = obsData.station;
@@ -207,7 +220,6 @@ void SPP::linearize(ObsData &obsData, const int iter) {
 
     activeSystems.clear();
     int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
-    static int dbgCnt = 0;
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
         if (!ifCodeTypes.count(sat.system)) continue;
@@ -233,7 +245,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         double elev = PI * 0.5;
         if (auto itE = satElevData.find(sat); itE != satElevData.end())
             elev = itE->second;
-        if (xyz.norm() > 1000.0 && elev < cutOffElev) {
+        if (xyz.norm() > 1000.0 && elev < mConfig.cutoffElevRad) {
             satRejected.insert(sat);
             nRejElev++;
             continue;
@@ -259,14 +271,10 @@ void SPP::linearize(ObsData &obsData, const int iter) {
 
         double trop = 0.0;
         if (refHgt > 0.0)
-            trop = tropoHopfield(refHgt, elev);
+            trop = Troposphere::tropoHopfield(refHgt, elev);
 
-        // 位置方程权
-        double weight = 1.0 / (sigIFCode * sigIFCode);
-        if (elev < PI / 6) {
-            const double s = std::sin(elev);
-            weight *= s * s;
-        }
+        // 位置方程权：高度角随机模型（Weight 类）
+        double weight = mWeight.weight(elev);
 
         // ---- 逐卫星构建方程 ----
         buildPosEquation(sat, pvt, los, rho, trop,
@@ -277,7 +285,6 @@ void SPP::linearize(ObsData &obsData, const int iter) {
 
         activeSystems.insert(sat.system);
         nPass++;
-        dbgCnt++;
     }
     posEquations.varSet.insert(dx);
     posEquations.varSet.insert(dy);
@@ -329,7 +336,7 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
         }
     }
     if (!found) {
-        LOG_WARN << "No doppler code found for " << sat;
+       // LOG_WARN << "No doppler code found for " << sat;
         return;
     }
 
@@ -347,11 +354,7 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
     ed.varCoeffData[dvz] = los[2];
     ed.varCoeffData[dcdt] = 1.0;
 
-    double velWeight = posWeight / 40.0;
-    if (elev < PI / 6) {
-        const double s = std::sin(elev);
-        velWeight *= s * s;
-    }
+    double velWeight = mWeight.weight(elev) / 40.0; // 速度观测噪声基准为位置观测的 √40 倍
     ed.weight = velWeight;
 
     const EquID eidVel(sat, "D1");
@@ -383,29 +386,38 @@ void SPP::computeSatPos(ObsData &obsData) {
 }
 
 void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaultTypes) {
-    // 每历元从观测自探测 IF 组合。SPP(伪距即可组组合，相位可缺)
-    std::map<char, std::vector<string> > sysCodes;
-    for (const auto &[sat, tv]: obsData.satTypeValueData)
-        for (const auto &[code, v]: tv) sysCodes[sat.system].push_back(code);
-
-    IFCodeTypes detected;
-    for (const auto &[sys, types]: sysCodes) {
-        if (!enabledSystems.empty() && !enabledSystems.count(sys)) continue;
-        if (FreqCombo def = FreqCombo::detect(sys, types, mRequirePhaseForIF);
-            !def.code1.empty() && !def.code2.empty()) {
-            detected[sys] = def;
-            LOG_INFO << "Auto-detected IF types for " << sys << ": " << def.code1 << "/" << def.code2;
+    // 逐历元重扫全部观测类型既浪费、又会刷屏日志，故用"各系统可用且非零的码类型"做签名缓存：
+    // 签名不变 ⇒ 码类型集合没变，检测结果必然相同，直接沿用。
+    // （原先每历元无条件打 "Auto-detected IF types"，整日运行上万条，属纯噪声，已不再记录。）
+    std::map<char, std::string> sig;
+    for (const auto &[sat, tv]: obsData.satTypeValueData) {
+        if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sat.system)) continue;
+        std::string &s = sig[sat.system];
+        for (const auto &[code, v]: tv) {
+            if (v == 0.0) continue; // 缺测/占位零值不算可用类型，否则签名会因单历元缺测抖动
+            s += code;
+            s.push_back(',');
         }
     }
-    if (detected.empty()) {
-        if (defaultTypes.empty())
-            LOG_WARN << "未检测到可用的 IF 组合";
-        else
-            LOG_WARN << "未检测到可用的 IF 组合，回退默认";
-        ifCodeTypes = defaultTypes;
-    } else {
-        ifCodeTypes = detected;
+    if (!ifCodeTypes.empty() && sig == ifCodeSig) return;
+    ifCodeSig = std::move(sig);
+
+    std::set<char> sysList;
+    for (const auto &[sat, tv]: obsData.satTypeValueData) sysList.insert(sat.system);
+
+    IFCodeTypes detected;
+    for (char sys: sysList) {
+        if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sys)) continue;
+        if (FreqCombo def = FreqCombo::detect(sys, obsData, mRequirePhaseForIF);
+            !def.code1.empty() && !def.code2.empty())
+            detected[sys] = def;
     }
+    if (detected.empty()) {
+        LOG_WARN << (defaultTypes.empty() ? "未检测到可用的 IF 组合" : "未检测到可用的 IF 组合，回退默认");
+        ifCodeTypes = defaultTypes;
+        return;
+    }
+    ifCodeTypes = std::move(detected);
 }
 
 void SPP::earthRotation() {
@@ -419,7 +431,30 @@ void SPP::earthRotation() {
 
 void SPP::computeElevAzim() {
     for (auto const &[sat, pvt]: satPVTRecTime) {
-        satElevData[sat] = elevation(xyz, pvt.p, frame);
-        satAzimData[sat] = azimuth(xyz, pvt.p, frame);
+        double e, a;
+        satElevAzim(xyz, pvt.p, e, a, frame);
+        satElevData[sat] = e;
+        satAzimData[sat] = a;
     }
+}
+
+bool SPP::estimateApproxPosition(const std::vector<ObsData> &epochs,
+                                 const std::vector<EphemerisTable> &ephs,
+                                 const std::set<char> &systems,
+                                 const double cutoffElevDeg, Vector3d &out) {
+    const size_t n = std::min(epochs.size(), ephs.size()); // 防止 ephs 较短时越界
+    for (size_t i = 0; i < n; ++i) {
+        if (ephs[i].gps.empty() && ephs[i].bds.empty()) continue; // 星历快照仍空
+        try {
+            SPP spp;
+            spp.ephTable = ephs[i];
+            spp.setEnabledSystems(systems);
+            spp.setCutoffElevDeg(cutoffElevDeg);
+            ObsData work = epochs[i];
+            work.antennaPosition = Vector3d::Zero(); // 线性化初值：地心冷启动
+            if (spp.processEpoch(work)) out = spp.result.xyz;
+            if (out.norm() > 1e6) return true;
+        } catch (...) { /* 该历元不可用，试下一个 */ }
+    }
+    return false;
 }
