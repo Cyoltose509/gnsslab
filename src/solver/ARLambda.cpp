@@ -15,7 +15,7 @@ VectorXd ARLambda::resolve(VectorXd &ambFloat,
     }
     MatrixXd F; //NOLINT
     VectorXd S; //NOLINT
-    if (lambda(ambFloat, ambCov, F, S, 2) == 0) {
+    if (lambda(ambFloat, ambCov, F, S, 2) == 0 && F.rows() == ambFloat.size()) {
         VectorXd ambFixed = VectorXd::Zero(ambFloat.size());
         for (int i = 0; i < ambFloat.size(); i++) {
             ambFixed(i) = F(i, 0);
@@ -192,19 +192,11 @@ int ARLambda::lambda(const VectorXd &a, const MatrixXd &Q, MatrixXd &F, VectorXd
     VectorXd z = VectorXd::Zero(n);
     MatrixXd Z = MatrixXd::Identity(n, n);
 
-    if (factorize(Q, L, D) == 0) {
-        reduction(L, D, Z);
-        z = Z.transpose() * a;
+    if (factorize(Q, L, D) != 0) return -1;
+    reduction(L, D, Z);
+    z = Z.transpose() * a;
 
-        if (search(L, D, z, E, s, m) == 0) {
-            try {
-                // F=Z'\E - Z nxn  E nxm F nxm
-                F = Z.transpose().inverse() * E;
-            } catch (...) {
-                return -1;
-            }
-        }
-    }
-
+    if (search(L, D, z, E, s, m) != 0) return -1;
+    F = Z.transpose().inverse() * E;
     return 0;
 }

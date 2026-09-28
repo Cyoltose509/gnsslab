@@ -27,6 +27,12 @@ set(LIB_SOURCES
         io/Sp3OrbitReader.cpp
         io/ClkReader.h
         io/ClkReader.cpp
+        io/ErpReader.h
+        io/ErpReader.cpp
+        io/TroReader.h
+        io/TroReader.cpp
+        io/IonexReader.h
+        io/IonexReader.cpp
         io/OsbBias.h
         io/OsbBias.cpp
         io/AntxReader.h
@@ -37,8 +43,10 @@ set(LIB_SOURCES
         core/CycleSlip.cpp
         solver/SPP.h
         solver/SPP.cpp
-        solver/PPP.h
-        solver/PPP.cpp
+        solver/PPPStatic.h
+        solver/PPPStatic.cpp
+        solver/PPPKinematic.h
+        solver/PPPKinematic.cpp
         solver/LEO.h
         solver/LEO.cpp
         solver/SolverLSQ.h
@@ -49,6 +57,8 @@ set(LIB_SOURCES
         solver/GnssEKF.cpp
         solver/ARLambda.h
         solver/ARLambda.cpp
+        solver/RTK.h
+        solver/RTK.cpp
         qc/QCProcessor.h
         qc/QCProcessor.cpp
         util/StringUtils.h

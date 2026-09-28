@@ -5,11 +5,10 @@
 #include "TimeConvert.h"
 #include "MathUtils.h"
 
-using namespace  Eigen;
+using namespace Eigen;
 
 class Geodesy {
 public:
-
     // 太阳/月球地心 ECEF 位置
     static void sunMoonECEF(const CommonTime &t, Vector3d &rsunEcef, Vector3d &rmoonEcef, double &gmstOut) {
         const JulianDate jd = CommonTime2JulianDate(t);
@@ -257,8 +256,42 @@ private:
         deps *= 1e-4 * ARCSEC_TO_RAD;
     }
 
-    // ECI→ECEF 变换矩阵 U(列主序)。含 IAU1976 岁差 P、IAU1980 章动 N、视恒星时 GAST、零极移(单位阵)。
-    static Matrix3d ECItoECEF(const CommonTime &t, double &gmstOut) {
+public:
+    static Vector3d poleTideDisplacement(const Vector3d &recvEcef, const CommonTime &t,
+                                         const double xp, const double yp) {
+        const auto blh = XYZtoBLH(recvEcef, Frame::WGS84);
+        const double phi = blh[0], lam = blh[1];
+        const double th = PI / 2.0 - phi; // 余纬 θ（式 7.28 的 R 矩阵以余纬定义）
+
+        // 式(7.7) 平均极(角秒)：x̄ = 0.054 + 0.00083(t-2000)，ȳ = 0.357 + 0.00395(t-2000)
+        const auto yds = CommonTime2YDSTime(t);
+        const double year = static_cast<double>(yds.year) + static_cast<double>(yds.doy) / 365.25;
+        const double xbar = 0.054 + 0.00083 * (year - 2000.0);
+        const double ybar = 0.357 + 0.00395 * (year - 2000.0);
+
+        // 式(7.25)：m1/m2 单位**角秒**
+        const double m1 = xp / ARCSEC_TO_RAD - xbar;
+        const double m2 = -(yp / ARCSEC_TO_RAD - ybar);
+
+        // 式(7.26)：S_r(Up)、S_θ(South)、S_λ(East)，单位 mm
+        const double A = m1 * std::cos(lam) + m2 * std::sin(lam);
+        const double B = m1 * std::sin(lam) - m2 * std::cos(lam);
+        constexpr double MM = 1.0e-3;
+        const double Sr = -33.0 * std::sin(2.0 * th) * A * MM; // Up
+        const double Sth = -9.0 * std::cos(2.0 * th) * A * MM; // South
+        const double Slam = 9.0 * std::cos(th) * B * MM; // East
+
+        // 式(7.27)(7.28)：[dX,dY,dZ] = R^T·[Sθ,Sλ,Sr]，R = [South; East; Up]
+        const double st = std::sin(th), ct = std::cos(th);
+        const double sl = std::sin(lam), cl = std::cos(lam);
+        const Vector3d south(ct * cl, ct * sl, -st);
+        const Vector3d east(-sl, cl, 0.0);
+        const Vector3d up(st * cl, st * sl, ct);
+        return Sth * south + Slam * east + Sr * up;
+    }
+
+    // ECI→ECEF 变换矩阵 U(列主序)。含 IAU1976 岁差 P、IAU1980 章动 N、视恒星时 GAST、极移(可选，默认单位阵)。
+    static Matrix3d ECItoECEF(const CommonTime &t, double &gmstOut, const double xp = 0.0, const double yp = 0.0) {
         const double jdFull = static_cast<double>(CommonTime2JulianDate(t).jd);
         const double T = (jdFull - 2451545.0) / 36525.0; // 儒略世纪 (TT≈UTC，可忽略)
         const double t2 = T * T, t3 = t2 * T;
@@ -285,9 +318,8 @@ private:
         const double gmst = gmstFromTime(t);
         double gast = gmst + dpsi * std::cos(eps);
         gast += (0.00264 * std::sin(f[4]) + 0.000063 * std::sin(2.0 * f[4])) * ARCSEC_TO_RAD;
-        // 极移(erpv=0 → W=单位阵)；U = W*Rz(gast)*N*P
-        R1 = Math::rotationY(0.0);
-        R2 = Math::rotationX(0.0);
+        R1 = Math::rotationY(-xp);
+        R2 = Math::rotationX(-yp);
         R3 = Math::rotationZ(gast);
         const Matrix3d W = R1 * R2;
         R = W * R3;

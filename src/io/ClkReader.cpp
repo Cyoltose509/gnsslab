@@ -32,10 +32,10 @@ bool ClkReader::read(const std::string &path, const std::set<char> &allowedSys) 
         if (line[0] != 'A') continue;
         char type[3] = {}, satStr[4] = {};
         int y, mo, d, h, mi, nfields;
-        double s, bias, drift;
+        double s, bias, drift = 0.0;
         int n = sscanf(line.c_str(), "%2s %3s %d %d %d %d %d %lf %d %lf %lf", //NOLINT
                        type, satStr, &y, &mo, &d, &h, &mi, &s, &nfields, &bias, &drift);
-        if (n < 11) continue;
+        if (n < 10) continue;
         if (type[0] != 'A' || type[1] != 'S') continue; // 只要卫星钟差
         SatID sat(satStr[0], (satStr[1] - '0') * 10 + (satStr[2] - '0'));
         if (!allowedSys.empty() && !allowedSys.count(sat.system)) continue;
@@ -47,12 +47,12 @@ bool ClkReader::read(const std::string &path, const std::set<char> &allowedSys) 
     if (tmp.empty()) return false;
     // 预计算每卫星相对首历元的秒数向量(查询时复用，避免每调用 O(n) 拷贝)
     relTimes.clear();
-    for (const auto &[sat, recs] : tmp) {
+    for (const auto &[sat, recs]: tmp) {
         std::vector<double> &rt = relTimes[sat];
         rt.reserve(recs.size());
         if (!recs.empty()) {
             const CommonTime t0 = recs[0].t;
-            for (const auto &r : recs) rt.push_back(r.t - t0);
+            for (const auto &r: recs) rt.push_back(r.t - t0);
         }
     }
     data = std::move(tmp);
@@ -69,10 +69,10 @@ double ClkReader::getClockBias(const SatID &sat, const CommonTime &t) const {
     if (t - r[0].t <= 0.0) return r[0].bias;
     if (t - r[n - 1].t >= 0.0) return r[n - 1].bias;
     const auto itT = relTimes.find(sat);
-    const std::vector<double> &times = (itT != relTimes.end()) ? itT->second : std::vector<double>{};
+    const std::vector<double> &times = itT != relTimes.end() ? itT->second : std::vector<double>{};
     const double tRel = t - r[0].t;
-    const int lb = Math::lowerBoundIndex(times, tRel);      // times[lb] <= tRel < times[lb+1]
-    const double span = r[lb + 1].t - r[lb].t;              // 两点间隔秒
-    const double frac = (t - r[lb].t) / span;               // 相对左点比例 [0,1]
+    const int lb = Math::lowerBoundIndex(times, tRel); // times[lb] <= tRel < times[lb+1]
+    const double span = r[lb + 1].t - r[lb].t; // 两点间隔秒
+    const double frac = (t - r[lb].t) / span; // 相对左点比例 [0,1]
     return Math::lerp(r[lb].bias, r[lb + 1].bias, frac);
 }

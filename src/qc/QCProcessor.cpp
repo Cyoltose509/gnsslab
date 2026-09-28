@@ -360,7 +360,8 @@ namespace QC {
             q.totalEpochs = rep.totalEpochs;
             q.validDual = w.n;
             CycleSlip::detectMW(w.MW, w.gapOk, q.slipFlag, q.outlierFlag);
-            CycleSlip::detectGF(w.LGF, w.PGF, w.gapOk, lam1, lam2, q.slipFlag);
+            std::vector<char> qcArtifact(w.n, 0);
+            CycleSlip::detectGF(w.LGF, w.PGF, w.gapOk, lam1, lam2, q.slipFlag, qcArtifact);
             q.clockJumpFlag.assign(w.n, 0); // 钟跳标记，初始化为 0
             q.slips = static_cast<int>(std::count(q.slipFlag.begin(), q.slipFlag.end(), 1));
             q.outliers = static_cast<int>(std::count(q.outlierFlag.begin(), q.outlierFlag.end(), 1));

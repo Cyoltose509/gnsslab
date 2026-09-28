@@ -22,9 +22,10 @@ public:
 
     static FreqCombo fromFreq(double f1, double f2);
 
-    static FreqCombo detect(char sys, const std::set<std::string> &codes, bool requirePhase = true);
 
     static FreqCombo detect(char sys, const std::vector<std::string> &codes, bool requirePhase = true);
+
+    static FreqCombo detect(char sys, const ObsData &obs, bool requirePhase = true);
 
     [[nodiscard]] double combineCode(double P1, double P2) const;
     [[nodiscard]] double combinePhase(double L1, double L2) const;

@@ -39,25 +39,35 @@ bool Sp3OrbitReader::read(const std::string &path) {
         if (line[0] == 'P') {
             std::istringstream ss(line);
             std::string tag;
-            double x, y, z, clk;
+            double x, y, z, clk = 0.0;
             ss >> tag >> x >> y >> z >> clk;
             if (tag.size() < 4) continue;
             SatID sat = parseSatId(tag.substr(1, 3));
             Record rec;
             rec.t = curT;
             rec.pos = Eigen::Vector3d(x, y, z) * 1000.0; // km -> m
-            rec.clock = clk * 1e-6; // us -> s
+            // 钟差列为空白(轨道-only 产品)时 ss 失败，rec.clock 保持 0 且 hasClock 仍为 false。
+            if (ss >> clk && !std::isnan(clk)) {
+                rec.clock = clk * 1e-6; // us -> s
+                rec.hasClock = true;
+                // 轨道-only 产品的钟差列填 0，据此区分"该文件确实带钟差"
+                if (rec.clock != 0.0) anyClock = true;
+            }
             tmp[sat].push_back(rec);
         } else if (line[0] == 'V') {
             std::istringstream ss(line);
             std::string tag;
-            double vx, vy, vz, vclk;
+            double vx, vy, vz, vclk = 0.0;
             ss >> tag >> vx >> vy >> vz >> vclk;
             if (tag.size() < 4) continue;
             if (SatID sat = parseSatId(tag.substr(1, 3)); tmp.count(sat) && !tmp[sat].empty()) {
                 auto &rec = tmp[sat].back();
                 rec.vel = Eigen::Vector3d(vx, vy, vz) * 0.1; // dm/s -> m/s
                 rec.hasVel = true;
+                if (ss >> vclk && !std::isnan(vclk)) {
+                    rec.clockRate = vclk * 1e-6; // us/s -> s/s
+                    rec.hasClockRate = true;
+                }
             }
         }
     }
@@ -80,6 +90,11 @@ bool Sp3OrbitReader::read(const std::string &path) {
                 }
                 recs[i].vel = (recs[b].pos - recs[a].pos) / dt;
                 recs[i].hasVel = true;
+                // 无 V 记录时钟速同样用中心差分（仅本产品自带钟差列时）
+                if (recs[i].hasClock) {
+                    recs[i].clockRate = (recs[b].clock - recs[a].clock) / dt;
+                    recs[i].hasClockRate = true;
+                }
             }
         }
     }
@@ -107,11 +122,11 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
 
     // 记录按时间升序（SP3 历元有序）；二分定位最近的记录索引（复用 read() 时预计算的相对时间向量，O(log n)）
     const auto itT = relTimes.find(sat);
-    const std::vector<double> &times = (itT != relTimes.end()) ? itT->second : std::vector<double>{};
+    const std::vector<double> &times = itT != relTimes.end() ? itT->second : std::vector<double>{};
     const double tRel = t - r[0].t;                          // 查询点同基准秒数
     const int lb = Math::lowerBoundIndex(times, tRel);       // 满足 times[lb] <= tRel < times[lb+1]
     int idx = lb;
-    if (lb + 1 < n && t - r[lb].t > (r[lb + 1].t - t)) idx = lb + 1; // 取 lb 与 lb+1 中更近者
+    if (lb + 1 < n && t - r[lb].t > r[lb + 1].t - t) idx = lb + 1; // 取 lb 与 lb+1 中更近者
     const double dt = t - r[idx].t;
 
     const int half = std::min(5, n / 2);
@@ -123,8 +138,8 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
     if (m < 2) {
         pvt.p = r[idx].pos;
         pvt.v = r[idx].hasVel ? r[idx].vel : Eigen::Vector3d::Zero();
-        pvt.clockBias = 0.0;
-        pvt.clockDrift = 0.0;
+        pvt.clockBias = r[idx].hasClock ? r[idx].clock : 0.0;
+        pvt.clockDrift = r[idx].hasClockRate ? r[idx].clockRate : 0.0;
         pvt.relativityCorrection = 0.0;
         return pvt;
     }
@@ -144,8 +159,22 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
     } else {
         pvt.v.setZero();
     }
-    pvt.clockBias = 0.0; // 钟差由调用方用 CLK 注入
-    pvt.clockDrift = 0.0;
+    // 超快/最终 SP3 自带钟差列时直接插值，调用方无需另给 CLK 文件
+    if (r[idx].hasClock) {
+        std::vector<double> clkVec(m);
+        for (int k = 0; k < m; ++k) clkVec[k] = r[lo + k].clock;
+        pvt.clockBias = Math::simpleLagrangeInterpolation(tt, clkVec, dt);
+        if (r[idx].hasClockRate) {
+            std::vector<double> drtVec(m);
+            for (int k = 0; k < m; ++k) drtVec[k] = r[lo + k].clockRate;
+            pvt.clockDrift = Math::simpleLagrangeInterpolation(tt, drtVec, dt);
+        } else {
+            pvt.clockDrift = 0.0;
+        }
+    } else {
+        pvt.clockBias = 0.0; // 无钟差列，钟差由调用方用 CLK 注入
+        pvt.clockDrift = 0.0;
+    }
     pvt.relativityCorrection = 0.0;
     return pvt;
 }

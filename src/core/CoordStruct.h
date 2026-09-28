@@ -130,3 +130,9 @@ inline void applyEarthRotation(Eigen::Vector3d &pTx, Eigen::Vector3d &vTx,
     pTx = rot * pTx;
     vTx = rot * vTx;
 }
+
+// ECEF 位置合理性判据：有限、且处在地球附近（模长 1e5~1e8.5 m 量级）。
+// 运动学/LEO 的冷启动种子与发散兜底共用（原先在 PPPKinematic.cpp 与 LEO.cpp 各写一份）。
+inline bool isSaneEcef(const Eigen::Vector3d &v) {
+    return v.allFinite() && v.squaredNorm() > 1.0e10 && v.squaredNorm() < 1.0e17;
+}

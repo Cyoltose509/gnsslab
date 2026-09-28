@@ -4,7 +4,22 @@ using namespace std;
 
 
 void SolverLSQ::solve(EquSys &equSys) {
-    currentUnkSet = equSys.varSet;
+    solveImpl(equSys, nullptr);
+}
+
+void SolverLSQ::solve(EquSys &equSys, const MatrixXd *fullWeight) {
+    solveImpl(equSys, fullWeight);
+}
+
+void SolverLSQ::solveImpl(EquSys &equSys, const MatrixXd *fullWeight) {
+    // 仅在变量集合内容变化时重建索引缓存，避免每次求解 O(n) 线性扫描
+    if (m_varSetCache != equSys.varSet) {
+        m_varSetCache = equSys.varSet;
+        m_varIndex.clear();
+        int i = 0;
+        for (const auto &v: m_varSetCache) m_varIndex[v] = i++;
+    }
+    currentUnkSet = m_varSetCache;
     const auto numUnk = static_cast<int>(currentUnkSet.size());
     const auto numObs = static_cast<int>(equSys.obsEquData.size());
 
@@ -26,7 +41,7 @@ void SolverLSQ::solve(EquSys &equSys) {
         prefit(iobs) = data.prefit;
 
         for (const auto &[var, value]: data.varCoeffData) {
-            const int indexUnk = getIndex(currentUnkSet, var);
+            const int indexUnk = getIndex(var);
             hMatrix(iobs, indexUnk) = value;
         }
         weights(iobs) = data.weight;
@@ -34,15 +49,27 @@ void SolverLSQ::solve(EquSys &equSys) {
         iobs++;
     }
 
-    const MatrixXd hT = hMatrix.transpose();
-
     if (prefit.size() != hMatrix.rows()) {
         throw InvalidSolver("prefit size don't equal with rows of hMatrix");
     }
 
-    // ---- 正规方程：使用 weights.asDiagonal() 替代稠密 wMatrix ----
-    MatrixXd N = hT * weights.asDiagonal() * hMatrix;
-    const VectorXd b = hT * weights.asDiagonal() * prefit;
+    if (fullWeight && fullWeight->rows() != numObs) {
+        throw InvalidSolver("fullWeight rows mismatch hMatrix rows");
+    }
+
+    // ---- 正规方程 ----
+    // 满阵权（观测误差相关，如双差共享参考星）走广义最小二乘 N = Hᵀ·P·H；
+    // 否则退化为 weights.asDiagonal() 的对角加权最小二乘。
+    // 两种分支必须分开写：Product 与 Product·DiagonalWrapper 之间 Eigen 无法归约公共类型。
+    MatrixXd N;
+    VectorXd b;
+    if (fullWeight) {
+        N = hMatrix.transpose() * (*fullWeight) * hMatrix;
+        b = hMatrix.transpose() * (*fullWeight) * prefit;
+    } else {
+        N = hMatrix.transpose() * weights.asDiagonal() * hMatrix;
+        b = hMatrix.transpose() * weights.asDiagonal() * prefit;
+    }
 
     try {
         const LDLT<MatrixXd> ldlt(N);
@@ -54,22 +81,12 @@ void SolverLSQ::solve(EquSys &equSys) {
 
     v = prefit - hMatrix * state;
     if (const int dof = numObs - numUnk; dof > 0) {
-        const double sigma0_sq = (v.array() * weights.array() * v.array()).sum() / dof;
-        sigma0 = sqrt(sigma0_sq);
+        // 后验方差因子：满阵时后验二次型用 P，否则用 diag(weights)
+        sigma0 = fullWeight ? sqrt(v.dot((*fullWeight) * v) / dof)
+                            : sqrt((v.array() * weights.array() * v.array()).sum() / dof);
     } else {
-        sigma0 = 1.0;  // 方程数刚好等于未知数，无法估计 sigma0
+        sigma0 = 1.0; // 方程数刚好等于未知数，无法估计 sigma0
     }
-}
-
-int SolverLSQ::getIndex(const VariableSet &varSet, const Variable &thisVar) {
-    int index(0);
-    for (const auto &var: varSet) {
-        if (var == thisVar) {
-            break;
-        }
-        index++;
-    }
-    return index;
 }
 
 double SolverLSQ::getSolution(const Parameter &type,
@@ -86,4 +103,4 @@ double SolverLSQ::getSolution(const Parameter &type,
     }
 
     throw InvalidRequest("SolverLSQ::Type not found in state vector.");
-} // End of method 'SolverGeneral::getSolution()'
+}

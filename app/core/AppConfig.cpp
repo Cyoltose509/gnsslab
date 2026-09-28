@@ -54,19 +54,19 @@ std::vector<std::string> AppConfig::getRecent(const std::string &group) const {
     return v;
 }
 
-void AppConfig::addRecent(const std::string &group, const std::string &path, const int max) const {
-    if (path.empty()) return;
+void AppConfig::addRecent(const std::string &group, const std::string &entry, const int max) const {
+    if (entry.empty()) return;
     auto v = getRecent(group);
     // 去重（精确匹配），再把新项放到最前
     v.erase(std::remove_if(v.begin(), v.end(),
-                           [&](const std::string &s) { return s == path; }),
+                           [&](const std::string &s) { return s == entry; }),
             v.end());
-    v.insert(v.begin(), path);
+    v.insert(v.begin(), entry);
     if (static_cast<int>(v.size()) > max) v.resize(max);
 
     const std::string sec = "recent_" + group;
-    // 写入 0..n-1（注意：最后一个参数必须是本对象的 ini 文件路径 this->path，
-    // 参数 path 是"待加入历史的那条路径"，会遮蔽成员，误用会写进数据文件里）
+    // 写入 0..n-1：最后一个参数必须是本对象的 ini 文件路径 this->path。
+    // 待加入的那条路径改名为 entry，不再遮蔽成员 path（原命名误用会写进数据文件）。
     for (int i = 0; i < static_cast<int>(v.size()); ++i)
         WritePrivateProfileStringA(sec.c_str(), std::to_string(i).c_str(),
                                    v[i].c_str(), this->path.c_str());

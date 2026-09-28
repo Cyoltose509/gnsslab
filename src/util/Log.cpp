@@ -46,8 +46,8 @@ void Log::write(const Level lvl, const std::string &msg) {
 const char *Log::levelStr(const Level lvl) {
     switch (lvl) {
         case debug: return "DEBUG";
-        case info:  return "INFO ";
-        case warn:  return "WARN ";
+        case info:  return "INFO";
+        case warn:  return "WARN";
         case error: return "ERROR";
     }
     return "????";

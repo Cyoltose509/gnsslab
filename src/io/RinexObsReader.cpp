@@ -5,6 +5,21 @@
 #include "TimeConvert.h"
 #include "CoordConvert.h"
 
+#include <cctype>
+
+// 卫星观测行形如 "G12 ..."：首字符为星座标识、其后两位为 PRN 数字。
+// 用于识别被追加在文件尾部的非观测内容（如 INI 段/统计块），避免其被当成卫星行、
+// 进而触发 SatID 内部 std::stoi 抛错（"invalid stoi argument"）而毁掉整个任务。
+static bool looksLikeSatLine(const std::string &line) {
+    if (line.size() < 3) return false;
+    const char sys = line[0];
+    if (sys != 'G' && sys != 'R' && sys != 'E' && sys != 'C' &&
+        sys != 'J' && sys != 'I' && sys != 'S')
+        return false;
+    return std::isdigit(static_cast<unsigned char>(line[1])) != 0 &&
+           std::isdigit(static_cast<unsigned char>(line[2])) != 0;
+}
+
 
 void RinexObsReader::parseRinexHeader() {
     XYZ antennaPosition;
@@ -86,8 +101,13 @@ ObsData RinexObsReader::parseRinexObs() {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         // 跳过空行
         if (strip(line).empty()) continue;
-        // 正常 epoch 行以 "> " 开头；遇到其它内容视为文件污染，尝试再读一行继续
-        if (line.size() >= 2 && line[0] == '>' && line[1] == ' ') break;
+        // 正常 epoch 行以 "> " 开头且时间字段(cols 2-28)非空；个别文件(HKWS 样本)尾部带有
+        // ">     4212" 形式的统计块首行，时间字段全空，会被误判为 epoch，进而 parseTime 返回
+        // day=0 的 CommonTime 触发 "before Epoch" 错误。仅当 "> " 开头且时间字段非空才视为 epoch 行，
+        // 否则继续读取(走到 EOF 由调用方 EndOfFile 分支优雅结束)。
+        bool isEpochLine = line.size() >= 2 && line[0] == '>' && line[1] == ' ' &&
+                           safeSubstr(line, 2, 27) != std::string(27, ' ');
+        if (isEpochLine) break;
     }
 
     int epochFlag = safeStoi(safeSubstr(line, 31, 1));
@@ -108,6 +128,12 @@ ObsData RinexObsReader::parseRinexObs() {
                 throw EndOfFile("EOF encountered!");
             }
             if (!line.empty() && line.back() == '\r') line.pop_back();
+            // 历元头声明的卫星数比实际观测行多（尾部被追加了非观测内容）时，读到这里的内容
+            // 不是卫星行。视为观测数据结束——与「历元块中途遇 EOF」同义，交给调用方的
+            // EndOfFile 分支优雅收尾，而不是让 SatID 的 stoi 抛错把整个任务判为解析失败。
+            if (!looksLikeSatLine(line)) {
+                throw EndOfFile("观测数据结束（历元块后存在非观测内容）");
+            }
             try {
                 satIndex[isv] = SatID(safeSubstr(line, 0, 3));
             } catch (std::exception &e) {

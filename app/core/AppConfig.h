@@ -20,7 +20,9 @@ public:
     void set(const std::string &key, const std::string &val) const;
 
     [[nodiscard]] std::vector<std::string> getRecent(const std::string &group) const;
-    void addRecent(const std::string &group, const std::string &path, int max = 12) const;
+    // 形参名必须叫 entry：早前误命名为 path 时遮蔽了成员 path，导致 Recent 列表被写进
+    // 用户的数据文件本身（见 .cpp addRecent 注释）。名字对齐可避免同类回归。
+    void addRecent(const std::string &group, const std::string &entry, int max = 12) const;
 
 private:
     AppConfig();

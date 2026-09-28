@@ -23,7 +23,7 @@ FreqCombo FreqCombo::fromFreq(const double f1, const double f2) {
 FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, bool requirePhase) {
     FreqCombo invalid;
 
-    // 在 codes 中按 (kind, band) 找一个码；kind='C' 伪距 / 'L' 相位，band 为码名第 2 字符(频段)
+    // 在 codes 中按 (kind, band) 找一个码
     auto findCode = [&](const char kind, const char band) -> std::string {
         for (const auto &c: codes)
             if (c.size() >= 2 && c[0] == kind && c[1] == band) return c;
@@ -79,9 +79,14 @@ FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, boo
     return d;
 }
 
-// set 重载直接转发到 vector 版本
-FreqCombo FreqCombo::detect(const char sys, const std::set<std::string> &codes, const bool requirePhase) {
-    return detect(sys, std::vector(codes.begin(), codes.end()), requirePhase);
+
+// 从整段 ObsData 收集某系统的观测码
+FreqCombo FreqCombo::detect(const char sys, const ObsData &obs, const bool requirePhase) {
+    std::vector<std::string> codes;
+    for (const auto &[sat, tv]: obs.satTypeValueData)
+        if (sat.system == sys)
+            for (const auto &[c, _]: tv) codes.push_back(c);
+    return detect(sys, codes, requirePhase);
 }
 
 bool FreqCombo::available(const TypeValueMap &tv, const bool requirePhase) const {
@@ -102,7 +107,7 @@ double FreqCombo::combineCodeFromObs(const std::map<std::string, double> &obs) c
 }
 
 double FreqCombo::MW_cycle(const double P1, const double P2, const double L1, const double L2,
-                          const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
+                           const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
     const double oP1 = P1 - osbP1, oP2 = P2 - osbP2;
     const double oL1 = L1 - osbL1, oL2 = L2 - osbL2;
     const double lam1 = lambda1, lam2 = lambda2;
@@ -117,7 +122,7 @@ double FreqCombo::MW_cycle(const double P1, const double P2, const double L1, co
 }
 
 double FreqCombo::MW_meter(const double P1, const double P2, const double L1, const double L2,
-                          const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
+                           const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
     return MW_cycle(P1, P2, L1, L2, osbP1, osbP2, osbL1, osbL2) * lambdaW;
 }
 

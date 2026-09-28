@@ -1,7 +1,9 @@
 #pragma once
 
 #include "CoordStruct.h"
+#include "GnssStruct.h"  // Result (DOP 回填)
 #include <Eigen/Eigen>
+using namespace Eigen;
 
 // 坐标转换函数
 inline BLH XYZtoBLH(const XYZ &xyz, const FrameInfo &frame) {
@@ -55,9 +57,9 @@ inline BLH XYZtoBLH(const XYZ &xyz, const FrameInfo &frame) {
 }
 
 inline XYZ BLHtoXYZ(const BLH &blh, const FrameInfo &frame) {
-    const double B = blh[0];  // 纬度 (rad)
-    const double L = blh[1];  // 经度 (rad)
-    const double H = blh[2];  // 高程 (m)
+    const double B = blh[0]; // 纬度 (rad)
+    const double L = blh[1]; // 经度 (rad)
+    const double H = blh[2]; // 高程 (m)
 
     const double a = frame.a;
     const double e2 = frame.e2;
@@ -76,13 +78,13 @@ inline XYZ BLHtoXYZ(const BLH &blh, const FrameInfo &frame) {
     return {x, y, z};
 }
 
-inline Eigen::Matrix3d getBLMatrix(const double B, const double L) {
+inline Matrix3d getBLMatrix(const double B, const double L) {
     const double sinB = std::sin(B);
     const double cosB = std::cos(B);
     const double sinL = std::sin(L);
     const double cosL = std::cos(L);
 
-    Eigen::Matrix3d R;
+    Matrix3d R;
     R << -sinL, cosL, 0.0,
             -sinB * cosL, -sinB * sinL, cosB,
             cosB * cosL, cosB * sinL, sinB;
@@ -90,16 +92,29 @@ inline Eigen::Matrix3d getBLMatrix(const double B, const double L) {
     return R;
 }
 
+// 由位置协方差(ECEF 左上 3x3 块 Qpos)与可选钟差方差 clockVar 求 PDOP/HDOP/VDOP/GDOP/TDOP。
+// 双差 RTK 消去钟差 ⇒ clockVar=0，此时 GDOP==PDOP、TDOP==0。
+// 与 SPP/PPP/RTK 三处历史实现逐字节一致，统一至此避免漂移。
+inline void computePositionDops(Result &result, const Matrix3d &Qpos, double clockVar, const Vector3d &blh) {
+    result.pdop = std::sqrt(Qpos(0, 0) + Qpos(1, 1) + Qpos(2, 2));
+    result.gdop = std::sqrt(result.pdop * result.pdop + clockVar);
+    result.tdop = clockVar > 0.0 ? std::sqrt(clockVar) : 0.0;
+    const Matrix3d R = getBLMatrix(blh[0], blh[1]);
+    const Matrix3d C_enu = R * Qpos * R.transpose();
+    result.hdop = std::sqrt(C_enu(0, 0) + C_enu(1, 1));
+    result.vdop = std::sqrt(C_enu(2, 2));
+}
+
 inline ENU XYZtoENU(const XYZ &xyz, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
     const auto diffXYZ = xyz - refXYZ;
     const auto refBLH = XYZtoBLH(refXYZ, frame);
-    const Eigen::Matrix3d R = getBLMatrix(refBLH.B(), refBLH.L());
+    const Matrix3d R = getBLMatrix(refBLH.B(), refBLH.L());
     return {R * diffXYZ};
 }
 
 inline XYZ ENUtoXYZ(const ENU &enu, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
     const auto refBLH = XYZtoBLH(refXYZ, frame);
-    auto R = getBLMatrix(refBLH.B(), refBLH.L());
+    const Matrix3d R = getBLMatrix(refBLH.B(), refBLH.L());
     const auto diffXYZ = R.transpose() * enu;
     XYZ resXYZ;
     resXYZ << refXYZ[0] + diffXYZ[0], refXYZ[1] + diffXYZ[1], refXYZ[2] + diffXYZ[2];
@@ -119,4 +134,45 @@ inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ, const FrameInfo &
     double az = atan2(enu(0), enu(1));
     if (az < 0.0) az += PI * 2.0;
     return az;
+}
+
+// M6: SPP/RTK 共用——由接收机与卫星位置一次性算仰角+方位，消除两边重复的 elevation/azimuth 调用样板
+inline void satElevAzim(const XYZ &refXYZ, const XYZ &satPos, double &elev, double &azim,
+                        const FrameInfo &frame = Frame::WGS84) {
+    elev = elevation(refXYZ, satPos, frame);
+    azim = azimuth(refXYZ, satPos, frame);
+}
+
+inline void geometricRangeAndLos(const Vector3d &satPos, const Vector3d &recvPos,
+                                 double &rho, Vector3d &losUnit) {
+    const Vector3d d = recvPos - satPos;
+    rho = d.norm();
+    losUnit = d.normalized();
+}
+
+
+struct RtnComponents {
+    double R = 0.0; // 径向误差(m)
+    double T = 0.0; // 沿迹误差(m)
+    double N = 0.0; // 法向误差(m)
+    double d3 = 0.0; // 三维位置误差模长(m)
+    bool hasFull = false;
+};
+
+/// posEst: 解算位置 ECEF(m)；posRef: 参考位置 ECEF(m)；velRef: 参考速度 ECEF(m/s)
+inline RtnComponents computeRTN(const Vector3d &posEst, const Vector3d &posRef,
+                                const Vector3d &velRef) {
+    RtnComponents out;
+    const Vector3d err = posEst - posRef;
+    out.d3 = err.norm();
+    const Vector3d ur = posRef.normalized();
+    out.R = err.dot(ur);
+    if (velRef.squaredNorm() > 1.0) {
+        const Vector3d ut = velRef.normalized();
+        const Vector3d uc = ur.cross(ut).normalized();
+        out.T = err.dot(ut);
+        out.N = err.dot(uc);
+        out.hasFull = true;
+    }
+    return out;
 }

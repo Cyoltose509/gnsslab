@@ -6,31 +6,10 @@
 #include <vector>
 #include <memory>
 
-namespace GuiFileProcessor {
-    struct SppTask;
+namespace GnssTask {
+    struct SolveTask;
+    struct SolverTaskBase;
 }
-
-namespace GuiPppProcessor {
-    struct PppTask;
-}
-
-namespace GuiLeoProcessor {
-    struct LeoTask;
-}
-
-// 一组任务标签页相关的全部状态（任务列表 / 待清理列表 / 激活与聚焦索引 / tab 标识前缀），
-// SPP / PPP / LEO 三套结构完全一致，打包后避免在调用点重复传 4~5 个耦合参数。
-template <typename Task>
-struct TaskTabGroup {
-    std::vector<std::shared_ptr<Task>> tasks;
-    std::vector<std::shared_ptr<Task>> closingTasks;
-    int activeTask   = -1;
-    int taskToFocus   = -1;
-    const char *idPrefix = "";
-
-    TaskTabGroup() = default;
-    explicit TaskTabGroup(const char *prefix) : idPrefix(prefix) {}
-};
 
 class Application {
 public:
@@ -45,10 +24,12 @@ private:
     void Render();
     void RenderMenuBar();
     void RenderTasks();
+    void RenderTaskTabList();
 
     void OpenSppSolve();
     void OpenPppSolve();
     void OpenLeoSolve();
+    void OpenRtkSolve();
 
     Gui   m_ui;
     bool  m_showTimeConverter  = false;
@@ -56,8 +37,10 @@ private:
     bool  m_showLsqSolver      = false;
     bool  m_showAbout          = false;
 
-    // 三组任务（SPP / PPP / LEO），每组打包任务列表、待清理列表、激活/聚焦索引与 tab 前缀
-    TaskTabGroup<GuiFileProcessor::SppTask> m_spp{"spp"};
-    TaskTabGroup<GuiPppProcessor::PppTask>  m_ppp{"ppp"};
-    TaskTabGroup<GuiLeoProcessor::LeoTask>  m_leo{"leo"};
+    // 五种解算器（SPP / PPP / LEO / RTK / 实时）的任务混在同一张列表里：它们都实现
+    // SolverTaskBase（生命周期状态机 + 渲染层的两个多态点），外壳逻辑因此完全同构。
+    std::vector<std::shared_ptr<GnssTask::SolverTaskBase>> m_tasks;
+    std::vector<std::shared_ptr<GnssTask::SolverTaskBase>> m_closingTasks;
+    int m_activeTask   = -1;
+    int m_taskToFocus  = -1;
 };

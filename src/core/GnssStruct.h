@@ -18,16 +18,6 @@
 struct SatID {
     char system{};
     int id;
-
-
-    //
-    // todo:
-    // 增加这个字段，实现北斗2代和北斗3代的区分，
-    // 在后面星间差分观测值构建时，需要考虑北斗2和北斗3接收机钟差不同
-    // 引起的模型差异
-    // int generation;
-
-    // 构造函数
     SatID() : id(-1) {
     }
     SatID(const char sys, const int satID) : system(sys), id(satID) {
@@ -328,6 +318,12 @@ inline std::ostream &operator<<(std::ostream &os, const Variable &v) {
     return os;
 }
 
+// 模糊度状态变量构造：RTK 与 PPP 共用同一模式(仅 station / 观测类型标签不同)。
+// sys 取自 sat.system；obsType 为 "L1"/"L2"(RTK 双频) 或 "IF"(PPP 无电离层组合)。
+inline Variable makeAmbiguityVar(const std::string &station, const SatID &sat, const std::string &obsType) {
+    return {station, sat, Parameter::ambiguity, ObsID(std::string(1, sat.system), obsType)};
+}
+
 typedef std::set<Variable> VariableSet;
 typedef std::map<Variable, double> VariableDataMap;
 typedef std::map<Variable, int> VariableIntMap;
@@ -383,6 +379,7 @@ struct EquData {
     double prefit;
     std::map<Variable, double> varCoeffData;
     double weight;
+    double varBudget = 0.0; // 完整误差方差预算(对流层+轨道/钟差)，仅供后验抗差 sigma 使用，不改滤波权
 };
 
 // 所有观测方程数据，包括未知参数和每个方程的数据
@@ -413,6 +410,7 @@ struct Result {
     int numSats;
     double ratio;
     std::map<SatID, double> postRes;
+    unsigned char stat = 0; // 解状态: 0=无效, 1=Fixed, 2=Float
 
     void reset() {
         xyz.setZero();
@@ -420,11 +418,12 @@ struct Result {
         blh.setZero();
         blhFixed.setZero();
         vel.setZero();
-        pdop = gdop = 0;
+        pdop = gdop = hdop = vdop = tdop = 0;
         sigmaP = sigmaV = 0;
         numSats = 0;
         ratio = 0;
         postRes.clear();
+        stat = 0;
     }
 };
 

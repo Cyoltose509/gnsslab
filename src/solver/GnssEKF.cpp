@@ -34,6 +34,13 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
 
         for (const auto &var : currentUnkSet) {
             const int ci = currentIndexData[var];
+            const auto p = var.getParaType();
+            // 周跳软重置(slip)：把模糊度 a-priori 钉到 reinit(prefit) 值 + 小方差，位置/钟差不受扰。
+            if (csData && p == Parameter::ambiguity && (*csData)[var] >= 2.0 && mForceValue.count(var)) {
+                currentState(ci) = mForceValue[var];
+                currentCov(ci, ci) = 0.01;  // ~10cm 初方差，足够吸收重收敛残差又不漂移
+                continue;
+            }
             if (oldUnkSet.find(var) != oldUnkSet.end()) {
                 const int oi = oldIndexData[var];
                 currentState(ci) = solution(oi);
@@ -79,9 +86,12 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
             phi(ii, ii) = 1.0;       // 对流层湿延迟：随机游走
             Q(ii, ii) = ztdProcNoise;
         } else if (p == Parameter::ambiguity) {
-            if (csData && (*csData)[var] > 0.5) {
+            if (csData && (*csData)[var] >= 2.0) {
+                phi(ii, ii) = 1.0;   // 软重置：钉在 reinit(prefit)，不漂移、不动位置
+                Q(ii, ii) = 0.0;     // 无过程噪声
+            } else if (csData && (*csData)[var] > 0.5) {
                 phi(ii, ii) = 0.0;
-                Q(ii, ii) = 9.0E+10;  // 周跳：重置
+                Q(ii, ii) = 9.0E+10;  // 硬重置(新弧/间隙)
             } else {
                 phi(ii, ii) = 1.0;    // 常数模糊度（随机游走方差=ambProcNoise）
                 Q(ii, ii) = ambProcNoise;
@@ -164,48 +174,6 @@ void GnssEKF::createIndex(const VariableSet &varSet) {
     for (const auto &var : varSet) currentIndexData[var] = index++;
 }
 
-VectorXd GnssEKF::getState(const std::map<int, Variable> &idxToVar) const {
-    const int n = static_cast<int>(idxToVar.size());
-    VectorXd out = VectorXd::Zero(n);
-    for (const auto &[i, var] : idxToVar)
-        out(i) = solution[currentIndexData.at(var)];
-    return out;
-}
-
-MatrixXd GnssEKF::getCovMatrix(const std::map<int, Variable> &idxToVar) const {
-    const int n = static_cast<int>(idxToVar.size());
-    MatrixXd out = MatrixXd::Zero(n, n);
-    for (const auto &[i, var] : idxToVar) {
-        const int fi = currentIndexData.at(var);
-        for (const auto &[j, var2] : idxToVar) {
-            const int fj = currentIndexData.at(var2);
-            out(i, j) = covMatrix(fi, fj);
-        }
-    }
-    return out;
-}
-
-VectorXd GnssEKF::getPredState(const std::map<int, Variable> &idxToVar) const {
-    const int n = static_cast<int>(idxToVar.size());
-    VectorXd out = VectorXd::Zero(n);
-    for (const auto &[i, var] : idxToVar)
-        out(i) = kalmanFilter.xhatminus[currentIndexData.at(var)];
-    return out;
-}
-
-MatrixXd GnssEKF::getPredCov(const std::map<int, Variable> &idxToVar) const {
-    const int n = static_cast<int>(idxToVar.size());
-    MatrixXd out = MatrixXd::Zero(n, n);
-    for (const auto &[i, var] : idxToVar) {
-        const int fi = currentIndexData.at(var);
-        for (const auto &[j, var2] : idxToVar) {
-            const int fj = currentIndexData.at(var2);
-            out(i, j) = kalmanFilter.Pminus(fi, fj);
-        }
-    }
-    return out;
-}
-
 double GnssEKF::getSolution(const Parameter &type,
                                  const VariableSet &currentUnkSet,
                                  const VectorXd &stateVec)  {
@@ -216,6 +184,20 @@ double GnssEKF::getSolution(const Parameter &type,
         idx++; ++it;
     }
     throw InvalidRequest("GnssEKF::getSolution: type not found");
+}
+
+bool GnssEKF::tryGetSolution(const Parameter &type, const VariableSet &currentUnkSet,
+                             const VectorXd &stateVec, double &out) {
+    auto it = currentUnkSet.begin();
+    int idx = 0;
+    while (it != currentUnkSet.end()) {
+        if (it->getParaType() == type) {
+            out = stateVec(idx);
+            return true;
+        }
+        idx++; ++it;
+    }
+    return false;
 }
 
 // SPP 式读取：按 Variable 取回状态分量（set 序索引由 currentIndexData 给出）。

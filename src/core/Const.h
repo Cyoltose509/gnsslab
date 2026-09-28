@@ -234,37 +234,3 @@ constexpr SatType getSatType(const char sys, const int prn, const bool old = fal
     }
 }
 
-static constexpr double TROPO_MAP_EPS = 3.0e-3;
-
-// 干/湿天顶延迟拆分
-inline double tropoHopfieldDry(const double H) {
-    constexpr double T0 = 288.16, P0 = 1013.25, H0 = 0.0;
-    const double T = T0 - 0.0065 * (H - H0);
-    if (T < 200.0) return 0.0;
-    const double P = P0 * pow(1 - 0.0000226 * (H - H0), 5.225);
-    constexpr double hd = 40136.0 + 148.72 * (T0 - 273.16);
-    const double Kd = 155.2e-7 * (P / T) * (hd - H);
-    return Kd > 0.0 ? Kd : 0.0;
-}
-inline double tropoHopfieldWet(const double H) {
-    constexpr double T0 = 288.16, RH0 = 0.5, H0 = 0.0;
-    const double T = T0 - 0.0065 * (H - H0);
-    if (T < 200.0) return 0.0;
-    const double RH = RH0 * exp(-0.0006396 * (H - H0));
-    const double e = RH * exp(-37.2465 + 0.213166 * T - 0.000256908 * T * T);
-    constexpr double hw = 11000.0;
-    const double Kw = 155.2e-7 * (4810.0 * e / (T * T)) * (hw - H);
-    return Kw > 0.0 ? Kw : 0.0;
-}
-// 干/湿映射函数
-inline double tropoMapDry(const double E)  { return 1.0 / sin(sqrt(E * E + 1.90386e-3)); }
-inline double tropoMapWet(const double E)  { return 1.0 / sin(sqrt(E * E + 6.85389e-4)); }
-
-// 总天顶对流层延迟（Hopfield 模型）= 干层延迟·干映射 + 湿层延迟·湿映射。
-inline double tropoHopfield(const double H, const double E) {
-    const double tropo = tropoHopfieldDry(H) * tropoMapDry(E)
-                       + tropoHopfieldWet(H) * tropoMapWet(E);
-    if (!isfinite(tropo) || tropo < 0.0 || tropo > 100.0)
-        return 0.0;
-    return tropo;
-}
