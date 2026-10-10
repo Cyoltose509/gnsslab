@@ -153,6 +153,11 @@ namespace GuiCharts {
         int numSatsResult = 0, numObs = 0;
         std::string noSolveMsg;
 
+        // 右侧面板「解状态」区：固定/浮点 + ratio，位于导出 CSV 上方，带分割线
+        bool showSolveStatus = false;
+        std::string solveStatusText;
+        ImVec4 solveStatusColor = ImVec4(1, 1, 1, 1);
+
         bool fixedY = false;
         std::vector<double> times, enu_e, enu_n, enu_u;
         bool newed = false;

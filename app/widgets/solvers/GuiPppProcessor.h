@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "SolverTask.h"
+#include "core/PathMemory.h"
 
 namespace GuiPppProcessor {
     struct PppTask : GnssTask::SolverTaskBase {
@@ -25,6 +26,26 @@ namespace GuiPppProcessor {
 
         void renderConfigPanel() override;
 
-        PppTask() { core = std::make_shared<GnssTask::SolveTask>(); }
+        // ---- 解算钩子（骨架见 RunSingleStationSolve）----
+        // PPP 的 init/after 逻辑与解算器类型无关（static 与 kinematic 只差用哪个类），
+        // 故钩子里的 solver 按 kinematic 决定 cast 成 PPPStatic 或 PPPKinematic。
+        bool initSolver(void *solver) override;
+        bool afterSolveEpoch(void *solver, GnssTask::EpochData *data, GnssTask::ObsItem *item, int index) override;
+
+        // 回填上次选择：PathMemory 此前只写(开始解算/浏览时 set)不读，重启后面板全空。
+        PppTask() {
+            core = std::make_shared<GnssTask::SolveTask>();
+            const auto &pm = GnssCore::PathMemory::instance();
+            obsPathBuf = pm.get("ppp_obs");
+            brdcPathBuf = pm.get("ppp_brdc");
+            sp3PathBuf = pm.get("ppp_sp3");
+            clkPathBuf = pm.get("ppp_clk");
+            atxPathBuf = pm.get("ppp_atx");
+            osbPathBuf = pm.get("ppp_osb");
+            erpPathBuf = pm.get("ppp_erp");
+            troPathBuf = pm.get("ppp_tro");
+            ionexPathBuf = pm.get("ppp_ionex");
+            kinematic = pm.get("ppp_kinematic") == "1";
+        }
     };
 } // namespace GuiPppProcessor

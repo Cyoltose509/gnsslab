@@ -13,6 +13,7 @@
 #include <chrono>
 #include <thread>
 #include "GuiSolverPanel.h"
+#include "Log.h"
 
 namespace GuiRealtimeProcessor {
     void SolveRealtimeThread(const std::shared_ptr<GnssTask::SolveTask> &task, const ConnectionConfig &config) {
@@ -21,11 +22,17 @@ namespace GuiRealtimeProcessor {
         spp.setEnabledSystems(task->enabledSystems); // IF 组合由 SPP::solve 每历元从观测自探测（与文件模式一致）
 
         std::chrono::steady_clock::time_point lastQcTime; // QC 节流计时
+        bool loggedConnectFail = false;   // 连接失败每 2s 重试一次：只记首次，避免刷屏
 
         while (!task->stop) {
             try {
                 OEM7SocketReader reader;
                 if (!reader.connect(config.ip, static_cast<unsigned short>(config.port))) {
+                    if (!loggedConnectFail) {
+                        LOG_WARN << "[实时] 连接失败 " << config.ip << ":" << config.port
+                                 << "，每 2s 重试";
+                        loggedConnectFail = true;
+                    }
                     task->setError("正在尝试连接 " + config.ip + ":" + std::to_string(config.port) + "...");
                     std::this_thread::sleep_for(std::chrono::seconds(2));
                     continue;
@@ -33,17 +40,23 @@ namespace GuiRealtimeProcessor {
 
                 // 连接成功，重置错误状态
                 task->clearError();
+                if (loggedConnectFail) {
+                    LOG_INFO << "[实时] 已连接 " << config.ip << ":" << config.port;
+                    loggedConnectFail = false;
+                }
                 reader.setReceiveTimeout(200); // 200ms timeout
 
                 ObsData obs;
                 while (!task->stop) {
                     try {
                         if (reader.getNextEpoch(obs)) {
+                            auto eph = reader.ephSnapshot(); // OEM7 内嵌星历统一经 ephTable 传入
+                            spp.ephTable = *eph;
                             spp.preprocess(obs);
 
                             GnssTask::EpochData data;
                             data.getFromObs(obs);
-                            if (!task->hasNav && !obs.satEphemerisData.empty())
+                            if (!task->hasNav && !eph->empty())
                                 task->hasNav = true;
 
                             try {

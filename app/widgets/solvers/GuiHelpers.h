@@ -23,15 +23,18 @@
 #include "ui/Gui.h"   // GuiFileFilter, ShowOpenFileDialog
 #include "GnssStruct.h"  // SatID
 #include "StringUtils.h" // ansiToWide / 全局 fmt3/fmt4
+#include "Log.h"         // renderCancelButton 记一行取消日志
 
 namespace GnssTask { struct SolverTaskBase; }
 
 namespace GuiHelpers {
     bool inputTextStd(const char *label, std::string *str, ImGuiInputTextFlags flags = 0);
 
+    // obsIniKey：产品行的日期源＝该 ini 键指向的观测文件；nullptr ⇒ 本行不出"获取"按钮
     void fileRow(const char *label, std::string *buf, const char *iniKey,
                  const GuiFileFilter *filters, int nFilters,
-                 const std::function<void(const std::string &)> &onSelect = {});
+                 const std::function<void(const std::string &)> &onSelect = {},
+                 const char *obsIniKey = nullptr);
 
     void renderCutoffAndSystems(double *cutoffDeg, std::set<char> *sysMask,
                                 const std::function<void()> &extraSameLine = {});
@@ -61,7 +64,7 @@ namespace GuiHelpers {
         {L"所有文件 (*.*)", L"*.*"}
     };
     inline constexpr GuiFileFilter fObs[] = {
-        {L"RINEX 观测 (*.??O;*.rnx)", L"*.??O;*.rnx"},
+        {L"RINEX 观测 (*.??O;*.rnx;*.obs)", L"*.??O;*.rnx;*.obs"},
         {L"OEM7 日志 (*.log)", L"*.log"},
         {L"所有文件 (*.*)", L"*.*"}
     };
@@ -110,13 +113,18 @@ namespace GuiHelpers {
     // 数值格式化 fmt3/fmt4 是全局函数（src/util/StringUtils.h），不在此命名空间声明；
     // 调用方直接用 fmt4/fmt3 即可（GuiHelpers.h 已包含 StringUtils.h）。
 
-    // 配置窗口通用开头
-    void beginConfigWindow(const std::string &idBase, const GnssTask::SolverTaskBase &task);
+    // 配置面板的通用开头/收尾。配置现在是"标签页里的一段内容"，不再是独立的浮动窗口——
+    // 那样同一个任务就有两套形态（Config=浮窗、其余=标签页），浮窗只能靠抢 z 序/焦点去顶，
+    // 反而盖住工具窗。改为整块可滚动子区承载（PPP 有 9 行文件选择，可能超过一屏）。
+    // EndChild 必须始终调用（ImGui 1.90+ 的约定），故用 endConfigBody() 收尾。
+    void beginConfigBody(const std::string &idBase, const GnssTask::SolverTaskBase &task);
+    void endConfigBody();
 
     // 「取消」按钮
     template<class Task>
     void renderCancelButton(Task *task) {
         if (ImGui::Button("取消", ImVec2(80, 40))) {
+            LOG_WARN << "[任务] 用户取消";
             // 必须置 stop：各 Processor 的读取/解算线程都靠它退出循环。
             // 原先只置 state/hasError，线程仍会跑完整个文件，取消形同虚设。
             // 两套 stop 都要置：SolverTaskBase::stop 是状态机/取消信号入口，

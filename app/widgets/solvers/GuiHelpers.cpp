@@ -3,8 +3,13 @@
 #include <windows.h>
 
 #include "GuiHelpers.h"
-#include "SolverTask.h"   // GnssTask::SolverTaskBase 完整定义（beginConfigWindow 读 cfgIndex）
-#include "core/AppConfig.h"
+#include "SolverTask.h"   // GnssTask::SolverTaskBase 完整定义（beginConfigBody 读 cfgIndex）
+#include "core/PathMemory.h"
+#include "Log.h"
+
+#include "download/ProductMeta.h"
+#include "download/DownloadStore.h"
+#include "GuiFtpDownload.h"
 
 #include "StringUtils.h"
 #include <algorithm>
@@ -54,10 +59,32 @@ bool GuiHelpers::inputTextStd(const char *label, std::string *str, const ImGuiIn
 
 void GuiHelpers::fileRow(const char *label, std::string *buf, const char *iniKey,
                          const GuiFileFilter *filters, const int nFilters,
-                         const std::function<void(const std::string &)> &onSelect) {
+                         const std::function<void(const std::string &)> &onSelect,
+                         const char *obsIniKey) {
+// 每个 (iniKey, buf 地址) 上次已同步到 ini 的值；用于只在真正变化时写一次盘。
+    static std::map<std::string, std::string> synced;
     ImGui::Text("%s:", label);
     ImGui::PushItemWidth(-200.0f);
+    // 用户手动清空输入框（含退格/Ctrl+A Del/粘贴后删/中文输入法组合）时必须同步擦掉 ini 键，
+    // 否则下次启动又被旧值填回。不依赖 InputText 的 edited 返回值——它在若干清空路径下会漏报；
+    // 改为「与 ini 里的实际值比对」，并用 synced 记住上次同步值，保证只在真正变化时写一次盘。
+    const std::string before = *buf;
     inputTextStd(("##" + std::string(label)).c_str(), buf);
+    // 以 (iniKey, buf 地址) 为键：同一 iniKey 可能被多个标签页各自持有独立的 buf。
+    const std::string syncKey = std::string(iniKey) + "@" +
+                                std::to_string(std::hash<const void *>{}(buf));
+    // 首次渲染 / buf 本帧变化 / **buf 为空** 都要同步。buf 为空这一条是补漏：
+    // 用户清空后若 ImGui 当帧未上报编辑（输入法组合、失焦、整段粘贴后删），
+    // 只靠 before!=*buf 会漏掉，重启就被旧值填回。空的判定代价极小，可每帧做。
+    const bool needCheck = (before != *buf) || buf->empty()
+                           || synced.find(syncKey) == synced.end();
+    // contains() 是 C++20，本项目 C++17 ⇒ 用 find。
+    if (needCheck) {
+        if (GnssCore::PathMemory::instance().get(iniKey) != *buf) {
+            GnssCore::PathMemory::instance().set(iniKey, *buf);
+        }
+        synced[syncKey] = *buf;
+    }
     ImGui::PopItemWidth();
     ImGui::SameLine();
     if (ImGui::Button(("浏览##" + std::string(label)).c_str())) {
@@ -66,25 +93,83 @@ void GuiHelpers::fileRow(const char *label, std::string *buf, const char *iniKey
             *buf = p;
             if (onSelect) onSelect(p);   // 派生动作（如自动扫描伴生星历）
             // 选中即持久化：写入 ini（下次打开默认填回），并提到历史最前
-            AppConfig::instance().addRecent(iniKey, p);
-            AppConfig::instance().set(iniKey, p);
+            GnssCore::PathMemory::instance().addRecent(iniKey, p);
+            GnssCore::PathMemory::instance().set(iniKey, p);
         }
     }
     ImGui::SameLine();
     if (ImGui::Button(("历史##" + std::string(label)).c_str()))
         ImGui::OpenPopup(("##hist_" + std::string(label)).c_str());
     if (ImGui::BeginPopup(("##hist_" + std::string(label)).c_str())) {
-        const auto rec = AppConfig::instance().getRecent(iniKey);
+        const auto rec = GnssCore::PathMemory::instance().getRecent(iniKey);
         if (rec.empty()) ImGui::TextDisabled("(暂无)");
         for (auto &r : rec)
             if (ImGui::Selectable(r.c_str())) {
                 *buf = r;
                 if (onSelect) onSelect(r);
                 // 选中历史项也要持久化：写入 ini（下次打开默认填回），并提到历史最前
-                AppConfig::instance().set(iniKey, r);
-                AppConfig::instance().addRecent(iniKey, r);
+                GnssCore::PathMemory::instance().set(iniKey, r);
+                GnssCore::PathMemory::instance().addRecent(iniKey, r);
             }
         ImGui::EndPopup();
+    }
+
+    // ---- "获取"：从本地 downloads/ 按 (产品类型, 日期) 取文件；未命中提示自动下载 ----
+    // ATX 是版本化文件（非逐日），镜像上也没有，故不出"获取"按钮。
+    const ProductType ptype = ProductMeta::typeFromIniKey(iniKey);
+    if (ptype != ProductType::Unknown && ptype != ProductType::ATX) {
+        // 日期源：观测文件路径（iniKey 里不含，调用点显式给出 obsIniKey）
+        std::string obsPath = (obsIniKey && *obsIniKey)
+                                  ? GnssCore::PathMemory::instance().get(obsIniKey)
+                                  : "";
+        auto yd = ProductMeta::parseObsDate(obsPath);
+
+        ImGui::SameLine();
+        if (ImGui::Button(("获取##" + std::string(label)).c_str())) {
+            if (!yd) {
+                LOG_WARN << "[获取] 无法从观测文件名推断日期（" << label << "），请先填观测文件路径";
+                ImGui::OpenPopup(("##getfail_" + std::string(label)).c_str());
+            } else {
+                const auto local = DownloadStore::findLocal(ptype, yd->first, yd->second);
+                if (!local.empty()) {
+                    const std::string p =
+                        DownloadStore::dirFor(ptype, yd->first, yd->second) + local.front();
+                    *buf = p;
+                    if (onSelect) onSelect(p);
+                    GnssCore::PathMemory::instance().set(iniKey, p);
+                    GnssCore::PathMemory::instance().addRecent(iniKey, p);
+                    LOG_INFO << "[获取] 本地命中 " << ProductMeta::typeDir(ptype) << " "
+                             << ProductMeta::doyToDateStr(yd->first, yd->second) << " → " << p;
+                } else {
+                    LOG_INFO << "[获取] 本地未命中 " << ProductMeta::typeDir(ptype) << " "
+                             << ProductMeta::doyToDateStr(yd->first, yd->second)
+                             << "，弹出自动下载确认";
+                    ImGui::OpenPopup(("##getdl_" + std::string(label)).c_str());
+                }
+            }
+        }
+
+        // 未找到 → 提示自动下载（默认数据中心 COD）
+        if (yd && ImGui::BeginPopupModal(("##getdl_" + std::string(label)).c_str(), nullptr,
+                                         ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("本地 downloads/ 未找到 %s（COD / %d-%03d）。",
+                        ProductMeta::typeDir(ptype).c_str(), yd->first, yd->second);
+            ImGui::Text("是否打开下载面板自动获取？");
+            if (ImGui::Button("是")) {
+                GuiFtpDownload::RequestAutoDownload(ptype, yd->first, yd->second, "COD");
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("否")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        // 无法从观测文件名推断日期
+        if (!yd && ImGui::BeginPopupModal(("##getfail_" + std::string(label)).c_str(), nullptr,
+                                          ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("无法从观测文件名推断日期，请先填写观测文件路径。");
+            if (ImGui::Button("知道了")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
     }
 }
 
@@ -154,15 +239,16 @@ std::set<char> GuiHelpers::resolveNavSystems(const std::set<char> &mask,
     return sysSet;
 }
 
-// 配置窗口通用开头
-void GuiHelpers::beginConfigWindow(const std::string &idBase, const GnssTask::SolverTaskBase &task) {
-    if (!ImGui::IsPopupOpen(reinterpret_cast<const char *>(static_cast<ImGuiID>(0)),
-                            ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-        ImGui::SetNextWindowFocus();
-    // 窗口名即 imgui.ini 里的持久化键([Window][名字])，跨运行必须稳定。
-    // 旧实现拼对象地址 → 每次运行键都变 → 拖过的尺寸记不住；改用任务创建序号(SolverTaskBase::cfgIndex)。
-    const std::string winId = idBase + std::to_string(task.cfgIndex);
-    ImGui::Begin(winId.c_str(), nullptr, ImGuiWindowFlags_NoCollapse);
+// 配置面板通用开头/收尾
+void GuiHelpers::beginConfigBody(const std::string &idBase, const GnssTask::SolverTaskBase &task) {
+    // idBase 里的中文前缀只为可读；子窗口 ID 取整串哈希，cfgIndex 保证每任务唯一且跨帧稳定。
+    // 铺满标签页剩余空间 ⇒ 表单超出时可滚。
+    const std::string id = idBase + std::to_string(task.cfgIndex);
+    ImGui::BeginChild(id.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+}
+
+void GuiHelpers::endConfigBody() {
+    ImGui::EndChild();
 }
 
 // CSV 导出：默认文件名 → 保存对话框。复用 StringUtils::ansiToWide（统一 SPP 原 ansiToWide 与 PPP/LEO 原 MultiByteToWideChar 两种写法）。

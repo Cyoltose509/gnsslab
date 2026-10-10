@@ -2,18 +2,17 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <cstdint>
 #include "widgets/tools/GuiTimeConverter.h"
 #include "widgets/tools/GuiCoordConverter.h"
 #include "widgets/tools/GuiLsqSolver.h"
+#include "widgets/tools/GuiFtpDownload.h"
 #include "widgets/solvers/GuiSolverPanel.h"
 #include "widgets/solvers/GuiSppProcessor.h"
 #include "widgets/solvers/GuiPppProcessor.h"
 #include "widgets/solvers/GuiLeoProcessor.h"
 #include "widgets/solvers/GuiRtkProcessor.h"
-#include "widgets/solvers/GuiRealtimeProcessor.h"
 #include "widgets/solvers/GuiHelpers.h"   // isSp3Path（旧单栏星历键迁移用）
-#include "core/AppConfig.h"
+#include "core/PathMemory.h"
 #include "version.h"
 #include "Log.h"
 
@@ -23,11 +22,11 @@ namespace {
     using TaskList = std::vector<std::shared_ptr<GnssTask::SolverTaskBase> >;
 
     void stopAndJoinTasks(TaskList &tasks) {
-        for (auto &task: tasks) {
+        for (const auto &task: tasks) {
             task->stop = true;
-            if (auto c = task->solveResult()) c->stop = true;
+            if (const auto c = task->solveResult()) c->stop = true;
         }
-        for (auto &task: tasks) {
+        for (const auto &task: tasks) {
             if (task->worker.joinable()) task->worker.join();
         }
         tasks.clear();
@@ -35,7 +34,7 @@ namespace {
 
     void gcClosingTasks(TaskList &closing) {
         for (auto it = closing.begin(); it != closing.end();) {
-            if (auto &task = *it; task->done.load() || task->errorFlag() || !task->worker.joinable()) {
+            if (const auto &task = *it; task->done.load() || task->errorFlag() || !task->worker.joinable()) {
                 if (task->worker.joinable()) task->worker.join();
                 it = closing.erase(it);
             } else {
@@ -43,7 +42,7 @@ namespace {
             }
         }
     }
-} // namespace
+}
 
 Application::Application() = default;
 
@@ -51,13 +50,15 @@ void Application::Initialize() {
     Log::init("gnsslab.log");
     LOG_INFO << "GnssLab v" PROJECT_VERSION " 启动";
 
-    std::string title = "GnssLab v" PROJECT_VERSION;
+    const std::string title = "GnssLab v" PROJECT_VERSION;
     m_ui.Initialize(title.c_str(), 1280, 720);
 }
 
 void Application::Shutdown() {
+    LOG_INFO << "GnssLab 退出";
     stopAndJoinTasks(m_tasks);
     stopAndJoinTasks(m_closingTasks);
+    GuiFtpDownload::Shutdown();   // 后台下载/扫描线程须在 GUI 销毁前收尾
     m_ui.Shutdown();
 }
 
@@ -87,6 +88,8 @@ void Application::RenderMenuBar() {
             ImGui::MenuItem("最小二乘工具", nullptr, &m_showLsqSolver);
             ImGui::EndMenu();
         }
+        // 下载面板开关：顶级菜单项，放在"工具"右边
+        ImGui::MenuItem("下载", nullptr, &GuiFtpDownload::s_open);
         if (ImGui::BeginMenu("帮助")) {
             if (ImGui::MenuItem("关于", nullptr))
                 m_showAbout = true;
@@ -157,6 +160,7 @@ void Application::RenderTaskTabList() {
         }
 
         if (!open) {
+            LOG_INFO << "[任务] 关闭标签页: " << res->fileName;
             task->stop = true;
             if (const auto c = task->solveResult()) c->stop = true;
             closingTasks.push_back(task);
@@ -179,9 +183,11 @@ void Application::RenderTasks() {
         );
 
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        // 与任务宿主一样是"背景件"：不许它抢 z 序，否则会把工具窗/配置窗压住
         constexpr ImGuiWindowFlags flags =
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
         if (ImGui::Begin("##empty_hint", nullptr, flags)) {
             ImGui::Text("GnssLab");
@@ -201,7 +207,8 @@ void Application::RenderTasks() {
             ImGuiWindowFlags_NoTitleBar |
             ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove;
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
     // 用固定 ID 的窗口做全视口容器
     if (ImGui::Begin("##task_host", nullptr, windowFlags)) {
@@ -222,12 +229,14 @@ void Application::OpenSppSolve() {
     const auto task = std::make_shared<GuiSppProcessor::SppTask>();
     auto &core = *task->core;
 
-    core.obsPathBuf = AppConfig::instance().get("spp_obs");
+    core.obsPathBuf = GnssCore::PathMemory::instance().get("spp_obs");
     if (!core.obsPathBuf.empty())
         core.navFiles = GnssTask::ScanNavFiles(core.obsPathBuf);
 
-    core.rtIpBuf = AppConfig::instance().get("rt_ip", "47.114.134.129");
-    core.rtPortBuf = AppConfig::instance().get("rt_port", "7190");
+    core.rtIpBuf = GnssCore::PathMemory::instance().get("rt_ip", "47.114.134.129");
+    core.rtPortBuf = GnssCore::PathMemory::instance().get("rt_port", "7190");
+
+    LOG_INFO << "[任务] 新建 SPP 配置：观测=" << core.obsPathBuf;
 
     task->state = GnssTask::SolverTaskBase::State::Config;
     task->loading = false;
@@ -241,7 +250,7 @@ void Application::OpenSppSolve() {
 void Application::OpenPppSolve() {
     const auto task = std::make_shared<GuiPppProcessor::PppTask>();
 
-    const auto &cfg = AppConfig::instance();
+    const auto &cfg = GnssCore::PathMemory::instance();
     task->obsPathBuf = cfg.get("ppp_obs");
     task->sp3PathBuf = cfg.get("ppp_sp3");
     task->brdcPathBuf = cfg.get("ppp_brdc");
@@ -255,6 +264,8 @@ void Application::OpenPppSolve() {
     task->osbPathBuf = cfg.get("ppp_osb");
     task->atxPathBuf = cfg.get("ppp_atx");
     task->kinematic = cfg.get("ppp_kinematic") == "1";
+    LOG_INFO << "[任务] 新建 PPP 配置：观测=" << task->obsPathBuf
+             << ", 动态=" << (task->kinematic ? "是" : "否");
 
     task->core->mode = GnssTask::SolverMode::Ppp;
 
@@ -271,7 +282,7 @@ void Application::OpenLeoSolve() {
     const auto task = std::make_shared<GuiLeoProcessor::LeoTask>();
 
     // 载入用户上次选择（项目外 ini）；无记录则留空，由用户填写。不再预填默认路径。
-    const auto &cfg = AppConfig::instance();
+    const auto &cfg = GnssCore::PathMemory::instance();
     task->leoObsPathBuf = cfg.get("leo_obs");
     task->gnssSp3PathBuf = cfg.get("leo_gnss_sp3");
     task->gnssBrdcPathBuf = cfg.get("leo_gnss_brdc");
@@ -285,6 +296,7 @@ void Application::OpenLeoSolve() {
     task->osbPathBuf = cfg.get("leo_osb");
     task->atxPathBuf = cfg.get("leo_atx");
     task->refSp3PathBuf = cfg.get("leo_ref_sp3");
+    LOG_INFO << "[任务] 新建 LEO 配置：观测=" << task->leoObsPathBuf;
     task->core->mode = GnssTask::SolverMode::Leo;
 
     task->state = GnssTask::SolverTaskBase::State::Config;
@@ -300,10 +312,12 @@ void Application::OpenRtkSolve() {
     const auto task = std::make_shared<GuiRtkProcessor::RtkTask>();
 
     // 载入用户上次选择（项目外 ini）；无记录则留空，由用户填写。
-    const auto &cfg = AppConfig::instance();
+    const auto &cfg = GnssCore::PathMemory::instance();
     task->baseObsPathBuf = cfg.get("rtk_base");
     task->roverObsPathBuf = cfg.get("rtk_rover");
     task->navPathBuf = cfg.get("rtk_nav");
+    LOG_INFO << "[任务] 新建 RTK 配置：基准=" << task->baseObsPathBuf
+             << ", 流动站=" << task->roverObsPathBuf;
     task->core->mode = GnssTask::SolverMode::Rtk;
 
     task->state = GnssTask::SolverTaskBase::State::Config;
@@ -325,6 +339,8 @@ void Application::Render() {
         GuiCoordConverter::Render(&m_showCoordConverter);
     if (m_showLsqSolver)
         GuiLsqSolver::Render(&m_showLsqSolver);
+    if (GuiFtpDownload::s_open)
+        GuiFtpDownload::Render(&GuiFtpDownload::s_open);
 
     // ---- 任务内容（全视口标签页） ----
     RenderTasks();

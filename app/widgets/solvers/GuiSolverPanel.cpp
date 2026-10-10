@@ -13,14 +13,33 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <set>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
 #include "GuiCharts.h"
 #include "StringUtils.h"
+#include "Log.h"
 
 namespace GuiSolverPanel {
+    // 渲染只需可视化，不需要逐历元全量点：LEO 一天 86400 历元 ×8 星 ≈ 69 万条(数十 MB)，
+    // 若每帧在锁内整份拷贝，60fps 下就是 GB/s 级拷贝并长期占锁饿死解算线程
+    // （实测 GUI 比 harness 慢约 30×）。故按最大点数等间隔抽样后再拷。
+    // 用模板以便 rtnTimes 与 rtnR/T/N 用**同一套采样索引**（长度须保持一致，否则绘图错位）。
+    template <typename T>
+    static void copySampled(const std::vector<T> &src, std::vector<T> &dst,
+                            const size_t maxPts = 3000) {
+        if (src.size() <= maxPts) { dst = src; return; }
+        dst.clear();
+        dst.reserve(maxPts + 1);
+        const double step = static_cast<double>(src.size()) / static_cast<double>(maxPts);
+        for (size_t i = 0; i < maxPts; ++i)
+            dst.push_back(src[static_cast<size_t>(static_cast<double>(i) * step)]);
+        dst.push_back(src.back()); // 保留末点，保证画到最新历元
+    }
+
     static QualityReport buildReport(GnssTask::SolveTask &task) {
         std::vector<QC::QCObsEpoch> qcEpochs;
         {
@@ -34,6 +53,7 @@ namespace GuiSolverPanel {
 
     void LaunchQC(const std::shared_ptr<GnssTask::SolveTask> &task) {
         if (task->qcWorker.joinable()) task->qcWorker.join(); // 确保上一轮已结束，再起新的一轮
+        LOG_INFO << "[QC] 开始质量分析";
         task->qcComputing = true;
         task->qcWorker = std::thread([task] {
             try {
@@ -43,6 +63,7 @@ namespace GuiSolverPanel {
                     task->qcReport = std::make_shared<QualityReport>(std::move(rep));
                 }
                 task->qcReady = true;
+                LOG_INFO << "[QC] 质量分析结束";
             } catch (...) {
                 task->qcReady = true;
             }
@@ -59,14 +80,15 @@ namespace GuiSolverPanel {
     struct SolverUi {
         void (*csvHeader)(std::ostream &, const GnssTask::SolveTask &);
         void (*csvRow)(std::ostream &, const GnssTask::EpochData &, const GnssTask::SolveTask &);
-        void (*statusSuffix)(std::string &, ImVec4 &, const GnssTask::EpochData &);
+        // 构建右侧面板「解状态」行（固定/浮点 + ratio）；SPP 用 statusNone 留空（不显示该块）
+        void (*solveStatusLine)(std::string &, ImVec4 &, const GnssTask::EpochData &);
     };
 
     // SPP/PPP/LEO 共用的尾部列：B/L/H、速度、各类 DOP、SigmaP/SigmaV、卫星数
     static void csvRowTail(std::ostream &out, const GnssTask::EpochData &r) {
         const auto &res = r.sppResult;
-        out << ',' << std::setprecision(8) << res.blh[0] * RAD_TO_DEG << ',' << res.blh[1] * RAD_TO_DEG << ','
-            << std::setprecision(3) << res.blh[2] << ',' << res.vel[0] << ',' << res.vel[1] << ',' << res.vel[2]
+        out << ',' << std::setprecision(10) << res.blh[0] * RAD_TO_DEG << ',' << res.blh[1] * RAD_TO_DEG << ','
+            << std::setprecision(4) << res.blh[2] << ',' << std::setprecision(6) << res.vel[0] << ',' << res.vel[1] << ',' << res.vel[2]
             << ',' << std::setprecision(4) << res.pdop << ',' << res.gdop << ',' << res.hdop << ',' << res.vdop
             << ',' << res.tdop << ',' << res.sigmaP << ',' << res.sigmaV << ',' << r.numSatsResult;
     }
@@ -74,16 +96,18 @@ namespace GuiSolverPanel {
     // --- SPP / PPP：ENU + 常数 REF ---
     static void csvHeaderGeneric(std::ostream &out, const GnssTask::SolveTask &) {
         out << "Wk,SOW,ECEF-X/m,ECEF-Y/m,ECEF-Z/m,REF-X/m,REF-Y/m,REF-Z/m,EAST/m,NORTH/m,UP/m,"
-               "B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount\n";
+               "B/deg,L/deg,H/m,VX/m,VY/m,VZ/m,PDOP,GDOP,HDOP,VDOP,TDOP,SigmaP,SigmaV,SatCount,Stat,Ratio\n";
     }
     static void csvRowGeneric(std::ostream &out, const GnssTask::EpochData &r,
                              const GnssTask::SolveTask &task) {
         const auto &res = r.sppResult;
-        out << std::setprecision(4) << res.xyz[0] << ',' << res.xyz[1] << ',' << res.xyz[2];
+        out << r.week << ',' << std::fixed << std::setprecision(3) << r.sow << ','
+            << std::defaultfloat << std::setprecision(11) << res.xyz[0] << ',' << res.xyz[1] << ',' << res.xyz[2];
         const ENU enu = XYZtoENU(res.xyz, task.refECEF);
         out << ',' << task.refECEF.X() << ',' << task.refECEF.Y() << ',' << task.refECEF.Z();
         out << ',' << enu.E() << ',' << enu.N() << ',' << enu.U();
         csvRowTail(out, r);
+        out << ',' << static_cast<int>(res.stat) << ',' << res.ratio;
     }
 
     // --- LEO：逐历元参考轨道 REF + RTN(径向/沿迹/法向)；无参考轨道则两者都略过 ---
@@ -98,7 +122,7 @@ namespace GuiSolverPanel {
     static void csvRowLeo(std::ostream &out, const GnssTask::EpochData &r,
                           const GnssTask::SolveTask &task) {
         const auto &res = r.sppResult;
-        out << std::setprecision(4) << res.xyz[0] << ',' << res.xyz[1] << ',' << res.xyz[2];
+        out << r.week << ',' << r.sow << ',' << std::setprecision(11) << res.xyz[0] << ',' << res.xyz[1] << ',' << res.xyz[2];
         if (task.hasRefOrbit) {
             out << ',' << r.refECEF[0] << ',' << r.refECEF[1] << ',' << r.refECEF[2];
             out << ',' << r.rtnR << ',' << r.rtnT << ',' << r.rtnN;
@@ -117,7 +141,7 @@ namespace GuiSolverPanel {
         const Vector3d ref(task.refECEF.X(), task.refECEF.Y(), task.refECEF.Z());
         const Vector3d blX = r.rtkBaseFloat;
         const ENU enuX = XYZtoENU(XYZ(ref.x() + blX.x(), ref.y() + blX.y(), ref.z() + blX.z()), task.refECEF);
-        out << std::setprecision(4) << r.rtkStat << ',';
+        out << r.week << ',' << r.sow << ',' << std::setprecision(4) << r.rtkStat << ',';
         if (r.rtkStat == 1) {
             const Vector3d blF = r.sppResult.xyz - ref;
             const ENU enuF = XYZtoENU(XYZ(ref.x() + blF.x(), ref.y() + blF.y(), ref.z() + blF.z()), task.refECEF);
@@ -132,23 +156,46 @@ namespace GuiSolverPanel {
             << r.rtkRatio << ',' << r.numSatsResult;
     }
 
-    static void statusSuffixNone(std::string &, ImVec4 &, const GnssTask::EpochData &) {}
-    static void statusSuffixRtk(std::string &text, ImVec4 &color, const GnssTask::EpochData &cur) {
-        const char *st = cur.rtkStat == 1 ? "固定(Fixed)" : cur.rtkStat == 2 ? "浮动(Float)" : "无效";
-        char buf2[200];
-        snprintf(buf2, sizeof buf2, "  | RTK:%s ratio=%.2f 卫星=%d", st, cur.rtkRatio, cur.numSatsResult);
-        text += buf2;
-        color = cur.rtkStat == 1 ? ImVec4(0.3f, 1, 0.3f, 1) : ImVec4(1, 0.8f, 0.2f, 1);
+    static const char *solveStatLabel(unsigned char stat) {
+        return stat == 1 ? "固定(Fixed)" : "浮点(Float)";
+    }
+    static ImVec4 solveStatColor(unsigned char stat) {
+        return stat == 1 ? ImVec4(0.3f, 1, 0.3f, 1) : ImVec4(1, 0.8f, 0.2f, 1);
+    }
+
+    // 不显示解状态块（SPP 无模糊度固定概念）
+    static void statusNone(std::string &, ImVec4 &, const GnssTask::EpochData &) {}
+
+    // RTK：用 RTK 专用字段（与 sppResult 同源，rtkStat/rtkRatio 由 feedRtkEpoch 复制而来）
+    static void statusRtk(std::string &text, ImVec4 &color, const GnssTask::EpochData &cur) {
+        char buf[200];
+        snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
+                 solveStatLabel(cur.rtkStat), cur.rtkRatio, cur.numSatsResult);
+        text = buf;
+        color = solveStatColor(cur.rtkStat);
+    }
+
+    // PPP/LEO：统一用 sppResult.stat/ratio（无 AR 时 stat 未置位，按浮点显示）
+    static void statusAmbig(std::string &text, ImVec4 &color, const GnssTask::EpochData &cur) {
+        unsigned char st = cur.sppResult.stat;
+        if (st == 0) st = 2; // 未置位（PPP/LEO 无 AR）→ 浮点
+        char buf[200];
+        snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
+                 solveStatLabel(st), cur.sppResult.ratio, cur.numSatsResult);
+        text = buf;
+        color = solveStatColor(st);
     }
 
     static const SolverUi &solverUi(const GnssTask::SolverMode m) {
-        static const SolverUi generic{&csvHeaderGeneric, &csvRowGeneric, &statusSuffixNone};
-        static const SolverUi leo{&csvHeaderLeo, &csvRowLeo, &statusSuffixNone};
-        static const SolverUi rtk{&csvHeaderRtk, &csvRowRtk, &statusSuffixRtk};
+        static const SolverUi generic{&csvHeaderGeneric, &csvRowGeneric, &statusNone};     // SPP
+        static const SolverUi ppp{&csvHeaderGeneric, &csvRowGeneric, &statusAmbig};
+        static const SolverUi leo{&csvHeaderLeo, &csvRowLeo, &statusAmbig};
+        static const SolverUi rtk{&csvHeaderRtk, &csvRowRtk, &statusRtk};
         switch (m) {
             case GnssTask::SolverMode::Leo: return leo;
             case GnssTask::SolverMode::Rtk: return rtk;
-            default: return generic;   // SPP 与 PPP 的结果列完全同构
+            case GnssTask::SolverMode::Ppp: return ppp;
+            default: return generic;
         }
     }
 
@@ -375,24 +422,32 @@ namespace GuiSolverPanel {
                         v.showRefEnu = false; // LEO 不编辑/显示参考真值
                         v.leoPos3d = task->leoPos3d;
                         v.leoRef3d = task->leoRef3d;
-                        v.leoTraj = task->leoTraj;
-                        v.leoRefTraj = task->leoRefTraj;
+                        // 抽样拷贝：整份拷 86400 条会把解算线程饿死（见 copySampled 注释）
+                        copySampled(task->leoTraj, v.leoTraj);
+                        copySampled(task->leoRefTraj, v.leoRefTraj);
                         v.gnssVis = task->gnssVis;
-                        v.gnssTraj = task->gnssTraj;
-                        v.rtnTimes = task->rtnTimes;
-                        v.rtnR = task->rtnR;
-                        v.rtnT = task->rtnT;
-                        v.rtnN = task->rtnN;
-                        v.rtnD3 = task->rtnD3;
+                        for (const auto &[sat, traj]: task->gnssTraj)
+                            copySampled(traj, v.gnssTraj[sat], 800); // 卫星轨迹更粗即可
+                        copySampled(task->rtnR, v.rtnR);
+                        copySampled(task->rtnT, v.rtnT);
+                        copySampled(task->rtnN, v.rtnN);
+                        copySampled(task->rtnD3, v.rtnD3);
+                        copySampled(task->rtnTimes, v.rtnTimes); // 必须与 RTN 数组同采样，否则索引错位
                     }
                 }
 
-                // RTK 等解算系统在状态行追加自己的状态串（固定/浮动 + ratio）；
-                // 各系统的差异由 solverUi 描述符承载，这里不再出现按 mode 的分支。
-                if (epochCount > 0 && selectedIdx >= 0) {
+                // 右侧面板「解状态」块（固定/浮点 + ratio）：PPP/LEO/RTK 显示，SPP 不显示。
+                // 原 RTK 状态行里的 " | RTK:固定/浮点 ratio=..." 已移至此，状态行统一只显示"共 N 个历元"。
+                if (epochCount > 0 && selectedIdx >= 0 && v.solved) {
                     std::lock_guard lk(task->mutex);
                     const SolverUi &ui = solverUi(task->mode);
-                    ui.statusSuffix(v.statusText, v.statusColor, task->epochs[selectedIdx]);
+                    std::string line; ImVec4 col;
+                    ui.solveStatusLine(line, col, task->epochs[selectedIdx]);
+                    if (!line.empty()) {
+                        v.showSolveStatus = true;
+                        v.solveStatusText = std::string(modeLabel(task->mode)) + ": " + line;
+                        v.solveStatusColor = col;
+                    }
                 }
 
                 v.isDone = isDone || isRealtime;
@@ -450,16 +505,30 @@ namespace GuiSolverPanel {
         if (dn.size() >= MAX_PATH) dn = std::string(modeLabel(task->mode)) + "_result.csv";
         std::wstring path;
         if (!GuiHelpers::saveCSVDialog(dn, path)) return;
+        LOG_INFO << "[导出] CSV (" << modeLabel(task->mode) << ") → "
+                 << std::filesystem::path(path).string();
 
-        std::lock_guard lk(task->mutex);
-        std::ofstream out(std::filesystem::path(path), std::ios::out);
-        if (!out.is_open()) return;
-        const SolverUi &ui = solverUi(task->mode);
-        ui.csvHeader(out, *task);
-        for (auto &r: task->epochs) {
-            out << r.week << ',' << std::fixed << std::setprecision(3) << r.sow << ',';
-            if (r.solved) ui.csvRow(out, r, *task);
-            out << '\n';
-        }
-    }
+std::lock_guard lk(task->mutex);
+     std::ofstream out(std::filesystem::path(path), std::ios::out);
+     if (!out.is_open()) return;
+     const SolverUi &ui = solverUi(task->mode);
+     ui.csvHeader(out, *task);
+     // 数出表头逗号数：未解出的历元要写等长空占位，保证每行列数与表头严格一致。
+     std::ostringstream hdr;
+     ui.csvHeader(hdr, *task);
+     const std::string hdrStr = hdr.str();
+     const int uiCols = static_cast<int>(std::count(hdrStr.begin(), hdrStr.end(), ','));
+     for (const auto &r: task->epochs) {
+         // 未解出的历元：写等长空占位（逗号数与表头列数-1 一致），保持每行列数相同，
+         // 否则未收敛行只有2 列会错位。Wk/SOW 由 csvRow 自行输出，此处不可再加
+         // ——重复输出会使表头 27 列、数据 29 列（并让 ECEF 落在错误列上）。
+         if (r.solved) {
+             ui.csvRow(out, r, *task);
+         } else {
+             for (int i = 0; i < uiCols; ++i) out << (i ? "," : "");
+             out << ',';
+         }
+         out << '\n';
+     }
+ }
 } // namespace GuiSolverPanel

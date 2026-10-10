@@ -9,7 +9,9 @@
 #include "LEO.h"
 #include "QualityControl.h"   // QC::makeQCObsEpoch
 #include "Log.h"
+#include "SolveDriver.h"      // 单站解算编排共享层：fillFrom* / solveStationStream（CLI 与 GUI 共用）
 
+#include <chrono>
 #include <fstream>
 #include <string>
 
@@ -55,56 +57,8 @@ namespace GnssTask {
         }
     }
 
-    void EpochData::applySatRule(const std::function<bool(const SatID &, const PVT &)> &usable) {
-        numSatsResult = 0;
-        for (size_t i = 0; i < satIds.size(); i++) {
-            const bool ok = usable(satIds[i], satPVTs[i]);
-            rejected[i] = !ok;
-            if (ok) ++numSatsResult;
-        }
-    }
-
-    void EpochData::getFromSPP(const SPP &spp) {
-        if (auto &result = spp.result; result.numSats > 0) {
-            solved = true;
-            sppResult = result;
-            const auto size = static_cast<int>(satIds.size());
-            for (int i = 0; i < size; i++) {
-                if (auto it = spp.satElevData.find(satIds[i]); it != spp.satElevData.end())
-                    elevations[i] = it->second;
-                if (auto it2 = spp.satAzimData.find(satIds[i]); it2 != spp.satAzimData.end())
-                    azimuths[i] = it2->second;
-                if (auto it3 = spp.satPVTTransTime.find(satIds[i]); it3 != spp.satPVTTransTime.end())
-                    satPVTs[i] = it3->second;
-            }
-            // 排除判据：解算器显式排除的卫星，或没有有效星历/位置的卫星。
-            // 后者必须一起排除，否则 GUI 会显示某星"参与解算"却给出全 0 坐标。
-            applySatRule([&](const SatID &sat, const PVT &pvt) {
-                return spp.satRejected.count(sat) == 0 && pvt.p.squaredNorm() > 1.0;
-            });
-        } else { solved = false; }
-    }
-
-    void EpochData::getFromObs(const ObsData &obs) {
-        week = obs.weekSecond.week;
-        sow = obs.weekSecond.sow;
-        const auto numSats = static_cast<int>(obs.satTypeValueData.size());
-        satIds.reserve(numSats);
-        elevations.reserve(numSats);
-        azimuths.reserve(numSats);
-        satPVTs.reserve(numSats);
-        rejected.reserve(numSats);
-        allObs.reserve(numSats);
-        for (auto &[sat, typeMap]: obs.satTypeValueData) {
-            satIds.push_back(sat);
-            elevations.push_back(0.0);
-            azimuths.push_back(0.0);
-            satPVTs.emplace_back();
-            rejected.push_back(false);
-            allObs.push_back(typeMap);
-        }
-        numObs = static_cast<int>(satIds.size());
-    }
+    // EpochData::getFromObs / getFromSPP 已提升为 SolverTask.h 的 inline 成员（CLI 不链本 .cpp 亦可），
+    // 故此处不再提供定义；SolveDriver 的 fillFromObs/fillFromSPP 薄封装转调它们。
 
     // ----------------------------------------------------------
     // 解算线程主循环的三段公共件（SPP / PPP / LEO / RTK 共用）
@@ -162,12 +116,22 @@ namespace GnssTask {
     // 单站解算器（SPP / PPP / LEO）的唯一解算线程主体
     // ----------------------------------------------------------
     // 解算本身由各解算器的 processEpoch() 承担（SPP::processEpoch / PPP::processEpoch / LEO::processEpoch
-    // 三个 override 同名同签名），所以这里能把"等星历 → 循环 → 回填 → 入列 → 收尾"这一整条骨架
-    // 收成一份，三家 Processor 只剩各自的 init/body 两段差异。
+    // 三个 override 同名同签名），由 SolveDriver::solveStream 统一调用并回填；这里再包上
+    // "等星历 → 入列 → 收尾"，三家 Processor 只剩 init/body/beforeSolve 三段差异。
+    // GUI 侧把 SolveTask 的观测队列包装成 ObsSource，使单站解算与 CLI 共用同一条循环骨架。
+    struct TaskQueueSource : SolveDriver::ObsSource {
+        std::shared_ptr<SolveTask> core;
+        explicit TaskQueueSource(std::shared_ptr<SolveTask> c) : core(std::move(c)) {}
+        bool next(GnssTask::ObsItem &out) override {
+            return NextObsQueue(core, out);
+        }
+    };
+
     template<typename Solver>
     void RunSingleStationSolve(const std::shared_ptr<SolveTask> &core,
-                               const std::function<bool(Solver &)> &init,
-                               const std::function<bool(Solver &, ObsItem &, EpochData &, int)> &body) {
+                               Solver &solver,
+                               const std::shared_ptr<SolverTaskBase> &job) {
+        const auto tSolve0 = std::chrono::steady_clock::now();
         try {
             if (!WaitNavReady(core)) {
                 LOG_WARN << "[解算] 任务被取消(stop 已置位)：解算线程未启动，0 历元";
@@ -175,53 +139,69 @@ namespace GnssTask {
                 return;
             }
 
-            Solver solver;
+            std::string sys;
+            for (char c : core->enabledSystems) sys += c;
+            LOG_INFO << "[解算] 开始: 截止高度角 " << core->cutoffDeg << "°, 系统="
+                     << (sys.empty() ? std::string("全部") : sys);
+
             solver.setCutoffElevDeg(core->cutoffDeg);
             solver.setEnabledSystems(core->enabledSystems);
-            if (!init(solver)) {
+            if (!job->initSolver(&solver)) {
                 LOG_ERROR << "[解算] 解算器初始化失败（产品加载返回 false）";
                 core->solvingDone = true;
                 return;
             }
 
-            ObsItem item;
-            while (NextObsQueue(core, item)) {
-                EpochData data;
-                data.getFromObs(item.obs);   // 观测骨架（satIds/elevations/…），回填前必须先铺好
-                bool solved = false;
-                int idx = 0;
-                try {
-                    // epochs 只由本线程追加，这里取到的下标就是 CommitEpoch 将写入的位置
-                    { std::lock_guard lk(core->mutex); idx = static_cast<int>(core->epochs.size()); }
-                    solved = body(solver, item, data, idx);
-                } catch (const std::exception &e) {
-                    LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
-                } catch (...) {
-                    LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
-                }
-                if (!solved) data.solved = false;
-                CommitEpoch(core, std::move(data));
-            }
+            TaskQueueSource src(core);
+            // 钩子经 job 的虚函数转出：解算与回填已在 SolveDriver 内完成，
+            // 这里只负责「调钩子 → 入列 → 记账」。下面两个 lambda 是本文件与 SolveDriver
+            // 之间的固定转接层，各家差异全在 job 的虚函数实现里，故调用处无需组装回调。
+            SolveDriver::solveStream(src, solver,
+                [core, job, &solver](Solver &s, ObsItem &item, EpochData &data) {
+                    int idx = 0;
+                    {
+                        std::lock_guard lk(core->mutex);
+                        idx = static_cast<int>(core->epochs.size());
+                    }
+                    bool ok = false;
+                    try {
+                        ok = job->afterSolveEpoch(&s, &data, &item, idx);
+                    } catch (const std::exception &e) {
+                        LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
+                    } catch (...) {
+                        LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
+                    }
+                    if (!ok) data.solved = false;
+                    CommitEpoch(core, std::move(data));
+                    return true;   // 已自行处理 solved 标记，交由外层原样收下
+                },
+                [job](Solver &s, ObsItem &item) {
+                    job->beforeSolveEpoch(&s, &item);
+                });
         } catch (const std::exception &e) {
             LOG_ERROR << "[解算] 解算线程异常: " << e.what();
             core->setError(e.what());
         }
+        size_t totalEpochs = 0;
+        {
+            std::lock_guard lk(core->mutex);
+            totalEpochs = core->epochs.size();
+        }
+        LOG_INFO << "[解算] 结束: " << totalEpochs << " 历元, 耗时 "
+                 << std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - tSolve0).count() << " ms";
         core->solvingDone = true;
     }
 
     // 三个单站解算器各实例化一份，函数体仍留在 .cpp（不进头文件）。
     template void RunSingleStationSolve<SPP>(
-        const std::shared_ptr<SolveTask> &, const std::function<bool(SPP &)> &,
-        const std::function<bool(SPP &, ObsItem &, EpochData &, int)> &);
+        const std::shared_ptr<SolveTask> &, SPP &, const std::shared_ptr<SolverTaskBase> &);
     template void RunSingleStationSolve<PPPStatic>(
-        const std::shared_ptr<SolveTask> &, const std::function<bool(PPPStatic &)> &,
-        const std::function<bool(PPPStatic &, ObsItem &, EpochData &, int)> &);
+        const std::shared_ptr<SolveTask> &, PPPStatic &, const std::shared_ptr<SolverTaskBase> &);
     template void RunSingleStationSolve<PPPKinematic>(
-        const std::shared_ptr<SolveTask> &, const std::function<bool(PPPKinematic &)> &,
-        const std::function<bool(PPPKinematic &, ObsItem &, EpochData &, int)> &);
+        const std::shared_ptr<SolveTask> &, PPPKinematic &, const std::shared_ptr<SolverTaskBase> &);
     template void RunSingleStationSolve<LEO>(
-        const std::shared_ptr<SolveTask> &, const std::function<bool(LEO &)> &,
-        const std::function<bool(LEO &, ObsItem &, EpochData &, int)> &);
+        const std::shared_ptr<SolveTask> &, LEO &, const std::shared_ptr<SolverTaskBase> &);
 
     void PlotData::insert(int index, const EpochData &ep, const XYZ &refECEF) {
         times.push_back(index);

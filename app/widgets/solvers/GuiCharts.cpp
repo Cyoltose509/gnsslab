@@ -97,6 +97,42 @@ namespace GuiCharts {
         }
     }
 
+    // 单序列最大绘制点数：屏幕分辨率下超过此数的点不可分辨，
+    // 抽稀对视觉无影响，但显著降低 ImPlot / ImDrawList 每帧几何重建开销（GUI 卡顿主因）。
+    static constexpr int kMaxPlotPts = 2000;
+
+    // 抽稀：点数超过 maxPts 时按均匀步长抽稀，始终保留首末点。
+    // 各图 X 轴为历元序号，拖拽游标按 epochCount 钳制，与抽稀无关，故不会失同步。
+    template<typename T>
+    static std::vector<T> decimateSeries(const std::vector<T> &src, const int maxPts) {
+        const int n = static_cast<int>(src.size());
+        if (n <= maxPts || maxPts <= 1) return src;
+        std::vector<T> out;
+        out.reserve(maxPts + 1);
+        const int step = (n + maxPts - 1) / maxPts;  // ceil(n/maxPts)
+        for (int i = 0; i < n; i += step) out.push_back(src[i]);
+        if ((n - 1) % step != 0) out.push_back(src.back());
+        return out;
+    }
+
+    // 残差序列抽稀：额外保留断点(NaN)以免断裂处被 ImPlot 连成实线。
+    static void decimateResiduals(const std::vector<double> &t, const std::vector<double> &v,
+                                 std::vector<double> &ot, std::vector<double> &ov, const int maxPts) {
+        const int n = static_cast<int>(v.size());
+        ot.clear(); ov.clear();
+        if (n <= maxPts || maxPts <= 1) { ot = t; ov = v; return; }
+        const int step = (n + maxPts - 1) / maxPts;
+        ot.reserve(maxPts + 16); ov.reserve(maxPts + 16);
+        for (int i = 0; i < n; i += step) {
+            ot.push_back(t[i]); ov.push_back(v[i]);
+            // 把本步长区间内出现的断点(NaN)一并保留，避免断裂处被连成线
+            for (int j = i + 1; j < std::min(n, i + step); ++j) {
+                if (!std::isfinite(v[j])) { ot.push_back(t[j]); ov.push_back(v[j]); }
+            }
+        }
+        if ((n - 1) % step != 0) { ot.push_back(t.back()); ov.push_back(v.back()); }
+    }
+
     // ----------------------------------------------------------
     // ENU 收敛轨迹图
     // ----------------------------------------------------------
@@ -127,6 +163,11 @@ namespace GuiCharts {
             nn.push_back(enu_n[i]);
             uu.push_back(enu_u[i]);
         }
+        // 抽稀：屏幕分辨率下多余点不可分辨，显著降低每帧重绘开销
+        tt = decimateSeries(tt, kMaxPlotPts);
+        ee = decimateSeries(ee, kMaxPlotPts);
+        nn = decimateSeries(nn, kMaxPlotPts);
+        uu = decimateSeries(uu, kMaxPlotPts);
         const int nf = static_cast<int>(tt.size());
         // PPP 初始误差可达百米量级，收敛后亚米，故不固定 Y 轴（按需自动缩放）
         if (newed && nf > 0 && std::isfinite(tt.back()))
@@ -142,7 +183,7 @@ namespace GuiCharts {
             ImPlot::DragLineX(0, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
             int se = static_cast<int>(std::lround(sx));
             if (se < 0) se = 0;
-            if (se >= nf) se = nf - 1;
+            if (se >= n) se = n - 1;  // 钳制到完整历元数（X 轴为历元序号，与抽稀无关）
             selectedEpoch = se;
         }
         ImPlot::EndPlot();
@@ -184,8 +225,12 @@ namespace GuiCharts {
                     tt.push_back(t[i]);
                     vv.push_back(v[i]);
                 }
-                if (!tt.empty() && tt.size() == vv.size())
-                    ImPlot::PlotLine(base.c_str(), tt.data(), vv.data(), static_cast<int>(tt.size()));
+                if (!tt.empty() && tt.size() == vv.size()) {
+                    // 抽稀：逐卫星残差序列点数过多时按屏幕分辨率抽稀，保留断点
+                    std::vector<double> dtt, dvv;
+                    decimateResiduals(tt, vv, dtt, dvv, kMaxPlotPts);
+                    ImPlot::PlotLine(base.c_str(), dtt.data(), dvv.data(), static_cast<int>(dtt.size()));
+                }
             }
             double sx = selectedEpoch;
             ImPlot::DragLineX(1, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
@@ -234,17 +279,20 @@ namespace GuiCharts {
 
         for (auto &[sat, pts]: tracks) {
             if (pts.size() < 2) continue;
+            // 抽稀：天顶轨迹每帧重建多段折线，按屏幕分辨率抽稀显著降低开销
+            auto dpts = decimateSeries(pts, kMaxPlotPts);
+            if (dpts.size() < 2) continue;
             ImU32 trkCol = getSatCol(sat.system);
             trkCol = IM_COL32((trkCol >> IM_COL32_R_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_G_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_B_SHIFT) & 0xFF, 120);
             int segStart = 0;
-            for (size_t i = 1; i <= pts.size(); ++i) {
-                if (i == pts.size() || pts[i].epIdx - pts[i - 1].epIdx > 2) {
+            for (size_t i = 1; i <= dpts.size(); ++i) {
+                if (i == dpts.size() || dpts[i].epIdx - dpts[i - 1].epIdx > 2) {
                     if (i - segStart >= 2) {
                         std::vector<ImVec2> seg;
                         for (int k = segStart; k < static_cast<int>(i); ++k)
-                            seg.push_back(pt(pts[k].azDeg, pts[k].elDeg));
+                            seg.push_back(pt(dpts[k].azDeg, dpts[k].elDeg));
                         dl->AddPolyline(seg.data(), static_cast<int>(seg.size()), trkCol, ImDrawFlags_None, 1.5f);
                         for (int k = segStart; k < static_cast<int>(i); k += 5)
                             dl->AddCircleFilled(seg[k - segStart], 1.5f, trkCol);
@@ -522,6 +570,11 @@ namespace GuiCharts {
                                     ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1),
                                                        "%s", v.noSolveMsg.empty() ? "无定位解" : v.noSolveMsg.c_str());
                                 }
+                                // 解状态块（固定/浮点 + ratio）：PPP/LEO/RTK 在导出 CSV 上方以分割线分隔
+                                if (v.showSolveStatus) {
+                                    ImGui::Separator();
+                                    ImGui::TextColored(v.solveStatusColor, "解状态:  %s", v.solveStatusText.c_str());
+                                }
                                 ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50);
                                 if (v.onExportCsv) {
                                     const bool canExport = v.epochCount > 0;
@@ -654,8 +707,12 @@ namespace GuiCharts {
                                 const int nSigma = static_cast<int>(tt.size());
                                 if (nSigma > 0 && newed && std::isfinite(tt.back()))
                                     ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
-                                if (nSigma > 0)
-                                    ImPlot::PlotLine(cols[k].name, tt.data(), yy.data(), nSigma);
+                                if (nSigma > 0) {
+                                    // 抽稀：σ/精度时间序列点数过多时按屏幕分辨率抽稀
+                                    auto dtt = decimateSeries(tt, kMaxPlotPts);
+                                    auto dyy = decimateSeries(yy, kMaxPlotPts);
+                                    ImPlot::PlotLine(cols[k].name, dtt.data(), dyy.data(), static_cast<int>(dtt.size()));
+                                }
                                 // 与其他时间序列图一致的可拖拽时间游标（与 selectedEpoch 双向同步）
                                 if (nSigma > 0) {
                                     double sx = (v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0);
@@ -712,10 +769,17 @@ namespace GuiCharts {
                             if (nRtn > 0 && v.newed)
                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, rt.back(), ImPlotCond_Once);
                             if (nRtn > 0) {
-                                ImPlot::PlotLine("R", rt.data(), rr.data(), nRtn);
-                                ImPlot::PlotLine("T", rt.data(), rrt.data(), nRtn);
-                                ImPlot::PlotLine("N", rt.data(), rrn.data(), nRtn);
-                                ImPlot::PlotLine("3D", rt.data(), rd3.data(), nRtn);
+                                // 抽稀：R/T/N/3D 轨迹按屏幕分辨率抽稀（各序列同长，步长一致保持对齐）
+                                auto drt = decimateSeries(rt, kMaxPlotPts);
+                                auto drr = decimateSeries(rr, kMaxPlotPts);
+                                auto drrt = decimateSeries(rrt, kMaxPlotPts);
+                                auto drrn = decimateSeries(rrn, kMaxPlotPts);
+                                auto drd3 = decimateSeries(rd3, kMaxPlotPts);
+                                const int dn = static_cast<int>(drt.size());
+                                ImPlot::PlotLine("R", drt.data(), drr.data(), dn);
+                                ImPlot::PlotLine("T", drt.data(), drrt.data(), dn);
+                                ImPlot::PlotLine("N", drt.data(), drrn.data(), dn);
+                                ImPlot::PlotLine("3D", drt.data(), drd3.data(), dn);
                             }
                             // 与其他时间序列图一致的可拖拽时间游标（与 selectedEpoch 双向同步）
                             double sx = (v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0);
@@ -769,8 +833,13 @@ namespace GuiCharts {
                             if (nRms > 0 && std::isfinite(tt.back()))
                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Once);
                             if (nRms > 0) {
-                                ImPlot::PlotLine("Code RMS", tt.data(), rc.data(), nRms);
-                                ImPlot::PlotLine("Phase RMS", tt.data(), rp.data(), nRms);
+                                // 抽稀：RMS 时间序列按屏幕分辨率抽稀（各序列同长，步长一致保持对齐）
+                                auto dtt = decimateSeries(tt, kMaxPlotPts);
+                                auto drc = decimateSeries(rc, kMaxPlotPts);
+                                auto drp = decimateSeries(rp, kMaxPlotPts);
+                                const int dn = static_cast<int>(dtt.size());
+                                ImPlot::PlotLine("Code RMS", dtt.data(), drc.data(), dn);
+                                ImPlot::PlotLine("Phase RMS", dtt.data(), drp.data(), dn);
                             }
                             // 与其他时间序列图一致的可拖拽时间游标（与 selectedEpoch 双向同步）
                             if (nRms > 0) {

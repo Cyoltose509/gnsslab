@@ -3,7 +3,7 @@
 #include <windows.h>
 #include "GuiSppProcessor.h"
 #include "GuiHelpers.h"
-#include "core/AppConfig.h"
+#include "core/PathMemory.h"
 #include "ui/Gui.h"
 #include "imgui.h"
 #include "QualityControl.h"
@@ -23,7 +23,7 @@
 
 namespace GuiSppProcessor {
     void SppTask::renderConfigPanel() {
-        GuiHelpers::beginConfigWindow("处理配置###cfg_", *this);
+        GuiHelpers::beginConfigBody("处理配置###cfg_", *this);
 
         if (ImGui::BeginTabBar("##cfg_tabs")) {
             if (ImGui::BeginTabItem("文件")) {
@@ -50,20 +50,20 @@ namespace GuiSppProcessor {
                             std::string p = wideToAcp(wp);
                             if (std::find(core->navFiles.begin(), core->navFiles.end(), p) == core->navFiles.end())
                                 core->navFiles.push_back(p);
-                            AppConfig::instance().addRecent("nav", p);
+                            GnssCore::PathMemory::instance().addRecent("nav", p);
                         }
                     }
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("从记录添加")) ImGui::OpenPopup("##nav_hist_pop");
                 if (ImGui::BeginPopup("##nav_hist_pop")) {
-                    const auto recent = AppConfig::instance().getRecent("nav");
+                    const auto recent = GnssCore::PathMemory::instance().getRecent("nav");
                     if (recent.empty()) ImGui::TextDisabled("(暂无记录)");
                     for (auto &r: recent) {
                         if (ImGui::Selectable(r.c_str())) {
                             if (std::find(core->navFiles.begin(), core->navFiles.end(), r) == core->navFiles.end())
                                 core->navFiles.push_back(r);
-                            AppConfig::instance().addRecent("nav", r);
+                            GnssCore::PathMemory::instance().addRecent("nav", r);
                         }
                     }
                     ImGui::EndPopup();
@@ -78,9 +78,12 @@ namespace GuiSppProcessor {
                     if (const std::string path = core->obsPathBuf; path.empty()) {
                         ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "请先选择观测文件");
                     } else {
+                        // 记忆手打的观测路径（浏览按钮另有 set，但直接输入/粘贴的只有这里落盘）
+                        GnssCore::PathMemory::instance().set("spp_obs", path);
                         core->filePath = path;
                         core->fileName = GuiHelpers::baseName(path);
                         core->isRinex = GuiHelpers::isRinexObsPath(path);
+                        LOG_INFO << "[SPP] 开始解算: 观测=" << path;
                         state = State::Running;
                         loading = true;
                         core->loading = true;
@@ -111,8 +114,9 @@ namespace GuiSppProcessor {
                     core->isRealtime = true;
                     isRealtime = true;
                     core->fileName = ip + ":" + port;
-                    AppConfig::instance().set("rt_ip", ip);
-                    AppConfig::instance().set("rt_port", port);
+                    LOG_INFO << "[SPP] 开始实时解算: " << ip << ":" << port;
+                    GnssCore::PathMemory::instance().set("rt_ip", ip);
+                    GnssCore::PathMemory::instance().set("rt_port", port);
                     GuiRealtimeProcessor::ConnectionConfig config;
                     config.ip = ip;
                     config.port = std::atoi(port.c_str()); //NOLINT
@@ -133,7 +137,7 @@ namespace GuiSppProcessor {
             }
             ImGui::EndTabBar();
         }
-        ImGui::End();
+        GuiHelpers::endConfigBody();
     }
 
     static void ReaderThread(const std::shared_ptr<GnssTask::SolveTask> &task) {
@@ -170,9 +174,8 @@ namespace GuiSppProcessor {
                 int ok = 0;
                 while (oem7.getNextEpoch(obs)) {
                     if (task->stop) break;
-                    auto eph = std::make_shared<EphemerisTable>();
-                    for (auto &[prn, e]: oem7.latestGps) eph->gps[prn] = {std::make_shared<GPSEphem>(e)};
-                    for (auto &[prn, e]: oem7.latestBds) eph->bds[prn] = {std::make_shared<BDSEphem>(e)};
+                    // 与 RTK 流式路径统一：复用写时复制星历快照（toe 不变时各历元共享同一 shared_ptr，避免逐历元深拷贝整张表）
+                    auto eph = oem7.ephSnapshot();
                     {
                         std::lock_guard lk(task->qcInputMutex);
                         task->qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
@@ -204,44 +207,53 @@ namespace GuiSppProcessor {
         task->loading = false;
     }
 
-    static void SolverThread(const std::shared_ptr<GnssTask::SolveTask> &task) {
-        std::shared_ptr<EphemerisTable> lastGoodEph; // 持有最近一份有效星历，避免指向已销毁 item.eph 的裸指针悬垂
-        GnssTask::RunSingleStationSolve<SPP>(task,
-                                             [&](SPP &spp) {
-                                                 for (const auto &np: task->navFiles) {
-                                                     try {
-                                                         spp.loadBrdc(np);
-                                                         task->hasNav = true;
-                                                         LOG_INFO << "SPP 读取广播星历: " << np;
-                                                     } catch (const std::exception &e) {
-                                                         LOG_ERROR << "SPP 读取广播星历失败 " << np << ": " << e.what();
-                                                     }
-                                                 }
-                                                 return true;
-                                             },
-                                             [&](SPP &spp, GnssTask::ObsItem &item, GnssTask::EpochData &data, int) {
-                                                 if (item.eph) {
-                                                     const EphemerisTable *tbl = item.eph.get();
-                                                     if (tbl->gps.empty() && tbl->bds.empty() && lastGoodEph) tbl = lastGoodEph.get();
-                                                     else if (!tbl->gps.empty() || !tbl->bds.empty()) lastGoodEph = item.eph;
-                                                     spp.ephTable = *tbl; // shared_ptr 元素深拷贝廉价
-                                                 }
-                                                 if (!task->isRinex && item.eph) task->hasNav = true;
-                                                 if (task->isRinex && !task->hasNav) task->noEphSolve = true;
+    // ---- SppTask 的解算钩子（骨架见 RunSingleStationSolve）----
 
-                                                 if (!spp.processEpoch(item.obs)) return false;
-                                                 data.getFromSPP(spp);
-                                                 if (!task->initializedRefECEF) {
-                                                     task->refECEF = data.sppResult.xyz;
-                                                     task->initializedRefECEF = true;
-                                                 }
-                                                 return true;
-                                             });
+    bool SppTask::initSolver(void *solverPtr) {
+        SPP &spp = *static_cast<SPP *>(solverPtr);
+        for (const auto &np: core->navFiles) {
+            try {
+                spp.loadBrdc(np);
+                core->hasNav = true;
+                LOG_INFO << "SPP 读取广播星历: " << np;
+            } catch (const std::exception &e) {
+                LOG_ERROR << "SPP 读取广播星历失败 " << np << ": " << e.what();
+            }
+        }
+        return true;
+    }
+
+    // 星历必须在 processEpoch 之前注入，故用 beforeSolveEpoch 而非 afterSolveEpoch
+    void SppTask::beforeSolveEpoch(void *solverPtr, GnssTask::ObsItem *itemPtr) {
+        SPP &spp = *static_cast<SPP *>(solverPtr);
+        GnssTask::ObsItem &item = *itemPtr;
+        if (item.eph) {
+            const EphemerisTable *tbl = item.eph.get();
+            if (tbl->gps.empty() && tbl->bds.empty() && lastGoodEph) tbl = lastGoodEph.get();
+            else if (!tbl->gps.empty() || !tbl->bds.empty()) lastGoodEph = item.eph;
+            spp.ephTable = *tbl; // shared_ptr 元素深拷贝廉价
+        }
+        if (!core->isRinex && item.eph) core->hasNav = true;
+        if (core->isRinex && !core->hasNav) core->noEphSolve = true;
+    }
+
+    bool SppTask::afterSolveEpoch(void *, GnssTask::EpochData *data, GnssTask::ObsItem *, int) {
+        if (!data->solved) return false;
+        if (!core->initializedRefECEF) {
+            core->refECEF = data->sppResult.xyz;
+            core->initializedRefECEF = true;
+        }
+        return true;
+    }
+
+    static void SolverThread(const std::shared_ptr<SppTask> &task) {
+        SPP spp;
+        GnssTask::RunSingleStationSolve<SPP>(task->core, spp, task);
     }
 
     void SolveThread(const std::shared_ptr<SppTask> &task) {
         std::thread thRead(ReaderThread, task->core);
-        std::thread thSolve(SolverThread, task->core);
+        std::thread thSolve(SolverThread, task);
         thRead.join();
         thSolve.join();
         task->state = SppTask::State::Done;

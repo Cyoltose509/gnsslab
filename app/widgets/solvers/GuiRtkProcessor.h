@@ -13,6 +13,7 @@
 #include "SolverTask.h"   // 复用 SolveTask / EpochData / PlotData / RenderTask / LaunchQC
 #include "EphemerisTable.h"
 #include "RTK.h"                  // RTK 求解器（RtkTask 持有其实例）
+#include "core/PathMemory.h"
 
 namespace GuiRtkProcessor {
     struct RtkTask : GnssTask::SolverTaskBase {
@@ -38,10 +39,6 @@ namespace GuiRtkProcessor {
             ObsData base;
             ObsData rover;
             std::shared_ptr<EphemerisTable> eph;
-            // 两站近似坐标随历元传递。原先读写两线程共用 RTK::mBaseXyz / mRoverApprox：
-            // 读取线程写、解算线程已被 processEpoch 读，是实打实的数据竞争。
-            Vector3d baseApprox = Vector3d::Zero();
-            Vector3d roverApprox = Vector3d::Zero();
         };
 
         std::queue<RtkPair> pairQueue;
@@ -52,7 +49,14 @@ namespace GuiRtkProcessor {
         std::atomic<int> totalEpochs{0};
         EphemerisTable navTable; // 全量广播星历（RINEX 路径，逐历元共享传给 processEpoch）
 
-        RtkTask() { core = std::make_shared<GnssTask::SolveTask>(); }
+        // 回填上次选择（此前只写不读，重启后三个路径框全空）
+        RtkTask() {
+            core = std::make_shared<GnssTask::SolveTask>();
+            const auto &pm = GnssCore::PathMemory::instance();
+            baseObsPathBuf = pm.get("rtk_base");
+            roverObsPathBuf = pm.get("rtk_rover");
+            navPathBuf = pm.get("rtk_nav");
+        }
 
         ~RtkTask() override {
             if (core) core->stop = true;

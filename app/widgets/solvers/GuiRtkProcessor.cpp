@@ -3,12 +3,11 @@
 #include <windows.h>
 #include <commdlg.h>
 #include "GuiRtkProcessor.h"
-#include "GuiHelpers.h"   // fileRow / renderCutoffAndSystems / inputTextStd / beginConfigWindow / renderCancelButton
-#include "core/AppConfig.h"
+#include "GuiHelpers.h"   // fileRow / renderCutoffAndSystems / inputTextStd / beginConfigBody / renderCancelButton
+#include "core/PathMemory.h"
 #include "ui/Gui.h"
 #include "imgui.h"
-#include "RTK.h"               // 手写 RTK 双差非组合求解器
-#include "SPP.h"               // OEM7 无 BESTPOS 时用 SPP 估基准/流动站近似坐标
+#include "RTK.h"               // 手写 RTK 双差非组合求解器（自举基准/流动站线性化初值）
 #include "RinexObsReader.h"
 #include "RinexNavStore.h"
 #include "OEM7Reader.h"
@@ -16,7 +15,9 @@
 #include "Exception.h"         // EndOfFile, SyncException
 #include "QualityControl.h"    // QC::makeQCObsEpoch / QualityReport
 #include "Log.h"
+#include "SolveDriver.h"       // 解算编排共享层：feedRtk（CLI 与 GUI 共用回填实现）
 
+#include <chrono>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -50,13 +51,6 @@ namespace GuiRtkProcessor {
     // 在首个含有效星历的历元上做 SPP 冷启动（seed=0，地心），估计该站近似 ECEF 坐标。
     // OEM7 课程日志常无 BESTPOS，而前几个历元的星历快照可能仍空 → 跳过空快照。
     // 成功返回 true（|xyz|>1e6），失败返回 false。
-
-    // 取首个含有效 BESTPOS 天线位置的历元坐标（OEM7 首个 RANGE 常为 (0,0,0)）
-    static bool firstBestpos(const std::vector<ObsData> &E, Vector3d &out) {
-        for (const auto &e : E)
-            if (e.antennaPosition.norm() > 1e3) { out = e.antennaPosition; return true; }
-        return false;
-    }
 
     // 每星几何（仰角/方位角/位置）现由 RTK::processEpoch 直接存入 satElevData/satAzimData/
     // satPVTRecTime（与 SPP 同名字段），GUI 经 feedRtkEpoch 读取，不再在此重算。
@@ -94,64 +88,58 @@ namespace GuiRtkProcessor {
             baseQc->qcLazy = true;
 
             if (oem7) {
-                // ---- OEM7 路径（星历由日志逐历元内联，广播星历可选）----
+                // ---- OEM7 流式路径（逐历元读取，避免 readAll 急切加载整文件；双站时间对齐与原 matchEpochPairs 等价）----
                 OEM7Reader br, rr;
                 if (!br.open(task->baseObsPathBuf) || !rr.open(task->roverObsPathBuf)) {
                     failRead(task, "无法打开 OEM7 日志");
                     return;
                 }
-                std::vector<ObsData> baseE, roverE;
-                std::vector<EphemerisTable> baseEph, roverEph;
-                br.readAll(baseE, baseEph);
-                rr.readAll(roverE, roverEph);
-                if (baseE.empty() || roverE.empty()) {
-                    failRead(task, "OEM7 无历元");
-                    return;
-                }
-                // 基准站坐标：优先首个有效 BESTPOS 历元；否则用 SPP 估（OEM7 课程日志常无 BESTPOS）。
-                // 二者皆无 → 明确报错，不再静默 "无历元数据"。
-                Vector3d baseXyz = Vector3d::Zero();
-                bool haveBase = firstBestpos(baseE, baseXyz);
-                if (!haveBase) {
-                    // （原 bi0 索引循环已删：其赋值从未被使用，且 sppApprox 内部本就会跳过空星历）
-                    haveBase = SPP::estimateApproxPosition(baseE, baseEph, task->enabledSystems, task->cutoffDeg, baseXyz);
-                }
-                if (!haveBase) {
-                    failRead(task, "OEM7 基准站日志无有效 BESTPOS 且 SPP 无法定位；请用 RINEX 或在配置中提供基准站坐标");
-                    return;
-                }
-                const Vector3d baseApprox = baseXyz;
 
-                // 流动站线性化初值：优先 BESTPOS，否则 SPP 估（短基线二者相近）
-                Vector3d roverXyz = Vector3d::Zero();
-                bool haveRover = firstBestpos(roverE, roverXyz);
-                if (!haveRover) {
-                    // （原 ri0 索引循环已删：同上）
-                    haveRover = SPP::estimateApproxPosition(roverE, roverEph, task->enabledSystems, task->cutoffDeg, roverXyz);
-                }
-                const Vector3d roverApprox = haveRover ? roverXyz : Vector3d::Zero();
-                LOG_INFO << "[RTK] OEM7 base XYZ = " << baseXyz.transpose()
-                         << (firstBestpos(baseE, baseXyz) ? " (BESTPOS)" : " (SPP 估算)");
+                // 基准站/流动站近似坐标由 RTK::processEpoch 内部自举（BESTPOS/头坐标，缺失则 SPP 冷启动）。
+                // 读取线程只做双站时间对齐，不再计算任何解算量。
 
-                // 双站历元时间对齐由 RTK::matchEpochPairs 提供（原为 GUI 内联的双指针扫描）
+                // 合并读取器：RTK 内部自举线性化初值，读取线程仅做双站时间对齐。
+                auto nextBase = [&](ObsData &out, std::shared_ptr<EphemerisTable> &eph) -> bool {
+                    if (!br.getNextEpoch(out)) return false;
+                    eph = br.ephSnapshot(); return true;
+                };
+                auto nextRover = [&](ObsData &out) -> bool {
+                    return rr.getNextEpoch(out);
+                };
+
+                const double tol = 0.001;   // 与 RTK::matchEpochPairs 默认一致
                 int ok = 0;
-                for (const auto &pr: RTK::matchEpochPairs(baseE, roverE)) {
+                ObsData base, rover; std::shared_ptr<EphemerisTable> baseEph;
+                if (!nextBase(base, baseEph)) { failRead(task, "OEM7 base 无历元"); return; }
+                if (!nextRover(rover))      { failRead(task, "OEM7 rover 无历元"); return; }
+
+                bool roverExhausted = false;
+                while (true) {
                     if (task->stop) break;
-                    const size_t bi = pr.first, ri = pr.second;
-                    if (bi >= baseEph.size()) continue; // 星历快照较短时跳过（原代码此处会越界）
-                    // EphemerisTable::gps/bds 存的是 vector<shared_ptr<...>>，直接整体浅拷贝（共享星历）即可
-                    auto eph = std::make_shared<EphemerisTable>(baseEph[bi]);
+                    // 推进流动站直到其时间 >= 基准站时间
+                    while (!roverExhausted && rover.epoch < base.epoch) {
+                        if (!nextRover(rover)) { roverExhausted = true; break; }
+                    }
+                    if (roverExhausted) break;
+                    if (rover.epoch > base.epoch + tol) {
+                        // 该基准站历元落在流动站时间窗之外 → 跳过，读下一基准站历元
+                        if (!nextBase(base, baseEph)) break;
+                        continue;
+                    }
+                    // 匹配成功，入队解算（近似坐标由 RTK 内部自举）
                     {
                         std::lock_guard lk(task->pairMtx);
-                        task->pairQueue.push({baseE[bi], roverE[ri], eph, baseApprox, roverApprox});
+                        task->pairQueue.push({base, rover, baseEph});
                     }
                     task->pairCv.notify_one();
                     {
                         std::lock_guard<std::mutex> lk(task->core->qcInputMutex);
-                        task->core->qcInput.push_back(QC::makeQCObsEpoch(roverE[ri], roverE[ri].weekSecond.sow));
+                        task->core->qcInput.push_back(QC::makeQCObsEpoch(rover, rover.weekSecond.sow));
                     }
-                    baseQcInput.push_back(QC::makeQCObsEpoch(baseE[bi], baseE[bi].weekSecond.sow));
+                    baseQcInput.push_back(QC::makeQCObsEpoch(base, base.weekSecond.sow));
                     ++ok;
+                    if (!nextBase(base, baseEph)) break;
+                    if (!nextRover(rover))   { roverExhausted = true; break; }
                 }
                 task->totalEpochs = ok;
             } else {
@@ -189,28 +177,28 @@ namespace GuiRtkProcessor {
                     failRead(task, "基准站 RINEX 解析失败");
                     return;
                 }
-                Vector3d baseXyz = base.antennaPosition;
-                if (baseXyz.norm() < 1e3) {
-                    // RINEX 头缺 APPROX POSITION XYZ → 用 SPP 估（广播星历已加载）
-                    ObsData work = base;
-                    work.antennaPosition = Vector3d::Zero();
-                    SPP spp;
-                    spp.ephTable = task->navTable;
-                    spp.setEnabledSystems(task->enabledSystems);
-                    spp.setCutoffElevDeg(task->cutoffDeg);
-                    try { if (spp.processEpoch(work)) baseXyz = spp.result.xyz; }
-                    catch (const std::exception &e) { LOG_WARN << "[RTK] RINEX base SPP 失败: " << e.what(); }
-                }
-                if (baseXyz.norm() < 1e3) {
-                    failRead(task, "RINEX 基准站无 APPROX POSITION XYZ 且 SPP 无法定位；请提供含坐标的观测文件");
-                    return;
-                }
-                const Vector3d baseApprox = baseXyz;
-                LOG_INFO << "[RTK] RINEX base XYZ = " << baseXyz.transpose() << " (RINEX 头 APPROX / SPP)";
+                // 基准站近似坐标由 RTK::processEpoch 内部自举（RINEX 头 APPROX 或 SPP 冷启动），
+                // 读取线程不再计算。
 
-                // 流动站线性化初值取首个历元，之后沿用；随历元入队，不再写共享的 RTK 成员
-                Vector3d roverApprox = Vector3d::Zero();
-                bool roverApproxSet = false;
+                // RTK 启动加速：当基准站文件远大于流动站（如超大参考站 + rover 仅取尾部窗口）时，
+                // 同步循环原本要逐历元解析几乎整个 base 才能与 rover 对齐（数万历元 → 数秒）。
+                // 这里先探测 rover 首历元时间，再把 base 流跳到该历元附近（仅扫历元行，亚秒级）。
+                // 只重定位流指针、不改任何已解析历元数据，对齐数据行为与原逐历元推进完全一致。
+                {
+                    RinexObsReader probeRdr;
+                    std::fstream probeFile(task->roverObsPathBuf, std::ios::in);
+                    if (probeFile.is_open()) {
+                        probeRdr.pFileStream = &probeFile;
+                        try {
+                            const ObsData rover0 = probeRdr.parseRinexObs();
+                            baseRdr.fastForwardToEpoch(rover0.epoch);
+                        } catch (const std::exception &) {
+                            // 探测失败不致命：退回原始逐历元同步
+                        }
+                    }
+                }
+
+                // 流动站线性化初值由 RTK::processEpoch 内部自举（首历元 antennaPosition 或 SPP）。
                 int ok = 0;
                 while (true) {
                     if (task->stop) break;
@@ -232,13 +220,9 @@ namespace GuiRtkProcessor {
                     }
 
                     if (gotRover) {
-                        if (!roverApproxSet) {
-                            roverApprox = rover.antennaPosition;
-                            roverApproxSet = true;
-                        }
                         {
                             std::lock_guard lk(task->pairMtx);
-                            task->pairQueue.push({base, rover, nullptr, baseApprox, roverApprox});
+                            task->pairQueue.push({base, rover, nullptr});
                         }
                         task->pairCv.notify_one();
                         {
@@ -303,9 +287,8 @@ namespace GuiRtkProcessor {
                 }
                 if (task->stop) break;
 
-                // 近似坐标随历元传入；task->rtk 现为解算线程独占，读取线程不再触碰。
-                task->rtk.mBaseXyz = item.baseApprox;
-                task->rtk.mRoverApprox = item.roverApprox;
+                // 基准/流动站线性化初值由 RTK::processEpoch 内部自举（BESTPOS/头坐标或 SPP 冷启动）。
+                // task->rtk 仅解算线程访问，读取线程不再写任何解算量，无数据竞争。
 
                 EphemerisTable *eph = item.eph ? item.eph.get() : &task->navTable;
                 bool ok = false;
@@ -322,7 +305,8 @@ namespace GuiRtkProcessor {
                 data.getFromObs(item.rover);
                 feedRtkEpoch(data, task->rtk);   // 与 SPP/PPP/LEO 同形：收口 result/几何/排除标记
 
-                const Vector3d baseXyz = item.baseApprox;
+                // refECEF 取本历元解算后基准站坐标（解算线程内读取，安全）
+                const Vector3d baseXyz = task->rtk.mBaseXyz;
                 GnssTask::CommitEpoch(task->core, std::move(data), [&](int, EpochData &) {
                     if (!task->core->initializedRefECEF) {
                         task->core->refECEF = XYZ(baseXyz.x(), baseXyz.y(), baseXyz.z());
@@ -337,32 +321,13 @@ namespace GuiRtkProcessor {
         task->core->solvingDone = true;
     }
 
+    // 委托给 SolveDriver 的唯一回填实现（CLI 与 GUI 共用，消灭重复）
     void feedRtkEpoch(EpochData &data, const RTK &rtk) {
-        const Result &r = rtk.result;
-        if (r.numSats <= 0) { data.solved = false; return; }
-        data.solved = true;
-        data.sppResult = r;               // stat/ratio/numSats/sigmaP/sigmaXYZ/postRes/xyz 全带走
-        data.rtkStat = r.stat;
-        data.rtkRatio = r.ratio;
-        data.rtkBaseFloat = rtk.mBaselineFloat;
-
-        const int size = static_cast<int>(data.satIds.size());
-        for (int i = 0; i < size; ++i) {
-            const SatID &sat = data.satIds[i];
-            auto itE = rtk.satElevData.find(sat);
-            auto itA = rtk.satAzimData.find(sat);
-            auto itP = rtk.satPVTRecTime.find(sat);
-            if (itE != rtk.satElevData.end()) data.elevations[i] = itE->second;
-            if (itA != rtk.satAzimData.end()) data.azimuths[i] = itA->second;
-            if (itP != rtk.satPVTRecTime.end()) data.satPVTs[i] = itP->second;
-        }
-        // 排除判据与 getFromSPP 同源：未进入双差解算，或无有效星历/位置的卫星
-        data.applySatRule([&](const SatID &sat, const PVT &pvt) {
-            return rtk.mUsedSats.count(sat) > 0 && pvt.p.squaredNorm() > 1.0;
-        });
+        SolveDriver::feedRtk(data, rtk);
     }
 
     static void SolveThread(const std::shared_ptr<RtkTask> &task) {
+        const auto tRtk0 = std::chrono::steady_clock::now();
         task->rtkCfg.cutoffElevRad = task->cutoffDeg * PI / 180.0;
         task->rtkCfg.enabledSystems = task->enabledSystems;
         task->rtk.setConfig(task->rtkCfg);
@@ -372,6 +337,14 @@ namespace GuiRtkProcessor {
         thRead.join();
         thSolve.join();
 
+        size_t rtkEpochs = 0;
+        {
+            std::lock_guard lk(task->core->mutex);
+            rtkEpochs = task->core->epochs.size();
+        }
+        LOG_INFO << "[RTK] 结束: " << rtkEpochs << " 历元, 耗时 "
+                 << std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - tRtk0).count() << " ms";
         task->state = RtkTask::State::Done;
         task->done = true;
         task->loading = false;
@@ -379,12 +352,12 @@ namespace GuiRtkProcessor {
     }
 
     void RtkTask::renderConfigPanel() {
-        GuiHelpers::beginConfigWindow("RTK 处理配置###rtk_cfg_", *this);
+        GuiHelpers::beginConfigBody("RTK 处理配置###rtk_cfg_", *this);
 
         // 与 PPP/LEO 完全一致：直接复用 GuiHelpers 预置过滤器（fObs 已含 *.??O 与 *.log，fRnx 含广播星历）
         GuiHelpers::fileRow("基准站观测文件", &this->baseObsPathBuf, "rtk_base", GuiHelpers::fObs, 3, {});
         GuiHelpers::fileRow("流动站观测文件", &this->roverObsPathBuf, "rtk_rover", GuiHelpers::fObs, 3, {});
-        GuiHelpers::fileRow("广播星历 BRDC", &this->navPathBuf, "rtk_nav", GuiHelpers::fRnx, 2, {});
+        GuiHelpers::fileRow("广播星历 BRDC", &this->navPathBuf, "rtk_nav", GuiHelpers::fRnx, 2, {}, "rtk_base");
         ImGui::Separator();
         GuiHelpers::renderCutoffAndSystems(&this->cutoffDeg, &this->enabledSystems);
 
@@ -396,7 +369,7 @@ namespace GuiRtkProcessor {
                 ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "RINEX 模式需要广播星历文件");
             } else {
                 // 记忆上次选择（项目外 ini）
-                const auto &cfg = AppConfig::instance();
+                const auto &cfg = GnssCore::PathMemory::instance();
                 cfg.set("rtk_base", this->baseObsPathBuf);
                 cfg.set("rtk_rover", this->roverObsPathBuf);
                 cfg.set("rtk_nav", this->navPathBuf);
@@ -404,6 +377,8 @@ namespace GuiRtkProcessor {
                 this->core->filePath = this->roverObsPathBuf;
                 this->core->fileName = GuiHelpers::baseName(this->roverObsPathBuf) + " / "
                                         + GuiHelpers::baseName(this->baseObsPathBuf);
+                LOG_INFO << "[RTK] 开始解算: 基准=" << this->baseObsPathBuf
+                         << ", 流动站=" << this->roverObsPathBuf;
 
                 this->state = State::Running;
                 this->loading = true;
@@ -414,7 +389,7 @@ namespace GuiRtkProcessor {
         ImGui::SameLine();
         GuiHelpers::renderCancelButton(this);
 
-        ImGui::End();
+        GuiHelpers::endConfigBody();
     }
 
 }

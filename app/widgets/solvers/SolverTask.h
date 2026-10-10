@@ -64,11 +64,16 @@ struct TrajPoint {
 };
 
 namespace GnssTask {
-    // 配置页窗口名的序号源（见 SolverTaskBase::cfgIndex）
+    // 配置页子区 ID 的序号源（见 SolverTaskBase::cfgIndex）
     inline int NextCfgIndex() {
         static std::atomic<int> seq{0};
         return seq.fetch_add(1) + 1;
     }
+
+    // EpochData / ObsItem 定义在下方（它们含 vector 等完整类型，无法前置定义）。
+    // 钩子只以指针接收，故此处前置声明即可。
+    struct EpochData;
+    struct ObsItem;
 
     // 解算 Task 生命周期样板基类：PPP/RTK/LEO/SPP/实时 五套 Processor 的 Task 共享同一套
     // 状态机/后台线程/停止标志，避免各自重复声明 {State,worker,loading,done,stop,...}。
@@ -120,6 +125,24 @@ namespace GnssTask {
 
         virtual void renderConfigPanel() = 0;
 
+        // ---- 解算线程的三个多态点（见 RunSingleStationSolve）----
+        // 单站解算（SPP / PPP / LEO）的骨架完全相同，差异全在下面这三个钩子里。
+        // 做成虚函数而非「传 std::function / 回调结构体」：调用处不必组装任何回调，
+        // 派生类按需 override，未用到的（RTK、以及不需要 pre-hook 的 PPP/LEO）不写即可。
+        // 派生类要读自己的成员（如 SPP 的 navFiles），虚函数天然能访问 this，无需捕获。
+        // solver 一律以 void* 传入：基类不知道具体解算器类型（SPP/PPPStatic/PPPKinematic/LEO），
+        // 由派生类 static_cast 回自身类型——全项目仅此一处类型擦除，换来调用处彻底不传回调。
+
+        // 加载产品 / 配噪声。返回 false 表示初始化失败、本次解算放弃。
+        virtual bool initSolver(void *solver) { return true; }
+
+        // processEpoch 之前触发：SPP 需在此注入逐历元星历（须早于解算）。
+        virtual void beforeSolveEpoch(void *solver, ObsItem *item) {}
+
+        // processEpoch 之后写各家差异（参考原点、共享状态）。data 已解算并回填好。
+        // 返回 false 表示该历元作废。
+        virtual bool afterSolveEpoch(void *solver, EpochData *data, ObsItem *item, int index) { return true; }
+
         // 配置页窗口名后缀：进程内按创建顺序分配，不掺对象地址（避免地址复用撞名）。
         // ImGui 拿完整窗口名当 ini 持久化键，故必须跨运行稳定，否则拖过的尺寸记不住。
         int cfgIndex = NextCfgIndex();
@@ -165,14 +188,66 @@ namespace GnssTask {
         double rtkRatio = 0.0;
         int rtkStat = 0; // 0=无效, 1=Fixed, 2=Float
 
-        void getFromSPP(const SPP &spp);
+        // 唯一一份 per-epoch 回填（观测骨架 / SPP 解算结果），SPP/PPP/LEO 共用。
+        // 定义为 inline 成员：CLI 不链 SolverTask.cpp，须经由头文件拿到定义；
+        // SolveDriver 的 fillFromObs/fillFromSPP 薄封装也只是转调这里，逻辑不重复。
+        void getFromObs(const ObsData &obs) {
+            week = obs.weekSecond.week;
+            sow = obs.weekSecond.sow;
+            satIds.clear();
+            elevations.clear();
+            azimuths.clear();
+            satPVTs.clear();
+            rejected.clear();
+            allObs.clear();
+            for (auto &[sat, typeMap] : obs.satTypeValueData) {
+                satIds.push_back(sat);
+                elevations.push_back(0.0);
+                azimuths.push_back(0.0);
+                satPVTs.emplace_back();
+                rejected.push_back(false);
+                allObs.push_back(typeMap);
+            }
+            numObs = static_cast<int>(satIds.size());
+        }
 
-        void getFromObs(const ObsData &obs);
-
-        // 按解算器给出的「该星是否可用」判据统一刷 rejected 与 numSatsResult。
-        // 三种解算器的排除规则语义本就相同（解算器显式排除，或无有效星历/位置），
-        // 各自手写一遍容易漏掉零 PVT 守卫 → 收口到这里，usable(sat, pvt) 只描述解算器差异。
-        void applySatRule(const std::function<bool(const SatID &, const PVT &)> &usable);
+        void getFromSPP(const SPP &spp) {
+            const auto &result = spp.result;
+            // 有效解判据：有参与解算的卫星，且位置落在合理地球半径范围内。
+            // 仅凭 numSats>0 不够——PPP 首历元尚未收敛时 result.numSats 可>0 但 result.xyz
+            // 仍是未初始化内存(denormal)，曾被当 solved 写出垃圾并污染 firstSolvedRef 的基准点。
+            const double r = result.xyz.norm();
+            // 上限必须容纳星载接收机：LEO 轨道高度数百 km（Swarm-C 实测 r≈6.80e6），
+            // 原先的 6.39e6 是**地面站**上限，会让 LEO 每个历元都被判无效解 ⇒
+            // 现象极隐蔽：解算本身完全正常(ok=1/nsat=8)，但 GUI 显示"全程无解"且无任何报错。
+            // 下限仍保留 6.35e6 以拦截未初始化/denormal 位置（其 norm 趋近 0）。
+            const bool posValid = (r > 6.35e6) && (r < 8.0e6);
+            if (result.numSats > 0 && posValid) {
+                solved = true;
+                sppResult = result;
+                const int n = static_cast<int>(satIds.size());
+                for (int i = 0; i < n; i++) {
+                    auto it = spp.satElevData.find(satIds[i]);
+                    if (it != spp.satElevData.end()) elevations[i] = it->second;
+                    auto it2 = spp.satAzimData.find(satIds[i]);
+                    if (it2 != spp.satAzimData.end()) azimuths[i] = it2->second;
+                    auto it3 = spp.satPVTTransTime.find(satIds[i]);
+                    if (it3 != spp.satPVTTransTime.end()) satPVTs[i] = it3->second;
+                }
+                // 排除判据：解算器显式排除的卫星，或没有有效星历/位置的卫星
+                numSatsResult = 0;
+                for (int i = 0; i < n; i++) {
+                    bool ok = spp.satRejected.count(satIds[i]) == 0 &&
+                              satPVTs[i].p.squaredNorm() > 1.0;
+                    rejected[i] = !ok;
+                    if (ok) ++numSatsResult;
+                }
+            } else {
+                solved = false;
+                // 未收敛历元仍需合法写出：把 xyz 置零，杜绝未初始化内存流入 CSV/GUI。
+                sppResult.reset();
+            }
+        }
     };
 
     struct PlotData {
@@ -290,8 +365,14 @@ namespace GnssTask {
         std::vector<std::pair<std::string, std::shared_ptr<SolveTask> > > extraQcTabs;
 
         ~SolveTask() override {
-            stop = true;
-            if (qcWorker.joinable()) qcWorker.join();
+    stop = true;
+    // QC 线程捕获了 shared_ptr(task)，若它是最后一个引用，析构就会跑在 QC 线程自己身上；
+            // 此时 join 自己 ⇒ 抛异常/崩溃（第二次打开 LEO 任务即触发）。
+            // 故先 detach 让它随线程结束自然销毁，不再 join。
+            if (qcWorker.joinable()) {
+                if (qcWorker.get_id() == std::this_thread::get_id()) qcWorker.detach();
+                else qcWorker.join();
+            }
         }
 
         // 结果即自己：SPP / 实时流没有外层容器，solveResult() 就是自身。
@@ -313,8 +394,12 @@ namespace GnssTask {
 
     void SyncTaskStatus(const std::shared_ptr<SolverTaskBase> &task, const std::shared_ptr<SolveTask> &core);
 
+    // 单站解算（SPP / PPP / LEO）的解算线程主体：三家共用同一份骨架，
+    // 差异全部落在 job 的三个虚函数钩子上（initSolver / beforeSolveEpoch / afterSolveEpoch），
+    // 故这里只传「解算器实例 + 任务对象」，不再组装任何回调。
+    // Solver 仍需模板化：它决定用哪个解算器类去 processEpoch，编译期即确定。
     template<typename Solver>
     void RunSingleStationSolve(const std::shared_ptr<SolveTask> &core,
-                               const std::function<bool(Solver &)> &init,
-                               const std::function<bool(Solver &, ObsItem &, EpochData &, int)> &body);
+                               Solver &solver,
+                               const std::shared_ptr<SolverTaskBase> &job);
 }

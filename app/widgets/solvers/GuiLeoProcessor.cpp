@@ -2,8 +2,8 @@
 #define NOMINMAX
 #include <windows.h>
 #include "GuiLeoProcessor.h"
-#include "GuiHelpers.h"   // fileRow / renderCutoffAndSystems / beginConfigWindow / renderCancelButton
-#include "core/AppConfig.h"
+#include "GuiHelpers.h"   // fileRow / renderCutoffAndSystems / beginConfigBody / renderCancelButton
+#include "core/PathMemory.h"
 #include "ui/Gui.h"
 #include "imgui.h"
 #include "SPP.h"          // LEO 继承自 PPP/SPP，getFromSPP 复用
@@ -60,126 +60,137 @@ namespace GuiLeoProcessor {
         task->core->loading = false;
     }
 
-    static void SolverThread(const std::shared_ptr<LeoTask> &task) {
-        // 参考轨道读取器与判定结果在循环外构造，供 init 与逐历元 body 共用。
-        Sp3OrbitReader refRdr;
-        SatID refSat('L', task->refPrn); // 兜底
-        bool hasRefOrbit = false;         // 参考轨道为可选，加载失败不致命
+    // ---- LeoTask 的解算钩子（骨架见 RunSingleStationSolve）----
+
+    bool LeoTask::initSolver(void *solverPtr) {
+        LEO &leo = *static_cast<LEO *>(solverPtr);
+        // 参考轨道读取器与判定结果放在 LeoTask 成员里：initSolver 与 afterSolveEpoch 都要用。
+        hasRefOrbit = false;         // 参考轨道为可选，加载失败不致命
         bool loadOk = true;
 
-        const auto init = [&](LEO &leo) {
-            // 超快/最终 SP3 自带钟差列时 CLK 可缺省（解算器自行判定，此处只负责加载与日志）
-            if (!task->gnssSp3PathBuf.empty()) {
-                const bool ok = leo.loadSp3(task->gnssSp3PathBuf);
-                LOG_INFO << "LEO 读取精密轨道 SP3: " << task->gnssSp3PathBuf << (ok ? "" : "[失败]");
-                if (!ok) loadOk = false;
-            }
-            if (!task->gnssClkPathBuf.empty()) {
-                const bool ok = leo.loadClk(task->gnssClkPathBuf);
-                LOG_INFO << "LEO 读取精密钟差 CLK: " << task->gnssClkPathBuf << (ok ? "" : "[失败]");
-                if (!ok) loadOk = false;
-            }
-            if (!task->osbPathBuf.empty()) {
-                const bool ok = leo.loadOsb(task->osbPathBuf);
-                LOG_INFO << "LEO 读取码偏差 OSB: " << task->osbPathBuf << (ok ? "" : "[失败]");
-                if (!ok) loadOk = false;
-            }
-            if (!task->atxPathBuf.empty()) {
-                const bool ok = leo.loadAtx(task->atxPathBuf);
-                LOG_INFO << "LEO 读取天线文件 ATX: " << task->atxPathBuf << (ok ? "" : "[失败]");
-                if (!ok) loadOk = false;
-            }
-            if (!task->gnssBrdcPathBuf.empty()) {
-                const bool ok = leo.loadBrdc(task->gnssBrdcPathBuf);
-                LOG_INFO << "LEO 读取广播星历 BRDC: " << task->gnssBrdcPathBuf << (ok ? "" : "[失败]");
-            }
+        // 超快/最终 SP3 自带钟差列时 CLK 可缺省（解算器自行判定，此处只负责加载与日志）
+        if (!gnssSp3PathBuf.empty()) {
+            const bool ok = leo.loadSp3(gnssSp3PathBuf);
+            LOG_INFO << "LEO 读取精密轨道 SP3: " << gnssSp3PathBuf << (ok ? "" : "[失败]");
+            if (!ok) loadOk = false;
+        }
+        if (!gnssClkPathBuf.empty()) {
+            // 同 PPP：只加载参与解算的星座，跳过其余系统的整行解析
+            const bool ok = leo.loadClk(gnssClkPathBuf, core->enabledSystems);
+            LOG_INFO << "LEO 读取精密钟差 CLK: " << gnssClkPathBuf << (ok ? "" : "[失败]");
+            if (!ok) loadOk = false;
+        }
+        if (!osbPathBuf.empty()) {
+            const bool ok = leo.loadOsb(osbPathBuf);
+            LOG_INFO << "LEO 读取码偏差 OSB: " << osbPathBuf << (ok ? "" : "[失败]");
+            if (!ok) loadOk = false;
+        }
+        if (!atxPathBuf.empty()) {
+            const bool ok = leo.loadAtx(atxPathBuf);
+            LOG_INFO << "LEO 读取天线文件 ATX: " << atxPathBuf << (ok ? "" : "[失败]");
+            if (!ok) loadOk = false;
+        }
+        if (!gnssBrdcPathBuf.empty()) {
+            const bool ok = leo.loadBrdc(gnssBrdcPathBuf);
+            LOG_INFO << "LEO 读取广播星历 BRDC: " << gnssBrdcPathBuf << (ok ? "" : "[失败]");
+            // 广播星历对 LEO **不是可选的**：LEO 构造里 mFirstEpochSPP=true，首历元定位靠 SPP，
+            // 而 SPP 的卫星位置只能来自广播星历（精密星历是 5min 间隔、且不具备电文参数）。
+            // 缺失时现象极隐蔽：每个历元都解不出、日志无任何 ERROR，用户只会看到"全程无解"。
+            if (!ok) loadOk = false;
+        } else {
+            LOG_ERROR << "LEO 未填广播星历 BRDC：首历元 SPP 定位需要它，缺则全历元无解";
+            loadOk = false;
+        }
 
-            if (!task->refSp3PathBuf.empty()) {
-                LOG_INFO << "LEO 读取参考轨道 SP3: " << task->refSp3PathBuf;
-                refRdr.read(task->refSp3PathBuf);
-                const auto &rdata = refRdr.getData();
-                bool refFound = false; // 是否已在 SP3 中找到 L 系统卫星
-                for (const auto &[sat, _]: rdata)
-                    if (sat.system == 'L') {
-                        task->refPrn = sat.id;
-                        refFound = true;
-                        break;
-                    }
-                // 仅当没找到 L 系统卫星时才用首条记录兜底；否则会无条件覆盖掉上面（或用户 UI）选中的 PRN
-                if (!refFound && !rdata.empty()) task->refPrn = rdata.begin()->first.id;
-                refSat = SatID('L', task->refPrn);
-                if (!leo.loadLeoReference(task->refSp3PathBuf, refSat)) {
-                    LOG_ERROR << "LEO loadLeoReference 失败";
-                    loadOk = false;
-                } else hasRefOrbit = true;
-            } else {
-                LOG_INFO << "LEO: 未提供参考轨道 SP3，跳过 RTN 评估与参考轨迹（解算仍依赖精密星历/钟差）";
+        if (!refSp3PathBuf.empty()) {
+            LOG_INFO << "LEO 读取参考轨道 SP3: " << refSp3PathBuf;
+            refRdr.read(refSp3PathBuf);
+            const auto &rdata = refRdr.getData();
+            bool refFound = false; // 是否已在 SP3 中找到 L 系统卫星
+            for (const auto &[sat, _]: rdata)
+            if (sat.system == 'L') {
+                refPrn = sat.id;
+                refFound = true;
+                break;
             }
-            task->core->hasRefOrbit = hasRefOrbit; // 供导出 CSV 判断是否输出 REF/RTN 列
+            // 仅当没找到 L 系统卫星时才用首条记录兜底；否则会无条件覆盖掉上面（或用户 UI）选中的 PRN
+            if (!refFound && !rdata.empty()) refPrn = rdata.begin()->first.id;
+            refSat = SatID('L', refPrn);
+            if (!leo.loadLeoReference(refSp3PathBuf, refSat)) {
+                LOG_ERROR << "LEO loadLeoReference 失败";
+                loadOk = false;
+            } else hasRefOrbit = true;
+        } else {
+            LOG_INFO << "LEO: 未提供参考轨道 SP3，跳过 RTN 评估与参考轨迹（解算仍依赖精密星历/钟差）";
+        }
+        core->hasRefOrbit = hasRefOrbit; // 供导出 CSV 判断是否输出 REF/RTN 列
 
-            if (!task->auxFiles.empty()) {
-                for (const auto &f: task->auxFiles) leo.loadAuxFile(f); // 多 HDR：后者覆盖 mLeoAntOffset
-            } else {
-                LOG_INFO << "LEO: 未加载辅助文件(.HDR 杠杆臂)，CoG→ARP 偏移为 0";
-            }
-            if (!loadOk) {
-                task->core->setError("产品加载失败（检查 SP3/CLK/OSB/ATX/参考轨道/辅助文件路径）");
-                return false;
-            }
+        if (!auxFiles.empty()) {
+            for (const auto &f: auxFiles) leo.loadAuxFile(f); // 多 HDR：后者覆盖 mLeoAntOffset
+        } else {
+            LOG_INFO << "LEO: 未加载辅助文件(.HDR 杠杆臂)，CoG→ARP 偏移为 0";
+        }
+        if (!loadOk) {
+            core->setError("产品加载失败（检查 SP3/CLK/OSB/ATX/参考轨道/辅助文件路径）");
+            return false;
+        }
             return true;
-        };
+    }
 
-        GnssTask::RunSingleStationSolve<LEO>(task->core, init,
-            [&](LEO &leo, GnssTask::ObsItem &oi, GnssTask::EpochData &data, int idx) {
-                if (!leo.processEpoch(oi.obs)) return false;
-                data.getFromSPP(leo);
-                const Vector3d leoPos = leo.result.xyz;
-                if (leoPos.squaredNorm() <= 1e12) return false;   // 非合理 ECEF 位置(<=1e6 m)
+    bool LeoTask::afterSolveEpoch(void *, GnssTask::EpochData *data,
+                                  GnssTask::ObsItem *item, int idx) {
+        if (!data->solved) return false;
+        const Vector3d leoPos = data->sppResult.xyz;
+        if (leoPos.squaredNorm() <= 1e12) return false;   // 非合理 ECEF 位置(<=1e6 m)
 
-                // 下方写入的 leoTraj/gnssTraj/rtn*/gnssVis 等都是**共享状态**：渲染侧(GuiSolverPanel)
-                // 会在 core->mutex 下整份拷贝它们，而这里此前一把锁都没拿。push_back 触发重分配时，
-                // 渲染侧并发拷贝就会读到已释放内存，或读到"size 与 data 指针不一致的半更新向量" →
-                // Debug 下迭代器断言 / abort(0x80000003)。LEO 是唯一按历元 push 大向量的解算器，
-                // 故只有它崩。锁顺序与 CommitEpoch 一致(先 core->mutex，后 plotMutex)，不会死锁。
-                std::lock_guard lk(task->core->mutex);
-                std::vector<SatVis> gnssVis;
-                for (size_t si = 0; si < data.satIds.size(); ++si) {
-                    if (data.rejected[si]) continue;
-                    const PVT &sp = data.satPVTs[si];
-                    if (sp.p.squaredNorm() <= 1.0) continue;
-                    gnssVis.push_back(
-                        SatVis{data.satIds[si], data.satIds[si].system, sp.p, true});
-                    task->core->gnssTraj[data.satIds[si]].push_back({idx, sp.p});
-                }
-                task->core->gnssVis = std::move(gnssVis);   // 只留当前历元的可见星
-                task->core->leoPos3d = leoPos;
-                task->core->leoTraj.push_back({idx, leoPos});
-                task->core->hasLeo = true;
+        // 下方写入的 leoTraj/gnssTraj/rtn*/gnssVis 等都是**共享状态**：渲染侧(GuiSolverPanel)
+        // 会在 core->mutex 下整份拷贝它们，而这里此前一把锁都没拿。push_back 触发重分配时，
+        // 渲染侧并发拷贝就会读到已释放内存，或读到"size 与 data 指针不一致的半更新向量" →
+        // Debug 下迭代器断言 / abort(0x80000003)。LEO 是唯一按历元 push 大向量的解算器，
+        // 故只有它崩。锁顺序与 CommitEpoch 一致(先 core->mutex，后 plotMutex)，不会死锁。
+        std::lock_guard lk(core->mutex);
+        std::vector<SatVis> gnssVis;
+        for (size_t si = 0; si < data->satIds.size(); ++si) {
+                if (data->rejected[si]) continue;
+                const PVT &sp = data->satPVTs[si];
+                if (sp.p.squaredNorm() <= 1.0) continue;
+                gnssVis.push_back(
+                SatVis{data->satIds[si], data->satIds[si].system, sp.p, true});
+                core->gnssTraj[data->satIds[si]].push_back({idx, sp.p});
+        }
+        core->gnssVis = std::move(gnssVis);   // 只留当前历元的可见星
+        core->leoPos3d = leoPos;
+        core->leoTraj.push_back({idx, leoPos});
+        core->hasLeo = true;
 
-                Vector3d refPos = leoPos;   // 无参考轨道时自比，RTN 全零
-                if (hasRefOrbit) {
-                    const PVT ref = refRdr.getPVT(refSat, oi.obs.epoch);
-                    refPos = ref.p.squaredNorm() > 1e12 ? ref.p : leoPos;
-                    // RTN 分量（径向/沿迹/法向）由 CoordConvert::computeRTN 统一提供
-                    const RtnComponents rtn = computeRTN(leoPos, refPos, ref.v);
-                    data.refECEF = refPos;
-                    data.rtnR = rtn.R;
-                    data.rtnT = rtn.T;
-                    data.rtnN = rtn.N;
-                    task->core->leoRef3d = refPos;
-                    task->core->leoRefTraj.push_back({idx, refPos});
-                    task->core->rtnTimes.push_back(oi.obs.epoch.m_sod);
-                    task->core->rtnR.push_back(rtn.R);
-                    task->core->rtnT.push_back(rtn.T);
-                    task->core->rtnN.push_back(rtn.N);
-                    task->core->rtnD3.push_back(rtn.d3);
-                }
-                if (!task->core->initializedRefECEF) {
-                    task->core->refECEF = refPos;
-                    task->core->initializedRefECEF = true;
-                }
-                return true;
-            });
+        Vector3d refPos = leoPos;   // 无参考轨道时自比，RTN 全零
+        if (hasRefOrbit) {
+                const PVT ref = refRdr.getPVT(refSat, item->obs.epoch);
+                refPos = ref.p.squaredNorm() > 1e12 ? ref.p : leoPos;
+                // RTN 分量（径向/沿迹/法向）由 CoordConvert::computeRTN 统一提供
+                const RtnComponents rtn = computeRTN(leoPos, refPos, ref.v);
+                data->refECEF = refPos;
+                data->rtnR = rtn.R;
+                data->rtnT = rtn.T;
+                data->rtnN = rtn.N;
+                core->leoRef3d = refPos;
+                core->leoRefTraj.push_back({idx, refPos});
+                core->rtnTimes.push_back(item->obs.epoch.m_sod);
+                core->rtnR.push_back(rtn.R);
+                core->rtnT.push_back(rtn.T);
+                core->rtnN.push_back(rtn.N);
+                core->rtnD3.push_back(rtn.d3);
+        }
+        if (!core->initializedRefECEF) {
+                core->refECEF = refPos;
+                core->initializedRefECEF = true;
+        }
+        return true;
+    }
+
+    static void SolverThread(const std::shared_ptr<LeoTask> &task) {
+        LEO leo;
+        GnssTask::RunSingleStationSolve<LEO>(task->core, leo, task);
     }
 
     void SolveThread(const std::shared_ptr<LeoTask> &task) {
@@ -194,15 +205,15 @@ namespace GuiLeoProcessor {
     }
 
     void LeoTask::renderConfigPanel() {
-        GuiHelpers::beginConfigWindow("LEO 处理配置###leo_cfg_", *this);
+        GuiHelpers::beginConfigBody("LEO 处理配置###leo_cfg_", *this);
 
-        GuiHelpers::fileRow("观测文件", &this->leoObsPathBuf, "leo_obs", GuiHelpers::fObs, 3, {});
-        GuiHelpers::fileRow("广播星历 BRDC", &this->gnssBrdcPathBuf, "leo_gnss_brdc", GuiHelpers::fRnx, 2, {});
-        GuiHelpers::fileRow("精密轨道 SP3", &this->gnssSp3PathBuf, "leo_gnss_sp3", GuiHelpers::fSp3, 2, {});
-        GuiHelpers::fileRow("精密钟差 CLK", &this->gnssClkPathBuf, "leo_gnss_clk", GuiHelpers::fClk, 2, {});
-        GuiHelpers::fileRow("天线文件 ATX", &this->atxPathBuf, "leo_atx", GuiHelpers::fAtx, 2, {});
-        GuiHelpers::fileRow("码偏差 OSB/BIA", &this->osbPathBuf, "leo_osb", GuiHelpers::fOsb, 2, {});
-        GuiHelpers::fileRow("参考轨道 SP3 (可选)", &this->refSp3PathBuf, "leo_ref_sp3", GuiHelpers::fSp3, 2, {});
+        GuiHelpers::fileRow("观测文件", &this->leoObsPathBuf, "leo_obs", GuiHelpers::fObs, 3, {}, "leo_obs");
+        GuiHelpers::fileRow("广播星历 BRDC", &this->gnssBrdcPathBuf, "leo_gnss_brdc", GuiHelpers::fRnx, 2, {}, "leo_obs");
+        GuiHelpers::fileRow("精密轨道 SP3", &this->gnssSp3PathBuf, "leo_gnss_sp3", GuiHelpers::fSp3, 2, {}, "leo_obs");
+        GuiHelpers::fileRow("精密钟差 CLK", &this->gnssClkPathBuf, "leo_gnss_clk", GuiHelpers::fClk, 2, {}, "leo_obs");
+        GuiHelpers::fileRow("天线文件 ATX", &this->atxPathBuf, "leo_atx", GuiHelpers::fAtx, 2, {}, "leo_obs");
+        GuiHelpers::fileRow("码偏差 OSB/BIA", &this->osbPathBuf, "leo_osb", GuiHelpers::fOsb, 2, {}, "leo_obs");
+        GuiHelpers::fileRow("参考轨道 SP3 (可选)", &this->refSp3PathBuf, "leo_ref_sp3", GuiHelpers::fSp3, 2, {}, "leo_obs");
         ImGui::Text("辅助文件 (.HDR 等):");
         if (!this->auxFiles.empty()) {
             for (size_t i = 0; i < this->auxFiles.size(); i++) {
@@ -223,20 +234,20 @@ namespace GuiLeoProcessor {
                     std::string p = wideToAcp(wp);
                     if (std::find(this->auxFiles.begin(), this->auxFiles.end(), p) == this->auxFiles.end())
                         this->auxFiles.push_back(p);
-                    AppConfig::instance().addRecent("leo_aux", p);
+                    GnssCore::PathMemory::instance().addRecent("leo_aux", p);
                 }
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("从记录添加")) ImGui::OpenPopup("##leo_aux_hist_pop");
         if (ImGui::BeginPopup("##leo_aux_hist_pop")) {
-            const auto recent = AppConfig::instance().getRecent("leo_aux");
+            const auto recent = GnssCore::PathMemory::instance().getRecent("leo_aux");
             if (recent.empty()) ImGui::TextDisabled("(暂无记录)");
             for (auto &r: recent) {
                 if (ImGui::Selectable(r.c_str())) {
                     if (std::find(this->auxFiles.begin(), this->auxFiles.end(), r) == this->auxFiles.end())
                         this->auxFiles.push_back(r);
-                    AppConfig::instance().addRecent("leo_aux", r);
+                    GnssCore::PathMemory::instance().addRecent("leo_aux", r);
                 }
             }
             ImGui::EndPopup();
@@ -248,7 +259,7 @@ namespace GuiLeoProcessor {
             if (this->leoObsPathBuf.empty()) {
                 ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "请先选择观测文件");
             } else {
-                const auto &cfg = AppConfig::instance();
+                const auto &cfg = GnssCore::PathMemory::instance();
                 cfg.set("leo_obs", this->leoObsPathBuf);
                 cfg.set("leo_gnss_brdc", this->gnssBrdcPathBuf);
                 cfg.set("leo_gnss_sp3", this->gnssSp3PathBuf);
@@ -257,6 +268,13 @@ namespace GuiLeoProcessor {
                 cfg.set("leo_osb", this->osbPathBuf);
                 cfg.set("leo_ref_sp3", this->refSp3PathBuf);
                 cfg.set("leo_ref_prn", std::to_string(this->refPrn));
+
+                {
+                    const std::string refInfo =
+                        this->refSp3PathBuf.empty() ? std::string("无") : this->refSp3PathBuf;
+                    LOG_INFO << "[LEO] 开始定轨: 观测=" << this->leoObsPathBuf
+                             << ", 参考轨道=" << refInfo;
+                }
 
                 // 同 PPP：上一轮被取消/关闭过会残留 stop=true，不复位则本轮 0 历元且无报错。
                 this->stop = false;
@@ -276,7 +294,7 @@ namespace GuiLeoProcessor {
         ImGui::SameLine();
         GuiHelpers::renderCancelButton(this);
 
-        ImGui::End();
+        GuiHelpers::endConfigBody();
     }
 
 }
