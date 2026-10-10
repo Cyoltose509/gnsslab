@@ -10,3 +10,9 @@
 [submodule "thirdparty/eigen-3.4.0"]
 	path = thirdparty/eigen-3.4.0
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "thirdparty/curl"]
+	path = thirdparty/curl
+	url = https://github.com/curl/curl.git
+[submodule "thirdparty/zlib"]
+	path = thirdparty/zlib
+	url = https://github.com/madler/zlib.git

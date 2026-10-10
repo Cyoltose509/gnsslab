@@ -1,9 +1,16 @@
-cmake_minimum_required(VERSION 3.10.2)
+cmake_minimum_required(VERSION 3.18)
 project(GnssLab VERSION 4.0)
 
 # set(CMAKE_BUILD_TYPE "Debug")
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
+# 本项目用 MSVC(cl.exe)。Release 必须用 MSVC 认得的 /O2；原先写的 "-O3 -Wall -g" 是 GCC 语法，
+# cl.exe 会报 D9002 忽略 -O3、且覆盖掉 CMake 默认带的 /O2，导致"Release"实际零优化 → RTK 仍慢。
+# 守卫 MSVC：换 GCC/Clang 时退回 -O3。
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Ob2 /DNDEBUG")
+else()
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+endif()
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 

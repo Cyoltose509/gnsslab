@@ -11,3 +11,6 @@ report
 /bin/gnsslab.log
 /bin/imgui.ini
 /bin/gnsslab.ini
+/bin/downloads/
+/.cmake-probe/
+/build_slint/
