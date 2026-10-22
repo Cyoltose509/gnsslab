@@ -608,4 +608,4 @@ namespace QC {
         computeComprehensive(rep);
         return rep;
     }
-} // namespace QC
+}
