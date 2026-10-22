@@ -2,22 +2,19 @@
 
 #include "Exception.h"
 #include <limits>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
-#include <cstdlib>
 #include "Const.h"
 #include <array>
 
 enum class TimeSystem:uint8_t {
     Unknown = 0,
     GPS,
-    GLO,
     GAL,
     BDT,
-    QZS,
     UTC,
     TAI,
-    TT,
     Count
 };
 
@@ -33,13 +30,10 @@ constexpr std::array<std::string_view,
 TIME_SYSTEM_STRINGS = {
     "Unknown",
     "GPS",
-    "GLO",
     "GAL",
     "BDT",
-    "QZS",
     "UTC",
-    "TAI",
-    "TT"
+    "TAI"
 };
 constexpr std::array<EpochParam,
     static_cast<size_t>(TimeSystem::Count)>
@@ -47,11 +41,8 @@ TIME_SYSTEM_EPOCH = {
     {
         {0, 0, 0},
         {10, 0x3FF, GPS_EPOCH_MJD},
-        {0, 0, 0},
-        {0, 0, 0},
+        {12, 0xFFF, GAL_EPOCH_MJD},
         {13, 0x1FFF, BDT_EPOCH_MJD},
-        {0, 0, 0},
-        {0, 0, 0},
         {0, 0, 0},
         {0, 0, 0},
     }
@@ -59,7 +50,7 @@ TIME_SYSTEM_EPOCH = {
 
 
 inline std::ostream &operator<<(std::ostream &os, const TimeSystem ts) {
-    return os << TIME_SYSTEM_STRINGS[static_cast<size_t>(ts)] << std::endl;
+    return os << TIME_SYSTEM_STRINGS[static_cast<size_t>(ts)];
 }
 
 
@@ -74,7 +65,7 @@ public:
     CommonTime(const CommonTime &right) = default;
 
     // Destructor.
-    virtual ~CommonTime() = default;
+    ~CommonTime() = default;
 
     void set(const long day, const double sod = 0.0, const TimeSystem timeSystem = TimeSystem::GPS) {
         m_day = day;
@@ -126,30 +117,18 @@ public:
         return *this;
     }
 
-    CommonTime &addSeconds(double seconds) {
-        long days = 0;
-
-        if (abs(seconds) >= SEC_PER_DAY) {
-            days = static_cast<long>(seconds * DAY_PER_SEC);
-            seconds -= days * SEC_PER_DAY;
-        }
-        m_day += days;
+    CommonTime &addSeconds(const double seconds) {
         m_sod += seconds;
         normalize();
         return *this;
     }
 
-    // 归化
+    // 归化：把 m_sod 折成 [0, SEC_PER_DAY) 内的当日秒，整日进位到 m_day。
+    // 用 floor 一次性处理正/负/多日，修掉旧实现在大负数下 off-by-one。
     bool normalize() {
-        if (abs(m_sod) >= SEC_PER_DAY) {
-            const auto day = static_cast<long>(m_sod) / SEC_PER_DAY;
-            m_day += day;
-            m_sod -= day * SEC_PER_DAY;
-        }
-        if (m_sod < 0) {
-            m_sod = m_sod + SEC_PER_DAY;
-            --m_day;
-        }
+        const double days = std::floor(m_sod / SEC_PER_DAY);
+        m_day += static_cast<long>(days);
+        m_sod -= days * SEC_PER_DAY;
         return true;
     }
 
@@ -206,13 +185,6 @@ public:
     TimeSystem m_timeSystem;
 }; // end class CommonTime
 
-// 'julian day' of earliest epoch expressible by CommonTime; 1/1/4713 B.C.
-static const auto BEGINNING_OF_TIME = CommonTime(0L, 0.0, TimeSystem::GPS);
-
-// 'julian day' of latest 'julian day' expressible by CommonTime,
-// 1/1/4713 A.D.
-static const auto END_OF_TIME = CommonTime(3442448L, 0.0, TimeSystem::GPS);
-
 inline std::ostream &operator<<(std::ostream &os, const CommonTime &ct) {
     os << ct.toString();
     return os;
@@ -240,9 +212,15 @@ public:
         timeSys = right.timeSys;
     }
 
-    CivilTime &operator=(const CivilTime &right);
+    CivilTime &operator=(const CivilTime &right) = default;
 
-    bool operator==(const CivilTime &right) const;
+    bool operator==(const CivilTime &right) const {
+        if (timeSys != right.timeSys)
+            return false;
+        return year == right.year && month == right.month && day == right.day &&
+               hour == right.hour && minute == right.minute &&
+               fabs(second - right.second) < std::numeric_limits<double>::epsilon();
+    }
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
@@ -257,8 +235,8 @@ public:
         return oss.str();
     }
 
-    /// Virtual Destructor.
-    virtual ~CivilTime() = default;
+    /// Destructor.
+    ~CivilTime() = default;
 
     int year;
     int month;
@@ -283,7 +261,7 @@ public:
     JulianDate(const JulianDate &right)
         : jd(right.jd) { timeSystem = right.timeSystem; }
 
-    JulianDate &operator=(const JulianDate &right);
+    JulianDate &operator=(const JulianDate &right) = default;
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
@@ -293,16 +271,25 @@ public:
         return oss.str();
     }
 
-    /// Virtual Destructor.
-    virtual ~JulianDate() = default;
+    /// Destructor.
+    ~JulianDate() = default;
 
-    void reset();
+    bool operator==(const JulianDate &right) const {
+        if (timeSystem != right.timeSystem)
+            return false;
+        return fabs(jd - right.jd) < std::numeric_limits<double>::epsilon();
+    }
 
-    bool operator==(const JulianDate &right) const;
+    bool operator!=(const JulianDate &right) const {
+        return !operator==(right);
+    }
 
-    bool operator!=(const JulianDate &right) const;
-
-    bool operator<(const JulianDate &right) const;
+    bool operator<(const JulianDate &right) const {
+        if (timeSystem != right.timeSystem) {
+            throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
+        }
+        return jd < right.jd;
+    }
 
     long double jd;
 
@@ -329,7 +316,7 @@ public:
     YDSTime(const YDSTime &right)
         : year(right.year), doy(right.doy), sod(right.sod) { timeSystem = right.timeSystem; }
 
-    YDSTime &operator=(const YDSTime &right);
+    YDSTime &operator=(const YDSTime &right) = default;
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
@@ -341,16 +328,30 @@ public:
         return oss.str();
     }
 
-    // Virtual Destructor.
-    virtual ~YDSTime() = default;
+    /// Destructor.
+    ~YDSTime() = default;
 
-    virtual void reset();
+    bool operator==(const YDSTime &right) const {
+        if (timeSystem != right.timeSystem)
+            return false;
+        return year == right.year && doy == right.doy &&
+               fabs(sod - right.sod) < std::numeric_limits<double>::epsilon();
+    }
 
-    bool operator==(const YDSTime &right) const;
+    bool operator!=(const YDSTime &right) const {
+        return !operator==(right);
+    }
 
-    bool operator!=(const YDSTime &right) const;
-
-    bool operator<(const YDSTime &right) const;
+    bool operator<(const YDSTime &right) const {
+        if (timeSystem != right.timeSystem) {
+            throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
+        }
+        if (year < right.year) return true;
+        if (year > right.year) return false;
+        if (doy < right.doy) return true;
+        if (doy > right.doy) return false;
+        return sod < right.sod;
+    }
 
     int year;
     int doy;
@@ -374,12 +375,10 @@ public:
         : mjd(right.mjd) { timeSystem = right.timeSystem; }
 
 
-    MJD &operator=(const MJD &right);
+    MJD &operator=(const MJD &right) = default;
 
-    /// Virtual Destructor.
-    virtual ~MJD() = default;
-
-    void reset();
+    /// Destructor.
+    ~MJD() = default;
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
@@ -389,17 +388,34 @@ public:
         return oss.str();
     }
 
-    bool operator==(const MJD &right) const;
+    bool operator==(const MJD &right) const {
+        if (timeSystem != right.timeSystem)
+            return false;
+        return fabs(mjd - right.mjd) < 4. * std::numeric_limits<double>::epsilon();
+    }
 
-    bool operator!=(const MJD &right) const;
+    bool operator!=(const MJD &right) const {
+        return !operator==(right);
+    }
 
-    bool operator<(const MJD &right) const;
+    bool operator<(const MJD &right) const {
+        if (timeSystem != right.timeSystem) {
+            throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
+        }
+        return mjd < right.mjd;
+    }
 
-    bool operator>(const MJD &right) const;
+    bool operator>(const MJD &right) const {
+        return !operator<=(right);
+    }
 
-    bool operator<=(const MJD &right) const;
+    bool operator<=(const MJD &right) const {
+        return operator<(right) || operator==(right);
+    }
 
-    bool operator>=(const MJD &right) const;
+    bool operator>=(const MJD &right) const {
+        return !operator<(right);
+    }
 
     long double mjd;
     TimeSystem timeSystem;
@@ -407,54 +423,6 @@ public:
 
 inline std::ostream &operator<<(std::ostream &s, const MJD &mjd) {
     s << mjd.toString();
-    return s;
-}
-
-class JD2020 {
-public:
-    explicit JD2020(const long double m = 0, const TimeSystem ts = TimeSystem::GPS)
-        : jd(m) {
-        timeSystem = ts;
-    }
-
-
-    JD2020(const JD2020 &right)
-        : jd(right.jd) { timeSystem = right.timeSystem; }
-
-
-    JD2020 &operator=(const JD2020 &right);
-
-    /// Virtual Destructor.
-    virtual ~JD2020() = default;
-
-    void reset();
-
-    [[nodiscard]] std::string toString() const {
-        std::ostringstream oss;
-        oss << setw(8) << jd
-                << timeSystem;
-
-        return oss.str();
-    }
-
-    bool operator==(const JD2020 &right) const;
-
-    bool operator!=(const JD2020 &right) const;
-
-    bool operator<(const JD2020 &right) const;
-
-    bool operator>(const JD2020 &right) const;
-
-    bool operator<=(const JD2020 &right) const;
-
-    bool operator>=(const JD2020 &right) const;
-
-    long double jd;
-    TimeSystem timeSystem;
-};
-
-inline std::ostream &operator<<(std::ostream &s, const JD2020 &jd) {
-    s << jd.toString();
     return s;
 }
 
@@ -503,21 +471,41 @@ public:
         return static_cast<unsigned int>(sow) / SEC_PER_DAY;
     }
 
-    void reset();
+    bool operator==(const WeekSecond &right) const {
+        return week == right.week && timeSystem == right.timeSystem && sow == right.sow;
+    }
 
-    bool operator==(const WeekSecond &right) const;
+    bool operator!=(const WeekSecond &right) const {
+        return !operator==(right);
+    }
 
-    bool operator!=(const WeekSecond &right) const;
+    bool operator<(const WeekSecond &right) const {
+        if (week < right.week) return true;
+        if (week > right.week) return false;
+        return sow < right.sow;
+    }
 
-    bool operator<(const WeekSecond &right) const;
+    bool operator>(const WeekSecond &right) const {
+        return !operator<=(right);
+    }
 
-    bool operator>(const WeekSecond &right) const;
+    bool operator<=(const WeekSecond &right) const {
+        return operator<(right) || operator==(right);
+    }
 
-    bool operator<=(const WeekSecond &right) const;
+    bool operator>=(const WeekSecond &right) const {
+        return !operator<(right);
+    }
 
-    bool operator>=(const WeekSecond &right) const;
-
-    double operator-(const WeekSecond &right) const;
+    double operator-(const WeekSecond &right) const {
+        if (timeSystem != right.timeSystem) {
+            throw InvalidRequest("CommonTime objects not in same time system, cannot be compared");
+        }
+        double sec = (week - right.week) * FULL_WEEK + (sow - right.sow);
+        if (sec > HALF_WEEK) sec -= FULL_WEEK;
+        if (sec < -HALF_WEEK) sec += FULL_WEEK;
+        return sec;
+    }
 
 
     void setEpoch(const unsigned int e) {
@@ -530,26 +518,16 @@ public:
         week |= w & bitmask();
     }
 
-    void setEpochModWeek(const unsigned int e, const unsigned int w) {
-        setEpoch(e);
-        setModWeek(w);
-    }
-
     [[nodiscard]] unsigned int getWeek() const {
         return week;
     }
 
     [[nodiscard]] unsigned int getModWeek() const {
-        return (week & bitmask());
+        return week & bitmask();
     }
 
     [[nodiscard]] unsigned int getEpoch() const {
-        return (week >> Nbits());
-    }
-
-    void getEpochModWeek(unsigned int &e, unsigned int &w) const {
-        e = getEpoch();
-        w = getModWeek();
+        return week >> Nbits();
     }
 
     [[nodiscard]] std::string toString() const {

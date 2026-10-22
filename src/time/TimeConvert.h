@@ -32,14 +32,6 @@ void CommonTime2MJD(const CommonTime &ct, MJD &mjd);
 
 void MJD2CommonTime(const MJD &mjd, CommonTime &ct);
 
-void CommonTime2JD2020(const CommonTime &ct, JD2020 &jd);
-
-void JD20202CommonTime(JD2020 &jd, CommonTime &ct);
-
-void MJD2JD2020(MJD &mjd, JD2020 &jd);
-
-void JD20202MJD(JD2020 &jd, MJD &mjd);
-
 CommonTime YDSTime2CommonTime(const YDSTime &ydst);
 
 YDSTime CommonTime2YDSTime(const CommonTime &ct);
@@ -47,3 +39,8 @@ YDSTime CommonTime2YDSTime(const CommonTime &ct);
 void CommonTime2WeekSecond(const CommonTime &ct, WeekSecond &wk);
 
 void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct);
+
+long daysFromCivil(long y, unsigned m, unsigned d);
+
+void civilFromDays(long z, int &y, unsigned &m, unsigned &d);
+
