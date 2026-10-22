@@ -14,8 +14,6 @@ public:
     static void write(Level lvl,  const std::string &msg);
 
 private:
-    static std::mutex mutex;
-    static std::string path;
     static const char *levelStr(Level lvl);
 };
 

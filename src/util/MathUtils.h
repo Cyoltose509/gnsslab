@@ -8,18 +8,11 @@
 using namespace std;
 
 namespace Math {
-    /// This is a straightforward version of Lagrange Interpolation.
-    /// Y must have size at least as large as X, and X.size() must be >= 2;
-    /// x should lie within the range of X.
-    /// 节点横坐标 X(如时间) 与纵坐标 Y(如矢量) 类型可不同：YType 需支持 YType(0) 与 (double * YType) 的累加。
-    /// 例：X=vector<double>(时间), Y=vector<Eigen::Vector3d>(位置) → 直接插值矢量。
     template<class XType, class YType>
     YType simpleLagrangeInterpolation(const vector<XType> &X, const vector<YType> &Y, const XType &x) {
         if (X.empty() || Y.size() < X.size()) {
             throw InvalidRequest("Input vectors must be non-empty and of same size");
         }
-        // 对 Eigen 固定大小向量，YType(0) / Ytype(0.0) 都会匹配到 Matrix(Index rows) 构造函数，
-        // 触发 resize(0) 导致断言崩溃；用 Y[0]-Y[0] 得到类型正确的零，对 double/Eigen 均安全。
         YType Yx = Y[0] - Y[0];
         for (size_t i = 0; i < X.size(); i++) {
             if (x == X[i]) return Y[i];
@@ -31,16 +24,13 @@ namespace Math {
             Yx += Li * Y[i];
         }
         return Yx;
-    } // end YType SimpleLagrangeInterpolation(const vector<XType>, const vector<YType>, const XType)
+    }
 
     template<class T>
     T lerp(const T &a, const T &b, const T &t) {
         return a + (b - a) * t;
     }
 
-    /// 升序序列二分查找：返回最大的 i 使 x[i] <= t（lower-bound 索引），越界 clamp 到 [0, n-1]。
-    /// 底层委托 C++ 标准库 std::lower_bound（要求 x 升序）；本函数仅做「取 int 索引 + 边界兜底」的薄封装，
-    /// 调用方据结果 i 与 i+1 取「包围区间」或「最近点」（如 SP3/CLK 历元插值）。
     template<class T>
     int lowerBoundIndex(const std::vector<T> &x, const T &t) {
         if (x.empty()) return 0;
@@ -49,13 +39,6 @@ namespace Math {
         return std::max(0, i - 1); // 回退一位 = 最后一个 <= t（无重复键时即包围区间左端点）
     }
 
-    /// Lagrange interpolation on data (X[i],Y[i]), i=0,N-1 to compute Y(x).
-    /// Also return an estimate of the estimation error in 'err'.
-    /// This routine assumes that N=X.size() is even and that x is centered on the
-    /// interval, that is X[N/2-1] <= x <= X[N/2].
-    /// NB This routine will work for N as small as 4, however tests with satellite
-    /// ephemerides have shown that N=4 yields m-level errors, N=6 cm-level,
-    /// N=8 ~0.1mm level and N=10 ~numerical noise errors; best to use N>=8.
     template<class T>
     T lagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T &x, T &err) {
         if (Y.size() < X.size() || X.size() < 4) {
@@ -86,14 +69,7 @@ namespace Math {
             y += err;
         }
         return y;
-    } // end T LagrangeInterpolation(vector, vector, const T, T&)
-
-
-    /// Perform Lagrange interpolation on the data (X[i],Y[i]), i=1,N (N=X.size()),
-    /// returning the value of Y(x) and dY(x)/dX.
-    /// Assumes that x is between X[k-1] and X[k], where k=N/2 and N > 2;
-    /// Warning: for use with the precise (SP3) ephemeris only when velocity is not
-    /// available; estimates of velocity, and especially clock drift, not as accurate.
+    }
     template<class T>
     void lagrangeInterpolation(const vector<T> &X, const vector<T> &Y, const T &x, T &y, T &dydx) {
         if (Y.size() < X.size() || X.size() < 4) {
@@ -262,21 +238,15 @@ namespace Math {
         return toReturn;
     }
 
-    // 绕 X/Y/Z 轴的 3x3 旋转矩阵（固定大小，避免上面的动态 MatrixXd）。
-    // 符号约定与 RTKLIB rtkcmn.c 的 Rx/Ry/Rz 宏一致：RTKLIB 用列主序数组，
-    // 其 Rx/Ry/Rz(t) 等效于标准旋转 Rx(-t)/Ry(-t)/Rz(-t)（即三个轴均为负向旋转）。
-    // 此处用 AngleAxisd 显式写出该等效旋转，便于直接阅读而不必再想列主序。
-    inline Eigen::Matrix3d rotationX(double t) {
+    inline Eigen::Matrix3d rotationX(const double t) {
         return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitX()).toRotationMatrix();
     }
-    inline Eigen::Matrix3d rotationY(double t) {
+    inline Eigen::Matrix3d rotationY(const double t) {
         return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitY()).toRotationMatrix();
     }
-    inline Eigen::Matrix3d rotationZ(double t) {
+    inline Eigen::Matrix3d rotationZ(const double t) {
         return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitZ()).toRotationMatrix();
     }
-
-    // 地球自转(Sagnac)改正统一复用 src/core/CoordStruct.h 的 applyEarthRotation(...)，PPP/LEO/SPP 三端共用。
 
     inline double frobenius(const Eigen::MatrixXd &m) {
         double sum(0);
@@ -325,6 +295,35 @@ namespace Math {
         if (v.empty()) return 0.0;
         std::sort(v.begin(), v.end());
         return v[v.size() / 2];
+    }
+    static uint16_t U2(const uint8_t *p) {
+        uint16_t u;
+        memcpy(&u, p, 2);
+        return u;
+    }
+
+    static uint32_t U4(const uint8_t *p) {
+        uint32_t u;
+        memcpy(&u, p, 4);
+        return u;
+    }
+
+    static int32_t I4(const uint8_t *p) {
+        int32_t i;
+        memcpy(&i, p, 4);
+        return i;
+    }
+
+    static float R4(const uint8_t *p) {
+        float r;
+        memcpy(&r, p, 4);
+        return r;
+    }
+
+    static double R8(const uint8_t *p) {
+        double r;
+        memcpy(&r, p, 8);
+        return r;
     }
 }
 
