@@ -1,16 +1,11 @@
 #include "Sp3OrbitReader.h"
 #include "MathUtils.h"
+#include "Const.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <string>
 
-namespace {
-    SatID parseSatId(const std::string &s) {
-        if (s.size() < 3) return {};
-        return {s[0], std::stoi(s.substr(1, 2))};
-    }
-
-} // namespace
 
 bool Sp3OrbitReader::read(const std::string &path) {
     std::ifstream in(path);
@@ -37,34 +32,46 @@ bool Sp3OrbitReader::read(const std::string &path) {
         }
         if (!inEpoch) continue;
         if (line[0] == 'P') {
-            std::istringstream ss(line);
-            std::string tag;
-            double x, y, z, clk = 0.0;
-            ss >> tag >> x >> y >> z >> clk;
-            if (tag.size() < 4) continue;
-            SatID sat = parseSatId(tag.substr(1, 3));
+            if (line.size() < kSp3IdLen + 1) continue;
+            const SatID sat = parseSatId(line.substr(1, 3));
             Record rec;
             rec.t = curT;
-            rec.pos = Eigen::Vector3d(x, y, z) * 1000.0; // km -> m
-            // 钟差列为空白(轨道-only 产品)时 ss 失败，rec.clock 保持 0 且 hasClock 仍为 false。
-            if (ss >> clk && !std::isnan(clk)) {
+
+            if (double x = 0.0, y = 0.0, z = 0.0;
+                getField(line, 0, x) && getField(line, 1, y) && getField(line, 2, z)
+                && isValid(x) && isValid(y) && isValid(z)) {
+                rec.pos = Eigen::Vector3d(x, y, z) * 1000.0; // km -> m
+            } else {
+                // 非标准列宽(与旧行为一致的后备)：按空白分隔读位置
+                std::istringstream ss(line);
+                double a = 0.0, b = 0.0, c = 0.0;
+                if (std::string tag; !(ss >> tag >> a >> b >> c) || tag.size() < 4) continue;
+                rec.pos = Eigen::Vector3d(a, b, c) * 1000.0;
+            }
+            if (double clk = 0.0; getField(line, 3, clk) &&isValid(clk)) {
                 rec.clock = clk * 1e-6; // us -> s
                 rec.hasClock = true;
-                // 轨道-only 产品的钟差列填 0，据此区分"该文件确实带钟差"
                 if (rec.clock != 0.0) anyClock = true;
             }
             tmp[sat].push_back(rec);
         } else if (line[0] == 'V') {
-            std::istringstream ss(line);
-            std::string tag;
-            double vx, vy, vz, vclk = 0.0;
-            ss >> tag >> vx >> vy >> vz >> vclk;
-            if (tag.size() < 4) continue;
-            if (SatID sat = parseSatId(tag.substr(1, 3)); tmp.count(sat) && !tmp[sat].empty()) {
+            if (line.size() < kSp3IdLen + 1) continue;
+            if (SatID sat = parseSatId(line.substr(1, 3)); tmp.count(sat) && !tmp[sat].empty()) {
                 auto &rec = tmp[sat].back();
-                rec.vel = Eigen::Vector3d(vx, vy, vz) * 0.1; // dm/s -> m/s
-                rec.hasVel = true;
-                if (ss >> vclk && !std::isnan(vclk)) {
+                if (double vx = 0.0, vy = 0.0, vz = 0.0;
+                    getField(line, 0, vx) && getField(line, 1, vy) && getField(line, 2, vz) &&
+                    isValid(vx) && isValid(vy) && isValid(vz)) {
+                    rec.vel = Eigen::Vector3d(vx, vy, vz) * 0.1; // dm/s -> m/s
+                    rec.hasVel = true;
+                } else {
+                    std::istringstream ss(line);
+                    std::string tag;
+                    if (double a = 0.0, b = 0.0, c = 0.0; ss >> tag >> a >> b >> c && tag.size() >= 4) {
+                        rec.vel = Eigen::Vector3d(a, b, c) * 0.1;
+                        rec.hasVel = true;
+                    }
+                }
+                if (double vclk = 0.0; getField(line, 3, vclk) && isValid(vclk)) {
                     rec.clockRate = vclk * 1e-6; // us/s -> s/s
                     rec.hasClockRate = true;
                 }
@@ -72,42 +79,30 @@ bool Sp3OrbitReader::read(const std::string &path) {
         }
     }
 
-    // 对每个卫星，若无 V 记录则用中心差分补速度
     for (auto &[sat, recs]: tmp) {
         int n = static_cast<int>(recs.size());
         if (n == 0) continue;
-        if (!recs[0].hasVel) {
-            for (int i = 0; i < n; ++i) {
-                int a = std::max(0, i - 1), b = std::min(n - 1, i + 1);
-                if (a == b) {
-                    recs[i].vel.setZero();
-                    continue;
-                }
-                double dt = recs[b].t - recs[a].t;
-                if (dt == 0.0) {
-                    recs[i].vel.setZero();
-                    continue;
-                }
-                recs[i].vel = (recs[b].pos - recs[a].pos) / dt;
-                recs[i].hasVel = true;
-                // 无 V 记录时钟速同样用中心差分（仅本产品自带钟差列时）
-                if (recs[i].hasClock) {
-                    recs[i].clockRate = (recs[b].clock - recs[a].clock) / dt;
-                    recs[i].hasClockRate = true;
-                }
-            }
+        if (recs[0].hasClockRate) continue;
+        for (int i = 0; i < n; ++i) {
+            if (!recs[i].hasClock) continue;
+            int a = std::max(0, i - 1), b = std::min(n - 1, i + 1);
+            if (a == b) continue;
+            double dt = recs[b].t - recs[a].t;
+            if (dt == 0.0) continue;
+            recs[i].clockRate = (recs[b].clock - recs[a].clock) / dt;
+            recs[i].hasClockRate = true;
         }
     }
 
     data = std::move(tmp);
     // 预计算每卫星相对首历元的秒数向量(查询时复用，避免每调用 O(n) 拷贝)
     relTimes.clear();
-    for (const auto &[sat, recs] : data) {
+    for (const auto &[sat, recs]: data) {
         std::vector<double> &rt = relTimes[sat];
         rt.reserve(recs.size());
         if (!recs.empty()) {
             const CommonTime t0 = recs[0].t;
-            for (const auto &r : recs) rt.push_back(r.t - t0);
+            for (const auto &r: recs) rt.push_back(r.t - t0);
         }
     }
     return !data.empty();
@@ -123,8 +118,8 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
     // 记录按时间升序（SP3 历元有序）；二分定位最近的记录索引（复用 read() 时预计算的相对时间向量，O(log n)）
     const auto itT = relTimes.find(sat);
     const std::vector<double> &times = itT != relTimes.end() ? itT->second : std::vector<double>{};
-    const double tRel = t - r[0].t;                          // 查询点同基准秒数
-    const int lb = Math::lowerBoundIndex(times, tRel);       // 满足 times[lb] <= tRel < times[lb+1]
+    const double tRel = t - r[0].t; // 查询点同基准秒数
+    const int lb = Math::lowerBoundIndex(times, tRel); // 满足 times[lb] <= tRel < times[lb+1]
     int idx = lb;
     if (lb + 1 < n && t - r[lb].t > r[lb + 1].t - t) idx = lb + 1; // 取 lb 与 lb+1 中更近者
     const double dt = t - r[idx].t;
@@ -133,33 +128,48 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
     const int lo = std::max(0, idx - half);
     const int hi = std::min(n - 1, idx + half);
     const int m = hi - lo + 1;
-
-    // 节点不足 2 个时直接取最近点，避免退化插值走到 Lagrange 的 0/1 节点分支。
     if (m < 2) {
         pvt.p = r[idx].pos;
         pvt.v = r[idx].hasVel ? r[idx].vel : Eigen::Vector3d::Zero();
         pvt.clockBias = r[idx].hasClock ? r[idx].clock : 0.0;
         pvt.clockDrift = r[idx].hasClockRate ? r[idx].clockRate : 0.0;
-        pvt.relativityCorrection = 0.0;
+        pvt.relativityCorrection = -2.0 * pvt.p.dot(pvt.v) / (C_MPS * C_MPS);
         return pvt;
     }
-
-    // 各节点相对 r[idx].t 的时间（秒），与查询点 dt 同基准 → 平移不变，可直接插值
     std::vector<double> tt(m);
     for (int k = 0; k < m; ++k) tt[k] = r[lo + k].t - r[idx].t;
 
     std::vector<Eigen::Vector3d> posVec(m);
-    for (int k = 0; k < m; ++k) posVec[k] = r[lo + k].pos;
+    for (int k = 0; k < m; ++k) {
+        const Eigen::Vector3d &p = r[lo + k].pos;
+        posVec[k] = Math::rotationZ(-OMEGA_EARTH * (tt[k] - dt)) * p;
+    }
     pvt.p = Math::simpleLagrangeInterpolation(tt, posVec, dt);
-
-    if (r[idx].hasVel) {
+    bool allVel = true;
+    for (int k = 0; k < m; ++k) {
+        if (!r[lo + k].hasVel) {
+            allVel = false;
+            break;
+        }
+    }
+    if (allVel) {
         std::vector<Eigen::Vector3d> velVec(m);
-        for (int k = 0; k < m; ++k) velVec[k] = r[lo + k].vel;
+        for (int k = 0; k < m; ++k) {
+            const Eigen::Vector3d &v = r[lo + k].vel;
+            velVec[k] = Math::rotationZ(-OMEGA_EARTH * (tt[k] - dt)) * v;
+        }
         pvt.v = Math::simpleLagrangeInterpolation(tt, velVec, dt);
     } else {
-        pvt.v.setZero();
+        constexpr double kVelDt = 1.0e-3; //与 RTKLIB peph2pos 的 tt 一致
+        std::vector<Eigen::Vector3d> posVecAhead(m);
+        for (int k = 0; k < m; ++k) {
+            const Eigen::Vector3d &p = r[lo + k].pos;
+            posVecAhead[k] = Math::rotationZ(-OMEGA_EARTH * (tt[k] - (dt + kVelDt))) * p;
+        }
+        const Eigen::Vector3d pAhead = Math::simpleLagrangeInterpolation(tt, posVecAhead, dt + kVelDt);
+        pvt.v = (pAhead - pvt.p) / kVelDt;
     }
-    // 超快/最终 SP3 自带钟差列时直接插值，调用方无需另给 CLK 文件
+
     if (r[idx].hasClock) {
         std::vector<double> clkVec(m);
         for (int k = 0; k < m; ++k) clkVec[k] = r[lo + k].clock;
@@ -175,7 +185,7 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
         pvt.clockBias = 0.0; // 无钟差列，钟差由调用方用 CLK 注入
         pvt.clockDrift = 0.0;
     }
-    pvt.relativityCorrection = 0.0;
+    pvt.relativityCorrection = -2.0 * pvt.p.dot(pvt.v) / (C_MPS * C_MPS);
     return pvt;
 }
 

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include "MathUtils.h"
+#include "Const.h"
 
 namespace {
     constexpr int IONEX_FIELD_WIDTH = 5; // IONEX 数值定宽 5 字符
@@ -76,7 +77,7 @@ bool IonexReader::read(const std::string &path) {
                     if (const bool leap = (yy % 4 == 0 && yy % 100 != 0) || yy % 400 == 0; leap && mm2 > 2) d2 += 1;
                     return d2;
                 }(y, mo, d);
-                t = YDSTime2CommonTime(YDSTime(y, doy, hh * 3600.0 + mm * 60.0 + ss, TimeSystem::GPS));
+                t = YDSTime2CommonTime(YDSTime(y, doy, hh * SEC_PER_HOUR + mm * SEC_PER_MIN + ss, TimeSystem::GPS));
                 cur.t = t;
                 MJD m;
                 CommonTime2MJD(t, m);

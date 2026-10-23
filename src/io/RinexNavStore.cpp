@@ -7,15 +7,6 @@
 using namespace std;
 
 namespace {
-    /// 读一行并替换科学计数法的 'D' → 'e'
-    string nextLine(fstream &navFile) {
-        string line;
-        getline(navFile, line);
-        if (!line.empty()) stripTrailing(line);
-        replace(line.begin(), line.end(), 'D', 'e');
-        return line;
-    }
-
     /// 从 RINEX epoch 行解析 CommonTime
     CommonTime parseEpoch(const string &line, const TimeSystem &ts = TimeSystem::GPS) {
         const int yr = safeStoi(line.substr(4, 4));
@@ -37,10 +28,7 @@ namespace {
     }
 }
 
-// ============================================================================
-// GPS 星历解析
-// ============================================================================
-void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
+void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line) const {
     SatID sat(line.substr(0, 3));
     eph.prn = sat.id;
 
@@ -65,49 +53,70 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     double HOWtime;
 
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         IODE = safeStod(l.substr(4, 19));
         Crs = safeStod(l.substr(23, 19));
         Delta_n = safeStod(l.substr(42, 19));
         M0 = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         Cuc = safeStod(l.substr(4, 19));
         ecc = safeStod(l.substr(23, 19));
         Cus = safeStod(l.substr(42, 19));
         sqrt_A = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         Toe = safeStod(l.substr(4, 19));
         Cic = safeStod(l.substr(23, 19));
         OMEGA_0 = safeStod(l.substr(42, 19));
         Cis = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         i0 = safeStod(l.substr(4, 19));
         Crc = safeStod(l.substr(23, 19));
         omega = safeStod(l.substr(42, 19));
         OMEGA_DOT = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         IDOT = safeStod(l.substr(4, 19));
         //L2Codes = safeStod(l.substr(23, 19));
         //GPSWeek = safeStod(l.substr(42, 19));
         //L2Pflag = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         URA = safeStod(l.substr(4, 19));
         SV_health = safeStod(l.substr(23, 19));
         TGD = safeStod(l.substr(42, 19));
         IODC = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         HOWtime = safeStod(l.substr(4, 19));
         //fitInterval = safeStod(l.substr(23, 19));
     }
@@ -145,10 +154,7 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line, fstream &navFile) {
     }
 }
 
-// ============================================================================
-// BDS 星历解析（RINEX 3.02，8 行格式）
-// ============================================================================
-void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
+void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line) const {
     SatID sat(line.substr(0, 3));
     eph.prn = sat.id;
 
@@ -169,28 +175,40 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     double i0, Crc, omega, OMEGA_DOT;
 
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         IODE = safeStod(l.substr(4, 19));
         Crs = safeStod(l.substr(23, 19));
         Delta_n = safeStod(l.substr(42, 19));
         M0 = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         Cuc = safeStod(l.substr(4, 19));
         ecc = safeStod(l.substr(23, 19));
         Cus = safeStod(l.substr(42, 19));
         sqrt_A = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         Toe = safeStod(l.substr(4, 19));
         Cic = safeStod(l.substr(23, 19));
         OMEGA_0 = safeStod(l.substr(42, 19));
         Cis = safeStod(l.substr(61, 19));
     }
     {
-        string l = nextLine(navFile);
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
         i0 = safeStod(l.substr(4, 19));
         Crc = safeStod(l.substr(23, 19));
         omega = safeStod(l.substr(42, 19));
@@ -198,30 +216,29 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     }
 
     // 行 5：IDOT, (blank), BDSWeek, (blank)
-    string l5 = nextLine(navFile);
+    string l5;
+    if (!nextLine(l5)) throw EndOfFile("nav data truncated");
+    stripTrailing(l5);
+    fortranExponent(l5);
     double IDOT = safeStod(l5.substr(4, 19));
     //double BDSWeek = safeStod(l5.substr(42, 19));
 
     // 行 6：SatH1, TGD1, TGD2, TransTime (BDS 秒)
-    string l6 = nextLine(navFile);
+    string l6;
+    if (!nextLine(l6)) throw EndOfFile("nav data truncated");
+    stripTrailing(l6);
+    fortranExponent(l6);
     double SatH1 = safeStod(l6.substr(4, 19));
     double TGD1 = safeStod(l6.substr(23, 19));
     double TGD2 = safeStod(l6.substr(42, 19));
     double TGD3 = safeStod(l6.substr(61, 19)); // 第 4 字段
-    // 部分 RINEX 文件（如 NovAtel 转换产物）在 SatH1 与 TGD 之间多出一个占位字段，
-    // 导致标准 TGD1 列读到 0、真正的 B1/B3 群时延落在 TGD2/TGD3 列。
-    // 此时用 TGD2、TGD3 作为真正的 B1/B3、B2/B3 群时延；
-    // 标准文件 TGD1 非零，仍走原逻辑。
     bool shifted = fabs(TGD1) < 1e-12 && (fabs(TGD2) > 1e-12 || fabs(TGD3) > 1e-12);
     double tgdB1 = shifted ? TGD2 : TGD1; // B1/B3 群时延
     double tgdB2 = shifted ? TGD3 : TGD2; // B2/B3 群时延
 
-    // 行 7：(blank) × 4 — 跳过
-    nextLine(navFile);
+    string _discard;
+    nextLine(_discard);
 
-    // ---- 填入 BDSEphem 字段 ----
-    //eph.week = static_cast<unsigned int>(BDSWeek);
-    // eph.toc already set from ws.sow above
     eph.toe = Toe;
     eph.m0 = M0;
     eph.e = ecc;
@@ -239,11 +256,173 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line, fstream &navFile) {
     eph.cic = Cic;
     eph.cis = Cis;
     eph.health = static_cast<unsigned int>(SatH1);
-    eph.ura = 2.0; // RINEX BDS 无直接 URA 字段
+    eph.ura = 2.0;
     eph.AODE = static_cast<unsigned int>(IODE);
     eph.AODC = static_cast<unsigned int>(IODE); // 近似等同 AODE
     eph.tgd1 = tgdB1;
     eph.tgd2 = tgdB2;
+}
+
+void RinexNavStore::loadGalEph(GalileoEphem &eph, string &line) const {
+    SatID sat(line.substr(0, 3));
+    eph.prn = sat.id;
+
+    // Epoch line = time of clock (toc)
+    CommonTime ctToc = parseEpoch(line, TimeSystem::GAL);
+    WeekSecond ws;
+    CommonTime2WeekSecond(ctToc, ws);
+    eph.toc = ws.sow; // 时间钟参数 (TOC)
+    eph.week = ws.week; // 从 TOC 时间推算
+
+    eph.a0 = safeStod(line.substr(23, 19));
+    eph.a1 = safeStod(line.substr(42, 19));
+    eph.a2 = safeStod(line.substr(61, 19));
+
+    // 读 7 行轨道参数（每行 4 个字段，各 19 列宽，起始列 4）
+    double IODE, Crs, Delta_n, M0;
+    double Cuc, ecc, Cus, sqrt_A;
+    double Toe, Cic, OMEGA_0, Cis;
+    double i0, Crc, omega, OMEGA_DOT;
+    double IDOT;
+    double URA, SV_health, TGD, IODC;
+    double HOWtime;
+
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        IODE = safeStod(l.substr(4, 19));
+        Crs = safeStod(l.substr(23, 19));
+        Delta_n = safeStod(l.substr(42, 19));
+        M0 = safeStod(l.substr(61, 19));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        Cuc = safeStod(l.substr(4, 19));
+        ecc = safeStod(l.substr(23, 19));
+        Cus = safeStod(l.substr(42, 19));
+        sqrt_A = safeStod(l.substr(61, 19));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        Toe = safeStod(l.substr(4, 19));
+        Cic = safeStod(l.substr(23, 19));
+        OMEGA_0 = safeStod(l.substr(42, 19));
+        Cis = safeStod(l.substr(61, 19));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        i0 = safeStod(l.substr(4, 19));
+        Crc = safeStod(l.substr(23, 19));
+        omega = safeStod(l.substr(42, 19));
+        OMEGA_DOT = safeStod(l.substr(61, 19));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        IDOT = safeStod(l.substr(4, 19));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        URA = safeStod(l.substr(4, 19));
+        SV_health = safeStod(l.substr(23, 19));
+        TGD = safeStod(l.substr(42, 19));
+        IODC = safeStod(l.substr(61, 19));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        HOWtime = safeStod(l.substr(4, 19));
+    }
+
+    // ---- 填入 GalEph 字段 ----
+    eph.toe = Toe;
+    eph.m0 = M0;
+    eph.e = ecc;
+    eph.rootA = sqrt_A;
+    eph.dn = Delta_n;
+    eph.i0 = i0;
+    eph.omega0 = OMEGA_0;
+    eph.omega = omega;
+    eph.omegaDot = OMEGA_DOT;
+    eph.idot = IDOT;
+    eph.cuc = Cuc;
+    eph.cus = Cus;
+    eph.crc = Crc;
+    eph.crs = Crs;
+    eph.cic = Cic;
+    eph.cis = Cis;
+    eph.health = static_cast<unsigned int>(SV_health);
+    eph.ura = URA;
+    eph.tgd = TGD;
+
+    if (HOWtime >= 0.0 && HOWtime < FULL_WEEK) {
+        if (HOWtime - eph.toe > HALF_WEEK && eph.week > 0) {
+            eph.week--;
+        } else if (eph.toe - HOWtime > HALF_WEEK) {
+            eph.week++;
+        }
+    }
+}
+
+void RinexNavStore::loadGloEph(GlonassEphem &eph, const string &line) const {
+    const SatID sat(line.substr(0, 3));
+    eph.prn = sat.id;
+
+    const CommonTime ctToc = parseEpoch(line, TimeSystem::UTC);
+    eph.toeCommon = ctToc;
+
+    eph.tauN = -safeStod(line.substr(23, 19));
+    eph.tauD = safeStod(line.substr(42, 19));
+    eph.tk = safeStod(line.substr(61, 19));
+
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        eph.X = safeStod(l.substr(4, 19));
+        eph.vX = safeStod(l.substr(23, 19));
+        eph.aX = safeStod(l.substr(42, 19));
+        eph.health = static_cast<unsigned int>(safeStod(l.substr(61, 19)));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        eph.Y = safeStod(l.substr(4, 19));
+        eph.vY = safeStod(l.substr(23, 19));
+        eph.aY = safeStod(l.substr(42, 19));
+        eph.freqNum = static_cast<int>(safeStod(l.substr(61, 19)));
+    }
+    {
+        string l;
+        if (!nextLine(l)) throw EndOfFile("nav data truncated");
+        stripTrailing(l);
+        fortranExponent(l);
+        eph.Z = safeStod(l.substr(4, 19));
+        eph.vZ = safeStod(l.substr(23, 19));
+        eph.aZ = safeStod(l.substr(42, 19));
+        // 第 4 字段 = 龄期 / operator info，此处忽略
+    }
 }
 
 void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
@@ -251,17 +430,17 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         throw FileMissingException("nav file path is empty");
     }
 
-    fstream navFileStream(file.c_str(), ios::in);
-    if (!navFileStream) {
+    try {
+        openFile(file);
+    } catch (const FFStreamError &) {
         throw FileMissingException("can't open nav file: " + file);
     }
 
     // ---- 读 header ----
     while (true) {
         string line;
-        getline(navFileStream, line);
         // 文件为空/截断(无 END OF HEADER 即遇 EOF)：安全退出，避免空行 continue 死循环。
-        if (navFileStream.eof() && line.empty()) break;
+        if (!nextLine(line)) break;
         stripTrailing(line);
 
         if (line.empty()) continue;
@@ -269,7 +448,7 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
             throw FFStreamError("Invalid line length, may need dos2unix: " + line);
         }
 
-        if (const string label = strip(line.substr(60, 20)); label == "RINEX VERSION / TYPE") {
+        if (const string label = getLabel(line); label == "RINEX VERSION / TYPE") {
             version = safeStod(line.substr(0, 20));
             fileType = strip(line.substr(20, 20));
             // 导航文件类型字符：N=GPS, G=GLONASS, E=Galileo, M=混合, C=钟差…
@@ -311,21 +490,28 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
     }
 
     // ---- 读星历数据 ----
-    while (navFileStream.peek() != EOF) {
-        string line;
-        getline(navFileStream, line);
-        replace(line.begin(), line.end(), 'D', 'e');
+    string line;
+    while (nextLine(line)) {
+        fortranExponent(line);
 
         if (line.empty() || line[0] == ' ') continue; // 空白行跳过
 
         if (line[0] == 'G') {
             auto eph = std::make_shared<GPSEphem>();
-            loadGPSEph(*eph, line, navFileStream);
-            ephTable.gps[eph->prn].push_back(eph); // 保留同一卫星的多条星历（不同 toe）
+            loadGPSEph(*eph, line);
+            ephTable.gps[eph->prn].push_back(eph);
         } else if (line[0] == 'C') {
             auto eph = std::make_shared<BDSEphem>();
-            loadBDSEph(*eph, line, navFileStream);
-            ephTable.bds[eph->prn].push_back(eph); // 保留同一卫星的多条星历（不同 toe）
+            loadBDSEph(*eph, line);
+            ephTable.bds[eph->prn].push_back(eph);
+        } else if (line[0] == 'E') {
+            auto eph = std::make_shared<GalileoEphem>();
+            loadGalEph(*eph, line);
+            ephTable.gal[eph->prn].push_back(eph);
+        } else if (line[0] == 'R') {
+            auto eph = std::make_shared<GlonassEphem>();
+            loadGloEph(*eph, line);
+            ephTable.glo[eph->prn].push_back(eph);
         }
     }
 }

@@ -9,7 +9,7 @@ namespace {
     bool parseEpoch(const std::string &s, CommonTime &out) {
         std::vector<std::string> parts;
         std::string tok;
-        for (char c: s) {
+        for (const char c: s) {
             if (c == ':') { parts.push_back(tok); tok.clear(); }
             else tok.push_back(c);
         }
@@ -38,7 +38,7 @@ bool TroReader::read(const std::string &path) {
     bool inSolution = false;
     while (std::getline(ifs, line)) {
         if (!line.empty() && line[0] == '+') {
-            inSolution = (line.find("TROP/SOLUTION") != std::string::npos);
+            inSolution = line.find("TROP/SOLUTION") != std::string::npos;
             continue;
         }
         if (!line.empty() && line[0] == '-') {
@@ -53,6 +53,9 @@ bool TroReader::read(const std::string &path) {
         if (!(iss >> station >> epoch)) continue;
         double trotot = 0.0, troStd = 0.0;
         if (!(iss >> trotot >> troStd)) continue;            // 至少要有 TROTOT 与其 σ
+        // 水平梯度列（TGNTOT STDDEV TGETOT STDDEV）可选：老格式文件可能没有，缺失则留 0
+        double gn = 0.0, gnStd = 0.0, ge = 0.0, geStd = 0.0;
+        iss >> gn >> gnStd >> ge >> geStd;
 
         CommonTime t;
         if (!parseEpoch(epoch, t)) continue;
@@ -65,6 +68,10 @@ bool TroReader::read(const std::string &path) {
         constexpr double MM = 1.0e-3; // 文件单位 mm -> m
         r.ztd = trotot * MM;
         r.ztdStd = troStd * MM;
+        r.gradN = gn * MM;
+        r.gradE = ge * MM;
+        r.gradNStd = gnStd * MM;
+        r.gradEStd = geStd * MM;
         data[station].push_back(r);
     }
 
@@ -86,7 +93,7 @@ bool TroReader::hasStation(const std::string &station) const {
 }
 
 const std::vector<TroReader::Record> *TroReader::findStation(const std::string &station) const {
-    auto it = data.find(station);
+    const auto it = data.find(station);
     if (it != data.end()) return &it->second;
     // 退化匹配：按 4 字符短名（HKWS00HKG ↔ HKWS）
     if (station.size() >= 4) {
@@ -123,8 +130,44 @@ bool TroReader::getZtd(const std::string &station, const CommonTime &t,
     const Record &hi = *it;
     const Record &lo = *(it - 1);
     const double span = hi.mjd - lo.mjd;
-    const double f = (span > 0.0) ? (mjd - lo.mjd) / span : 0.0;
+    const double f = span > 0.0 ? (mjd - lo.mjd) / span : 0.0;
     ztd = lo.ztd + (hi.ztd - lo.ztd) * f;
     sigma = lo.ztdStd + (hi.ztdStd - lo.ztdStd) * f;
+    return true;
+}
+
+bool TroReader::getTropoGrad(const std::string &station, const CommonTime &t,
+                             double &gradN, double &gradE,
+                             double &gradNStd, double &gradEStd) const {
+    const std::vector<Record> *recs = findStation(station);
+    if (recs == nullptr || recs->empty()) return false;
+    // 所有记录梯度均为 0 时视为无梯度数据（老格式文件）
+    bool anyGrad = false;
+    for (const auto &r : *recs)
+        if (r.gradN != 0.0 || r.gradE != 0.0) { anyGrad = true; break; }
+    if (!anyGrad) return false;
+
+    MJD m;
+    CommonTime2MJD(t, m);
+    const double mjd = static_cast<double>(m.mjd);
+    const auto it = std::lower_bound(recs->begin(), recs->end(), mjd,
+                                     [](const Record &r, const double v) { return r.mjd < v; });
+    if (it == recs->begin()) {
+        gradN = it->gradN; gradE = it->gradE;
+        gradNStd = it->gradNStd; gradEStd = it->gradEStd;
+        return true;
+    }
+    if (it == recs->end()) {
+        gradN = recs->back().gradN; gradE = recs->back().gradE;
+        gradNStd = recs->back().gradNStd; gradEStd = recs->back().gradEStd;
+        return true;
+    }
+    const Record &hi = *it, &lo = *(it - 1);
+    const double span = hi.mjd - lo.mjd;
+    const double f = span > 0.0 ? (mjd - lo.mjd) / span : 0.0;
+    gradN = lo.gradN + (hi.gradN - lo.gradN) * f;
+    gradE = lo.gradE + (hi.gradE - lo.gradE) * f;
+    gradNStd = lo.gradNStd + (hi.gradNStd - lo.gradNStd) * f;
+    gradEStd = lo.gradEStd + (hi.gradEStd - lo.gradEStd) * f;
     return true;
 }

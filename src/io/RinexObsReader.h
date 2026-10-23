@@ -2,11 +2,12 @@
 #pragma once
 #include <fstream>
 #include "GnssStruct.h"
+#include "RinexFileBase.h"
 
-class RinexObsReader {
+class RinexObsReader : public RinexFileBase {
 public:
     RinexObsReader()
-    : pFileStream(nullptr), isHeaderRead(false)
+    : isHeaderRead(false)
     {}
 
     std::fstream* pFileStream = nullptr;   // 观测文件流；由调用方直接赋值（替代 setFileStream）
@@ -14,30 +15,25 @@ public:
     void parseRinexHeader();
     ObsData parseRinexObs();
 
+    void fastForwardToEpoch(const CommonTime &target) const;
+
     /// 返回已解析的 RINEX header（含 mapObsTypes 可用于自动检测 IF 类型）
     [[nodiscard]] const RinexHeader &getHeader() const { return rinexHeader; }
 
     ObsData parseRinexObs(const CommonTime& syncEpoch)
     {
-        // store current stream pos;
         const streampos sp( pFileStream->tellg() );
         ObsData obsData;
         while(true){
             if( pFileStream->peek() == EOF ){
                 break;
             }
-            // read a record from current strm;
             obsData = parseRinexObs();
-
-            // 首先寻找大于等于参考时刻的历元
-            // 只要大于等于，就意味着时间是同步的或者是超过了给定参考时刻的
             if(obsData.epoch >=syncEpoch)
             {
                 break;
             }
         }
-        // 如果流动站的时刻大于给定的参考时刻+容许的误差，则说明流动站观测值超前了，
-        // 此时，同步失败，且要把流动站的流重置到文件开头，以实现下一个历元的同步。
         if(obsData.epoch > syncEpoch + 0.001 )
         {
             pFileStream->seekg( sp );
@@ -54,7 +50,12 @@ public:
 private:
     RinexHeader rinexHeader;
     std::map<char, std::set<string>> sysTypes;
+    /// GLONASS 频率通道号 k：键为卫星标签(R01..R24)，来自 RINEX "GLONASS SLOT / FRQ #"
+    std::map<std::string, int> mGloChan;
     bool isHeaderRead;
+
+    /// obs 流由调用方经 pFileStream 注入；同步到基类 pStream 供 nextLine/scanLabeledHeader 使用。
+    void syncStream() { pStream = pFileStream; }
 };
 
 

@@ -49,7 +49,7 @@ bool ErpReader::getErp(const CommonTime &t, double &xp, double &yp, double &ut1U
 
     MJD m;
     CommonTime2MJD(t, m);
-    const double mjd = static_cast<double>(m.mjd);
+    const auto mjd = static_cast<double>(m.mjd);
 
     const auto it = std::lower_bound(
         data.begin(), data.end(), mjd,

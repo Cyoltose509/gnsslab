@@ -1,5 +1,7 @@
 #include "OEM7SocketReader.h"
 
+#include "MathUtils.h"
+
 bool OEM7SocketReader::connect(const std::string& ip, const unsigned short port) {
     buffer.clear();
     bufferIndex = 0;
@@ -43,7 +45,7 @@ bool OEM7SocketReader::getNextMessage(std::vector<uint8_t>& message) {
         }
 
         const auto hlen = buffer[bufferIndex + 3];
-        const auto msgLen = U2(&buffer[bufferIndex + 8]);
+        const auto msgLen = Math::U2(&buffer[bufferIndex + 8]);
         const auto totalLen = hlen + msgLen + 4;
 
         if (buffer.size() - bufferIndex < totalLen) {

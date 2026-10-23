@@ -5,16 +5,11 @@
 #include "TimeConvert.h"
 #include "CoordConvert.h"
 
-#include <cctype>
 
-// 卫星观测行形如 "G12 ..."：首字符为星座标识、其后两位为 PRN 数字。
-// 用于识别被追加在文件尾部的非观测内容（如 INI 段/统计块），避免其被当成卫星行、
-// 进而触发 SatID 内部 std::stoi 抛错（"invalid stoi argument"）而毁掉整个任务。
 static bool looksLikeSatLine(const std::string &line) {
     if (line.size() < 3) return false;
-    const char sys = line[0];
-    if (sys != 'G' && sys != 'R' && sys != 'E' && sys != 'C' &&
-        sys != 'J' && sys != 'I' && sys != 'S')
+    if (const char sys = line[0]; sys != 'G' && sys != 'R' && sys != 'E' && sys != 'C' &&
+                                  sys != 'J' && sys != 'I' && sys != 'S')
         return false;
     return std::isdigit(static_cast<unsigned char>(line[1])) != 0 &&
            std::isdigit(static_cast<unsigned char>(line[2])) != 0;
@@ -22,25 +17,13 @@ static bool looksLikeSatLine(const std::string &line) {
 
 
 void RinexObsReader::parseRinexHeader() {
+    syncStream();
     XYZ antennaPosition;
-    char satSys;
     std::map<char, std::vector<string> > mapObsTypes;
     // 天线偏心（marker -> 天线参考点 ARP），RINEX: ANTENNA: DELTA H/E/N（本地 E/N/U 偏移）
     bool haveAntDelta = false;
     double antDh = 0.0, antDe = 0.0, antDn = 0.0;
-    while (true) {
-        string line;
-        getline(*pFileStream, line);
-        if (pFileStream->eof()) {
-            throw FFStreamError("Unexpected EOF in RINEX header");
-        }
-
-        string label;
-        label = strip(safeSubstr(line, 60, 20));
-
-        if (label == "END OF HEADER") {
-            break;
-        }
+    scanLabeledHeader([&](const std::string &label, std::string &line) {
         if (label == "MARKER NAME") {
             string markerName = strip(safeSubstr(line, 0, 60));
             std::replace(markerName.begin(), markerName.end(), ' ', '_');
@@ -57,13 +40,12 @@ void RinexObsReader::parseRinexHeader() {
             antennaPosition[2] = safeStod(safeSubstr(line, 28, 14));
             rinexHeader.antennaPosition = antennaPosition;
         } else if (label == "ANTENNA: DELTA H/E/N") {
-
             antDh = safeStod(safeSubstr(line, 0, 14));
             antDe = safeStod(safeSubstr(line, 14, 14));
             antDn = safeStod(safeSubstr(line, 28, 14));
             haveAntDelta = true;
         } else if (label == "SYS / # / OBS TYPES") {
-            const char sysStr= line[0];
+            const char sysStr = line[0];
             const int numObs = safeStoi(safeSubstr(line, 3, 3));
             constexpr int maxObsPerLine = 13;
             for (int i = 0; i < maxObsPerLine && static_cast<int>(mapObsTypes[sysStr].size()) < numObs; i++) {
@@ -75,8 +57,28 @@ void RinexObsReader::parseRinexHeader() {
             const std::string type = strip(safeSubstr(line, 20, 20));
             const std::string radome = strip(safeSubstr(line, 40, 20));
             if (!type.empty()) rinexHeader.antType = radome.empty() ? type : type + " " + radome;
+        } else if (label == "SYS / PHASE SHIFT") {
+            std::istringstream ss(strip(safeSubstr(line, 0, 60)));
+
+            if (std::string sysStr, obsType, valStr; ss >> sysStr >> obsType >> valStr) {
+                const char sys = sysStr.empty() ? ' ' : sysStr[0];
+                rinexHeader.phaseShift[std::string(1, sys) + obsType] = safeStod(valStr);
+            }
+        } else if (label == "GLONASS SLOT / FRQ #") {
+            std::istringstream ss(strip(safeSubstr(line, 0, 60)));
+            std::string tok;
+            while (ss >> tok) {
+                if (tok.size() == 3 && tok[0] == 'R' &&
+                    std::isdigit(static_cast<unsigned char>(tok[1])) &&
+                    std::isdigit(static_cast<unsigned char>(tok[2]))) {
+                    if (std::string chTok; ss >> chTok) {
+                        try { mGloChan[tok] = std::stoi(chTok); } catch (...) {
+                        }
+                    }
+                }
+            }
         }
-    }
+    });
     if (haveAntDelta) {
         rinexHeader.antDeltaENU = Eigen::Vector3d(antDe, antDn, antDh);
     }
@@ -85,6 +87,7 @@ void RinexObsReader::parseRinexHeader() {
 }
 
 ObsData RinexObsReader::parseRinexObs() {
+    syncStream();
     if (!isHeaderRead) {
         parseRinexHeader();
         isHeaderRead = true;
@@ -93,18 +96,9 @@ ObsData RinexObsReader::parseRinexObs() {
     // 读取观测值（跳过空行以及可能被污染的尾部非 epoch 行）
     std::string line;
     while (true) {
-        getline(*pFileStream, line);
-        if (pFileStream->eof()) {
-            throw EndOfFile("EOF encountered!");
-        }
-        // 去除 Windows 换行残留的 \r
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!nextLine(line)) throw EndOfFile("EOF encountered!");
         // 跳过空行
         if (strip(line).empty()) continue;
-        // 正常 epoch 行以 "> " 开头且时间字段(cols 2-28)非空；个别文件(HKWS 样本)尾部带有
-        // ">     4212" 形式的统计块首行，时间字段全空，会被误判为 epoch，进而 parseTime 返回
-        // day=0 的 CommonTime 触发 "before Epoch" 错误。仅当 "> " 开头且时间字段非空才视为 epoch 行，
-        // 否则继续读取(走到 EOF 由调用方 EndOfFile 分支优雅结束)。
         bool isEpochLine = line.size() >= 2 && line[0] == '>' && line[1] == ' ' &&
                            safeSubstr(line, 2, 27) != std::string(27, ' ');
         if (isEpochLine) break;
@@ -123,26 +117,25 @@ ObsData RinexObsReader::parseRinexObs() {
     if (epochFlag == 0 || epochFlag == 1 || epochFlag == 6) {
         std::vector<SatID> satIndex(numSats);
         for (int isv = 0; isv < numSats; ++isv) {
-            getline(*pFileStream, line);
-            if (pFileStream->eof()) {
-                throw EndOfFile("EOF encountered!");
-            }
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            // 历元头声明的卫星数比实际观测行多（尾部被追加了非观测内容）时，读到这里的内容
-            // 不是卫星行。视为观测数据结束——与「历元块中途遇 EOF」同义，交给调用方的
-            // EndOfFile 分支优雅收尾，而不是让 SatID 的 stoi 抛错把整个任务判为解析失败。
-            if (!looksLikeSatLine(line)) {
-                throw EndOfFile("观测数据结束（历元块后存在非观测内容）");
-            }
+        if (!nextLine(line)) throw EndOfFile("EOF encountered!");
+        if (!looksLikeSatLine(line)) {
+            throw EndOfFile("观测数据结束");
+        }
             try {
                 satIndex[isv] = SatID(safeSubstr(line, 0, 3));
             } catch (std::exception &e) {
                 throw FFStreamError(e.what());
             }
 
-            auto sat = SatID(satIndex[isv]);
-            // 仅解析已实现定位的星座：GPS/BDS
-            if (sat.system != 'G' && sat.system != 'C') {
+            auto sat = satIndex[isv];
+            if (sat.system == 'R') {
+                if (auto it = mGloChan.find(sat.toString()); it != mGloChan.end()) {
+                    satIndex[isv].chan = it->second;
+                    sat.chan = it->second;
+                }
+            }
+            // 仅解析已实现定位的星座：GPS / BDS / GLONASS / Galileo
+            if (sat.system != 'G' && sat.system != 'C' && sat.system != 'R' && sat.system != 'E') {
                 continue;
             }
 
@@ -162,9 +155,14 @@ ObsData RinexObsReader::parseRinexObs() {
                 double data = safeStod(tmpStr);
 
                 if (obsTypeStr[0] == 'L') {
-                    double freq = getFreq(sat.system, obsTypeStr);
+                    // GLONASS 频率随通道号变化（FDMA），必须用逐星频率；其余系统用 (sys, band) 频率
+                    double freq = sat.system == 'R'
+                                      ? getGlonassFreq(obsTypeStr[1], sat.chan)
+                                      : getFreq(sat.system, obsTypeStr);
                     double wavelength = freq > 0.0 ? C_MPS / freq : 0.0;
                     if (wavelength == 0.0) continue;
+                    const std::string key = std::string(1, sat.system) + obsTypeStr;
+                    if (const auto it = rinexHeader.phaseShift.find(key); it != rinexHeader.phaseShift.end()) data = data + it->second;
                     data = data * wavelength;
                 }
 
@@ -190,13 +188,61 @@ ObsData RinexObsReader::parseRinexObs() {
     return obsData;
 }
 
+void RinexObsReader::fastForwardToEpoch(const CommonTime &target) const {
+    if (!pFileStream || !pFileStream->good()) return;
+    const std::streamoff startOff = pFileStream->tellg();
+    pFileStream->seekg(0, std::ios::end);
+    const std::streamoff endOff = pFileStream->tellg();
+    const std::streamoff remaining = endOff - startOff;
+    if (remaining <= 0) return;
+    std::string all;
+    all.resize(static_cast<std::size_t>(remaining));
+    pFileStream->seekg(startOff);
+    pFileStream->read(&all[0], remaining);
+    const auto readn = static_cast<std::size_t>(pFileStream->gcount());
+    if (readn == 0) return;
+    all.resize(readn);
+
+    std::size_t lineStart = 0;
+    while (lineStart < readn) {
+        std::size_t nl = all.find('\n', lineStart);
+        if (nl == std::string::npos) nl = readn;
+        if (const std::size_t lineLen = nl - lineStart; lineLen >= 2 && all[lineStart] == '>' && all[lineStart + 1] == ' ') {
+            std::size_t end = nl;
+            if (end > lineStart && all[end - 1] == '\r') --end;
+            bool timeEmpty = true;
+            for (int k = 2; k < 29 && lineStart + k < end; ++k) {
+                if (all[lineStart + k] != ' ') {
+                    timeEmpty = false;
+                    break;
+                }
+            }
+            if (!timeEmpty) {
+                int epochFlag = 0;
+                if (lineStart + 31 < end) epochFlag = safeStoi(std::string(1, all[lineStart + 31]));
+                if (epochFlag == 0 || epochFlag == 1 || epochFlag == 6) {
+                    CommonTime t = parseTime(std::string(all, lineStart, end - lineStart));
+                    t.setTimeSystem(TimeSystem::GPS);
+                    if (t >= target) {
+                        pFileStream->clear();
+                        pFileStream->seekg(startOff + static_cast<std::streamoff>(lineStart));
+                        return;
+                    }
+                }
+            }
+        }
+        lineStart = nl + 1;
+    }
+    // 无匹配历元：流已到 EOF，后续 parseRinexObs 走 EndOfFile 收尾
+}
+
 CommonTime RinexObsReader::parseTime(const string &line) {
     if (safeSubstr(line, 2, 27) == string(27, ' '))
         return CommonTime();
-    const auto year   = safeStoi(safeSubstr(line, 2, 4));
-    const auto month  = safeStoi(safeSubstr(line, 7, 2));
-    const auto day    = safeStoi(safeSubstr(line, 10, 2));
-    const auto hour   = safeStoi(safeSubstr(line, 13, 2));
+    const auto year = safeStoi(safeSubstr(line, 2, 4));
+    const auto month = safeStoi(safeSubstr(line, 7, 2));
+    const auto day = safeStoi(safeSubstr(line, 10, 2));
+    const auto hour = safeStoi(safeSubstr(line, 13, 2));
     const auto minute = safeStoi(safeSubstr(line, 16, 2));
     const auto second = safeStod(safeSubstr(line, 19, 11));
     return CivilTime2CommonTime(CivilTime(year, month, day, hour, minute, second));
@@ -205,7 +251,7 @@ CommonTime RinexObsReader::parseTime(const string &line) {
 void RinexObsReader::chooseObs(ObsData &obsData) {
     if (sysTypes.empty()) return;
 
-    for (auto it = obsData.satTypeValueData.begin(); it != obsData.satTypeValueData.end(); ) {
+    for (auto it = obsData.satTypeValueData.begin(); it != obsData.satTypeValueData.end();) {
         const char sys = it->first.system;
         if (sysTypes.find(sys) == sysTypes.end()) {
             it = obsData.satTypeValueData.erase(it);
@@ -213,7 +259,7 @@ void RinexObsReader::chooseObs(ObsData &obsData) {
         }
         const auto &wantedTypes = sysTypes.at(sys);
         TypeValueMap filtered;
-        for (const auto &[type, value] : it->second) {
+        for (const auto &[type, value]: it->second) {
             if (wantedTypes.count(type)) filtered[type] = value;
         }
         if (filtered.empty()) {

@@ -2,22 +2,20 @@
 
 #include <iostream>
 #include <string>
-#include <list>
 #include <map>
-#include <algorithm>
 #include <fstream>
 
 #include "EphemerisTable.h"
 #include "GnssStruct.h"
+#include "RinexFileBase.h"
 
 using namespace std;
 
-/// RINEX 3.x 导航文件读取器
-/// 用法：loadFile(gnssNavFile, ephTable) 直接将 GPS/BDS 星历写入 EphemerisTable
-class RinexNavStore {
+class RinexNavStore : public RinexFileBase {
 public:
     RinexNavStore() = default;
-    virtual ~RinexNavStore() = default;
+
+    ~RinexNavStore() override = default;
 
     /// 读一个 RINEX nav 文件（.xxN / .xxG / .xxC），星历写入 ephTable
     void loadFile(const string &file, EphemerisTable &ephTable);
@@ -36,8 +34,12 @@ public:
     long leapSeconds = 0, leapDelta = 0, leapWeek = 0, leapDay = 0;
 
 private:
-    static void loadGPSEph(GPSEphem &eph, string &line, fstream &navFile);
+    void loadGPSEph(GPSEphem &eph, string &line) const;
 
-    static void loadBDSEph(BDSEphem &eph, string &line, fstream &navFile);
+    void loadBDSEph(BDSEphem &eph, string &line) const;
+
+    void loadGalEph(GalileoEphem &eph, string &line) const;
+
+    void loadGloEph(GlonassEphem &eph, const string &line) const;
 
 };

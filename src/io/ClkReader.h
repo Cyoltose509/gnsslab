@@ -1,13 +1,14 @@
 #pragma once
 #include "GnssStruct.h"
-#include "TimeConvert.h"
+#include "MathUtils.h"
+#include "RinexFileBase.h"
 #include <vector>
 #include <map>
 #include <set>
 #include <string>
 
-/// 精密钟差 CLK (RINEX CLK) 读取器。
-class ClkReader {
+/// 精密钟差 CLK (RINEX CLK) 读取器。继承 RinexFileBase 复用 CRLF 安全 nextLine。
+class ClkReader : public RinexFileBase {
 public:
     struct Record {
         CommonTime t;
@@ -22,13 +23,18 @@ public:
     [[nodiscard]] bool empty() const { return data.empty(); }
 
     [[nodiscard]] bool contains(const SatID &sat) const {
-        auto it = data.find(sat);
+        const auto it = data.find(sat);
         return it != data.end() && !it->second.empty();
     }
 
     [[nodiscard]] double getClockBias(const SatID &sat, const CommonTime &t) const;
 
+    [[nodiscard]] bool covers(const SatID &sat, const CommonTime &t, const double maxGap = 120.0) const;
+
     [[nodiscard]] int satCount() const { return static_cast<int>(data.size()); }
+
+    /// 只读访问全部已解析钟差记录（指纹/调试用；不暴露写入口）。
+    [[nodiscard]] const std::map<SatID, std::vector<Record>> &records() const { return data; }
 
 private:
     std::map<SatID, std::vector<Record> > data;

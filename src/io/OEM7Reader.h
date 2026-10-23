@@ -2,10 +2,11 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <cmath>
 #include "GnssStruct.h"
-#include "Ephemeris.h"
 #include "EphemerisTable.h"
 #include "CoordConvert.h"
+#include "core/InsStruct.h"
 
 class OEM7Reader {
 public:
@@ -17,26 +18,45 @@ public:
 
     virtual void close();
 
-    /// 流式读取（逐历元，realtime 路径使用）
     bool getNextEpoch(ObsData &obs);
 
-    /// 批量读取：一次性消费所有消息，产出历元列表 + 逐历元星历快照
-    /// @param progress 可选进度输出（0.0~1.0），由调用方轮询
-    void readAll(std::vector<ObsData> &epochs,
-                 std::vector<EphemerisTable> &ephSnapshots,
-                 std::atomic<float> *progress = nullptr);
-
-    /// 文件读取进度（0.0 ~ 1.0）
-    [[nodiscard]] double progress() const {
-        return fileSize > 0 ? static_cast<double>(bufferIndex) / static_cast<double>(fileSize) : 0.0;
+    bool getNextImu(ImuSample &s) {
+        std::vector<uint8_t> message;
+        while (getNextMessage(message)) {
+            if (const size_t before = mImuLog.size(); parseImu(message) && mImuLog.size() > before) {
+                s = mImuLog.back();
+                return true;
+            }
+        }
+        return false;
     }
 
-    std::map<int, GPSEphem> latestGps;
-    std::map<int, BDSEphem> latestBds;
+    [[nodiscard]] std::shared_ptr<EphemerisTable> ephSnapshot() {
+        if (!mEphSnap) mEphSnap = std::make_shared<EphemerisTable>();
+        return mEphSnap;
+    }
 
-    std::map<char, std::vector<std::string>> availableTypes;  // 各系统出现的 C 类观测量代码
+    [[nodiscard]] const ImuLog &getImuLog() const { return mImuLog; }
 
-    /// 解析过程中收集到的「各系统可用观测量类型」（C 类伪距码），
+    std::shared_ptr<EphemerisTable> mEphSnap;
+
+    /// 收到一条（系统,prn）星历时：TOE 未变则跳过
+    template<typename E>
+    void storeEph(std::map<int, std::vector<std::shared_ptr<E> > > EphemerisTable::*member,
+                  int prn, E &&e) {
+        if (!mEphSnap) mEphSnap = std::make_shared<EphemerisTable>();
+        const auto &curMap = mEphSnap.get()->*member;
+        const auto it = curMap.find(prn);
+        if (it != curMap.end() && !it->second.empty()) {
+            if (std::fabs(it->second.back()->getCommonTime() - e.getCommonTime()) < 1e-9) return;
+        }
+        auto nxt = std::make_shared<EphemerisTable>(*mEphSnap);
+        (nxt.get()->*member)[prn] = {std::make_shared<E>(std::forward<E>(e))};
+        mEphSnap = std::move(nxt);
+    }
+
+    std::map<char, std::vector<std::string> > availableTypes;
+
 protected:
     struct Header {
         int type;
@@ -47,14 +67,17 @@ protected:
     } currentHeader = {};
 
     std::vector<unsigned char> buffer;
-    size_t bufferIndex = 0;  // 当前读取位置，替代 buffer.erase 避免 O(N²) 搬迁
-    size_t fileSize = 0;    // 文件总字节数（用于进度显示）
+    size_t bufferIndex = 0; // 当前读取位置，替代 buffer.erase 避免 O(N²) 搬迁
+    size_t fileSize = 0; // 文件总字节数
     ObsData currentObs;
-    Eigen::Vector3d antennaPosition{0, 0, 0};  // 默认值
+    ImuLog mImuLog; // IMU 累积缓存（与 currentObs 同构：parseImu 写入、getImuLog 读出）
+    Eigen::Vector3d antennaPosition{0, 0, 0}; // 默认值
 
     virtual bool getNextMessage(std::vector<uint8_t> &message);
 
-    bool parseMessage(const std::vector<uint8_t> &message);
+    bool parseGNSSMessage(const std::vector<uint8_t> &message);
+
+    bool parseImu(const std::vector<uint8_t> &message);
 
     bool parseRange(const std::vector<uint8_t> &message);
 
@@ -62,38 +85,13 @@ protected:
 
     bool parseBdsEphem(const std::vector<uint8_t> &message);
 
+    bool parseGloEphem(const std::vector<uint8_t> &message);
+
+    bool parseGalEph(const std::vector<uint8_t> &message);
+
     bool parseBestPos(const std::vector<uint8_t> &message);
 
+    static bool isCompactImuRecord(const std::vector<uint8_t> &buf, size_t start);
+
     static bool crcExam(const std::vector<uint8_t> &message);
-
-    // Helpers
-    static uint16_t U2(const uint8_t *p) {
-        uint16_t u;
-        memcpy(&u, p, 2);
-        return u;
-    }
-
-    static uint32_t U4(const uint8_t *p) {
-        uint32_t u;
-        memcpy(&u, p, 4);
-        return u;
-    }
-
-    static int32_t I4(const uint8_t *p) {
-        int32_t i;
-        memcpy(&i, p, 4);
-        return i;
-    }
-
-    static float R4(const uint8_t *p) {
-        float r;
-        memcpy(&r, p, 4);
-        return r;
-    }
-
-    static double R8(const uint8_t *p) {
-        double r;
-        memcpy(&r, p, 8);
-        return r;
-    }
 };
