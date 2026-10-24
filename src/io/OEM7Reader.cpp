@@ -579,7 +579,7 @@ bool OEM7Reader::parseBestPos(const std::vector<uint8_t> &message) {
     if (solStatus == 0 && lat_deg > 0 && lat_deg < 90 && lon_deg > 0 && lon_deg < 180) {
         const double lat_rad = lat_deg * DEG_TO_RAD;
         const double lon_rad = lon_deg * DEG_TO_RAD;
-        currentObs.antennaPosition = BLHtoXYZ({lat_rad, lon_rad, hgt}, Frame::WGS84);
+        currentObs.antennaPosition = BLHToXYZ({lat_rad, lon_rad, hgt}, Frame::WGS84);
         return true;
     }
 
