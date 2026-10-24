@@ -4,13 +4,13 @@
 #include "CoordConvert.h"
 #include "TimeConvert.h"
 #include "MathUtils.h"
+#include <Eigen/Eigen>
 
-using namespace Eigen;
 
 class Geodesy {
 public:
     // 太阳/月球地心 ECEF 位置
-    static void sunMoonECEF(const CommonTime &t, Vector3d &rsunEcef, Vector3d &rmoonEcef, double &gmstOut) {
+    static void sunMoonECEF(const CommonTime &t, Eigen::Vector3d &rsunEcef, Eigen::Vector3d &rmoonEcef, double &gmstOut) {
         const JulianDate jd = CommonTime2JulianDate(t);
         const double D = static_cast<double>(jd.jd) - 2451545.0; // 自 J2000 日数
         const double T = D / 36525.0; // 儒略世纪
@@ -28,7 +28,7 @@ public:
         const double rs = ASTRONOMICAL_UNIT * (1.000140612 - 0.016708617 * std::cos(Ms * DEG_TO_RAD) - 0.000139589 * std::cos(
                                                    2.0 * Ms * DEG_TO_RAD));
         const double sl = std::sin(ls * DEG_TO_RAD), cl = std::cos(ls * DEG_TO_RAD);
-        const Vector3d sunEci(rs * cl, rs * cose * sl, rs * sine * sl);
+        const Eigen::Vector3d sunEci(rs * cl, rs * cose * sl, rs * sine * sl);
 
         // 月球
         const double lm = 218.32 + 481267.883 * T + 6.29 * std::sin(f[0]) - 1.27 * std::sin(f[0] - 2.0 * f[3])
@@ -39,23 +39,23 @@ public:
                                                    + 0.0078 * std::cos(2.0 * f[3]) + 0.0028 * std::cos(2.0 * f[0])) * DEG_TO_RAD);
         const double slm = std::sin(lm * DEG_TO_RAD), clm = std::cos(lm * DEG_TO_RAD);
         const double sp = std::sin(pm * DEG_TO_RAD), cp = std::cos(pm * DEG_TO_RAD);
-        const Vector3d moonEci(rm * cp * clm, rm * (cose * cp * slm - sine * sp), rm * (sine * cp * slm + cose * sp));
+        const Eigen::Vector3d moonEci(rm * cp * clm, rm * (cose * cp * slm - sine * sp), rm * (sine * cp * slm + cose * sp));
 
         // ECI→ECEF
-        const Matrix3d U = ECItoECEF(t, gmstOut);
+        const Eigen::Matrix3d U = eciToECEF(t, gmstOut);
         rsunEcef = U * sunEci;
         rmoonEcef = U * moonEci;
     }
 
     // 固体潮位移(ECEF, 米)
-    static Vector3d solidTideDisplacement(const Vector3d &recvEcef, const CommonTime &t) {
-        Vector3d rsun, rmoon;
+    static Eigen::Vector3d solidTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t) {
+        Eigen::Vector3d rsun, rmoon;
         double gmst;
         sunMoonECEF(t, rsun, rmoon, gmst);
-        auto blh = XYZtoBLH(recvEcef, Frame::WGS84);
+        auto blh = XYZToBLH(recvEcef, Frame::WGS84);
         const double pos[2] = {blh[0], blh[1]};
-        Matrix3d E = getBLMatrix(blh[0], blh[1]);
-        const Vector3d eu = E.row(2).transpose();
+        Eigen::Matrix3d E = ECEFToENUDCM(blh[0], blh[1]);
+        const Eigen::Vector3d eu = E.row(2).transpose();
         double dr1[3], dr2[3];
         tidePotential(eu.data(), rsun.data(), SUN_GM, pos, dr1);
         tidePotential(eu.data(), rmoon.data(), MOON_GM, pos, dr2);
@@ -70,47 +70,85 @@ public:
     }
 
     // 卫星相位中心机体框架
-    static void satelliteBodyFrame(const Vector3d &pTx, const Vector3d &rsunEcef,
-                                   Vector3d &ex, Vector3d &ey, Vector3d &ez) {
+    static void satelliteBodyFrame(const Eigen::Vector3d &pTx, const Eigen::Vector3d &rsunEcef,
+                                   Eigen::Vector3d &ex, Eigen::Vector3d &ey, Eigen::Vector3d &ez) {
         ez = -pTx.normalized();
-        const Vector3d es = (rsunEcef - pTx).normalized();
+        const Eigen::Vector3d es = (rsunEcef - pTx).normalized();
         ey = ez.cross(es).normalized();
         ex = ey.cross(ez);
+    }
+
+    // ===================== 地球椭球 / 重力 / 自转（导航系计算用） =====================
+    // 子午卷曲率半径 M 与卮邕卷曲率半径 N（m）
+    static double meridianRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
+        const double s = std::sin(B);
+        const double w2 = 1.0 - frame.e2 * s * s;
+        return frame.a * (1.0 - frame.e2) / (w2 * std::sqrt(w2));
+    }
+
+    static double primeVerticalRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
+        const double s = std::sin(B);
+        return frame.a / std::sqrt(1.0 - frame.e2 * s * s);
+    }
+
+    // 正常重力（Somigliana 闭式 + 自由空气高度改正），m/s^2
+    static double normalGravity(const double latDeg, const FrameInfo &frame = Frame::WGS84, const double h = 0.0) {
+        const double s = std::sin(latDeg * DEG_TO_RAD);
+        const double s2 = s * s;
+        const double g0 = 9.7803267715 * (1.0 + 0.00193185138639 * s2) / std::sqrt(1.0 - frame.e2 * s2);
+        return g0 - 3.0877e-6 * h;   // 自由空气改正 ≈ -0.3086 mgal/m
+    }
+
+    // 地球自转角速度在 e 系的投影（rad/s）；n 系的 ω_ie^n 见
+    // InsMath.h::navEarthRate(latDeg, earthRate)。
+    static Eigen::Vector3d earthRateInECEF(const double omega = OMEGA_EARTH) {
+        return {0.0, 0.0, omega};
+    }
+
+    // 位移速率引起的导航系旋转 ω_en^n（n 系相对 e 系的角速度，rad/s）。
+    // 与 ω_ie^n（InsMath.h::navEarthRate）合起来即为 n 系相对 e 系的完整旋转速率。
+    static Eigen::Vector3d transportRateInNav(const double latDeg, const double vNorth, const double vEast,
+                                              const double height = 0.0,
+                                              const FrameInfo &frame = Frame::WGS84) {
+        const double B = latDeg * DEG_TO_RAD;
+        const double Rn = primeVerticalRadius(B, frame) + height;
+        const double Rm = meridianRadius(B, frame) + height;
+        return {vEast / Rn, -vNorth / Rm, -vEast * std::tan(B) / Rn};
     }
 
     // 相位缠绕改正的未 unwrap 原始量（单位 cycle）。
     // 卫星端用 satelliteYaw 偏航模型；接收机天线基 (exr, eyr) 由调用方注入，满足 exr×eyr = 天线法向：
     //   地面站 => ENU(North, West)；LEO => 机体 LVLH(沿迹 Xb, -跨迹 Yb)，使法向朝空间。
-    static double phaseWindupCorrection(const Vector3d &pTx, const Vector3d &vTx,
-                                        const Vector3d &recv, const CommonTime &epoch,
-                                        const Vector3d &exr, const Vector3d &eyr) {
-        Vector3d rsun, rmoon;
+    static double phaseWindupCorrection(const Eigen::Vector3d &pTx, const Eigen::Vector3d &vTx,
+                                        const Eigen::Vector3d &recv, const CommonTime &epoch,
+                                        const Eigen::Vector3d &exr, const Eigen::Vector3d &eyr) {
+        Eigen::Vector3d rsun, rmoon;
         double gmst;
         sunMoonECEF(epoch, rsun, rmoon, gmst);
-        Vector3d exs, eys;
+        Eigen::Vector3d exs, eys;
         satelliteYaw(pTx, vTx, rsun, exs, eys); // 卫星星体 x/y(ECEF)
 
-        const Vector3d ek = (recv - pTx).normalized(); // 卫星->接收机 单位向量
-        const Vector3d eks = ek.cross(eys);
-        const Vector3d ekr = ek.cross(eyr);
-        const Vector3d ds = exs - ek * ek.dot(exs) - eks;
-        const Vector3d dr = exr - ek * ek.dot(exr) + ekr;
+        const Eigen::Vector3d ek = (recv - pTx).normalized(); // 卫星->接收机 单位向量
+        const Eigen::Vector3d eks = ek.cross(eys);
+        const Eigen::Vector3d ekr = ek.cross(eyr);
+        const Eigen::Vector3d ds = exs - ek * ek.dot(exs) - eks;
+        const Eigen::Vector3d dr = exr - ek * ek.dot(exr) + ekr;
 
         double cosp = ds.dot(dr) / (ds.norm() * dr.norm());
         if (cosp < -1.0) cosp = -1.0;
         else if (cosp > 1.0) cosp = 1.0;
         double ph = std::acos(cosp) / (2.0 * PI); // cycle
-        if (const Vector3d drs = ds.cross(dr); ek.dot(drs) < 0.0) ph = -ph;
+        if (const Eigen::Vector3d drs = ds.cross(dr); ek.dot(drs) < 0.0) ph = -ph;
         return ph;
     }
 
     // 地面站版：接收机天线基 = ENU(North, West)，法向朝天(Up)。
-    static double phaseWindupCorrection(const Vector3d &pTx, const Vector3d &vTx,
-                                        const Vector3d &recv, const CommonTime &epoch) {
-        auto blh = XYZtoBLH(recv, Frame::WGS84);
-        Matrix3d E = getBLMatrix(blh[0], blh[1]); // 行 = East, North, Up
-        const Vector3d exr = E.row(1).transpose(); // 接收机 x = North
-        const Vector3d eyr = -E.row(0).transpose(); // 接收机 y = West
+    static double phaseWindupCorrection(const Eigen::Vector3d &pTx, const Eigen::Vector3d &vTx,
+                                        const Eigen::Vector3d &recv, const CommonTime &epoch) {
+        auto blh = XYZToBLH(recv, Frame::WGS84);
+        Eigen::Matrix3d E = ECEFToENUDCM(blh[0], blh[1]); // 行 = East, North, Up
+        const Eigen::Vector3d exr = E.row(1).transpose(); // 接收机 x = North
+        const Eigen::Vector3d eyr = -E.row(0).transpose(); // 接收机 y = West
         return phaseWindupCorrection(pTx, vTx, recv, epoch, exr, eyr);
     }
 
@@ -257,9 +295,9 @@ private:
     }
 
 public:
-    static Vector3d poleTideDisplacement(const Vector3d &recvEcef, const CommonTime &t,
+    static Eigen::Vector3d poleTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t,
                                          const double xp, const double yp) {
-        const auto blh = XYZtoBLH(recvEcef, Frame::WGS84);
+        const auto blh = XYZToBLH(recvEcef, Frame::WGS84);
         const double phi = blh[0], lam = blh[1];
         const double th = PI / 2.0 - phi; // 余纬 θ（式 7.28 的 R 矩阵以余纬定义）
 
@@ -284,14 +322,14 @@ public:
         // 式(7.27)(7.28)：[dX,dY,dZ] = R^T·[Sθ,Sλ,Sr]，R = [South; East; Up]
         const double st = std::sin(th), ct = std::cos(th);
         const double sl = std::sin(lam), cl = std::cos(lam);
-        const Vector3d south(ct * cl, ct * sl, -st);
-        const Vector3d east(-sl, cl, 0.0);
-        const Vector3d up(st * cl, st * sl, ct);
+        const Eigen::Vector3d south(ct * cl, ct * sl, -st);
+        const Eigen::Vector3d east(-sl, cl, 0.0);
+        const Eigen::Vector3d up(st * cl, st * sl, ct);
         return Sth * south + Slam * east + Sr * up;
     }
 
     // ECI→ECEF 变换矩阵 U(列主序)。含 IAU1976 岁差 P、IAU1980 章动 N、视恒星时 GAST、极移(可选，默认单位阵)。
-    static Matrix3d ECItoECEF(const CommonTime &t, double &gmstOut, const double xp = 0.0, const double yp = 0.0) {
+    static Eigen::Matrix3d eciToECEF(const CommonTime &t, double &gmstOut, const double xp = 0.0, const double yp = 0.0) {
         const double jdFull = static_cast<double>(CommonTime2JulianDate(t).jd);
         const double T = (jdFull - 2451545.0) / 36525.0; // 儒略世纪 (TT≈UTC，可忽略)
         const double t2 = T * T, t3 = t2 * T;
@@ -302,11 +340,11 @@ public:
         const double th = (2004.3109 * T - 0.42665 * t2 - 0.041833 * t3) * ARCSEC_TO_RAD;
         const double z = (2306.2181 * T + 1.09468 * t2 + 0.018203 * t3) * ARCSEC_TO_RAD;
         const double eps = (84381.448 - 46.8150 * T - 0.00059 * t2 + 0.001813 * t3) * ARCSEC_TO_RAD;
-        Matrix3d R1 = Math::rotationZ(-z);
-        Matrix3d R2 = Math::rotationY(th);
-        Matrix3d R3 = Math::rotationZ(-ze);
-        Matrix3d R = R1 * R2;
-        const Matrix3d P = R * R3; // P = Rz(-z)*Ry(th)*Rz(-ze)
+        Eigen::Matrix3d R1 = Math::rotationZ(-z);
+        Eigen::Matrix3d R2 = Math::rotationY(th);
+        Eigen::Matrix3d R3 = Math::rotationZ(-ze);
+        Eigen::Matrix3d R = R1 * R2;
+        const Eigen::Matrix3d P = R * R3; // P = Rz(-z)*Ry(th)*Rz(-ze)
         // IAU 1980 章动
         double dpsi, deps;
         iau1980Nutation(T, f, dpsi, deps);
@@ -314,16 +352,16 @@ public:
         R2 = Math::rotationZ(-dpsi);
         R3 = Math::rotationX(eps);
         R = R1 * R2;
-        const Matrix3d N = R * R3;
+        const Eigen::Matrix3d N = R * R3;
         const double gmst = gmstFromTime(t);
         double gast = gmst + dpsi * std::cos(eps);
         gast += (0.00264 * std::sin(f[4]) + 0.000063 * std::sin(2.0 * f[4])) * ARCSEC_TO_RAD;
         R1 = Math::rotationY(-xp);
         R2 = Math::rotationX(-yp);
         R3 = Math::rotationZ(gast);
-        const Matrix3d W = R1 * R2;
+        const Eigen::Matrix3d W = R1 * R2;
         R = W * R3;
-        const Matrix3d NP = N * P;
+        const Eigen::Matrix3d NP = N * P;
         gmstOut = gmst;
         return R * NP;
     }
@@ -360,16 +398,16 @@ public:
     }
 
     // 卫星 yaw 姿态（nominal-yaw）：用于相位缠绕的卫星星体 x/y
-    static void satelliteYaw(const Vector3d &pTx, const Vector3d &vTx,
-                             const Vector3d &rsun, Vector3d &exs, Vector3d &eys) {
-        Vector3d ri_pos = pTx;
-        Vector3d ri_vel = vTx;
+    static void satelliteYaw(const Eigen::Vector3d &pTx, const Eigen::Vector3d &vTx,
+                             const Eigen::Vector3d &rsun, Eigen::Vector3d &exs, Eigen::Vector3d &eys) {
+        Eigen::Vector3d ri_pos = pTx;
+        Eigen::Vector3d ri_vel = vTx;
         ri_vel[0] -= OMEGA_EARTH * ri_pos[1]; // 地球自转修正后的轨道速度
         ri_vel[1] += OMEGA_EARTH * ri_pos[0];
-        const Vector3d en = ri_pos.cross(ri_vel).normalized(); // 轨道法向
-        const Vector3d ep = rsun.cross(en).normalized(); // 太阳-轨道面交线
-        const Vector3d es = pTx.normalized();
-        const Vector3d esun = rsun.normalized();
+        const Eigen::Vector3d en = ri_pos.cross(ri_vel).normalized(); // 轨道法向
+        const Eigen::Vector3d ep = rsun.cross(en).normalized(); // 太阳-轨道面交线
+        const Eigen::Vector3d es = pTx.normalized();
+        const Eigen::Vector3d esun = rsun.normalized();
         const double beta = PI / 2.0 - std::acos(en.dot(esun)); // 太阳赤纬角
         const double E = std::acos(es.dot(ep)); // 轨道角
         double mu = PI / 2.0 + (es.dot(esun) <= 0.0 ? -E : E);
@@ -378,7 +416,7 @@ public:
         const double yaw = std::fabs(beta) < 1e-12 && std::fabs(mu) < 1e-12
                                ? PI
                                : std::atan2(-std::tan(beta), std::sin(mu)) + PI;
-        const Vector3d ex = en.cross(es).normalized();
+        const Eigen::Vector3d ex = en.cross(es).normalized();
         const double cosy = std::cos(yaw), siny = std::sin(yaw);
         exs = -siny * en + cosy * ex;
         eys = -cosy * en - siny * ex;

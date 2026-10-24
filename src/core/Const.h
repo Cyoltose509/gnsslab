@@ -24,7 +24,6 @@ constexpr double REL_CONST_BDS = -4.442807309e-10;
 
 /// Add this offset to convert Modified Julian Date to Julian Date.
 constexpr double MJD_TO_JD = 2400000.5;
-constexpr double MJD_TO_JD2020 = -58849.5;
 /// 'Julian day' offset from MJD
 constexpr long MJD_JDAY = 2400001L;
 /// Modified Julian Date of UNIX epoch (Jan. 1, 1970).
@@ -39,6 +38,11 @@ constexpr long FULL_WEEK = 604800L;
 constexpr long SEC_PER_DAY = 86400L;
 /// Days per second.
 constexpr double DAY_PER_SEC = 1.0 / SEC_PER_DAY;
+
+/// Seconds per hour.
+constexpr long SEC_PER_HOUR = 3600L;
+/// Seconds per minute.
+constexpr long SEC_PER_MIN = 60L;
 
 
 /// Milliseconds in a second.
@@ -70,6 +74,8 @@ constexpr double GPS_EPOCH_JD = 2444244.5;
 constexpr long GPS_EPOCH_MJD = 44244L;
 /// Modified Julian Date of BDT epoch (Jan. 6, 1980).
 constexpr long BDT_EPOCH_MJD = 53736;
+/// Modified Julian Date of GAL epoch (Galileo System Time, Aug. 22, 1999).
+constexpr long GAL_EPOCH_MJD = 51412L;
 /// Weeks per GPS Epoch
 constexpr long GPS_WEEK_PER_EPOCH = 1024L;
 
@@ -119,6 +125,38 @@ constexpr double L7_WAVELENGTH_BDS = C_MPS / L7_FREQ_BDS;
 constexpr double L8_WAVELENGTH_BDS = C_MPS / L8_FREQ_BDS;
 constexpr double L5_WAVELENGTH_BDS = C_MPS / L5_FREQ_BDS;
 
+// ===== Galileo (CDMA，频率固定，与 GPS/BDS 同构) =====
+constexpr double L1_FREQ_GAL = 1575.420e6; /// E1
+constexpr double L5_FREQ_GAL = 1176.450e6; /// E5a
+constexpr double L7_FREQ_GAL = 1207.140e6; /// E5b
+constexpr double L6_FREQ_GAL = 1278.750e6; /// E6
+constexpr double L8_FREQ_GAL = 1191.795e6; /// E5 = (E5a+E5b)/2
+
+constexpr double L1_WAVELENGTH_GAL = C_MPS / L1_FREQ_GAL;
+constexpr double L5_WAVELENGTH_GAL = C_MPS / L5_FREQ_GAL;
+constexpr double L7_WAVELENGTH_GAL = C_MPS / L7_FREQ_GAL;
+constexpr double L6_WAVELENGTH_GAL = C_MPS / L6_FREQ_GAL;
+constexpr double L8_WAVELENGTH_GAL = C_MPS / L8_FREQ_GAL;
+
+// ===== GLONASS (FDMA，频率随通道号 k 偏移) =====
+// G1 = BASE1 + k*DFREQ1, G2 = BASE2 + k*DFREQ2 （k 即 RINEX "GLONASS SLOT / FRQ #" 给出的频率通道号）
+constexpr double GLO_BASE_FREQ1 = 1.60200e9;
+constexpr double GLO_DFREQ1     = 0.56250e6;
+constexpr double GLO_BASE_FREQ2 = 1.24600e9;
+constexpr double GLO_DFREQ2     = 0.43750e6;
+constexpr double GLO_BASE_FREQ3 = 1.202025e9; /// G3 (CDMA，无 FDMA 步进)
+constexpr double GLO_DFREQ3     = 0.0;
+
+/// GLONASS FDMA 频率：band='1'→G1, '2'→G2, '3'→G3；channel=k（频率通道号）
+inline double getGlonassFreq(const char band, const int channel) {
+    switch (band) {
+        case '1': return GLO_BASE_FREQ1 + channel * GLO_DFREQ1;
+        case '2': return GLO_BASE_FREQ2 + channel * GLO_DFREQ2;
+        case '3': return GLO_BASE_FREQ3 + channel * GLO_DFREQ3;
+        default: return 0.0;
+    }
+}
+
 constexpr double getWavelength(const char sys, const int &n) {
     if (n == 0) {
         std::cerr << "getWavelength():frequency no must be positive integer!" << endl;
@@ -136,8 +174,14 @@ constexpr double getWavelength(const char sys, const int &n) {
         if (n == 7) return L7_WAVELENGTH_BDS;
         if (n == 8) return L8_WAVELENGTH_BDS;
         if (n == 6) return L6_WAVELENGTH_BDS;
+    } else if (sys == 'E') {
+        if (n == 1) return L1_WAVELENGTH_GAL;
+        if (n == 5) return L5_WAVELENGTH_GAL;
+        if (n == 7) return L7_WAVELENGTH_GAL;
+        if (n == 6) return L6_WAVELENGTH_GAL;
+        if (n == 8) return L8_WAVELENGTH_GAL;
     } else {
-        std::cerr << "don't support system except GPS and Beidou" << endl;
+        std::cerr << "don't support system except GPS, Beidou and Galileo" << endl;
     }
 
     return 0.0;
@@ -155,8 +199,14 @@ constexpr double getFreq(const char sys, const int &n) {
         if (n == 7) return L7_FREQ_BDS;
         if (n == 8) return L8_FREQ_BDS;
         if (n == 6) return L6_FREQ_BDS;
+    } else if (sys == 'E') {
+        if (n == 1) return L1_FREQ_GAL;
+        if (n == 5) return L5_FREQ_GAL;
+        if (n == 7) return L7_FREQ_GAL;
+        if (n == 6) return L6_FREQ_GAL;
+        if (n == 8) return L8_FREQ_GAL;
     } else {
-        std::cerr << "don't support system except GPS and Beidou" << endl;
+        std::cerr << "don't support system except GPS, Beidou and Galileo" << endl;
     }
     return 0.0;
 }
@@ -179,8 +229,6 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
         case 'C':
             switch (band) {
                 // BDS B1 频段同时含 B1C(1575.420) 与 B1I(1561.098)，由第3字符(I/C)区分。
-                // 旧实现把 band '1' 一律当 B1C，导致 B1I 信号相位用错波长 → MP/电离层组合几何项
-                // 消不净（动态数据里 BDS 的 MP 表现为斜线）。仅 L1I 改判为 B1I，其余保持旧行为。
                 case '1': return type.size() >= 3 && type[2] == 'I' ? L2_FREQ_BDS : L1_FREQ_BDS;
                 case '2': return L2_FREQ_BDS;
                 case '5': return L5_FREQ_BDS;
@@ -190,18 +238,32 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
                 default: ;
             }
             break;
+
+        case 'E':
+            switch (band) {
+                case '1': return L1_FREQ_GAL;   // E1
+                case '5': return L5_FREQ_GAL;   // E5a
+                case '7': return L7_FREQ_GAL;   // E5b
+                case '6': return L6_FREQ_GAL;   // E6
+                case '8': return L8_FREQ_GAL;   // E5 (E5a+E5b)/2
+                default: ;
+            }
+            break;
+
+        case 'R':
+            // GLONASS FDMA
+            switch (band) {
+                case '1': return getGlonassFreq('1', 0);
+                case '2': return getGlonassFreq('2', 0);
+                case '3': return getGlonassFreq('3', 0);
+                default: ;
+            }
+            break;
         default: ;
     }
 
     return 0.0;
 }
-
-inline double getGamma(const char sys, const std::string_view type1, const std::string_view type2) {
-    const double f1 = getFreq(sys, type1);
-    const double f2 = getFreq(sys, type2);
-    return f1 * f1 / (f2 * f2);
-}
-
 
 enum class SatType {
     MEO,

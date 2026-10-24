@@ -12,18 +12,26 @@
 
 #include "TimeConvert.h"
 #include "CoordStruct.h"
-#include "Ephemeris.h"
+#include "CoordConvert.h"
 #include "TimeStruct.h"
 
 struct SatID {
     char system{};
     int id;
+    /// GLONASS FDMA 频率通道号 k（RINEX "GLONASS SLOT / FRQ #" 给出）；
+    /// 仅 GLONASS 使用，其它系统恒为 0。不参与 operator==/</toString 身份（卫星身份由 system+id 决定）。
+    int chan{0};
+
     SatID() : id(-1) {
     }
+
     SatID(const char sys, const int satID) : system(sys), id(satID) {
     }
 
-    explicit SatID(const string & substr) {
+    SatID(const char sys, const int satID, const int channel) : system(sys), id(satID), chan(channel) {
+    }
+
+    explicit SatID(const string &substr) {
         if (substr.length() != 3) {
             throw std::runtime_error("SatID substr length error");
         }
@@ -34,9 +42,11 @@ struct SatID {
     bool operator==(const SatID &other) const {
         return this->system == other.system && this->id == other.id;
     }
+
     bool operator!=(const SatID &other) const {
         return !(*this == other);
     }
+
     bool operator<(const SatID &other) const {
         if (this->system != other.system)
             return this->system < other.system;
@@ -59,19 +69,16 @@ inline ostream &operator<<(ostream &os, const SatID &sat_id) {
 }
 
 
-//---------------
-// 观测值管理
-//---------------
-//---------------
-// struct used in rinex reader
-//---------------
 struct RinexHeader {
     string station;
-    double version; //< RINEX 3 version/type
-    string antType; //< 接收机天线型号（RINEX "ANT # / TYPE"），用于 ATX 查 PCO/PCV
-    XYZ antennaPosition; //< APPROX POSITION XYZ（RINEX 此处即天线参考点 ARP，已含天线高）
-    Eigen::Vector3d antDeltaENU{0, 0, 0}; //< ANTENNA: DELTA H/E/N（本地 E/N/U，Up=天线高于 marker）
-    std::map<char, std::vector<string> > mapObsTypes; //< SYS / # / OBS TYPES
+    double version;
+    string antType;
+    XYZ antennaPosition;
+    Eigen::Vector3d antDeltaENU{0, 0, 0};
+    std::map<char, std::vector<string> > mapObsTypes;
+    // RINEX "SYS / PHASE SHIFT"：各相位观测的半周/整数周偏置
+    std::map<std::string, double> phaseShift;
+
     RinexHeader() : version(0) {
     }
 };
@@ -99,7 +106,6 @@ inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap
 
 
 typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
-typedef std::map<SatID, Ephemeris *> SatEphemerisMap;
 
 inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satTypeValueMap) {
     for (const auto &[sat, map]: satTypeValueMap) {
@@ -121,7 +127,6 @@ struct ObsData {
     //接收机接收信号的时刻的周数和秒数
     WeekSecond weekSecond;
     SatTypeValueMap satTypeValueData;
-    SatEphemerisMap satEphemerisData;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
@@ -139,14 +144,6 @@ inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
 
 typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 
-//-------------------
-// 星历相关数据结构
-//-------------------
-
-
-//---------------
-// 参数估计模块数据结构
-//---------------
 class Parameter {
 public:
     enum ParameterName {
@@ -167,7 +164,8 @@ public:
         dVZ,
         cdtr_dot,
         ztd,
-        dOX, dOY, dOZ,   // 接收机天线/参考点常值 ECEF 偏移
+        dOX, dOY, dOZ, // 接收机天线/参考点常值 ECEF 偏移
+        codeBias, // 每星伪距(IF code)系统偏置估计：吸收多路径/未建模硬件延迟，使紧码权不再污染位置
         count
     };
 
@@ -179,13 +177,6 @@ public:
     [[nodiscard]] std::string toString() const {
         // 直接返回对应的字符串，假设调用方保证传入的颜色有效
         return paraNameStrings[static_cast<int>(paraName)];
-    }
-
-    static ParameterName toParameterName(const std::string &nameStr) {
-        for (int i = Unknown; i < static_cast<int>(count); ++i) {
-            if (paraNameStrings[i] == nameStr) return static_cast<ParameterName>(i);
-        }
-        return Unknown;
     }
 
     // Overload the equality operator as a member function
@@ -207,7 +198,7 @@ private:
     ParameterName paraName;
     inline static const std::string paraNameStrings[static_cast<int>(count)] = {
         "Unknown", "dX", "dY", "dZ", "cdt", "cdt2", "cdt3", "cdt4", "ifb", "iono", "ambiguity",
-        "dVX", "dVY", "dVZ", "cdtr_dot", "ztd", "dOX", "dOY", "dOZ"
+        "dVX", "dVY", "dVZ", "cdtr_dot", "ztd", "dOX", "dOY", "dOZ", "codeBias"
     };
 };
 
@@ -324,13 +315,22 @@ inline Variable makeAmbiguityVar(const std::string &station, const SatID &sat, c
     return {station, sat, Parameter::ambiguity, ObsID(std::string(1, sat.system), obsType)};
 }
 
+inline Variable makeCodeBiasVar(const std::string &station, const SatID &sat, const std::string &obsType) {
+    return {station, SatID(sat.system, -1), Parameter::codeBias, ObsID(std::string(1, sat.system), obsType)};
+}
+
+// 逐 GLONASS 星 / 频点 IFCB（Inter-Frequency Code Bias）状态量构造：用真实 PRN 作键（非 -1 通配符），
+// 因为 GLONASS FDMA 频分多址致每星频率不同，其频间码偏是逐星独立、无法用逐系统(per-system)标量装下。
+// 仅在 GLONASS 的码(伪距)观测方程接入，系数 1.0（相位 IF 组合已吸收频间项，IFCB 主要体现于码）。
+inline Variable makeIfbVar(const std::string &station, const SatID &sat, const std::string &obsType) {
+    return {station, sat, Parameter::ifb, ObsID(std::string(1, sat.system), obsType)};
+}
+
 typedef std::set<Variable> VariableSet;
 typedef std::map<Variable, double> VariableDataMap;
 typedef std::map<Variable, int> VariableIntMap;
 
-//===========
-// EquationData
-//===========
+
 class EquID {
 public:
     SatID sat; // 卫星标识（假设 SatID 已定义）
@@ -399,31 +399,52 @@ struct EquSys {
 
 
 struct Result {
-    Eigen::Vector3d xyz, xyzFixed;
-    Eigen::Vector3d blh, blhFixed;
-    Eigen::Vector3d vel;
-    Eigen::Vector3d sigmaXYZ;
-    Eigen::Vector3d sigmaVel;
-    double sigmaP;
-    double sigmaV;
-    double pdop, gdop, hdop, vdop, tdop;
-    int numSats;
-    double ratio;
-    std::map<SatID, double> postRes;
+    Eigen::Vector3d xyz = Eigen::Vector3d::Zero();
+    Eigen::Vector3d xyzFixed = Eigen::Vector3d::Zero();
+    Eigen::Vector3d xyzFloat = Eigen::Vector3d::Zero();
+    Eigen::Vector3d blh = Eigen::Vector3d::Zero();
+    Eigen::Vector3d blhFixed = Eigen::Vector3d::Zero();
+    Eigen::Vector3d vel = Eigen::Vector3d::Zero();
+    Eigen::Vector3d sigmaXYZ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d sigmaVel = Eigen::Vector3d::Zero();
+    double sigmaP = 0;
+    double sigmaPFloat = -1; // 浮点解 σ
+    double sigmaPFixed = -1; // 固定解 σ
+    double sigmaV = 0;
+    double pdop = 0, gdop = 0, hdop = 0, vdop = 0, tdop = 0;
+    int numSats = 0;
+    double ratio = 0;
+    std::map<SatID, double> postRes; // 伪距(码)后验残差, m
+    std::map<SatID, double> postResPhase; // 相位后验残差, m (SPP 无相位, 恒空)
     unsigned char stat = 0; // 解状态: 0=无效, 1=Fixed, 2=Float
 
     void reset() {
         xyz.setZero();
         xyzFixed.setZero();
+        xyzFloat.setZero();
         blh.setZero();
         blhFixed.setZero();
         vel.setZero();
+        sigmaXYZ.setZero();
+        sigmaVel.setZero();
         pdop = gdop = hdop = vdop = tdop = 0;
         sigmaP = sigmaV = 0;
+        sigmaPFloat = -1;
+        sigmaPFixed = -1;
         numSats = 0;
         ratio = 0;
         postRes.clear();
+        postResPhase.clear();
         stat = 0;
     }
 };
 
+inline void computePositionDops(Result &result, const Eigen::Matrix3d &Qpos, double clockVar, const Eigen::Vector3d &blh) {
+    result.pdop = std::sqrt(Qpos(0, 0) + Qpos(1, 1) + Qpos(2, 2));
+    result.gdop = std::sqrt(result.pdop * result.pdop + clockVar);
+    result.tdop = clockVar > 0.0 ? std::sqrt(clockVar) : 0.0;
+    const Eigen::Matrix3d R = ECEFToENUDCM(blh[0], blh[1]);
+    const Eigen::Matrix3d C_enu = R * Qpos * R.transpose();
+    result.hdop = std::sqrt(C_enu(0, 0) + C_enu(1, 1));
+    result.vdop = std::sqrt(C_enu(2, 2));
+}

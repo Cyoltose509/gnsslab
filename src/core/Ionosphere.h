@@ -15,7 +15,7 @@ public:
         double cosThetaB = 0.0;  // LOS 与地磁场夹角余弦
     };
 
-    static IppGeometry ippGeometry(const Vector3d &xyzRecv, const Vector3d &xyzSat,
+    static IppGeometry ippGeometry(const Eigen::Vector3d &xyzRecv, const Eigen::Vector3d &xyzSat,
                                    const double elev, const double azim, const double ionoHeightKm) {
         IppGeometry g;
         const double hIon = ionoHeightKm * 1000.0;                          // 单层高度 (m)
@@ -25,30 +25,30 @@ public:
         const double mfac = 1.0 / std::cos(alpha);                           // 斜路径映射因子
 
         // IPP 经纬度：在接收机大地坐标上沿方位角推进地心角 psi
-        const auto blh = XYZtoBLH(xyzRecv, Frame::WGS84);
+        const auto blh = XYZToBLH(xyzRecv, Frame::WGS84);
         const double latR = blh[0], lonR = blh[1]; // rad
         const double sPsi = std::sin(psi), cPsi = std::cos(psi);
         const double sAz = std::sin(azim), cAz = std::cos(azim);
         const double latI = std::asin(std::sin(latR) * cPsi + std::cos(latR) * sPsi * cAz);
         const double lonI = lonR + std::atan2(sPsi * sAz,
                                               std::cos(latR) * cPsi - std::sin(latR) * sPsi * cAz);
-        g.latDeg = latI * 180.0 / PI;
-        g.lonDeg = lonI * 180.0 / PI;
+        g.latDeg = latI * RAD_TO_DEG;
+        g.lonDeg = lonI * RAD_TO_DEG;
         g.vtecToStec = mfac * 1.0e16;
 
         // 偶极子地磁场 @ IPP（地磁北极近似 lat 80°N, lon 290°E）
-        const double latM = 80.0 * PI / 180.0, lonM = 290.0 * PI / 180.0;
-        const Vector3d mHat(std::cos(latM) * std::cos(lonM),
+        const double latM = 80.0 * DEG_TO_RAD, lonM = 290.0 * DEG_TO_RAD;
+        const Eigen::Vector3d mHat(std::cos(latM) * std::cos(lonM),
                             std::cos(latM) * std::sin(lonM),
                             std::sin(latM));
-        const Vector3d rHat = xyzRecv.normalized(); // 近似 IPP 方向(地心单位向量)
+        const Eigen::Vector3d rHat = xyzRecv.normalized(); // 近似 IPP 方向(地心单位向量)
         const double cTm = rHat.dot(mHat);
         const double rIpp = Rearth + hIon;
         const double k = B0 * std::pow(Rearth, 3.0) / (rIpp * rIpp * rIpp);
-        const Vector3d bHat = (3.0 * cTm * rHat - mHat).normalized();
+        const Eigen::Vector3d bHat = (3.0 * cTm * rHat - mHat).normalized();
         g.bMag = k * std::sqrt(1.0 + 3.0 * cTm * cTm);
 
-        const Vector3d los = (xyzSat - xyzRecv).normalized();
+        const Eigen::Vector3d los = (xyzSat - xyzRecv).normalized();
         g.cosThetaB = bHat.dot(los);
         return g;
     }

@@ -22,21 +22,17 @@ public:
                          const std::vector<char> &ok, double lam1, double lam2,
                          std::vector<char> &slip, std::vector<char> &artifact);
 
-    void setGfThreshold(double thr) { gfThres = thr; }
-    double gfThreshold() const { return gfThres; }
+    void setGfThreshold(const double thr) { gfThres = thr; }
 
     bool gfWideLaneSlip(double L1, double L2, double thr = 0.12);
 
-    bool lastMwSlip() const { return mLastMwSlip; }
-    bool lastGfSlip() const { return mLastGfSlip; }
-    bool lastGfArtifact() const { return mLastGfArtifact; }
-
+    bool mLastMwSlip = false;
+    bool mLastGfSlip = false;
+    bool mLastGfArtifact = false; // 本次 feed 的 GF 跳变是否为伪影
 private:
     FreqCombo fc;
     double lam1 = 0, lam2 = 0;
-    bool mLastMwSlip = false;
-    bool mLastGfSlip = false;
-    bool mLastGfArtifact = false; // 本次 feed 的 GF 跳变是否为伪影(码 GF 同跳)
+
 
     double mwMean = 0, mwVar = 0;
     int mwCnt = 0;

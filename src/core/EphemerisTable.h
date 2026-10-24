@@ -2,43 +2,39 @@
 
 #include <map>
 #include <vector>
-#include <cmath>
 #include <limits>
-#include <fstream>
 #include <memory>
 #include "GnssStruct.h"
 #include "Ephemeris.h"
 #include "TimeConvert.h"
+#include "Const.h"
 
-/// 星历表：拥有所有星历数据的所有权（深拷贝），支持多线程安全的浅拷贝
-/// 每颗卫星保存多条星历（按 toe 不同），查询时按历元时间选取最接近的一条。
 struct EphemerisTable {
     std::map<int, std::vector<std::shared_ptr<GPSEphem>>> gps;
     std::map<int, std::vector<std::shared_ptr<BDSEphem>>> bds;
+    std::map<int, std::vector<std::shared_ptr<GalileoEphem>>> gal;
+    std::map<int, std::vector<std::shared_ptr<GlonassEphem>>> glo;
 
-    /// 按卫星 ID + 历元时间查星历：返回 toe 距该历元最近的一条。
-    /// epoch 允许与星历使用不同时间系统（内部会对齐后比较）。
+    static constexpr double EPH_MAX_AGE_SEC = 6.0 * SEC_PER_HOUR;
+
+    static double ageSeconds(Ephemeris *e, const CommonTime &epoch) {
+        if (!e) return (std::numeric_limits<double>::max)();
+        const CommonTime te = e->getCommonTime();
+        CommonTime ep = epoch;
+        convertTimeSystem(ep, te.m_timeSystem);
+        return std::fabs(ep - te);
+    }
+
     [[nodiscard]] Ephemeris *find(const SatID &sat, const CommonTime &epoch) {
         if (sat.system == 'G') return pickClosest(gps, sat.id, epoch);
         if (sat.system == 'C') return pickClosest(bds, sat.id, epoch);
-        return nullptr;
-    }
-
-    /// 兼容旧接口：无历元时返回该卫星最后加入的一条星历。
-    [[nodiscard]] Ephemeris *find(const SatID &sat) {
-        if (sat.system == 'G') {
-            const auto it = gps.find(sat.id);
-            return (it != gps.end() && !it->second.empty()) ? it->second.back().get() : nullptr;
-        }
-        if (sat.system == 'C') {
-            const auto it = bds.find(sat.id);
-            return (it != bds.end() && !it->second.empty()) ? it->second.back().get() : nullptr;
-        }
+        if (sat.system == 'E') return pickClosest(gal, sat.id, epoch);
+        if (sat.system == 'R') return pickClosest(glo, sat.id, epoch);
         return nullptr;
     }
 
     [[nodiscard]] bool empty() const {
-        return gps.empty() && bds.empty();
+        return gps.empty() && bds.empty() && gal.empty() && glo.empty();
     }
 
 private:
@@ -53,12 +49,13 @@ private:
             CommonTime te = e->getCommonTime(); // 星历参考时刻(toe)，星历自身时间系统
             CommonTime ep = epoch; // 观测历元，可能是 GPS 系统
             convertTimeSystem(ep, te.m_timeSystem); // 对齐到同一时间系统再比较
-            const double dt = std::fabs(ep - te);
-            if (dt < bestDt) {
+            if (const double dt = std::fabs(ep - te); dt < bestDt) {
                 bestDt = dt;
                 best = e.get();
             }
         }
+        // 最近的星历仍超出有效期，视为不可用。
+        if (best && ageSeconds(best, epoch) > EPH_MAX_AGE_SEC) return nullptr;
         return best;
     }
 };

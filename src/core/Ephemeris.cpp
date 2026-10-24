@@ -39,7 +39,7 @@ PVT Ephemeris::getPVT(CommonTime t) {
         const double ygk = x0 * sOMEk + y0 * cosik * cOMEk;
         const double zgk = y0 * sinik;
 
-        constexpr double I_5 = -5.0 * PI / 180.0;
+        constexpr double I_5 = -5.0 * DEG_TO_RAD;
         const double I_1 = refFrame.omega * tk;
         const double cosI_1 = cos(I_1), sinI_1 = sin(I_1);
         const double cosI_5 = cos(I_5), sinI_5 = sin(I_5);
@@ -79,5 +79,58 @@ PVT Ephemeris::getPVT(CommonTime t) {
     sv.clockDrift = a1 + 2 * a2 * dt;
     sv.relativityCorrection = -2.0 * sqrt(refFrame.gm) / (C_MPS * C_MPS) * e * rootA * sin(Ek);
     fixTGD(sv);
+    return sv;
+}
+
+PVT GlonassEphem::getPVT(CommonTime t) {
+    convertTimeSystem(t, timeSystem); // 观测时刻对齐到星历时间系统（GPS→UTC，减跳秒）
+    PVT sv;
+    const double dt = t - toeCommon; // 相对参考历元的物理秒数
+
+    constexpr double MU = Frame::PZ90.gm * 1e-9;
+    constexpr double OMGE = Frame::PZ90.omega;
+    constexpr double J2_GLO = Frame::PZ90.j2;
+    constexpr double RE_GLO = Frame::PZ90.a * 1e-3;
+    double x[6] = {X, Y, Z, vX, vY, vZ};
+    const double acc[3] = {aX, aY, aZ};
+
+    auto deq = [&](const double s[6], double f[6]) {
+        const double r2 = s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+        const double r = std::sqrt(r2);
+        const double aJ = 1.5 * J2_GLO * MU * RE_GLO * RE_GLO / (r2 * r2 * r); // 1.5·J2·μ·Re²/r⁵
+        const double b = 5.0 * s[2] * s[2] / r2;
+        const double c = -MU / (r2 * r) - aJ * (1.0 - b);
+        const double omg2 = OMGE * OMGE;
+        f[0] = s[3];
+        f[1] = s[4];
+        f[2] = s[5];
+        f[3] = (c + omg2) * s[0] + 2.0 * OMGE * s[4] + acc[0];
+        f[4] = (c + omg2) * s[1] - 2.0 * OMGE * s[3] + acc[1];
+        f[5] = (c - 2.0 * aJ) * s[2] + acc[2];
+    };
+
+    double tt = dt;
+    while (std::fabs(tt) > 1e-9) {
+        const double h = (tt > 0.0 ? 1.0 : -1.0);
+        const double hh = (std::fabs(tt) < 1.0) ? tt : h;
+        double k1[6], k2[6], k3[6], k4[6], tmp[6];
+        deq(x, k1);
+        for (int i = 0; i < 6; ++i) tmp[i] = x[i] + 0.5 * hh * k1[i];
+        deq(tmp, k2);
+        for (int i = 0; i < 6; ++i) tmp[i] = x[i] + 0.5 * hh * k2[i];
+        deq(tmp, k3);
+        for (int i = 0; i < 6; ++i) tmp[i] = x[i] + hh * k3[i];
+        deq(tmp, k4);
+        for (int i = 0; i < 6; ++i)
+            x[i] += hh / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
+        tt -= hh;
+    }
+
+    sv.p = Eigen::Vector3d(x[0], x[1], x[2]) * 1000.0; // km → m
+    sv.v = Eigen::Vector3d(x[3], x[4], x[5]) * 1000.0; // km/s → m/s
+
+    sv.clockBias = -tauN + tauD * dt;
+    sv.clockDrift = tauD;
+    sv.relativityCorrection = 0.0;
     return sv;
 }

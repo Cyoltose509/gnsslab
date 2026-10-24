@@ -15,6 +15,7 @@ struct FrameInfo {
 };
 
 namespace Frame {
+
     constexpr FrameInfo WGS84{
         6378137.0,
         1.0 / 298.257223563,
@@ -116,6 +117,24 @@ public:
     [[nodiscard]] double N() const { return this->y(); }
     [[nodiscard]] double U() const { return this->z(); }
 };
+// 导航系局部坐标（NED：x=北 y=东 z=地）。与 ENU 是同一局部水平面的两种轴向命名，
+// 差一个置换 + 天向符号，互转见 CoordConvert.h 的 ENUToNED / NEDToENU。
+class NED : public Eigen::Vector3d {
+public:
+    NED() : Eigen::Vector3d(0.0, 0.0, 0.0) {
+    }
+
+    NED(const Eigen::Vector3d &vec) : Eigen::Vector3d(vec) { //NOLINT
+    }
+
+    NED(const double N_, const double E_, const double D_) : Eigen::Vector3d(N_, E_, D_) {
+    }
+
+    [[nodiscard]] double N() const { return this->x(); }
+    [[nodiscard]] double E() const { return this->y(); }
+    [[nodiscard]] double D() const { return this->z(); }
+};
+
 
 // 地球自转(Sagnac)改正：将卫星在发射时刻 tTx 的 ECEF 位置/速度旋转到接收时刻 tRx 的 ECEF 框架。
 inline void applyEarthRotation(Eigen::Vector3d &pTx, Eigen::Vector3d &vTx,
@@ -131,8 +150,27 @@ inline void applyEarthRotation(Eigen::Vector3d &pTx, Eigen::Vector3d &vTx,
     vTx = rot * vTx;
 }
 
-// ECEF 位置合理性判据：有限、且处在地球附近（模长 1e5~1e8.5 m 量级）。
-// 运动学/LEO 的冷启动种子与发散兜底共用（原先在 PPPKinematic.cpp 与 LEO.cpp 各写一份）。
-inline bool isSaneEcef(const Eigen::Vector3d &v) {
+
+inline bool isSaneECEF(const Eigen::Vector3d &v) {
     return v.allFinite() && v.squaredNorm() > 1.0e10 && v.squaredNorm() < 1.0e17;
+}
+
+
+// e → ENU 旋转矩阵 C_e^enu（行 = 当地 东/北/天 在 ECEF 中的方向余弦）。
+// 命名与归属同 CoordConvert.h 命名律的矩阵族（ECEFToNEDDCM 的孪生：差一个置换+天向符号）。
+// ⚠️ 为何留在本文件而非 CoordConvert.h：GnssStruct.h（computePositionDops）依赖它，而
+// GnssStruct.h 不能 include CoordConvert.h——后者经 MathUtils.h 把全局 using namespace std
+// 扩散进全部 solver TU，正是 GuiHelpers _Fn 事故的根因顺序。故此处是受包含关系约束的例外。
+inline Eigen::Matrix3d ECEFToENUDCM(const double B, const double L) {
+    const double sinB = std::sin(B);
+    const double cosB = std::cos(B);
+    const double sinL = std::sin(L);
+    const double cosL = std::cos(L);
+
+    Eigen::Matrix3d R;
+    R << -sinL, cosL, 0.0,
+            -sinB * cosL, -sinB * sinL, cosB,
+            cosB * cosL, cosB * sinL, sinB;
+
+    return R;
 }

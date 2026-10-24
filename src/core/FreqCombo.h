@@ -1,10 +1,9 @@
 #pragma once
 
 #include <string>
-#include <set>
 #include <map>
 #include <vector>
-#include "GnssStruct.h"   // SatID（detect 等参数类型）
+#include "GnssStruct.h"
 
 class FreqCombo {
 public:
@@ -24,6 +23,12 @@ public:
 
 
     static FreqCombo detect(char sys, const std::vector<std::string> &codes, bool requirePhase = true);
+
+    /// 带通道号的探测（GLONASS FDMA 每星频率不同，须逐星给定 channel=k）
+    static FreqCombo detect(char sys, const std::vector<std::string> &codes, int channel, bool requirePhase);
+
+    /// 单颗卫星观测 → FreqCombo（逐星）
+    static FreqCombo detect(char sys, const TypeValueMap &tv, int channel, bool requirePhase);
 
     static FreqCombo detect(char sys, const ObsData &obs, bool requirePhase = true);
 
