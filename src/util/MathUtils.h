@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include "Exception.h"
+#include "Const.h"   // PI（wrapPi/wrapTwoPi 用）
 #include <Eigen/Eigen>
 using namespace std;
 
@@ -324,6 +325,36 @@ namespace Math {
         double r;
         memcpy(&r, p, 8);
         return r;
+    }
+
+    /// 归化到 (-pi, pi]
+    inline double wrapPi(const double a) {
+        double x = std::fmod(a + PI, 2.0 * PI);
+        if (x < 0.0) x += 2.0 * PI;
+        return x - PI;
+    }
+
+    /// 归化到 [0, 2pi)
+    inline double wrapTwoPi(const double a) {
+        double x = std::fmod(a, 2.0 * PI);
+        if (x < 0.0) x += 2.0 * PI;
+        return x;
+    }
+
+    /// 反对称（叉乘）矩阵：skewSymmetric(v)·w == v×w
+    inline Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
+        Eigen::Matrix3d S;
+        S << 0.0,   -v.z(),  v.y(),
+             v.z(),  0.0,   -v.x(),
+            -v.y(),  v.x(),  0.0;
+        return S;
+    }
+
+    /// 两矢量夹角 (rad)。用 atan2(|a×b|, a·b) 而非 acos(a·b/(|a||b|))：
+    /// acos 在 0 附近导数无穷（dot 差 1e-16 就放大成 ~1e-8 rad 的角度误差），
+    /// atan2 全区间稳健。对准残差这类"接近 0 的角度"必须用这个。
+    inline double angleBetween(const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
+        return std::atan2(a.cross(b).norm(), a.dot(b));
     }
 }
 

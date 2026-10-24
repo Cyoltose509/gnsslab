@@ -6,6 +6,8 @@
 #include <limits>    // For std::numeric_limits<double>::max()
 #include <fstream>   // std::ifstream (forEachLine)
 #include <vector>    // std::vector (forEachLine)
+#include <cctype>    // std::tolower (toLower)
+#include <cstring>   // std::strlen (endsWithIC)
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -121,6 +123,19 @@ inline std::string stripExt(const std::string &fn) {
     return pos != std::string::npos && pos > 0 ? fn.substr(0, pos) : fn;
 }
 
+/// 转小写（逐字符，ASCII 安全：先转 unsigned char 再进 std::tolower，避免负值 UB）
+inline std::string toLower(std::string s) {
+    for (char &c: s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+/// 大小写不敏感的后缀判断（suf 须传小写形式，如 ".asc"）
+inline bool endsWithIC(const std::string &s, const char *suf) {
+    const std::string ls = toLower(s);
+    const size_t sl = ls.size(), kl = std::strlen(suf);
+    return sl >= kl && ls.compare(sl - kl, kl, suf) == 0;
+}
+
 static std::string wideToAcp(const std::wstring &w) {
     if (w.empty()) return {};
     const int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -147,6 +162,14 @@ inline std::string fmt4(const double x) {
 inline std::string fmt3(const double x) {
     char b[32];
     snprintf(b, sizeof b, "%.3f", x);
+    return b;
+}
+
+/// %.12g：浮点的完整有效数字往返（ini/CSV 持久化用；fmt3/fmt4 是定长显示，
+/// std::to_string(double) 只有 6 位小数会截断，均不适用于存读回）
+inline std::string fmtG(const double x) {
+    char b[32];
+    snprintf(b, sizeof b, "%.12g", x);
     return b;
 }
 
