@@ -1,13 +1,12 @@
 #pragma once
 
-#include <iostream>
 #include <string>
-#include <stdexcept> // For std::invalid_argument and std::out_of_range
-#include <limits>    // For std::numeric_limits<double>::max()
-#include <fstream>   // std::ifstream (forEachLine)
-#include <vector>    // std::vector (forEachLine)
-#include <cctype>    // std::tolower (toLower)
-#include <cstring>   // std::strlen (endsWithIC)
+#include <stdexcept>
+#include <limits>
+#include <fstream>
+#include <vector>
+#include <cctype>
+#include <cstring>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -144,8 +143,6 @@ static std::string wideToAcp(const std::wstring &w) {
     return s;
 }
 
-// ACP(ANSI 代码页，中文 Windows 即 GBK) 窄串 → 宽串。文件对话框路径按 ACP 存储，
-// 经此还原为宽串后用 OS 宽 API 打开，保证中文路径稳定。acpToWide 与 ansiToWide 同义。
 inline std::wstring acpToWide(const std::string &s) {
     if (s.empty()) return {};
     const int n = MultiByteToWideChar(CP_ACP, 0, s.c_str(), -1, nullptr, 0);
@@ -159,6 +156,7 @@ inline std::string fmt4(const double x) {
     snprintf(b, sizeof b, "%.4f", x);
     return b;
 }
+
 inline std::string fmt3(const double x) {
     char b[32];
     snprintf(b, sizeof b, "%.3f", x);
@@ -174,14 +172,14 @@ inline std::string fmtG(const double x) {
 }
 
 /// 逐行回调；文件打不开返回 false（与 ifstream 构造失败同义）
-template <class F>
+template<class F>
 bool forEachLine(const std::string &path, F &&fn) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
 
-    constexpr std::streamsize kChunk = 1 << 20;   // 1 MB
+    constexpr std::streamsize kChunk = 1 << 20; // 1 MB
     std::vector<char> buf(kChunk);
-    std::string carry;                            // 跨块残行（被截断的那一行最多一次小拷贝）
+    std::string carry; // 跨块残行（被截断的那一行最多一次小拷贝）
 
     for (;;) {
         in.read(buf.data(), kChunk);
@@ -190,13 +188,13 @@ bool forEachLine(const std::string &path, F &&fn) {
 
         const char *p = buf.data();
         const char *end = p + got;
-        const char *sol = p;                      // 当前行起点
+        const char *sol = p; // 当前行起点
         for (const char *q = p; q != end; ++q) {
             if (*q != '\n') continue;
             const char *le = q;
-            if (le > sol && le[-1] == '\r') --le;          // 去掉 CR
+            if (le > sol && le[-1] == '\r') --le; // 去掉 CR
             const std::string_view sv(sol, static_cast<size_t>(le - sol));
-            buf[static_cast<size_t>(le - p)] = '\0';        // 行尾字节（'\r' 或 '\n'）之后不再用
+            buf[static_cast<size_t>(le - p)] = '\0'; // 行尾字节（'\r' 或 '\n'）之后不再用
             if (carry.empty()) {
                 fn(sv);
             } else {
@@ -209,6 +207,6 @@ bool forEachLine(const std::string &path, F &&fn) {
         if (sol < end) carry.append(sol, static_cast<size_t>(end - sol));
         if (got < kChunk) break;
     }
-    if (!carry.empty()) fn(std::string_view(carry));        // 末行无换行符
+    if (!carry.empty()) fn(std::string_view(carry)); // 末行无换行符
     return true;
 }
