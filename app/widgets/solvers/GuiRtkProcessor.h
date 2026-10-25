@@ -2,7 +2,8 @@
 
 #include <string>
 #include <memory>
-#include <thread>
+#include <sstream>
+#include <cstdio>
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
@@ -10,26 +11,34 @@
 #include <set>
 
 #include "GnssStruct.h"
-#include "SolverTask.h"   // 复用 SolveTask / EpochData / PlotData / RenderTask / LaunchQC
+#include "SolverTask.h"
 #include "EphemerisTable.h"
-#include "RTK.h"                  // RTK 求解器（RtkTask 持有其实例）
+#include "RTK.h"
 #include "core/PathMemory.h"
 
-namespace GuiRtkProcessor {
+namespace Solvers::RtkProcessor {
+    // 复用 SolverTask.h 中 GnssTask 命名空间的 sysSetToString / stringToSysSet
+    using GnssTask::sysSetToString;
+    using GnssTask::stringToSysSet;
+
     struct RtkTask : GnssTask::SolverTaskBase {
 
         std::string baseObsPathBuf;
         std::string roverObsPathBuf;
         std::string navPathBuf;
 
-        std::set<char> enabledSystems{'G', 'C'};
+        // 基站坐标（可选）：勾选则使用 surveyed ECEF 坐标，否则由 RTK 内部自举（观测 BESTPOS/头文件或 SPP）
+        bool useBaseCoord = false;
+        Eigen::Vector3d baseXyz{0, 0, 0};
+
+        std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
         // 解算参数直接持一份 RTK::Config：默认值只在 RTK 里声明一次，GUI 不再抄一遍
         RTK::Config rtkCfg{};
-        double cutoffDeg = rtkCfg.cutoffElevRad * 180.0 / PI; // 面板按度编辑，初值取自 solver 默认
+        double cutoffDeg = rtkCfg.cutoffElevRad * RAD_TO_DEG; // 面板按度编辑，初值取自 solver 默认
 
         std::shared_ptr<GnssTask::SolveTask> core; // 渲染/存储基础设施
 
-        // 渲染层的两个多态点（见 GuiSolverPanel::RenderTask）
+        // 渲染层的两个多态点（见 Solvers::SolverPanel::RenderTask）
         std::shared_ptr<GnssTask::SolveTask> solveResult() override { return core; }
         void renderConfigPanel() override;   // 定义见 .cpp
 
@@ -52,10 +61,25 @@ namespace GuiRtkProcessor {
         // 回填上次选择（此前只写不读，重启后三个路径框全空）
         RtkTask() {
             core = std::make_shared<GnssTask::SolveTask>();
-            const auto &pm = GnssCore::PathMemory::instance();
+            const auto &pm = AppConfig::PathMemory::instance();
             baseObsPathBuf = pm.get("rtk_base");
             roverObsPathBuf = pm.get("rtk_rover");
             navPathBuf = pm.get("rtk_nav");
+            if (const std::string sysStr = pm.get("rtk_systems"); !sysStr.empty()) enabledSystems = stringToSysSet(sysStr);
+            cutoffDeg = pm.getNum("rtk_cutoff", cutoffDeg, 0.0, 90.0);
+            // 实时流端点统一进 SolveTask::rtEndpoints：[0]=基准站 [1]=流动站（与 SPP 共用存储）。
+            core->rtEndpoints.resize(2);
+            core->rtEndpoints[0].ip = pm.get("rtk_rt_base_ip", "8.148.22.229");
+            core->rtEndpoints[0].port = pm.get("rtk_rt_base_port", "2002");
+            core->rtEndpoints[1].ip = pm.get("rtk_rt_rover_ip", "8.148.22.229");
+            core->rtEndpoints[1].port = pm.get("rtk_rt_rover_port", "3002");
+            if (const std::string manualStr = pm.get("rtk_base_manual"); !manualStr.empty() && manualStr != "0") useBaseCoord = true;
+            if (const std::string xyzStr = pm.get("rtk_base_xyz"); !xyzStr.empty()) {
+                double v[3]{0, 0, 0}; int n = 0;
+                std::stringstream ss(xyzStr); std::string tok;
+                while (n < 3 && std::getline(ss, tok, ',') && std::sscanf(tok.c_str(), "%lf", &v[n]) == 1) ++n;
+                if (n == 3) baseXyz = Eigen::Vector3d(v[0], v[1], v[2]);
+            }
         }
 
         ~RtkTask() override {
@@ -64,4 +88,4 @@ namespace GuiRtkProcessor {
     };
 
 
-} // namespace GuiRtkProcessor
+}

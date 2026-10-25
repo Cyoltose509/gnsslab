@@ -4,7 +4,7 @@
 #include <string>
 #include <memory>
 
-namespace GuiRealtimeProcessor {
+namespace Solvers::RealtimeProcessor {
 
     struct ConnectionConfig {
         std::string ip = "47.114.134.129";

@@ -13,7 +13,7 @@
 #include "implot.h"
 #include "implot3d.h"
 
-namespace GuiCharts {
+namespace Solvers::Charts {
     ImU32 getSatCol(const char s) {
         switch (s) {
             case 'G': return IM_COL32(80, 220, 120, 255);
@@ -24,9 +24,55 @@ namespace GuiCharts {
         }
     }
 
-    // ----------------------------------------------------------
+    // 断点感知时间轴：相邻点 x 间隔超过 ~2.5×典型间隔则插入一个 NaN 断点
+    static void buildBrokenAxis(const std::vector<double> &times,
+                                std::vector<double> &tt,
+                                std::vector<int> &keptIdx) {
+        tt.clear();
+        keptIdx.clear();
+        const int n = static_cast<int>(times.size());
+        double step = 1.0;
+        {
+            std::vector<double> d;
+            d.reserve(n > 1 ? n - 1 : 0);
+            for (int i = 1; i < n; ++i) {
+                if (std::isfinite(times[i]) && std::isfinite(times[i - 1]) && times[i] > times[i - 1])
+                    d.push_back(times[i] - times[i - 1]);
+            }
+            if (!d.empty()) {
+                std::sort(d.begin(), d.end());
+                step = d[d.size() / 2];
+            }
+        }
+        const double thr = 2.5 * step;
+        for (int i = 0; i < n; ++i) {
+            if (!std::isfinite(times[i])) continue;
+            if (!keptIdx.empty() && times[i] - tt.back() > thr) {
+                tt.push_back(tt.back()); // 断点 x（复用前一点 x，使 ImPlot 在此断开）
+                keptIdx.push_back(-1); // NaN 占位
+            }
+            tt.push_back(times[i]);
+            keptIdx.push_back(i);
+        }
+    }
+
+    // 按 buildBrokenAxis 结果对齐单条 y 序列（非有限 y 一并置 NaN，保持与 tt 等长）
+    static void alignBrokenY(const std::vector<int> &keptIdx,
+                             const std::vector<double> &y,
+                             std::vector<double> &vv) {
+        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+        vv.clear();
+        vv.reserve(keptIdx.size());
+        for (const int k: keptIdx) {
+            if (k < 0) {
+                vv.push_back(nan);
+                continue;
+            }
+            vv.push_back(k < static_cast<int>(y.size()) && std::isfinite(y[k]) ? y[k] : nan);
+        }
+    }
+
     // 卫星数据列表
-    // ----------------------------------------------------------
     void renderSatelliteTable(const std::vector<SatRow> &rows, int &selectedSatIdx, const char *id) {
         if (rows.empty()) {
             ImGui::TextDisabled("(无卫星)");
@@ -37,7 +83,6 @@ namespace GuiCharts {
             if (r.hasAzim) hasAzim = true;
             if (r.hasSatXYZ) hasXYZ = true;
         }
-        // 各处理器可能给不同行赋不同 extra 列数；取最大并做边界保护，防止 vector 越界
         size_t nExtra = 0;
         for (const auto &r: rows) nExtra = std::max(nExtra, r.extra.size());
 
@@ -54,7 +99,7 @@ namespace GuiCharts {
                 ImGui::TableSetupColumn("Z(m)", ImGuiTableColumnFlags_WidthFixed, 90);
             }
             for (size_t k = 0; k < nExtra; ++k) {
-                const char *hdr = (k < rows.front().extra.size()) ? rows.front().extra[k].first.c_str() : "?";
+                const char *hdr = k < rows.front().extra.size() ? rows.front().extra[k].first.c_str() : "?";
                 ImGui::TableSetupColumn(hdr, ImGuiTableColumnFlags_WidthFixed, 110);
             }
             ImGui::TableSetupColumn("状态", ImGuiTableColumnFlags_WidthFixed, 56);
@@ -97,141 +142,173 @@ namespace GuiCharts {
         }
     }
 
-    // 单序列最大绘制点数：屏幕分辨率下超过此数的点不可分辨，
-    // 抽稀对视觉无影响，但显著降低 ImPlot / ImDrawList 每帧几何重建开销（GUI 卡顿主因）。
-    static constexpr int kMaxPlotPts = 2000;
-
-    // 抽稀：点数超过 maxPts 时按均匀步长抽稀，始终保留首末点。
-    // 各图 X 轴为历元序号，拖拽游标按 epochCount 钳制，与抽稀无关，故不会失同步。
-    template<typename T>
-    static std::vector<T> decimateSeries(const std::vector<T> &src, const int maxPts) {
-        const int n = static_cast<int>(src.size());
-        if (n <= maxPts || maxPts <= 1) return src;
-        std::vector<T> out;
-        out.reserve(maxPts + 1);
-        const int step = (n + maxPts - 1) / maxPts;  // ceil(n/maxPts)
-        for (int i = 0; i < n; i += step) out.push_back(src[i]);
-        if ((n - 1) % step != 0) out.push_back(src.back());
-        return out;
-    }
-
-    // 残差序列抽稀：额外保留断点(NaN)以免断裂处被 ImPlot 连成实线。
-    static void decimateResiduals(const std::vector<double> &t, const std::vector<double> &v,
-                                 std::vector<double> &ot, std::vector<double> &ov, const int maxPts) {
-        const int n = static_cast<int>(v.size());
-        ot.clear(); ov.clear();
-        if (n <= maxPts || maxPts <= 1) { ot = t; ov = v; return; }
-        const int step = (n + maxPts - 1) / maxPts;
-        ot.reserve(maxPts + 16); ov.reserve(maxPts + 16);
-        for (int i = 0; i < n; i += step) {
-            ot.push_back(t[i]); ov.push_back(v[i]);
-            // 把本步长区间内出现的断点(NaN)一并保留，避免断裂处被连成线
-            for (int j = i + 1; j < std::min(n, i + step); ++j) {
-                if (!std::isfinite(v[j])) { ot.push_back(t[j]); ov.push_back(v[j]); }
-            }
-        }
-        if ((n - 1) % step != 0) { ot.push_back(t.back()); ov.push_back(v.back()); }
-    }
-
-    // ----------------------------------------------------------
     // ENU 收敛轨迹图
-    // ----------------------------------------------------------
     void renderENUPlot(const std::vector<double> &times,
                        const std::vector<double> &enu_e,
                        const std::vector<double> &enu_n,
                        const std::vector<double> &enu_u,
-                       int &selectedEpoch, bool &newed, const bool fixedY) {
+                       int &selectedEpoch, bool &newed, const bool fixedY,
+                       const bool hasFloat,
+                       const std::vector<double> &float_e,
+                       const std::vector<double> &float_n,
+                       const std::vector<double> &float_u,
+                       const int epochCount) {
         const int n = static_cast<int>(times.size());
+        const int nEpoch = epochCount > 0 ? epochCount : n;
         if (n <= 0 || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, 380))) return;
         ImPlot::SetupAxes("Epoch", "E/N/U (m)");
         if (fixedY) ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-        // 过滤非有限值，避免 ImPlot SetupAxisLimits / PlotLine 断言
-        std::vector<double> tt, ee, nn, uu;
-        tt.reserve(n);
-        ee.reserve(n);
-        nn.reserve(n);
-        uu.reserve(n);
-        for (int i = 0; i < n; ++i) {
-            if (i >= static_cast<int>(enu_e.size()) || i >= static_cast<int>(enu_n.size()) ||
-                i >= static_cast<int>(enu_u.size()))
-                continue;
-            if (!std::isfinite(times[i]) || !std::isfinite(enu_e[i]) ||
-                !std::isfinite(enu_n[i]) || !std::isfinite(enu_u[i]))
-                continue;
-            tt.push_back(times[i]);
-            ee.push_back(enu_e[i]);
-            nn.push_back(enu_n[i]);
-            uu.push_back(enu_u[i]);
-        }
-        // 抽稀：屏幕分辨率下多余点不可分辨，显著降低每帧重绘开销
-        tt = decimateSeries(tt, kMaxPlotPts);
-        ee = decimateSeries(ee, kMaxPlotPts);
-        nn = decimateSeries(nn, kMaxPlotPts);
-        uu = decimateSeries(uu, kMaxPlotPts);
+        std::vector<double> tt, fe, fn, fu;
+        std::vector<int> kept;
+        buildBrokenAxis(times, tt, kept);
         const int nf = static_cast<int>(tt.size());
-        // PPP 初始误差可达百米量级，收敛后亚米，故不固定 Y 轴（按需自动缩放）
+        std::vector<double> ee, nn, uu;
+        ee.reserve(nf);
+        nn.reserve(nf);
+        uu.reserve(nf);
+        alignBrokenY(kept, enu_e, ee);
+        alignBrokenY(kept, enu_n, nn);
+        alignBrokenY(kept, enu_u, uu);
+        if (hasFloat) {
+            fe.reserve(nf);
+            fn.reserve(nf);
+            fu.reserve(nf);
+            alignBrokenY(kept, float_e, fe);
+            alignBrokenY(kept, float_n, fn);
+            alignBrokenY(kept, float_u, fu);
+        }
         if (newed && nf > 0 && std::isfinite(tt.back()))
             ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
         newed = false;
         if (nf > 0) {
-            ImPlot::PlotLine("E", tt.data(), ee.data(), nf);
-            ImPlot::PlotLine("N", tt.data(), nn.data(), nf);
-            ImPlot::PlotLine("U", tt.data(), uu.data(), nf);
+            if (hasFloat && !fe.empty()) {
+                ImPlotSpec fspec;
+                fspec.LineColor = ImVec4(0.75f, 0.75f, 0.75f, 0.35f);
+                fspec.LineWeight = 1.0f;
+                ImPlot::PlotLine("E(浮点)", tt.data(), fe.data(), nf, fspec);
+                ImPlot::PlotLine("N(浮点)", tt.data(), fn.data(), nf, fspec);
+                ImPlot::PlotLine("U(浮点)", tt.data(), fu.data(), nf, fspec);
+            }
+            // 主曲线（固定解优先，否则浮点解）
+            ImPlotSpec espec;
+            espec.LineColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+            espec.LineWeight = 1.5f;
+            ImPlot::PlotLine("E", tt.data(), ee.data(), nf, espec);
+            ImPlotSpec nspec;
+            nspec.LineColor = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+            nspec.LineWeight = 1.5f;
+            ImPlot::PlotLine("N", tt.data(), nn.data(), nf, nspec);
+            ImPlotSpec uspec;
+            uspec.LineColor = ImVec4(0.3f, 0.5f, 1.0f, 1.0f);
+            uspec.LineWeight = 1.5f;
+            ImPlot::PlotLine("U", tt.data(), uu.data(), nf, uspec);
+
+            {
+                std::vector<double> rms3d;
+                rms3d.reserve(nf);
+                for (int k = 0; k < nf; ++k)
+                    rms3d.push_back(std::sqrt(ee[k] * ee[k] + nn[k] * nn[k] + uu[k] * uu[k]));
+                ImPlotSpec rs;
+                rs.LineColor = ImVec4(1.0f, 0.85f, 0.2f, 0.95f);
+                rs.LineWeight = 1.5f;
+                ImPlot::PlotLine("RMS 3D", tt.data(), rms3d.data(), nf, rs);
+            }
         }
         if (nf > 0) {
             auto sx = static_cast<double>(selectedEpoch);
             ImPlot::DragLineX(0, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
             int se = static_cast<int>(std::lround(sx));
             if (se < 0) se = 0;
-            if (se >= n) se = n - 1;  // 钳制到完整历元数（X 轴为历元序号，与抽稀无关）
+            if (se >= nEpoch) se = nEpoch - 1; // 钳制到完整历元数（X 轴为历元序号）
             selectedEpoch = se;
         }
         ImPlot::EndPlot();
     }
 
-    // ----------------------------------------------------------
+    // Ratio 时序图
+    void renderRatioPlot(const std::vector<double> &times,
+                         const std::vector<double> &ratioVals,
+                         int &selectedEpoch, bool &newed, const int epochCount) {
+        const int n = static_cast<int>(times.size());
+        const int nEpoch = epochCount > 0 ? epochCount : n;
+        if (n <= 0 || !ImPlot::BeginPlot("Ratio 时序", ImVec2(-1, 300))) return;
+        ImPlot::SetupAxes("Epoch", "Ratio");
+        std::vector<double> tt, rr;
+        std::vector<int> kept;
+        buildBrokenAxis(times, tt, kept);
+        const int nf = static_cast<int>(tt.size());
+        alignBrokenY(kept, ratioVals, rr);
+        if (newed && nf > 0 && std::isfinite(tt.back()))
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
+        newed = false;
+        if (nf > 0) {
+            // 3.0 阈值横线
+            if (tt.front() <= tt.back()) {
+                double yt[2] = {tt.front(), tt.back()};
+                double yv[2] = {3.0, 3.0};
+                ImPlotSpec thr;
+                thr.LineColor = ImVec4(1.0f, 0.6f, 0.1f, 0.9f);
+                thr.LineWeight = 1.5f;
+                ImPlot::PlotLine("阈值 3.0", yt, yv, 2, thr);
+            }
+            ImPlotSpec rspec;
+            rspec.LineColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+            rspec.LineWeight = 1.5f;
+            ImPlot::PlotLine("Ratio", tt.data(), rr.data(), nf, rspec);
+        }
+        if (nf > 0) {
+            double sx = selectedEpoch;
+            ImPlot::DragLineX(5, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
+            int se = static_cast<int>(std::lround(sx));
+            if (se < 0) se = 0;
+            if (se >= nEpoch) se = nEpoch - 1;
+            selectedEpoch = se;
+        }
+        ImPlot::EndPlot();
+    }
+
     // 逐卫星残差图
-    // ----------------------------------------------------------
     void renderSatResidualPlot(const std::map<SatID, std::vector<double> > &satResT,
                                const std::map<SatID, std::vector<double> > &satResV,
                                int &selectedEpoch, const int epochCount, bool &newed,
                                const double *yLo, const double *yHi, const float plotH) {
-        if (ImPlot::BeginPlot("逐卫星残差", ImVec2(-1, plotH))) {
-            ImPlot::SetupAxes("Epoch", "残差 (m)");
+        if (ImPlot::BeginPlot("伪距残差序列", ImVec2(-1, plotH))) {
+            ImPlot::SetupAxes("Epoch", "码(伪距)残差 (m)");
             {
                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, std::max(10.0, static_cast<double>(epochCount)), ImPlotCond_Once);
                 if (yLo && yHi && std::isfinite(*yLo) && std::isfinite(*yHi) && *yHi > *yLo)
                     ImPlot::SetupAxisLimits(ImAxis_Y1, *yLo, *yHi, ImPlotCond_Once);
             }
-            for (auto &[sat, vals]: satResV) {
-                auto it = satResT.find(sat);
-                if (it == satResT.end() || vals.empty()) continue;
-                // 防御：时间戳数量必须不少于残差数量，否则 t[i] 越界
-                if (it->second.size() < vals.size()) continue;
-                const double *t = it->second.data();
-                const double *v = vals.data();
-                const auto n = static_cast<int>(vals.size());
-                const std::string base = sat.toString();
-                std::vector<double> tt, vv;
-                tt.reserve(n + 4);
-                vv.reserve(n + 4);
-                for (int i = 0; i < n; ++i) {
-                    // 过滤非有限值，防止 ImPlot/assert 崩溃
-                    if (!std::isfinite(v[i])) continue;
-                    if (i > 0 && std::isfinite(t[i]) && std::isfinite(t[i - 1]) && (t[i] - t[i - 1]) > 2.5) {
-                        tt.push_back(t[i - 1]);
-                        vv.push_back(std::numeric_limits<double>::quiet_NaN()); // 断点：前后两段不相连
+
+            auto plotOne = [&](const std::map<SatID, std::vector<double> > &T,
+                               const std::map<SatID, std::vector<double> > &V,
+                               const std::string &suffix) {
+                for (auto &[sat, vals]: V) {
+                    auto it = T.find(sat);
+                    if (it == T.end() || vals.empty()) continue;
+                    if (it->second.size() < vals.size()) continue;
+                    const double *t = it->second.data();
+                    const double *v = vals.data();
+                    const auto n = static_cast<int>(vals.size());
+                    const std::string base = sat.toString() + suffix;
+                    std::vector<double> tt, vv;
+                    tt.reserve(n + 4);
+                    vv.reserve(n + 4);
+                    for (int i = 0; i < n; ++i) {
+                        if (!std::isfinite(v[i])) continue;
+                        if (i > 0 && std::isfinite(t[i]) && std::isfinite(t[i - 1]) && t[i] - t[i - 1] > 2.5) {
+                            tt.push_back(t[i - 1]);
+                            vv.push_back(std::numeric_limits<double>::quiet_NaN()); // 断点：前后两段不相连
+                        }
+                        tt.push_back(t[i]);
+                        vv.push_back(v[i]);
                     }
-                    tt.push_back(t[i]);
-                    vv.push_back(v[i]);
+                    if (!tt.empty() && tt.size() == vv.size())
+                        ImPlot::PlotLine(base.c_str(), tt.data(), vv.data(), static_cast<int>(tt.size()));
                 }
-                if (!tt.empty() && tt.size() == vv.size()) {
-                    // 抽稀：逐卫星残差序列点数过多时按屏幕分辨率抽稀，保留断点
-                    std::vector<double> dtt, dvv;
-                    decimateResiduals(tt, vv, dtt, dvv, kMaxPlotPts);
-                    ImPlot::PlotLine(base.c_str(), dtt.data(), dvv.data(), static_cast<int>(dtt.size()));
-                }
-            }
+            };
+
+            plotOne(satResT, satResV, "");
             double sx = selectedEpoch;
             ImPlot::DragLineX(1, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
             int se = static_cast<int>(std::lround(sx));
@@ -243,8 +320,8 @@ namespace GuiCharts {
         newed = false;
     }
 
-    void RenderSkyplot(const std::map<SatID, std::vector<SkyPoint> > &tracks,
-                       const std::vector<std::pair<SatID, SkyPoint> > &curPts,
+    void RenderSkyplot(const std::map<SatID, std::vector<GnssTask::SkyPoint> > &tracks,
+                       const std::vector<std::pair<SatID, GnssTask::SkyPoint> > &curPts,
                        const float sizePx) {
         const float availW = ImGui::GetContentRegionAvail().x;
         const float sizeW = std::max(220.0f, std::min(availW, sizePx));
@@ -279,20 +356,28 @@ namespace GuiCharts {
 
         for (auto &[sat, pts]: tracks) {
             if (pts.size() < 2) continue;
-            // 抽稀：天顶轨迹每帧重建多段折线，按屏幕分辨率抽稀显著降低开销
-            auto dpts = decimateSeries(pts, kMaxPlotPts);
-            if (dpts.size() < 2) continue;
             ImU32 trkCol = getSatCol(sat.system);
             trkCol = IM_COL32((trkCol >> IM_COL32_R_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_G_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_B_SHIFT) & 0xFF, 120);
             int segStart = 0;
-            for (size_t i = 1; i <= dpts.size(); ++i) {
-                if (i == dpts.size() || dpts[i].epIdx - dpts[i - 1].epIdx > 2) {
+            int gapThr = 2;
+            {
+                std::vector<int> gaps;
+                gaps.reserve(pts.size());
+                for (size_t i = 1; i < pts.size(); ++i)
+                    gaps.push_back(pts[i].epIdx - pts[i - 1].epIdx);
+                if (!gaps.empty()) {
+                    std::sort(gaps.begin(), gaps.end());
+                    gapThr = std::max(2, 3 * gaps[gaps.size() / 2]);
+                }
+            }
+            for (size_t i = 1; i <= pts.size(); ++i) {
+                if (i == pts.size() || pts[i].epIdx - pts[i - 1].epIdx > gapThr) {
                     if (i - segStart >= 2) {
                         std::vector<ImVec2> seg;
                         for (int k = segStart; k < static_cast<int>(i); ++k)
-                            seg.push_back(pt(dpts[k].azDeg, dpts[k].elDeg));
+                            seg.push_back(pt(pts[k].azDeg, pts[k].elDeg));
                         dl->AddPolyline(seg.data(), static_cast<int>(seg.size()), trkCol, ImDrawFlags_None, 1.5f);
                         for (int k = segStart; k < static_cast<int>(i); k += 5)
                             dl->AddCircleFilled(seg[k - segStart], 1.5f, trkCol);
@@ -315,25 +400,24 @@ namespace GuiCharts {
         }
     }
 
-    // LEO 轨迹：直接用 ImPlot3D 画 ECEF 原始 XYZ（不换算、不依赖参考轨道）。
-    // 参考轨道轨迹仅在存在时叠加；无参考轨道时只画 LEO 自身轨迹。
-    void RenderLeo3D(const Eigen::Vector3d &leoPos,
-                     const std::vector<TrajPoint> &leoTraj,
-                     const std::vector<TrajPoint> &refTraj,
-                     const float sizePx) {
+    // LEO 轨迹（实现：绘制逻辑本体，无 SEH；独立成自由函数以避开 __try 与局部对象展开的 C2712 冲突）
+    static void RenderLeo3DImpl(const Eigen::Vector3d &leoPos,
+                                const std::vector<GnssTask::TrajPoint> &leoTraj,
+                                const std::vector<GnssTask::TrajPoint> &refTraj,
+                                const float sizePx) {
         if (leoTraj.size() < 2) {
             ImGui::TextDisabled("(轨迹点不足，无法绘制 3D)");
             return;
         }
-        auto fillXYZ = [&](const std::vector<TrajPoint> &traj,
+        auto fillXYZ = [&](const std::vector<GnssTask::TrajPoint> &traj,
                            std::vector<double> &xs, std::vector<double> &ys, std::vector<double> &zs) {
             xs.clear();
             ys.clear();
             zs.clear();
-            for (const auto &tp: traj) {
-                const double x = tp.pos.x(), y = tp.pos.y(), z = tp.pos.z();
+            for (const auto &[epIdx, pos]: traj) {
+                const double x = pos.x(), y = pos.y(), z = pos.z();
                 if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
-                if (tp.pos.norm() < 1e3) continue;
+                if (pos.norm() < 1e3) continue;
                 xs.push_back(x);
                 ys.push_back(y);
                 zs.push_back(z);
@@ -356,35 +440,28 @@ namespace GuiCharts {
                     ImPlot3D::PlotLine("参考轨道", rx.data(), ry.data(), rz.data(), static_cast<int>(rx.size()));
             }
             if (leoPos.norm() > 1e3 && std::isfinite(leoPos.x()) && std::isfinite(leoPos.y()) && std::isfinite(leoPos.z())) {
-                double px[1] = {leoPos.x()}, py[1] = {leoPos.y()}, pz[1] = {leoPos.z()};
+                const double px[1] = {leoPos.x()}, py[1] = {leoPos.y()}, pz[1] = {leoPos.z()};
                 ImPlot3D::PlotScatter("当前位置", px, py, pz, 1);
             }
             ImPlot3D::EndPlot();
         }
     }
 
-    // SEH 兜底（**刻意保留**）：ImPlot3D 在极端/并发数据下可能触发断言。
-    // 与"包住整帧渲染"的宽范围 SEH 不同，这里只包住单个第三方调用，
-    // 且刻意隔离在这个不含 C++ 析构的函数里（SEH 与 C++ 析构混用本身就有问题）；
-    // 捕获后跳过本图，避免破坏外层 TabItem/Table/Child 栈。
-    void RenderLeo3DSeh(const Eigen::Vector3d &leoPos,
-                        const std::vector<TrajPoint> &leoTraj,
-                        const std::vector<TrajPoint> &refTraj,
-                        const float sizePx) {
+    // LEO 轨迹（SEH 包裹，渲染异常不崩溃）
+    void RenderLeo3D(const Eigen::Vector3d &leoPos,
+                     const std::vector<GnssTask::TrajPoint> &leoTraj,
+                     const std::vector<GnssTask::TrajPoint> &refTraj,
+                     const float sizePx) {
         __try {
-            RenderLeo3D(leoPos, leoTraj, refTraj, sizePx);
+            RenderLeo3DImpl(leoPos, leoTraj, refTraj, sizePx);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "LEO 3D 轨迹渲染异常，已跳过");
         }
     }
 
-    // ------------------------------------------------------------------
-    // RenderPositioningTab 的渲染主体按职责拆分为下列无状态辅助函数；
-    // 所有状态均来自 PosTabView（只读），不新增任何 static 可变状态。
-    // ------------------------------------------------------------------
     namespace {
         // 章节标题；flag 非空时在标题右侧补一个 显示/隐藏 开关
-        static void SectionHeader(const char *title, bool *flag) {
+        void SectionHeader(const char *title, bool *flag) {
             ImGui::SeparatorText(title);
             if (flag) {
                 const float bw = ImGui::CalcTextSize("显示").x
@@ -399,12 +476,12 @@ namespace GuiCharts {
         }
 
         // 可见性兜底：LEO 走 renderToggles，SPP/PPP 走 PosTabView 的静态开关
-        static bool vis(const bool *flag, const bool fallback) {
+        bool vis(const bool *flag, const bool fallback) {
             return flag ? *flag : fallback;
         }
 
         // 顶部状态行 + 历元导航（首/末/前后 + 滑块 + 历元信息）
-        static void renderStatusAndEpochNav(const PosTabView &v) {
+        void renderStatusAndEpochNav(const PosTabView &v) {
             // 状态行
             if (!v.statusText.empty())
                 ImGui::TextColored(v.statusColor, "%s", v.statusText.c_str());
@@ -435,11 +512,15 @@ namespace GuiCharts {
                 ImGui::SameLine();
                 if (!v.epochInfo.empty())
                     ImGui::TextDisabled("| %s", v.epochInfo.c_str());
+                if (v.showFixRate) {
+                    ImGui::SameLine();
+                    ImGui::Text("| %s", v.fixRateText.c_str());
+                }
             }
         }
 
         // 参考真值 ECEF 输入（含剪贴板坐标解析）
-        static void renderRefEcefInput(const PosTabView &v) {
+        void renderRefECEFInput(const PosTabView &v) {
             if (v.refECEF && v.showRefEnu && v.showRefInput) {
                 ImGui::Text("参考真值:");
                 ImGui::SameLine();
@@ -471,7 +552,7 @@ namespace GuiCharts {
         }
 
         // 选中卫星的观测详情表（伪距 / 载波 / Doppler / 强度，按频点分行）
-        static void renderObsDetailTable(const PosTabView &v) {
+        void renderObsDetailTable(const PosTabView &v) {
             if (v.showObsDetail && v.selectedSatIdx && *v.selectedSatIdx >= 0 &&
                 *v.selectedSatIdx < static_cast<int>(v.satRows.size())) {
                 const int si = *v.selectedSatIdx;
@@ -514,8 +595,150 @@ namespace GuiCharts {
             }
         }
 
+        // 右侧面板三表
+        void renderPosTables(const PosTabView &v) {
+            ImGui::SeparatorText("位置");
+            // 表1：坐标表（数据 | X | Y | Z | 长度 | σ）
+            if (ImGui::BeginTable("##coord", 6, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn("数据");
+                ImGui::TableSetupColumn("X/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                ImGui::TableSetupColumn("Y/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                ImGui::TableSetupColumn("Z/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                ImGui::TableSetupColumn("长度/m", ImGuiTableColumnFlags_WidthFixed, 78);
+                ImGui::TableSetupColumn("σ/m", ImGuiTableColumnFlags_WidthFixed, 78);
+                ImGui::TableHeadersRow();
+                auto row = [&](const char *label, const Eigen::Vector3d &p,
+                               const char *lenTxt, const char *sigTxt) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("%s", label);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%.4f", p[0]);
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::Text("%.4f", p[1]);
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::Text("%.4f", p[2]);
+                    ImGui::TableSetColumnIndex(4);
+                    if (lenTxt && *lenTxt) ImGui::Text("%s", lenTxt);
+                    else ImGui::TextDisabled("-");
+                    ImGui::TableSetColumnIndex(5);
+                    if (sigTxt && *sigTxt) ImGui::Text("%s", sigTxt);
+                    else ImGui::TextDisabled("-");
+                };
+                char b1[64], b2[64];
+                snprintf(b1, sizeof b1, "%.3f", v.sigmaFloatDisp);
+                row("坐标-float", v.xyzFloatDisp, "", b1);
+                if (v.hasFixed) {
+                    snprintf(b1, sizeof b1, "%.3f", v.sigmaFixedDisp);
+                    row("坐标-fixed", v.xyzFixedDisp, "", b1);
+                }
+                if (v.hasBaseline) {
+                    snprintf(b1, sizeof b1, "%.4f", v.baseFloatDisp.norm());
+                    row("基线-float", v.baseFloatDisp, b1, "");
+                    if (v.hasFixed) {
+                        snprintf(b1, sizeof b1, "%.4f", v.baseFixedDisp.norm());
+                        row("基线-fixed", v.baseFixedDisp, b1, "");
+                    }
+                }
+                if (v.hasVelDisp) {
+                    snprintf(b1, sizeof b1, "%.4f", v.velDisp.norm());
+                    snprintf(b2, sizeof b2, "%.3f", v.sigmaVDisp);
+                    row("速度", v.velDisp, b1, b2);
+                }
+                ImGui::EndTable();
+            }
+
+            // 表2：参考 + ENU/RTN（无表头；仅在有固定算法时；LEO 无参考轨道不显示）
+            if (v.showRefTable) {
+                ImGui::SeparatorText("参考");
+                if (ImGui::BeginTable("##ref", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("数据");
+                    if (v.isLeoRtn) {
+                        ImGui::TableSetupColumn("R/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                        ImGui::TableSetupColumn("T/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                        ImGui::TableSetupColumn("N/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                    } else {
+                        ImGui::TableSetupColumn("X/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                        ImGui::TableSetupColumn("Y/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                        ImGui::TableSetupColumn("Z/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                    }
+                    ImGui::TableSetupColumn("3D-RMS/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                    auto rrow = [&](const char *label, const Eigen::Vector3d &p, const double rms) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("%.4f", p[0]);
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::Text("%.4f", p[1]);
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::Text("%.4f", p[2]);
+                        ImGui::TableSetColumnIndex(4);
+                        ImGui::Text("%.4f", rms);
+                    };
+                    if (v.isLeoRtn) {
+                        rrow("参考", v.refDisp, v.rtn3dDisp);
+                        rrow("RTN", v.rtnDisp, v.rtn3dDisp);
+                    } else {
+                        rrow("参考", v.refDisp, v.abs3dDisp);
+                        if (v.hasFixed) {
+                            rrow("ENU-fixed", v.enuFixedDisp, v.enuFixed3d);
+                            rrow("ENU-float", v.enuFloatDisp, v.enuFloat3d);
+                        } else {
+                            rrow("ENU", v.enuFloatDisp, v.enuFloat3d);
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+            }
+
+            // 表3：DOP + 卫星数
+            {
+                ImGui::SeparatorText("其他");
+                if (const int nC = v.isRtk ? 5 : 6;
+                    ImGui::BeginTable("##dop", nC,
+                        ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("PDOP");
+                    ImGui::TableSetupColumn("GDOP");
+                    ImGui::TableSetupColumn("HDOP");
+                    ImGui::TableSetupColumn("VDOP");
+                    if (!v.isRtk) ImGui::TableSetupColumn("TDOP");
+                    ImGui::TableSetupColumn("卫星数");
+                    ImGui::TableHeadersRow();
+                    // 行2：数值
+                    ImGui::TableNextRow();
+                    int ci = 0;
+                    auto set = [&](const char *fmt, const double val) {
+                        ImGui::TableSetColumnIndex(ci++);
+                        ImGui::Text(fmt, val);
+                    };
+                    set("%.2f", v.pdop);
+                    set("%.2f", v.gdop);
+                    set("%.2f", v.hdop);
+                    set("%.2f", v.vdop);
+                    if (!v.isRtk) set("%.2f", v.tdop);
+                    ImGui::TableSetColumnIndex(ci++);
+                    ImGui::Text("%d/%d", v.numSatsResult, v.numObs);
+                    // 行3/行4：解状态、ratio 作为 2 列表头 + 数值行（仅固定/浮点区分模式）
+                    if (v.showSolveStatus) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("解状态");
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("ratio值");
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextColored(v.solveStatusColor, "%s", v.solStatShort.c_str());
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("%.2f", v.solRatio);
+                    }
+                    ImGui::EndTable();
+                }
+            }
+        }
+
         // 左右并排：卫星概览表（含选中星观测详情） | 位置面板（含导出 CSV）
-        static void renderSatelliteAndPositionPanels(const PosTabView &v, const float th) {
+        void renderSatelliteAndPositionPanels(const PosTabView &v, const float th) {
             {
                 bool *stTg = v.renderToggles ? &v.renderToggles->satTable : nullptr;
                 bool *ppTg = v.renderToggles ? &v.renderToggles->posPanel : nullptr;
@@ -546,43 +769,20 @@ namespace GuiCharts {
                             SectionHeader("位置 (WGS84)", ppTg);
                             if (ppVis) {
                                 if (v.solved) {
-                                    ImGui::Text("ECEF: (%.4f, %.4f, %.4f)", v.xyz[0], v.xyz[1], v.xyz[2]);
-                                    if (v.showRefEnu) {
-                                        ImGui::Text("  REF: (%.4f, %.4f, %.4f)", v.refECEF ? (*v.refECEF)[0] : 0,
-                                                    v.refECEF ? (*v.refECEF)[1] : 0, v.refECEF ? (*v.refECEF)[2] : 0);
-                                        ImGui::Text("  ENU: (%.4f, %.4f, %.4f)", v.enu[0], v.enu[1], v.enu[2]);
-                                    }
-                                    ImGui::Text("  BLH: (%.8f, %.8f, %.4f)", v.blh[0] * RAD_TO_DEG, v.blh[1] * RAD_TO_DEG, v.blh[2]);
-                                    ImGui::Text("  σP: %.3f", v.sigmaP);
-                                    if (v.showZtd)
-                                        ImGui::Text("  ZTD: %.4f m", v.ztd);
-                                    if (v.showVelDop) {
-                                        if (v.showVel) {
-                                            ImGui::SeparatorText("速度");
-                                            ImGui::Text("  (%.4f, %.4f, %.4f) m/s", v.vel[0], v.vel[1], v.vel[2]);
+                                    ImGui::BeginChild("##restbl", ImVec2(0, -52), ImGuiChildFlags_Borders);
+                                    renderPosTables(v);
+                                    ImGui::EndChild();
+                                    if (v.onExportCsv) {
+                                        const bool canExport = v.epochCount > 0;
+                                        if (!canExport) ImGui::BeginDisabled();
+                                        if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) {
+                                            v.onExportCsv();
                                         }
-                                        ImGui::SeparatorText("DOP");
-                                        ImGui::Text("  PDOP:%.2f GDOP:%.2f HDOP:%.2f VDOP:%.2f TDOP:%.2f",
-                                                    v.pdop, v.gdop, v.hdop, v.vdop, v.tdop);
-                                        ImGui::Text("  卫星: %d/%d", v.numSatsResult, v.numObs);
+                                        if (!canExport) ImGui::EndDisabled();
                                     }
                                 } else {
                                     ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1),
                                                        "%s", v.noSolveMsg.empty() ? "无定位解" : v.noSolveMsg.c_str());
-                                }
-                                // 解状态块（固定/浮点 + ratio）：PPP/LEO/RTK 在导出 CSV 上方以分割线分隔
-                                if (v.showSolveStatus) {
-                                    ImGui::Separator();
-                                    ImGui::TextColored(v.solveStatusColor, "解状态:  %s", v.solveStatusText.c_str());
-                                }
-                                ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50);
-                                if (v.onExportCsv) {
-                                    const bool canExport = v.epochCount > 0;
-                                    if (!canExport) ImGui::BeginDisabled();
-                                    if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) {
-                                        v.onExportCsv();
-                                    }
-                                    if (!canExport) ImGui::EndDisabled();
                                 }
                             } else {
                                 ImGui::TextDisabled("(已隐藏)");
@@ -595,21 +795,28 @@ namespace GuiCharts {
             }
         }
 
-        // ENU 收敛轨迹（LEO 的 show3d 模式下隐藏）
-        static void renderEnuConvergence(const PosTabView &v) {
-            // ENU 收敛轨迹：LEO 是运动目标（ENU 相对固定测站无意义），show3d 模式(LEO)下隐藏；
-            // SPP/PPP 静态站才显示 ENU 收敛。
+        // ENU 收敛轨迹
+        void renderEnuConvergence(const PosTabView &v) {
             if (v.epochCount > 0 && !v.times.empty() && !v.show3d &&
                 !v.enu_e.empty() && !v.enu_n.empty() && !v.enu_u.empty()) {
                 SectionHeader("ENU 收敛轨迹", nullptr);
                 bool newed = v.newed;
                 renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
-                              *v.selectedEpoch, newed, v.fixedY);
+                              *v.selectedEpoch, newed, v.fixedY,
+                              v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
             }
         }
 
+        // Ratio 时序（RTK/LEO/PPP）
+        void renderRatioPlotSection(const PosTabView &v) {
+            if (!v.showRatio || v.epochCount == 0 || v.times.empty() || v.ratioVals.empty()) return;
+            SectionHeader("Ratio 时序 (阈值 3.0)", nullptr);
+            bool newed = v.newed;
+            renderRatioPlot(v.times, v.ratioVals, *v.selectedEpoch, newed, v.epochCount);
+        }
+
         // 天顶图 / LEO 3D 轨迹 与 逐星残差 并排
-        static void renderSkyResidualRow(const PosTabView &v) {
+        void renderSkyResidualRow(const PosTabView &v) {
             // 3D 卫星坐标图 / 天顶图 + 逐星残差（并排；标题右侧带开关）
             {
                 bool *d3Tg = v.renderToggles ? &v.renderToggles->plot3d : nullptr;
@@ -617,7 +824,7 @@ namespace GuiCharts {
                 // LEO: plot3d 开关控制左列；SPP/PPP 无开关，天顶图恒显示
                 const bool left = vis(d3Tg, true);
                 const bool right = vis(resTg, v.showResidual) && !v.resT.empty(); //NOLINT
-                if (left || right || v.renderToggles) {
+                if (left || right) {
                     const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
                     // LEO 模式恒开两列（保证隐藏图的开关仍可点）；SPP/PPP 按实际列数
                     if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
@@ -631,7 +838,7 @@ namespace GuiCharts {
                             SectionHeader(v.renderToggles ? "LEO 轨迹 (ECEF XYZ)" : "天顶图", d3Tg);
                             if (left) {
                                 if (v.show3d)
-                                    RenderLeo3DSeh(v.leoPos3d, v.leoTraj, v.leoRefTraj, rowH);
+                                    RenderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, rowH);
                                 else
                                     RenderSkyplot(v.skyTracks, v.curSkyPts, 460.0f); // SPP/PPP 走天顶图
                             } else {
@@ -643,7 +850,7 @@ namespace GuiCharts {
                         if (right || v.renderToggles) {
                             ImGui::TableSetColumnIndex(ci++); //NOLINT
                             if (ImGui::BeginChild("##respanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                                SectionHeader("逐星残差", resTg);
+                                SectionHeader("伪距残差序列", resTg);
                                 if (right) {
                                     const double ylo = v.robustRes ? v.resYlo : -8.0;
                                     const double yhi = v.robustRes ? v.resYhi : 8.0;
@@ -663,21 +870,61 @@ namespace GuiCharts {
             }
         }
 
-        // σP / σV / PDOP 时间序列（动态列）
-        static void renderSigmaDopRow(const PosTabView &v) {
-            // σP / σV / PDOP
+        // DOP 五曲线叠图（P·G·H·V·T 共享时间轴），未解算历元以 NaN 断点，中途断点不连线。
+        void renderDopPlot(const PosTabView &v, const bool newed) {
+            if (ImPlot::BeginPlot("DOP", ImVec2(-1, 350))) {
+                ImPlot::SetupAxes("Epoch", "DOP");
+                ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
+                std::vector<double> tt;
+                std::vector<int> kept;
+                buildBrokenAxis(v.times, tt, kept); // 自适应断点：相邻间隔过大插 NaN
+                const int n = static_cast<int>(tt.size());
+                if (n > 0 && newed && std::isfinite(tt.back()))
+                    ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
+                auto plotOne = [&](const char *label, const std::vector<double> &src) {
+                    if (static_cast<int>(src.size()) != static_cast<int>(v.times.size())) return;
+                    std::vector<double> yy;
+                    alignBrokenY(kept, src, yy);
+                    ImPlot::PlotLine(label, tt.data(), yy.data(), n);
+                };
+                plotOne("PDOP", v.pdops);
+                plotOne("GDOP", v.gdops);
+                plotOne("HDOP", v.hdops);
+                plotOne("VDOP", v.vdops);
+                if (!v.isRtk)
+                    plotOne("TDOP", v.tdops);
+                if (n > 0) {
+                    double sx = v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0;
+                    ImPlot::DragLineX(3, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
+                    if (v.selectedEpoch) {
+                        int se = static_cast<int>(std::lround(sx));
+                        if (se < 0) se = 0;
+                        if (v.epochCount > 0 && se >= v.epochCount) se = v.epochCount - 1;
+                        *v.selectedEpoch = se;
+                    }
+                }
+                ImPlot::EndPlot();
+            }
+        }
+
+        // σP / σV / DOP 时间序列（动态列）
+        void renderSigmaDopRow(const PosTabView &v) {
+            // σP / σV / DOP（最右列：P·G·H·V·T 五曲线叠图）
             if (v.showSigmaDop && v.epochCount > 0 && !v.times.empty()) {
-                SectionHeader("σ / 精度 (P·V·PDOP)", nullptr);
+                SectionHeader("σ / 精度 (P·V·DOP)", nullptr);
                 const bool newed = v.newed; // ENU 之后已置 false（与 SPP 一致：X 轴自动缩放）
                 // 动态列：只包含启用且非空的序列
                 struct Col {
                     const char *name;
-                    const std::vector<double> *data;
+                    const std::vector<double> *data; // 单序列列使用
+                    bool isDop; // DOP 叠图列
                 };
                 std::vector<Col> cols;
-                if (!v.sigmaPs.empty()) cols.push_back({"SigmaP", &v.sigmaPs});
-                if (v.showSigmaV && !v.sigmaVs.empty()) cols.push_back({"SigmaV", &v.sigmaVs});
-                if (v.showPdop && !v.pdops.empty()) cols.push_back({"PDOP", &v.pdops});
+                if (!v.sigmaPs.empty()) cols.push_back({"SigmaP", &v.sigmaPs, false});
+                if (v.showSigmaV && !v.sigmaVs.empty()) cols.push_back({"SigmaV", &v.sigmaVs, false});
+                const bool hasDop = v.showPdop && !v.pdops.empty() && !v.gdops.empty()
+                                    && !v.hdops.empty() && !v.vdops.empty() && !v.tdops.empty();
+                if (hasDop) cols.push_back({"DOP", nullptr, true});
                 if (!cols.empty()) {
                     if (ImGui::BeginTable("##bp3", static_cast<int>(cols.size()),
                                           ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
@@ -687,35 +934,38 @@ namespace GuiCharts {
                         ImGui::TableNextRow();
                         for (int k = 0; k < static_cast<int>(cols.size()); ++k) {
                             ImGui::TableSetColumnIndex(k);
-                            if (ImPlot::BeginPlot(cols[k].name, ImVec2(-1, 350), ImPlotFlags_NoLegend)) {
+                            if (cols[k].isDop) {
+                                renderDopPlot(v, newed);
+                                continue;
+                            }
+                            const bool sigPWithFloat = cols[k].name == std::string("SigmaP")
+                                                       && v.hasFloatSeries && !v.sigmaPFloatVals.empty();
+                            if (ImPlot::BeginPlot(cols[k].name, ImVec2(-1, 350),
+                                                  sigPWithFloat ? ImPlotFlags_None : ImPlotFlags_NoLegend)) {
                                 ImPlot::SetupAxes("Epoch", "m");
                                 ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-                                // 过滤非有限值，避免 ImPlot 断言
-                                const int nSigmaRaw = static_cast<int>(v.times.size());
-                                const bool okSigmaRaw = (nSigmaRaw > 0 &&
-                                                         static_cast<int>(cols[k].data->size()) == nSigmaRaw);
-                                std::vector<double> tt, yy;
-                                if (okSigmaRaw) {
-                                    tt.reserve(nSigmaRaw);
-                                    yy.reserve(nSigmaRaw);
-                                    for (int i = 0; i < nSigmaRaw; ++i) {
-                                        if (!std::isfinite(v.times[i]) || !std::isfinite((*cols[k].data)[i])) continue;
-                                        tt.push_back(v.times[i]);
-                                        yy.push_back((*cols[k].data)[i]);
-                                    }
-                                }
+                                std::vector<double> tt;
+                                std::vector<int> kept;
+                                buildBrokenAxis(v.times, tt, kept); // 自适应断点：中途断点不连线
                                 const int nSigma = static_cast<int>(tt.size());
+                                std::vector<double> yy;
+                                alignBrokenY(kept, *cols[k].data, yy);
                                 if (nSigma > 0 && newed && std::isfinite(tt.back()))
                                     ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
                                 if (nSigma > 0) {
-                                    // 抽稀：σ/精度时间序列点数过多时按屏幕分辨率抽稀
-                                    auto dtt = decimateSeries(tt, kMaxPlotPts);
-                                    auto dyy = decimateSeries(yy, kMaxPlotPts);
-                                    ImPlot::PlotLine(cols[k].name, dtt.data(), dyy.data(), static_cast<int>(dtt.size()));
+                                    ImPlot::PlotLine(cols[k].name, tt.data(), yy.data(), nSigma);
+                                    if (sigPWithFloat) {
+                                        std::vector<double> ff;
+                                        ff.reserve(nSigma);
+                                        alignBrokenY(kept, v.sigmaPFloatVals, ff);
+                                        ImPlotSpec fspec;
+                                        fspec.LineColor = ImVec4(0.75f, 0.75f, 0.75f, 0.35f);
+                                        fspec.LineWeight = 1.0f;
+                                        ImPlot::PlotLine("SigmaP(浮点)", tt.data(), ff.data(), nSigma, fspec);
+                                    }
                                 }
-                                // 与其他时间序列图一致的可拖拽时间游标（与 selectedEpoch 双向同步）
                                 if (nSigma > 0) {
-                                    double sx = (v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0);
+                                    double sx = v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0;
                                     ImPlot::DragLineX(3, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
                                     if (v.selectedEpoch) {
                                         int se = static_cast<int>(std::lround(sx));
@@ -734,7 +984,7 @@ namespace GuiCharts {
         }
 
         // LEO 专用：相对参考轨道的 R/T/N/3D 偏差轨迹
-        static void renderRtnDeviation(const PosTabView &v) {
+        void renderRtnDeviation(const PosTabView &v) {
             // LEO 专用：相对参考轨道的 R/T/N/3D 偏差轨迹
             {
                 bool *rtnTg = v.renderToggles && v.hasRef ? &v.renderToggles->rtn : nullptr;
@@ -745,44 +995,26 @@ namespace GuiCharts {
                         if (ImPlot::BeginPlot("R/T/N/3D 偏差", ImVec2(-1, 380))) {
                             ImPlot::SetupAxes("Epoch", "偏差 (m)");
                             ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
-                            // 防御：SolverThread 每帧 push 多组向量，快照后仍要求长度一致；
-                            // 同时过滤非有限值，避免 ImPlot 断言/崩溃。
-                            const auto nRtnRaw = static_cast<int>(v.rtnTimes.size());
+                            // 断点感知：相邻有限点间隔过大时插入 NaN 断点（自适应阈值，兼容抽样后的小数秒时间轴）
                             std::vector<double> rt, rr, rrt, rrn, rd3;
-                            rt.reserve(v.rtnTimes.size());
-                            rr.reserve(v.rtnTimes.size());
-                            rrt.reserve(v.rtnTimes.size());
-                            rrn.reserve(v.rtnTimes.size());
-                            rd3.reserve(v.rtnTimes.size());
-                            for (int i = 0; i < nRtnRaw; ++i) {
-                                if (!std::isfinite(v.rtnTimes[i])) continue;
-                                if (!std::isfinite(v.rtnR[i]) || !std::isfinite(v.rtnT[i]) ||
-                                    !std::isfinite(v.rtnN[i]) || !std::isfinite(v.rtnD3[i]))
-                                    continue;
-                                rt.push_back(v.rtnTimes[i]);
-                                rr.push_back(v.rtnR[i]);
-                                rrt.push_back(v.rtnT[i]);
-                                rrn.push_back(v.rtnN[i]);
-                                rd3.push_back(v.rtnD3[i]);
-                            }
-                            const auto nRtn = static_cast<int>(rt.size());
+                            std::vector<int> kept;
+                            buildBrokenAxis(v.rtnTimes, rt, kept);
+                            alignBrokenY(kept, v.rtnR, rr);
+                            alignBrokenY(kept, v.rtnT, rrt);
+                            alignBrokenY(kept, v.rtnN, rrn);
+                            alignBrokenY(kept, v.rtnD3, rd3);
+                            const int nRtn = static_cast<int>(rt.size());
                             if (nRtn > 0 && v.newed)
                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, rt.back(), ImPlotCond_Once);
                             if (nRtn > 0) {
-                                // 抽稀：R/T/N/3D 轨迹按屏幕分辨率抽稀（各序列同长，步长一致保持对齐）
-                                auto drt = decimateSeries(rt, kMaxPlotPts);
-                                auto drr = decimateSeries(rr, kMaxPlotPts);
-                                auto drrt = decimateSeries(rrt, kMaxPlotPts);
-                                auto drrn = decimateSeries(rrn, kMaxPlotPts);
-                                auto drd3 = decimateSeries(rd3, kMaxPlotPts);
-                                const int dn = static_cast<int>(drt.size());
-                                ImPlot::PlotLine("R", drt.data(), drr.data(), dn);
-                                ImPlot::PlotLine("T", drt.data(), drrt.data(), dn);
-                                ImPlot::PlotLine("N", drt.data(), drrn.data(), dn);
-                                ImPlot::PlotLine("3D", drt.data(), drd3.data(), dn);
+                                const int dn = static_cast<int>(rt.size());
+                                ImPlot::PlotLine("R", rt.data(), rr.data(), dn);
+                                ImPlot::PlotLine("T", rt.data(), rrt.data(), dn);
+                                ImPlot::PlotLine("N", rt.data(), rrn.data(), dn);
+                                ImPlot::PlotLine("3D", rt.data(), rd3.data(), dn);
                             }
                             // 与其他时间序列图一致的可拖拽时间游标（与 selectedEpoch 双向同步）
-                            double sx = (v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0);
+                            double sx = v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0;
                             ImPlot::DragLineX(2, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
                             if (v.selectedEpoch) {
                                 int se = static_cast<int>(std::lround(sx));
@@ -800,7 +1032,7 @@ namespace GuiCharts {
         }
 
         // LEO 专用：逐历元伪距 / 相位 RMS
-        static void renderRmsRow(const PosTabView &v) {
+        void renderRmsRow(const PosTabView &v) {
             // LEO 专用：逐历元伪距/相位 RMS
             {
                 bool *rmsTg = v.renderToggles ? &v.renderToggles->rms : nullptr;
@@ -811,39 +1043,27 @@ namespace GuiCharts {
                         if (ImPlot::BeginPlot("伪距/相位 RMS", ImVec2(-1, 320))) {
                             ImPlot::SetupAxes("Epoch", "RMS (m)");
                             ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
-                            const int nRmsRaw = static_cast<int>(v.times.size());
-                            const bool okRmsRaw = (nRmsRaw > 0 &&
-                                                   static_cast<int>(v.rmsCode.size()) == nRmsRaw &&
-                                                   static_cast<int>(v.rmsPhase.size()) == nRmsRaw);
                             std::vector<double> tt, rc, rp;
-                            if (okRmsRaw) {
-                                tt.reserve(nRmsRaw);
-                                rc.reserve(nRmsRaw);
-                                rp.reserve(nRmsRaw);
-                                for (int i = 0; i < nRmsRaw; ++i) {
-                                    if (!std::isfinite(v.times[i]) || !std::isfinite(v.rmsCode[i]) ||
-                                        !std::isfinite(v.rmsPhase[i]))
-                                        continue;
-                                    tt.push_back(v.times[i]);
-                                    rc.push_back(v.rmsCode[i]);
-                                    rp.push_back(v.rmsPhase[i]);
-                                }
+                            std::vector<int> kept;
+                            buildBrokenAxis(v.times, tt, kept);
+                            const bool okRms = !v.rmsCode.empty() && !v.rmsPhase.empty() &&
+                                               static_cast<int>(v.rmsCode.size()) == static_cast<int>(v.times.size()) &&
+                                               static_cast<int>(v.rmsPhase.size()) == static_cast<int>(v.times.size());
+                            if (okRms) {
+                                alignBrokenY(kept, v.rmsCode, rc);
+                                alignBrokenY(kept, v.rmsPhase, rp);
                             }
                             const int nRms = static_cast<int>(tt.size());
                             if (nRms > 0 && std::isfinite(tt.back()))
                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Once);
-                            if (nRms > 0) {
-                                // 抽稀：RMS 时间序列按屏幕分辨率抽稀（各序列同长，步长一致保持对齐）
-                                auto dtt = decimateSeries(tt, kMaxPlotPts);
-                                auto drc = decimateSeries(rc, kMaxPlotPts);
-                                auto drp = decimateSeries(rp, kMaxPlotPts);
-                                const int dn = static_cast<int>(dtt.size());
-                                ImPlot::PlotLine("Code RMS", dtt.data(), drc.data(), dn);
-                                ImPlot::PlotLine("Phase RMS", dtt.data(), drp.data(), dn);
+                            if (okRms) {
+                                const int dn = static_cast<int>(tt.size());
+                                ImPlot::PlotLine("Code RMS", tt.data(), rc.data(), dn);
+                                ImPlot::PlotLine("Phase RMS", tt.data(), rp.data(), dn);
                             }
                             // 与其他时间序列图一致的可拖拽时间游标（与 selectedEpoch 双向同步）
                             if (nRms > 0) {
-                                double sx = (v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0);
+                                double sx = v.selectedEpoch ? static_cast<double>(*v.selectedEpoch) : 0.0;
                                 ImPlot::DragLineX(4, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
                                 if (v.selectedEpoch) {
                                     int se = static_cast<int>(std::lround(sx));
@@ -864,7 +1084,7 @@ namespace GuiCharts {
 
     void RenderPositioningTab(const PosTabView &v) {
         renderStatusAndEpochNav(v);
-        renderRefEcefInput(v);
+        renderRefECEFInput(v);
 
         ImGui::Separator();
 
@@ -881,6 +1101,7 @@ namespace GuiCharts {
 
         renderSatelliteAndPositionPanels(v, th);
         renderEnuConvergence(v);
+        renderRatioPlotSection(v);
         renderSkyResidualRow(v);
         renderSigmaDopRow(v);
         renderRtnDeviation(v);

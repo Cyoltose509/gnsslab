@@ -4,6 +4,7 @@
 #include "SolverTask.h"
 
 #include "RinexObsReader.h"
+#include "OEM7Reader.h"         // ReadOem7ObsToQueue：OEM7 日志逐历元读取（三家共用）
 #include "PPPStatic.h"        // RunSingleStationSolve<PPPStatic> / <PPPKinematic> 的显式实例化需要完整定义
 #include "PPPKinematic.h"
 #include "LEO.h"
@@ -13,66 +14,52 @@
 
 #include <chrono>
 #include <fstream>
+#include <limits>
 #include <string>
 
 namespace GnssTask {
-    // ----------------------------------------------------------
-    // SolverTaskBase：错误状态的线程安全读写
-    // ----------------------------------------------------------
-    // hasError 是 atomic，渲染线程可无锁判断；errorMsg 是 std::string，必须加锁访问。
-    // errorMutex 只保护 errorMsg，且始终是最内层锁（不在持有时去取别的锁）。
     bool SolverTaskBase::errorFlag() const { return hasError.load(); }
 
     std::string SolverTaskBase::errorMessage() const {
-        std::lock_guard<std::mutex> lk(errorMutex);
+        std::lock_guard lk(errorMutex);
         return errorMsg;
     }
 
     void SolverTaskBase::setError(std::string msg) {
-        std::lock_guard<std::mutex> lk(errorMutex);
+        std::lock_guard lk(errorMutex);
         errorMsg = std::move(msg);
         hasError.store(true); // 先写完消息再置标志，保证标志为真时消息已可见
     }
 
     void SolverTaskBase::clearError() {
-        std::lock_guard<std::mutex> lk(errorMutex);
+        std::lock_guard lk(errorMutex);
         errorMsg.clear();
         hasError.store(false);
     }
 
     void SolverTaskBase::syncErrorFrom(const SolverTaskBase &src) {
-        // src 与 this 是不同对象：取完 src 的快照（原子+锁）后再写自身，
-        // 不在持有 src.errorMutex 时去取 this->errorMutex，不引入任何锁序依赖。
         bool h = false;
         std::string m;
         {
-            std::lock_guard<std::mutex> lk(src.errorMutex);
+            std::lock_guard lk(src.errorMutex);
             h = src.hasError.load();
             m = src.errorMsg;
         }
         {
-            std::lock_guard<std::mutex> lk(errorMutex);
+            std::lock_guard lk(errorMutex);
             errorMsg = std::move(m);
             hasError.store(h);
         }
     }
 
-    // EpochData::getFromObs / getFromSPP 已提升为 SolverTask.h 的 inline 成员（CLI 不链本 .cpp 亦可），
-    // 故此处不再提供定义；SolveDriver 的 fillFromObs/fillFromSPP 薄封装转调它们。
 
-    // ----------------------------------------------------------
-    // 解算线程主循环的三段公共件（SPP / PPP / LEO / RTK 共用）
-    // ----------------------------------------------------------
-    // 等广播星历就绪。返回 false = 任务被取消。
     bool WaitNavReady(const std::shared_ptr<SolveTask> &core) {
         std::unique_lock lk(core->queueMutex);
         core->queueCv.wait(lk, [&] { return core->navReady.load() || core->stop.load(); });
         return !core->stop.load();
     }
 
-    // 阻塞取下一个观测历元。false = 队列已读完或任务被取消（解算循环应结束）。
-    // 注意「队列空但读取未结束」时不能就此收尾：读取线程置 navReady 早于首历元入队，
-    // 此刻队列确实为空，必须继续等。
+
     bool NextObsQueue(const std::shared_ptr<SolveTask> &core, ObsItem &out) {
         std::unique_lock lk(core->queueMutex);
         for (;;) {
@@ -84,7 +71,7 @@ namespace GnssTask {
                 core->obsQueue.pop();
                 return !core->stop.load();
             }
-            return false;  // 队列空 ⇒ 上一条 wait 只可能因 readDone 或 stop 醒来
+            return false; // 队列空 ⇒ 上一条 wait 只可能因 readDone 或 stop 醒来
         }
     }
 
@@ -112,17 +99,13 @@ namespace GnssTask {
         core->syncErrorFrom(*task);
     }
 
-    // ----------------------------------------------------------
-    // 单站解算器（SPP / PPP / LEO）的唯一解算线程主体
-    // ----------------------------------------------------------
-    // 解算本身由各解算器的 processEpoch() 承担（SPP::processEpoch / PPP::processEpoch / LEO::processEpoch
-    // 三个 override 同名同签名），由 SolveDriver::solveStream 统一调用并回填；这里再包上
-    // "等星历 → 入列 → 收尾"，三家 Processor 只剩 init/body/beforeSolve 三段差异。
-    // GUI 侧把 SolveTask 的观测队列包装成 ObsSource，使单站解算与 CLI 共用同一条循环骨架。
     struct TaskQueueSource : SolveDriver::ObsSource {
         std::shared_ptr<SolveTask> core;
-        explicit TaskQueueSource(std::shared_ptr<SolveTask> c) : core(std::move(c)) {}
-        bool next(GnssTask::ObsItem &out) override {
+
+        explicit TaskQueueSource(std::shared_ptr<SolveTask> c) : core(std::move(c)) {
+        }
+
+        bool next(ObsItem &out) override {
             return NextObsQueue(core, out);
         }
     };
@@ -140,9 +123,9 @@ namespace GnssTask {
             }
 
             std::string sys;
-            for (char c : core->enabledSystems) sys += c;
+            for (const char c: core->enabledSystems) sys += c;
             LOG_INFO << "[解算] 开始: 截止高度角 " << core->cutoffDeg << "°, 系统="
-                     << (sys.empty() ? std::string("全部") : sys);
+                    << (sys.empty() ? std::string("全部") : sys);
 
             solver.setCutoffElevDeg(core->cutoffDeg);
             solver.setEnabledSystems(core->enabledSystems);
@@ -153,31 +136,28 @@ namespace GnssTask {
             }
 
             TaskQueueSource src(core);
-            // 钩子经 job 的虚函数转出：解算与回填已在 SolveDriver 内完成，
-            // 这里只负责「调钩子 → 入列 → 记账」。下面两个 lambda 是本文件与 SolveDriver
-            // 之间的固定转接层，各家差异全在 job 的虚函数实现里，故调用处无需组装回调。
             SolveDriver::solveStream(src, solver,
-                [core, job, &solver](Solver &s, ObsItem &item, EpochData &data) {
-                    int idx = 0;
-                    {
-                        std::lock_guard lk(core->mutex);
-                        idx = static_cast<int>(core->epochs.size());
-                    }
-                    bool ok = false;
-                    try {
-                        ok = job->afterSolveEpoch(&s, &data, &item, idx);
-                    } catch (const std::exception &e) {
-                        LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
-                    } catch (...) {
-                        LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
-                    }
-                    if (!ok) data.solved = false;
-                    CommitEpoch(core, std::move(data));
-                    return true;   // 已自行处理 solved 标记，交由外层原样收下
-                },
-                [job](Solver &s, ObsItem &item) {
-                    job->beforeSolveEpoch(&s, &item);
-                });
+                                     [core, job](Solver &s, ObsItem &item, EpochData &data) {
+                                         int idx = 0;
+                                         {
+                                             std::lock_guard lk(core->mutex);
+                                             idx = static_cast<int>(core->epochs.size());
+                                         }
+                                         bool ok = false;
+                                         try {
+                                             ok = job->afterSolveEpoch(&s, &data, &item, idx);
+                                         } catch (const std::exception &e) {
+                                             LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
+                                         } catch (...) {
+                                             LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
+                                         }
+                                         if (!ok) data.solved = false;
+                                         CommitEpoch(core, std::move(data));
+                                         return true; // 已自行处理 solved 标记，交由外层原样收下
+                                     },
+                                     [job](Solver &s, ObsItem &item) {
+                                         job->beforeSolveEpoch(&s, &item);
+                                     });
         } catch (const std::exception &e) {
             LOG_ERROR << "[解算] 解算线程异常: " << e.what();
             core->setError(e.what());
@@ -188,30 +168,47 @@ namespace GnssTask {
             totalEpochs = core->epochs.size();
         }
         LOG_INFO << "[解算] 结束: " << totalEpochs << " 历元, 耗时 "
-                 << std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - tSolve0).count() << " ms";
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - tSolve0).count() << " ms";
         core->solvingDone = true;
     }
 
     // 三个单站解算器各实例化一份，函数体仍留在 .cpp（不进头文件）。
     template void RunSingleStationSolve<SPP>(
         const std::shared_ptr<SolveTask> &, SPP &, const std::shared_ptr<SolverTaskBase> &);
+
     template void RunSingleStationSolve<PPPStatic>(
         const std::shared_ptr<SolveTask> &, PPPStatic &, const std::shared_ptr<SolverTaskBase> &);
+
     template void RunSingleStationSolve<PPPKinematic>(
         const std::shared_ptr<SolveTask> &, PPPKinematic &, const std::shared_ptr<SolverTaskBase> &);
+
     template void RunSingleStationSolve<LEO>(
         const std::shared_ptr<SolveTask> &, LEO &, const std::shared_ptr<SolverTaskBase> &);
 
-    void PlotData::insert(int index, const EpochData &ep, const XYZ &refECEF) {
+    void PlotData::insert(const int index, const EpochData &ep, const XYZ &refECEF) {
         times.push_back(index);
         const auto &result = ep.sppResult;
         const bool solved = ep.solved;
+        constexpr double dopNaN = std::numeric_limits<double>::quiet_NaN();
         sigmaPs.push_back(solved ? result.sigmaP : 0.0);
+        sigmaPFloatVals.push_back(solved && result.sigmaPFloat > 0 ? result.sigmaPFloat : dopNaN);
+        sigmaPFixedVals.push_back(solved && result.sigmaPFixed > 0 ? result.sigmaPFixed : dopNaN);
         sigmaVs.push_back(solved ? result.sigmaV : 0.0);
-        pdops.push_back(solved ? result.pdop : 0.0);
+        pdops.push_back(solved ? result.pdop : dopNaN);
+        gdops.push_back(solved ? result.gdop : dopNaN);
+        hdops.push_back(solved ? result.hdop : dopNaN);
+        vdops.push_back(solved ? result.vdop : dopNaN);
+        tdops.push_back(solved ? result.tdop : dopNaN);
+
+        // ratio 序列：RTK 用 rtkRatio；PPP/LEO 用 sppResult.ratio；未解出用 NaN 制造断点
+        if (ep.rtkStat != 0) ratioVals.push_back(ep.rtkRatio);
+        else if (solved) ratioVals.push_back(result.ratio);
+        else ratioVals.push_back(std::numeric_limits<double>::quiet_NaN());
+
+        // 主曲线（固定解优先，否则浮点解）
         if (solved) {
-            auto enu = XYZtoENU(result.xyz, refECEF);
+            auto enu = XYZToENU(result.xyz, refECEF);
             enu_e.push_back(enu[0]);
             enu_n.push_back(enu[1]);
             enu_u.push_back(enu[2]);
@@ -220,18 +217,42 @@ namespace GnssTask {
             enu_n.push_back(0);
             enu_u.push_back(0);
         }
-        if (solved)
+
+        // 浮点解曲线（与固定解对比；无独立浮点解时回退为 xyz；未解算用 NaN 断点）
+        if (solved) {
+            Eigen::Vector3d fxyz;
+            if (ep.rtkStat != 0) fxyz = ep.rtkFloatXyz;
+            else if (result.xyzFloat.squaredNorm() > 1.0) fxyz = result.xyzFloat;
+            else fxyz = result.xyz;
+            auto fenu = XYZToENU(fxyz, refECEF);
+            float_e.push_back(fenu[0]);
+            float_n.push_back(fenu[1]);
+            float_u.push_back(fenu[2]);
+        } else {
+            constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+            float_e.push_back(nan);
+            float_n.push_back(nan);
+            float_u.push_back(nan);
+        }
+
+        if (solved) {
             for (auto &[satID, res]: result.postRes) {
                 satResTimes[satID].push_back(index);
                 satResVals[satID].push_back(res);
             }
+            for (auto &[satID, res]: result.postResPhase) {
+                satResPhaseTimes[satID].push_back(index);
+                satResPhaseVals[satID].push_back(res);
+            }
+        }
         newed = true;
     }
 
     void PlotData::refreshENU(const std::vector<EpochData> &ep, const XYZ &refECEF) {
-        for (int i = 0; i < (int) enu_e.size(); i++) {
+        for (int i = 0; i < static_cast<int>(enu_e.size()); i++) {
+            const auto &r = ep[i].sppResult;
             if (ep[i].solved) {
-                auto enu = XYZtoENU(ep[i].sppResult.xyz, refECEF);
+                auto enu = XYZToENU(r.xyz, refECEF);
                 enu_e[i] = enu[0];
                 enu_n[i] = enu[1];
                 enu_u[i] = enu[2];
@@ -240,19 +261,47 @@ namespace GnssTask {
                 enu_n[i] = 0;
                 enu_u[i] = 0;
             }
+            // 浮点解曲线随参考点重算（未解算保持 NaN 断点，与 insert 一致）
+            if (ep[i].solved) {
+                Eigen::Vector3d fxyz;
+                if (ep[i].rtkStat != 0) fxyz = ep[i].rtkFloatXyz;
+                else if (r.xyzFloat.squaredNorm() > 1.0) fxyz = r.xyzFloat;
+                else fxyz = r.xyz;
+                auto fenu = XYZToENU(fxyz, refECEF);
+                float_e[i] = fenu[0];
+                float_n[i] = fenu[1];
+                float_u[i] = fenu[2];
+            } else {
+                constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+                float_e[i] = nan;
+                float_n[i] = nan;
+                float_u[i] = nan;
+            }
         }
     }
 
     void PlotData::clear() {
         times.clear();
         sigmaPs.clear();
+        sigmaPFloatVals.clear();
+        sigmaPFixedVals.clear();
         sigmaVs.clear();
         pdops.clear();
+        gdops.clear();
+        hdops.clear();
+        vdops.clear();
+        tdops.clear();
         enu_e.clear();
         enu_n.clear();
         enu_u.clear();
+        ratioVals.clear();
+        float_e.clear();
+        float_n.clear();
+        float_u.clear();
         satResTimes.clear();
         satResVals.clear();
+        satResPhaseTimes.clear();
+        satResPhaseVals.clear();
         resRangeReady = false;
         resYlo = -8.0;
         resYhi = 8.0;
@@ -261,40 +310,15 @@ namespace GnssTask {
     // ----------------------------------------------------------
     // 伴生文件扫描
     // ----------------------------------------------------------
-    std::vector<std::string> ScanNavFiles(const std::string &obsPath) {
-        std::vector<std::string> result;
-        if (obsPath.size() < 4) return result;
-        const std::string base = obsPath.substr(0, obsPath.size() - 1);
-        // RINEX 3: .??N, .??G, .??C, .??F 等
-        for (auto &ext: {"N", "G", "C", "F", "E", "J", "I", "L"}) {
-            std::string np = base + ext;
-            std::ifstream t(np);
-            if (t.good()) {
-                t.close();
-                result.push_back(np);
-            }
-        }
-        return result;
+    std::string AutoDetectNav(const std::string &obsPath) {
+        const auto &cands = ScanNavFiles(obsPath);
+        return cands.empty() ? std::string() : cands.front();
     }
 
-    // 把单历元原始观测转成 QC 输入由 QC::makeQCObsEpoch 统一完成（见 QCProcessor.h），三端共用。
-
-    // ----------------------------------------------------------
-    // RINEX 观测读取公共主体（SPP / PPP / LEO 的读取线程共用）
-    // ----------------------------------------------------------
-    // 三处原 ReaderThread 逐行雷同的部分：清 QC 输入 → 发 navReady 信号 → 打开 RINEX →
-    // 逐历元 makeQCObsEpoch 并入 obsQueue → 置 totalEpochs / readDone / notify_all。
-    //
-    // 四点差异留在调用方（强行参数化只会让签名变绕）：
-    //   1. 日志前缀不同（"读取文件" / "PPP 读取文件" / "LEO 读取文件"）；
-    //   2. 停止标志不同：SPP 用 SolveTask 自身的 stop，PPP/LEO 用外层 Task 的 stop
-    //      （core->stop 不会被 Application 置位）→ stopFlag 参数；
-    //   3. hasNav 取值不同（PPP=true / LEO=有 BRDC / SPP 不在此处置位）；
-    //   4. 无历元时是否立即返回、以及 QC 触发时机不同（PPP/LEO 空输入置 qcReady，SPP 无条件触发）。
     int ReadRinexObsToQueue(const std::shared_ptr<SolveTask> &core, const std::atomic<bool> &stopFlag) {
         const std::string &path = core->filePath;
         {
-            std::lock_guard<std::mutex> lk(core->qcInputMutex);
+            std::lock_guard lk(core->qcInputMutex);
             core->qcInput.clear(); // 重新收集原始观测，供质量分析（与解算解耦）
         }
 
@@ -321,7 +345,7 @@ namespace GnssTask {
             try {
                 ObsData o = obsReader.parseRinexObs();
                 {
-                    std::lock_guard<std::mutex> lk(core->qcInputMutex);
+                    std::lock_guard lk(core->qcInputMutex);
                     core->qcInput.push_back(QC::makeQCObsEpoch(o, o.weekSecond.sow)); // 原始观测 → QC 输入
                 }
                 {
@@ -330,7 +354,7 @@ namespace GnssTask {
                 }
                 core->queueCv.notify_one();
                 ok++;
-            } catch (const EndOfFile &) { break;             } catch (const std::exception &e) {
+            } catch (const EndOfFile &) { break; } catch (const std::exception &e) {
                 LOG_ERROR << "RINEX parse err (" << path << "): " << e.what();
                 core->setError("RINEX parse err: " + std::string(e.what()));
                 core->readDone = true;
@@ -347,4 +371,62 @@ namespace GnssTask {
         core->queueCv.notify_all();
         return ok;
     }
-} // namespace GnssTask
+
+    // OEM7 日志读取（从 Solvers::SppProcessor::ReaderThread 抽出，SPP/PPP/LEO 三家共用）。
+    // 与 RINEX 版的差异：OEM7 内含广播星历，逐历元携带 ephSnapshot 入队，
+    // 由解算线程的 beforeSolveEpoch 钩子注入 solver.ephTable；navReady 在打开
+    // 文件成功后即发出（RINEX 版打开前就发，因为星历来自外部 BRDC 文件）。
+    int ReadOem7ObsToQueue(const std::shared_ptr<SolveTask> &core, const std::atomic<bool> &stopFlag) {
+        const std::string &path = core->filePath;
+        {
+            std::lock_guard lk(core->qcInputMutex);
+            core->qcInput.clear(); // 重新收集原始观测，供质量分析（与解算解耦）
+        }
+
+        OEM7Reader oem7;
+        if (!oem7.open(path)) {
+            LOG_ERROR << "无法打开 OEM7: " << path;
+            core->setError("无法打开 OEM7");
+            core->readDone = true;
+            core->queueCv.notify_all();
+            return -1;
+        }
+        {
+            std::lock_guard lk(core->queueMutex);
+            core->navReady = true;
+        }
+        core->queueCv.notify_all();
+
+        ObsData obs;
+        int ok = 0;
+        while (oem7.getNextEpoch(obs)) {
+            if (stopFlag) break;
+            // 与 RTK 流式路径统一：复用写时复制星历快照（toe 不变时各历元共享同一 shared_ptr，避免逐历元深拷贝整张表）
+            auto eph = oem7.ephSnapshot();
+            {
+                std::lock_guard lk(core->qcInputMutex);
+                core->qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
+            }
+            {
+                std::lock_guard lk(core->queueMutex);
+                core->obsQueue.push({std::move(obs), std::move(eph)});
+            }
+            core->queueCv.notify_one();
+            ok++;
+        }
+        if (ok == 0) {
+            LOG_ERROR << "OEM7 无历元: " << path;
+            core->setError("OEM7 无历元");
+        }
+        core->totalEpochs = ok;
+        core->hasNav = ok > 0; // OEM7 内含星历
+        core->readDone = true;
+        core->queueCv.notify_all();
+        return ok;
+    }
+
+    int ReadObsToQueue(const std::shared_ptr<SolveTask> &core, const std::atomic<bool> &stopFlag) {
+        if (core->isRinex) return ReadRinexObsToQueue(core, stopFlag);
+        return ReadOem7ObsToQueue(core, stopFlag);
+    }
+}

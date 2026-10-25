@@ -34,7 +34,7 @@ namespace QualityControl {
         // —— 逐任务实例的 UI 选择与绘图缓冲 ——
         // 原为 render() 内的函数级 static：render 是模板函数，RTK 的基准站/流动站两个
         // QC 页都是 SolveTask，会共用同一份 static，导致系统筛选/卫星下拉/导出定义互相串台。
-        int sysSel = 0;   // 系统筛选：0=全部 1=GPS 2=BDS
+        int sysSel = 0;   // 系统筛选：0=全部 1=GPS 2=GLO 3=GAL 4=BDS
         int comboSel = 0; // 逐卫星下拉选择：0=全部
         std::map<std::string, std::pair<std::string, std::function<void()> > > plotDefs;
 
@@ -273,8 +273,8 @@ namespace QualityControl {
                     else
                         ImGui::Text("-");
                 };
-                addSys('G', "GPS");
-                addSys('C', "BDS");
+                // 逐系统行：遍历所有实际出现于 sysCompleteness 的系统（固定顺序 GPS/GLO/GAL/BDS）
+                for (const char s: {'G', 'R', 'E', 'C'}) addSys(s, sysName(s));
                 // 总体行：计数按系统累加，连续指标按所有卫星直接平均（与顶部 CNR 一致）
                 if (!rep.sysCompleteness.empty()) {
                     int totalSlips = 0, totalOutliers = 0, totalClockJumps = 0;
@@ -352,7 +352,9 @@ namespace QualityControl {
                                             std::vector<const SatQC *> &toPlot, bool &allView) {
             ImGui::SeparatorText("逐卫星统计");
             for (auto &sat: rep.satOrder) {
-                if (sysSel == 0 || (sysSel == 1 && sat.system == 'G') || (sysSel == 2 && sat.system == 'C')) list.push_back(sat);
+                if (sysSel == 0 || (sysSel == 1 && sat.system == 'G') ||
+                    (sysSel == 2 && sat.system == 'R') || (sysSel == 3 && sat.system == 'E') ||
+                    (sysSel == 4 && sat.system == 'C')) list.push_back(sat);
             }
             if (list.empty()) {
                 ImGui::Text("无符合条件的卫星。");
@@ -687,7 +689,7 @@ namespace QualityControl {
         // 懒加载：仅当任务标记 qcLazy 且尚未计算时，在 tab 首次可见时触发一次 LaunchQC。
         // RTK 双标签置 qcLazy=true（加快首屏）；SPP/PPP/LEO 保持 eager 触发（qcLazy=false），
         // 此处不会抢先触发，避免双算 QC。
-        if (task->qcLazy && !task->qcReady && !task->qcComputing) GuiSolverPanel::LaunchQC(task);
+        if (task->qcLazy && !task->qcReady && !task->qcComputing) Solvers::SolverPanel::LaunchQC(task);
 
         std::shared_ptr<QualityReport> repPtr;
         {
@@ -722,7 +724,11 @@ namespace QualityControl {
         ImGui::SameLine();
         ImGui::RadioButton("GPS", &sysSel, 1);
         ImGui::SameLine();
-        ImGui::RadioButton("BDS", &sysSel, 2);
+        ImGui::RadioButton("GLO", &sysSel, 2);
+        ImGui::SameLine();
+        ImGui::RadioButton("GAL", &sysSel, 3);
+        ImGui::SameLine();
+        ImGui::RadioButton("BDS", &sysSel, 4);
 
         renderOverviewStats(rep);
 

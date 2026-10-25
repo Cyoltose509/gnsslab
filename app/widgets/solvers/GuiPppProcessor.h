@@ -1,12 +1,13 @@
 #pragma once
 
+
 #include <string>
 #include <memory>
 
 #include "SolverTask.h"
 #include "core/PathMemory.h"
 
-namespace GuiPppProcessor {
+namespace Solvers::PppProcessor {
     struct PppTask : GnssTask::SolverTaskBase {
         std::string obsPathBuf; // 观测文件 (RINEX .??O)
         std::string sp3PathBuf; // 精密轨道 SP3
@@ -26,16 +27,18 @@ namespace GuiPppProcessor {
 
         void renderConfigPanel() override;
 
-        // ---- 解算钩子（骨架见 RunSingleStationSolve）----
-        // PPP 的 init/after 逻辑与解算器类型无关（static 与 kinematic 只差用哪个类），
-        // 故钩子里的 solver 按 kinematic 决定 cast 成 PPPStatic 或 PPPKinematic。
         bool initSolver(void *solver) override;
         bool afterSolveEpoch(void *solver, GnssTask::EpochData *data, GnssTask::ObsItem *item, int index) override;
+        // OEM7 模式星历注入（RINEX 模式不实现：星历来自 initSolver 的 SP3/BRDC）
+        void beforeSolveEpoch(void *solver, GnssTask::ObsItem *item) override;
+
+        // OEM7 内嵌星历的上一帧非空快照（toe 不变时各历元共享同一 shared_ptr）
+        std::shared_ptr<EphemerisTable> lastGoodEph;
 
         // 回填上次选择：PathMemory 此前只写(开始解算/浏览时 set)不读，重启后面板全空。
         PppTask() {
             core = std::make_shared<GnssTask::SolveTask>();
-            const auto &pm = GnssCore::PathMemory::instance();
+            const auto &pm = AppConfig::PathMemory::instance();
             obsPathBuf = pm.get("ppp_obs");
             brdcPathBuf = pm.get("ppp_brdc");
             sp3PathBuf = pm.get("ppp_sp3");
@@ -46,6 +49,9 @@ namespace GuiPppProcessor {
             troPathBuf = pm.get("ppp_tro");
             ionexPathBuf = pm.get("ppp_ionex");
             kinematic = pm.get("ppp_kinematic") == "1";
+            // 截止高度角 / 星座筛选：记忆进 ini（默认 15° / 全系统，见 SolverTask.h）
+            core->cutoffDeg = pm.getNum("ppp_cutoff", core->cutoffDeg, 0.0, 90.0);
+            if (const std::string sysStr = pm.get("ppp_systems"); !sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
         }
     };
-} // namespace GuiPppProcessor
+}

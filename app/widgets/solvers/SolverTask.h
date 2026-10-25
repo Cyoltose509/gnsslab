@@ -1,30 +1,8 @@
 #pragma once
 
-// ---------------------------------------------------------------------------
-// 全局解算 Task 基础设施（与具体解算器无关）
-//
-// 这里存放 SPP / PPP / RTK / LEO 五套 Processor 共用的「任务容器与数据骨架」：
-//   SolverTaskBase  任务生命周期状态机（State / worker / loading / done / stop / 错误）
-//                   + 渲染层的两个多态点 solveResult() / renderConfigPanel()
-//   SolveTask         任务容器：观测队列 + 历元结果 + 绘图缓存 + QC 结果。
-//                    五种解算器共用同一套容器，与具体解算器无关（故不带 SPP 前缀）
-//   EpochData    单历元解算结果（含 LEO/RTK 的扩展字段）
-//   PlotData        绘图序列缓存
-//   ObsItem         观测 + 星历的入队单元
-//   SolverMode      解算器标识（导出文件名前缀 / CSV 列布局）
-//   ScanNavFiles    伴生导航文件扫描
-//   TrajPoint/SatVis/SkyPoint  纯数据结构（3D 轨迹、可见星、天顶图点）
-//
-// 解算主循环的公共部分（等星历就绪 / 取历元 / 入列）也在本文件声明，
-// 见 WaitNavReady / NextObsQueue / CommitEpoch。
-//
-// 职责边界：本头只提供「数据与状态」，不含任何 ImGui 渲染；因此也不包含 GuiCharts.h
-// （那会把整个 imgui 拖进任何只想用数据结构的场合）。 GuiCharts.h 反过来包含本头。
-// 渲染分发层是 GuiSolverPanel（见 GuiSolverPanel.h），它只依赖这里的两个多态点。
-// ---------------------------------------------------------------------------
-
 #include <string>
 #include <vector>
+#include <fstream>
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -41,48 +19,60 @@
 #include "CoordConvert.h"
 #include "QualityControl.h"
 #include "EphemerisTable.h"
-
-// 天顶图点：历元序号 + 方位/高度角(度) + 是否参与解算
-struct SkyPoint {
-    int epIdx = 0;
-    float azDeg = 0, elDeg = 0;
-    bool used = true;
-};
-
-// 单颗 GNSS 卫星当前位置（ECEF, m）+ 是否参与解算
-struct SatVis {
-    SatID sat;
-    char sys = 0;
-    Vector3d pos{0, 0, 0};
-    bool used = true;
-};
-
-// 一条历史轨迹点：历元序号 + ECEF 位置(m)
-struct TrajPoint {
-    int epIdx = 0;
-    Vector3d pos{0, 0, 0};
-};
+#include "Csv.h"        // 通用 CSV 轮子（读写）；导出内容在本文件定义，与轮子解耦
+#include "Const.h"      // RAD_TO_DEG
 
 namespace GnssTask {
-    // 配置页子区 ID 的序号源（见 SolverTaskBase::cfgIndex）
+    // 天顶图点：历元序号 + 方位/高度角(度) + 是否参与解算
+    struct SkyPoint {
+        int epIdx = 0;
+        float azDeg = 0, elDeg = 0;
+        bool used = true;
+    };
+
+    // 单颗 GNSS 卫星当前位置（ECEF, m）+ 是否参与解算
+    struct SatVis {
+        SatID sat;
+        char sys = 0;
+        Eigen::Vector3d pos{0, 0, 0};
+        bool used = true;
+    };
+
+    // 一条历史轨迹点：历元序号 + ECEF 位置(m)
+    struct TrajPoint {
+        int epIdx = 0;
+        Eigen::Vector3d pos{0, 0, 0};
+    };
+
+    // 星座集合 ↔ 字符串（ini 持久化用，顺序固定 G/R/E/C）
+    inline std::string sysSetToString(const std::set<char> &s) {
+        std::string out;
+        for (char c: {'G', 'R', 'E', 'C'}) if (s.count(c)) out += c;
+        return out;
+    }
+
+    inline std::set<char> stringToSysSet(const std::string &s) {
+        std::set<char> out;
+        for (char c: s) if (c == 'G' || c == 'R' || c == 'E' || c == 'C') out.insert(c);
+        return out.empty() ? std::set{'G', 'R', 'E', 'C'} : out;
+    }
+
+    struct RealtimeEndpoint {
+        std::string ip;
+        std::string port;
+    };
+
     inline int NextCfgIndex() {
-        static std::atomic<int> seq{0};
+        static std::atomic seq{0};
         return seq.fetch_add(1) + 1;
     }
 
-    // EpochData / ObsItem 定义在下方（它们含 vector 等完整类型，无法前置定义）。
-    // 钩子只以指针接收，故此处前置声明即可。
     struct EpochData;
     struct ObsItem;
 
-    // 解算 Task 生命周期样板基类：PPP/RTK/LEO/SPP/实时 五套 Processor 的 Task 共享同一套
-    // 状态机/后台线程/停止标志，避免各自重复声明 {State,worker,loading,done,stop,...}。
-    // 同时是渲染分发层唯一需要的接口（solveResult() + renderConfigPanel()），
-    // 于是application侧只需维护一个 shared_ptr<SolverTaskBase> 列表。
     struct SolverTaskBase : std::enable_shared_from_this<SolverTaskBase> {
         enum class State { Config, Running, Done };
 
-        // 后台线程写、渲染线程读 -> 必须 atomic，否则是数据竞争
         std::atomic<State> state{State::Config};
 
         std::thread worker;
@@ -90,20 +80,9 @@ namespace GnssTask {
         std::atomic<bool> done{false};
         std::atomic<bool> stop{false};
 
-        // 标签页标题用的显示名与数据源类型：五种任务的 tab 都要读，故放基类。
-        // 原先每个外层 Task 各存一份 fileName，还得从 core 镜像过来，两份容易写歪。
         std::string fileName;
         bool isRealtime = false;
 
-        // ---- 错误状态（后台线程写 / 渲染线程读）----
-        // hasError/errorMsg 原为裸成员：std::string 并发读写会破坏其内部指针（不只是脏读），
-        // 故收为私有，一律经下面的访问器读写：
-        //   errorFlag()                 —— 无锁读标志（atomic，渲染每帧调用）
-        //   errorMessage()              —— 加锁取 errorMsg 快照
-        //   setError(msg)/clearError()  —— 加锁写 errorMsg 后再置/清标志
-        //   syncErrorFrom(src)          —— 整体同步标志与消息（外层 PPP/LEO/RTK Task → core）
-        // 锁层级：errorMutex 只保护 errorMsg，是最内层锁——取它时不持有任何其它锁，
-        // 持有它时也不再去抢别的锁，因此不会与 mutex / plotMutex / qcInputMutex 成环。
         bool errorFlag() const;
 
         std::string errorMessage() const;
@@ -114,37 +93,22 @@ namespace GnssTask {
 
         void syncErrorFrom(const SolverTaskBase &src);
 
-        // ---- 渲染层的两个多态点（见 GuiSolverPanel::RenderTask）----
-        // 渲染分发层只认这两个接口，因此不再需要每个解算器各声明一个 RenderTask 自由函数：
-        //   solveResult()        本任务的结果容器（SPP/实时 直接用 SolveTask 本身，其余持有 core 成员）
-        //   renderConfigPanel()  配置阶段的配置面板渲染（各解算器差异最大的一块 UI）
-        // 不叫 core()：派生类里已经有一个叫 core 的结果容器成员，同名会冲突。
-        // 返回 shared_ptr 而非裸指针：调用方（Application / GuiSolverPanel）本来都持有 shared_ptr，
-        // 生命周期由它们保证；散落的裸指针会让渲染层在 shared_ptr 与裸指针之间反复转换。
         virtual std::shared_ptr<SolveTask> solveResult() = 0;
 
         virtual void renderConfigPanel() = 0;
 
-        // ---- 解算线程的三个多态点（见 RunSingleStationSolve）----
-        // 单站解算（SPP / PPP / LEO）的骨架完全相同，差异全在下面这三个钩子里。
-        // 做成虚函数而非「传 std::function / 回调结构体」：调用处不必组装任何回调，
-        // 派生类按需 override，未用到的（RTK、以及不需要 pre-hook 的 PPP/LEO）不写即可。
-        // 派生类要读自己的成员（如 SPP 的 navFiles），虚函数天然能访问 this，无需捕获。
-        // solver 一律以 void* 传入：基类不知道具体解算器类型（SPP/PPPStatic/PPPKinematic/LEO），
-        // 由派生类 static_cast 回自身类型——全项目仅此一处类型擦除，换来调用处彻底不传回调。
 
         // 加载产品 / 配噪声。返回 false 表示初始化失败、本次解算放弃。
         virtual bool initSolver(void *solver) { return true; }
 
         // processEpoch 之前触发：SPP 需在此注入逐历元星历（须早于解算）。
-        virtual void beforeSolveEpoch(void *solver, ObsItem *item) {}
+        virtual void beforeSolveEpoch(void *solver, ObsItem *item) {
+        }
 
         // processEpoch 之后写各家差异（参考原点、共享状态）。data 已解算并回填好。
         // 返回 false 表示该历元作废。
         virtual bool afterSolveEpoch(void *solver, EpochData *data, ObsItem *item, int index) { return true; }
 
-        // 配置页窗口名后缀：进程内按创建顺序分配，不掺对象地址（避免地址复用撞名）。
-        // ImGui 拿完整窗口名当 ini 持久化键，故必须跨运行稳定，否则拖过的尺寸记不住。
         int cfgIndex = NextCfgIndex();
 
         virtual ~SolverTaskBase() {
@@ -173,24 +137,16 @@ namespace GnssTask {
         std::vector<bool> rejected;
         std::vector<TypeValueMap> allObs;
         Result sppResult;
-        int numSatsResult;
+        int numSatsResult = 0; // 必须初始化：未解出历元不会走到赋值分支，否则写出未初始化内存
 
-        // LEO 专用：逐历元参考轨道(SP3)位置与 RTN(径向/沿迹/法向)误差分量。
-        // 由 GuiLeoProcessor 在解算时按对应历元 SP3 填充；无参考轨道时保持默认(0)。
-        // 导出 CSV 时：LEO 且有参考轨道 → 输出 REF-* 与 R/T/N 列；否则不输出这两类列。
-        Vector3d refECEF = Vector3d::Zero();
+        Eigen::Vector3d refECEF = Eigen::Vector3d::Zero();
         double rtnR = 0, rtnT = 0, rtnN = 0;
 
-        // RTK 专用：固定解基线(ECEF, m)由 sppResult.xyz − refECEF 给出；此处额外保存浮动解基线、
-        // LAMBDA ratio 与解状态(1=Fixed,2=Float)，供"定位解算"标签页状态行与 CSV 导出使用。
-        // 由 GuiRtkProcessor 在解算时填充。
-        Vector3d rtkBaseFloat{0, 0, 0};
+        Eigen::Vector3d rtkBaseFloat{0, 0, 0};
+        Eigen::Vector3d rtkFloatXyz = Eigen::Vector3d::Zero(); // 浮点解 ECEF(=base+mBaselineFloat)，供 ENU 浮点对比线
         double rtkRatio = 0.0;
         int rtkStat = 0; // 0=无效, 1=Fixed, 2=Float
 
-        // 唯一一份 per-epoch 回填（观测骨架 / SPP 解算结果），SPP/PPP/LEO 共用。
-        // 定义为 inline 成员：CLI 不链 SolverTask.cpp，须经由头文件拿到定义；
-        // SolveDriver 的 fillFromObs/fillFromSPP 薄封装也只是转调这里，逻辑不重复。
         void getFromObs(const ObsData &obs) {
             week = obs.weekSecond.week;
             sow = obs.weekSecond.sow;
@@ -200,7 +156,7 @@ namespace GnssTask {
             satPVTs.clear();
             rejected.clear();
             allObs.clear();
-            for (auto &[sat, typeMap] : obs.satTypeValueData) {
+            for (auto &[sat, typeMap]: obs.satTypeValueData) {
                 satIds.push_back(sat);
                 elevations.push_back(0.0);
                 azimuths.push_back(0.0);
@@ -213,31 +169,20 @@ namespace GnssTask {
 
         void getFromSPP(const SPP &spp) {
             const auto &result = spp.result;
-            // 有效解判据：有参与解算的卫星，且位置落在合理地球半径范围内。
-            // 仅凭 numSats>0 不够——PPP 首历元尚未收敛时 result.numSats 可>0 但 result.xyz
-            // 仍是未初始化内存(denormal)，曾被当 solved 写出垃圾并污染 firstSolvedRef 的基准点。
             const double r = result.xyz.norm();
-            // 上限必须容纳星载接收机：LEO 轨道高度数百 km（Swarm-C 实测 r≈6.80e6），
-            // 原先的 6.39e6 是**地面站**上限，会让 LEO 每个历元都被判无效解 ⇒
-            // 现象极隐蔽：解算本身完全正常(ok=1/nsat=8)，但 GUI 显示"全程无解"且无任何报错。
-            // 下限仍保留 6.35e6 以拦截未初始化/denormal 位置（其 norm 趋近 0）。
-            const bool posValid = (r > 6.35e6) && (r < 8.0e6);
-            if (result.numSats > 0 && posValid) {
+            if (const bool posValid = r > 6.35e6 && r < 8.0e6; result.numSats > 0 && posValid) {
                 solved = true;
                 sppResult = result;
                 const int n = static_cast<int>(satIds.size());
                 for (int i = 0; i < n; i++) {
-                    auto it = spp.satElevData.find(satIds[i]);
-                    if (it != spp.satElevData.end()) elevations[i] = it->second;
-                    auto it2 = spp.satAzimData.find(satIds[i]);
-                    if (it2 != spp.satAzimData.end()) azimuths[i] = it2->second;
-                    auto it3 = spp.satPVTTransTime.find(satIds[i]);
-                    if (it3 != spp.satPVTTransTime.end()) satPVTs[i] = it3->second;
+                    if (auto it = spp.satElevData.find(satIds[i]); it != spp.satElevData.end()) elevations[i] = it->second;
+                    if (auto it2 = spp.satAzimData.find(satIds[i]); it2 != spp.satAzimData.end()) azimuths[i] = it2->second;
+                    if (auto it3 = spp.satPVTTransTime.find(satIds[i]); it3 != spp.satPVTTransTime.end()) satPVTs[i] = it3->second;
                 }
                 // 排除判据：解算器显式排除的卫星，或没有有效星历/位置的卫星
                 numSatsResult = 0;
                 for (int i = 0; i < n; i++) {
-                    bool ok = spp.satRejected.count(satIds[i]) == 0 &&
+                    const bool ok = spp.satRejected.count(satIds[i]) == 0 &&
                               satPVTs[i].p.squaredNorm() > 1.0;
                     rejected[i] = !ok;
                     if (ok) ++numSatsResult;
@@ -253,18 +198,26 @@ namespace GnssTask {
     struct PlotData {
         std::vector<double> times;
         std::vector<double> sigmaPs;
+        std::vector<double> sigmaPFloatVals; // 浮点解 σP 时序（RTK 有，SPP/PPP/LEO 为空 → 仅画单线）
+        std::vector<double> sigmaPFixedVals; // 固定解 σP 时序（RTK 固定历元有，其余为 NaN 断点）
         std::vector<double> sigmaVs;
         std::vector<double> pdops;
+        std::vector<double> gdops, hdops, vdops, tdops; // 完整 DOP 时序（P·G·H·V·T），未解算填 NaN 断点
         std::vector<double> enu_e;
         std::vector<double> enu_n;
         std::vector<double> enu_u;
         bool newed = false;
+
+        std::vector<double> ratioVals; // RTK:rtkRatio / PPP·LEO:sppResult.ratio
+        std::vector<double> float_e, float_n, float_u; // 浮点解 ENU（与固定解对比）
 
         bool resRangeReady = false;
         double resYlo = -8.0, resYhi = 8.0;
 
         std::map<SatID, std::vector<double> > satResTimes;
         std::map<SatID, std::vector<double> > satResVals;
+        std::map<SatID, std::vector<double> > satResPhaseTimes;
+        std::map<SatID, std::vector<double> > satResPhaseVals;
 
         void insert(int index, const EpochData &ep, const XYZ &refECEF);
 
@@ -278,12 +231,27 @@ namespace GnssTask {
         std::shared_ptr<EphemerisTable> eph;
     };
 
-    /// 扫描 RINEX obs 同目录下的伴生导航文件
-    std::vector<std::string> ScanNavFiles(const std::string &obsPath);
+    // 扫 obsPath 同前缀的伴生星历文件（RINEX3 .??N/.??G/...）。做成 inline：
+    // 既被 GUI（SolverTask.cpp 的 AutoDetectNav）调用，也被 CLI（spp_cli）调用，
+    // 而 SolverTask.cpp 不进 CLI 链接，故定义必须随头文件可见，否则 CLI 链接期报未解析符号。
+    inline std::vector<std::string> ScanNavFiles(const std::string &obsPath) {
+        std::vector<std::string> result;
+        if (obsPath.size() < 4) return result;
+        const std::string base = obsPath.substr(0, obsPath.size() - 1);
+        // RINEX 3: .??N, .??G, .??C, .??F 等
+        for (auto &ext: {"N", "G", "C", "F", "E", "J", "I", "L"}) {
+            std::string np = base + ext;
+            if (std::ifstream t(np); t.good()) {
+                t.close();
+                result.push_back(np);
+            }
+        }
+        return result;
+    }
 
-    // 解算器标识：决定导出文件名前缀与 CSV 列布局。
-    // 原为 std::string 字面量（"SPP"/"PPP"/"LEO"/"RTK"）并散落比较，拼写漂移编译器查不出来。
-    enum class SolverMode { Spp, Ppp, Leo, Rtk };
+    std::string AutoDetectNav(const std::string &obsPath);
+
+    enum class SolverMode { Spp, Ppp, Leo, Rtk, Ins };
 
     inline const char *modeLabel(const SolverMode m) {
         switch (m) {
@@ -291,8 +259,199 @@ namespace GnssTask {
             case SolverMode::Ppp: return "PPP";
             case SolverMode::Leo: return "LEO";
             case SolverMode::Rtk: return "RTK";
+            case SolverMode::Ins: return "INS";
         }
         return "SPP";
+    }
+
+    inline void exportCsvSpp(std::ostream &out, const std::vector<EpochData> &epochs,
+                             const Eigen::Vector3d &ref, const bool skipUnsolved) {
+        Csv::Writer w;
+        w.row("Wk", "SOW", "ECEF-X/m", "ECEF-Y/m", "ECEF-Z/m",
+              "REF-X/m", "REF-Y/m", "REF-Z/m", "EAST/m", "NORTH/m", "UP/m",
+              "B/deg", "L/deg", "H/m", "VX/m", "VY/m", "VZ/m",
+              "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "SigmaP", "SigmaV",
+              "SatCount", "3dRMS/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: epochs) {
+            if (!r.solved) {
+                // 未解出历元：只写 Wk/SOW/Status，其余留空。
+                // 旧实现仅在 skipUnsolved=true(GUI) 时留空；CLI 传 false，于是把从未被赋值的
+                // sppResult 整体写出 → 未初始化内存(1e203 量级)流入 CSV/绘图，表现为"解发散"。
+                // 这里统一按未解出处理，杜绝脏值外泄（与 skipUnsolved 取值无关）。
+                w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell("Invalid");
+                for (int i = 3; i < cols; ++i) w.cell("");
+                w.endRow();
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const ENU enu = XYZToENU(res.xyz, ref);
+            const double rms3d = std::sqrt(enu.E() * enu.E() + enu.N() * enu.N() + enu.U() * enu.U());
+            w.row(r.week, Csv::fx(r.sow, 3),
+                  Csv::f(res.xyz[0], 11), Csv::f(res.xyz[1], 11), Csv::f(res.xyz[2], 11),
+                  Csv::f(ref.x(), 11), Csv::f(ref.y(), 11), Csv::f(ref.z(), 11),
+                  Csv::f(enu.E(), 6), Csv::f(enu.N(), 6), Csv::f(enu.U(), 6),
+                  Csv::f(res.blh[0] * RAD_TO_DEG, 10), Csv::f(res.blh[1] * RAD_TO_DEG, 10), Csv::f(res.blh[2], 4),
+                  Csv::f(res.vel[0], 6), Csv::f(res.vel[1], 6), Csv::f(res.vel[2], 6),
+                  Csv::f(res.pdop, 4), Csv::f(res.gdop, 4), Csv::f(res.hdop, 4), Csv::f(res.vdop, 4), Csv::f(res.tdop, 4),
+                  Csv::f(res.sigmaP, 4), Csv::f(res.sigmaV, 4),
+                  r.numSatsResult,
+                  Csv::f(rms3d, 6));
+        }
+        out << w.str();
+    }
+
+    // 统一浮点/固定块：给定 ECEF 解与参考点，写出 X/Y/Z + E/N/U + 3dRMS + SigmaP（8 列）。
+    // skip=true 时整块写空（未固定历元用），保持列对齐。3dRMS = |ENU(解, ref)|。
+    inline void csvWriteSolBlock(Csv::Writer &w, const Eigen::Vector3d &ecef,
+                                 const Eigen::Vector3d &ref, double sigma, bool skip) {
+        if (skip) {
+            for (int i = 0; i < 8; ++i) w.cell("");
+            return;
+        }
+        const ENU enu = XYZToENU(ecef, ref);
+        const double rms = std::sqrt(enu.E() * enu.E() + enu.N() * enu.N() + enu.U() * enu.U());
+        w.cell(Csv::f(ecef.x(), 11)).cell(Csv::f(ecef.y(), 11)).cell(Csv::f(ecef.z(), 11))
+                .cell(Csv::f(enu.E(), 6)).cell(Csv::f(enu.N(), 6)).cell(Csv::f(enu.U(), 6))
+                .cell(Csv::f(rms, 6)).cell(Csv::f(sigma, 4));
+    }
+
+    // PPP：浮点解(Float-) + 固定解(Fix-) 双块，各自 3dRMS 与 SigmaP；以 RTK 为准统一布局。
+    // LEO 继承 PPPKinematic→PPPStatic，字段同源，故此处布局 PPP/LEO 通用。
+    inline void exportCsvPpp(std::ostream &out, const std::vector<EpochData> &epochs,
+                             const Eigen::Vector3d &ref, bool skipUnsolved) {
+        Csv::Writer w;
+        w.row("Wk", "SOW", "Status",
+              "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m", "Float-3dRMS/m", "Float-SigmaP/m",
+              "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m", "Fix-3dRMS/m", "Fix-SigmaP/m",
+              "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "SatCount",
+              "REF-X/m", "REF-Y/m", "REF-Z/m", "Vel-X/m", "Vel-Y/m", "Vel-Z/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: epochs) {
+            if (!r.solved) {
+                w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell("Invalid");
+                for (int i = 3; i < cols; ++i) w.cell("");
+                w.endRow();
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const bool fixed = (res.stat == 1);
+            const char *statStr = fixed ? "Fixed" : (res.stat == 2 ? "Float" : "Invalid");
+            const Eigen::Vector3d fixE = fixed ? res.xyzFixed : Eigen::Vector3d::Zero();
+            w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell(statStr);
+            csvWriteSolBlock(w, res.xyzFloat, ref, res.sigmaPFloat, false);
+            csvWriteSolBlock(w, fixE, ref, res.sigmaPFixed, !fixed);
+            w.cell(Csv::f(res.pdop, 4)).cell(Csv::f(res.gdop, 4)).cell(Csv::f(res.hdop, 4)).cell(Csv::f(res.vdop, 4)).cell(
+                        Csv::f(res.tdop, 4))
+                    .cell(res.ratio).cell(r.numSatsResult);
+            w.cell(Csv::f(ref.x(), 11)).cell(Csv::f(ref.y(), 11)).cell(Csv::f(ref.z(), 11))
+                    .cell(Csv::f(res.vel[0], 6)).cell(Csv::f(res.vel[1], 6)).cell(Csv::f(res.vel[2], 6));
+            w.endRow();
+        }
+        out << w.str();
+    }
+
+    // LEO：逐历元参考轨道 REF + RTN(径向/沿迹/法向)；浮点 + 固定解双块（以 RTK 为准统一布局）。
+    // 有参考轨道额外给 RTN；无参考轨道省 RTN（但保留 REF-ECEF 作为绝对参考）。
+    inline void exportCsvLeo(std::ostream &out, const std::vector<EpochData> &epochs,
+                             const Eigen::Vector3d &ref, bool hasRefOrbit, bool skipUnsolved) {
+        Csv::Writer w;
+        if (hasRefOrbit)
+            w.row("Wk", "SOW", "Status",
+                  "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m", "Float-3dRMS/m", "Float-SigmaP/m",
+                  "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m", "Fix-3dRMS/m", "Fix-SigmaP/m",
+                  "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "SatCount",
+                  "REF-X/m", "REF-Y/m", "REF-Z/m", "R/m", "T/m", "N/m", "Vel-X/m", "Vel-Y/m", "Vel-Z/m").endRow();
+        else
+            w.row("Wk", "SOW", "Status",
+                  "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m", "Float-3dRMS/m", "Float-SigmaP/m",
+                  "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m", "Fix-3dRMS/m", "Fix-SigmaP/m",
+                  "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "SatCount",
+                  "REF-X/m", "REF-Y/m", "REF-Z/m", "Vel-X/m", "Vel-Y/m", "Vel-Z/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: epochs) {
+            if (!r.solved) {
+                w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell("Invalid");
+                for (int i = 3; i < cols; ++i) w.cell("");
+                w.endRow();
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const bool fixed = (res.stat == 1);
+            const char *statStr = fixed ? "Fixed" : (res.stat == 2 ? "Float" : "Invalid");
+            const Eigen::Vector3d fixE = fixed ? res.xyzFixed : Eigen::Vector3d::Zero();
+            // LEO 的"参考"是随时间运动的轨道，逐历元值存放在 r.refECEF（LEO 解算回填，
+            // 与 rtnR/T/N 同源）；函数参数 ref 只是首历元（或配置文件）的静态参考。
+            // 用静态 ref 会让 REF 三列全天冻结在同一组坐标，且 E/N/U、3dRMS 变成
+            // 相对首历元参考的 10^6 m 量级垃圾值，故这里一律改用逐历元的 refRow。
+            const Eigen::Vector3d &refRow =
+                    (hasRefOrbit && r.refECEF.squaredNorm() > 1.0) ? r.refECEF : ref;
+            w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell(statStr);
+            csvWriteSolBlock(w, res.xyzFloat, refRow, res.sigmaPFloat, false);
+            csvWriteSolBlock(w, fixE, refRow, res.sigmaPFixed, !fixed);
+            w.cell(Csv::f(res.pdop, 4)).cell(Csv::f(res.gdop, 4)).cell(Csv::f(res.hdop, 4)).cell(Csv::f(res.vdop, 4)).cell(
+                        Csv::f(res.tdop, 4))
+                    .cell(res.ratio).cell(r.numSatsResult);
+            w.cell(Csv::f(refRow.x(), 11)).cell(Csv::f(refRow.y(), 11)).cell(Csv::f(refRow.z(), 11));
+            if (hasRefOrbit)
+                w.cell(Csv::f(r.rtnR, 6)).cell(Csv::f(r.rtnT, 6)).cell(Csv::f(r.rtnN, 6));
+            w.cell(Csv::f(res.vel[0], 6)).cell(Csv::f(res.vel[1], 6)).cell(Csv::f(res.vel[2], 6));
+            w.endRow();
+        }
+        out << w.str();
+    }
+
+    // RTK：绝对坐标 = 基准站(ref) + 基线；浮点解 = base + 浮动基线，固定解 = 绝对固定位置。
+    // 浮点/固定均给出 X/Y/Z + E/N/U + 3dRMS + SigmaP。双差消去接收机钟差 → GDOP==PDOP、TDOP==0
+    //（与 RTKLIB 一致，非 bug）；5 个 DOP 全列以显式呈现该性质。
+    inline void exportCsvRtk(std::ostream &out, const std::vector<EpochData> &epochs,
+                             const Eigen::Vector3d &ref, bool skipUnsolved) {
+        Csv::Writer w;
+        w.row("Wk", "SOW", "Status",
+              "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m", "Float-3dRMS/m", "Float-SigmaP/m",
+              "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m", "Fix-3dRMS/m", "Fix-SigmaP/m",
+              "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "NSats",
+              "REF-X/m", "REF-Y/m", "REF-Z/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: epochs) {
+            if (!r.solved) {
+                w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell("Invalid");
+                for (int i = 3; i < cols; ++i) w.cell("");
+                w.endRow();
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const bool fixed = (res.stat == 1);
+            const char *statStr = fixed ? "Fixed" : (res.stat == 2 ? "Float" : "Invalid");
+            const Eigen::Vector3d base(ref.x(), ref.y(), ref.z());
+            const Eigen::Vector3d floatE = base + r.rtkBaseFloat; // 浮点绝对坐标 = 基准站 + 浮动基线
+            const Eigen::Vector3d fixE = fixed ? res.xyz : Eigen::Vector3d::Zero(); // 固定绝对坐标 = 解算输出（未固定留空）
+            w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell(statStr);
+            csvWriteSolBlock(w, floatE, ref, res.sigmaPFloat, false);
+            csvWriteSolBlock(w, fixE, ref, res.sigmaPFixed, !fixed);
+            w.cell(Csv::f(res.pdop, 4)).cell(Csv::f(res.gdop, 4)).cell(Csv::f(res.hdop, 4)).cell(Csv::f(res.vdop, 4)).cell(
+                        Csv::f(res.tdop, 4))
+                    .cell(r.rtkRatio).cell(r.numSatsResult);
+            w.cell(Csv::f(ref.x(), 11)).cell(Csv::f(ref.y(), 11)).cell(Csv::f(ref.z(), 11));
+            w.endRow();
+        }
+        out << w.str();
+    }
+
+    // 统一入口：按 mode 派发到各解算自己的导出实现。
+    inline void exportCsv(std::ostream &out, const std::vector<EpochData> &epochs,
+                          SolverMode mode, const Eigen::Vector3d &ref, bool hasRefOrbit,
+                          bool skipUnsolved) {
+        switch (mode) {
+            case SolverMode::Ppp: exportCsvPpp(out, epochs, ref, skipUnsolved);
+                break;
+            case SolverMode::Leo: exportCsvLeo(out, epochs, ref, hasRefOrbit, skipUnsolved);
+                break;
+            case SolverMode::Rtk: exportCsvRtk(out, epochs, ref, skipUnsolved);
+                break;
+            default: exportCsvSpp(out, epochs, ref, skipUnsolved);
+                break; // SPP
+        }
     }
 
     struct SolveTask : SolverTaskBase {
@@ -301,9 +460,9 @@ namespace GnssTask {
 
         std::mutex mutex;
 
-        std::set<char> enabledSystems{'G', 'C'};
-        double cutoffDeg = 10.0;
-        std::vector<std::string> navFiles;
+        std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
+        double cutoffDeg = 15.0;
+        std::string brdcPathBuf; // 广播星历（SPP 单文件版，与 PPP/LEO/RTK 字段对齐）
 
         std::atomic<float> readProgress{0.0f};
         std::atomic<int> solvingProgress{0};
@@ -326,8 +485,8 @@ namespace GnssTask {
         bool hasRefOrbit = false;
 
         bool hasLeo = false;
-        Vector3d leoPos3d{0, 0, 0};
-        Vector3d leoRef3d{0, 0, 0};
+        Eigen::Vector3d leoPos3d{0, 0, 0};
+        Eigen::Vector3d leoRef3d{0, 0, 0};
         std::vector<TrajPoint> leoTraj;
         std::vector<TrajPoint> leoRefTraj;
         std::vector<SatVis> gnssVis;
@@ -346,8 +505,7 @@ namespace GnssTask {
         int selectedSatIdx = -1;
 
         std::string obsPathBuf;
-        std::string rtIpBuf = "47.114.134.129";
-        std::string rtPortBuf = "7190";
+        std::vector<RealtimeEndpoint> rtEndpoints;
 
         SolverMode mode{SolverMode::Spp};
 
@@ -365,10 +523,7 @@ namespace GnssTask {
         std::vector<std::pair<std::string, std::shared_ptr<SolveTask> > > extraQcTabs;
 
         ~SolveTask() override {
-    stop = true;
-    // QC 线程捕获了 shared_ptr(task)，若它是最后一个引用，析构就会跑在 QC 线程自己身上；
-            // 此时 join 自己 ⇒ 抛异常/崩溃（第二次打开 LEO 任务即触发）。
-            // 故先 detach 让它随线程结束自然销毁，不再 join。
+            stop = true;
             if (qcWorker.joinable()) {
                 if (qcWorker.get_id() == std::this_thread::get_id()) qcWorker.detach();
                 else qcWorker.join();
@@ -378,11 +533,24 @@ namespace GnssTask {
         // 结果即自己：SPP / 实时流没有外层容器，solveResult() 就是自身。
         std::shared_ptr<SolveTask> solveResult() override { return std::static_pointer_cast<SolveTask>(shared_from_this()); }
 
+        // 把本任务结果导出为 CSV（委托给上面共享的 GnssTask::exportCsv）。
+        void exportCsv(std::ostream &out, bool skipUnsolved = true) const {
+            GnssTask::exportCsv(out, epochs, mode, refECEF, hasRefOrbit, skipUnsolved);
+        }
+
         void renderConfigPanel() override {
         }
     };
 
     int ReadRinexObsToQueue(const std::shared_ptr<SolveTask> &core, const std::atomic<bool> &stopFlag);
+
+    // 观测文件读取分发（与 app/core/ObsFormat.h classifyObsPath 配对）：
+    // isRinex 由各面板开始解算前经 classifyObsPath 置位，这里只按标志分派，
+    // 不再各自判断后缀。返回值语义同 ReadRinexObsToQueue：
+    //   -1 = 打开或解析失败（已置 hasError/errorMsg/readDone 并 notify_all）；
+    //    0  = 无历元（已置 hasError/"无历元"，仍继续走调用方 QC 收尾分支）；
+    //   >0  = 入队历元数。
+    int ReadObsToQueue(const std::shared_ptr<SolveTask> &core, const std::atomic<bool> &stopFlag);
 
     bool WaitNavReady(const std::shared_ptr<SolveTask> &core);
 

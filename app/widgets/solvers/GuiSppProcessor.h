@@ -7,7 +7,7 @@
 #include "SolverTask.h"
 #include "core/PathMemory.h"
 
-namespace GuiSppProcessor {
+namespace Solvers::SppProcessor {
     struct SppTask : GnssTask::SolverTaskBase {
         std::shared_ptr<GnssTask::SolveTask> solveResult() override { return core; }
 
@@ -19,16 +19,20 @@ namespace GuiSppProcessor {
         bool afterSolveEpoch(void *solver, GnssTask::EpochData *data, GnssTask::ObsItem *item, int index) override;
 
         std::shared_ptr<GnssTask::SolveTask> core;
-        // 持有最近一份有效星历：OEM7/实时逐历元给的快照可能整表为空，
-        // 直接用会让该历元无星历可用，故留一份上次的（成员而非局部，因钩子要跨调用访问）。
         std::shared_ptr<EphemerisTable> lastGoodEph;
-        // 回填上次填写（观测路径与实时 IP/端口此前都只写不读）
         SppTask() {
             core = std::make_shared<GnssTask::SolveTask>();
-            const auto &pm = GnssCore::PathMemory::instance();
+            const auto &pm = AppConfig::PathMemory::instance();
             core->obsPathBuf = pm.get("spp_obs");
-            core->rtIpBuf = pm.get("rt_ip");
-            core->rtPortBuf = pm.get("rt_port");
+            core->brdcPathBuf = pm.get("spp_brdc");
+            // 实时流端点统一进 SolveTask::rtEndpoints（SPP 用 [0]）。默认与 ConnectionConfig / Application 一致。
+            core->rtEndpoints.resize(1);
+            core->rtEndpoints[0].ip = pm.get("rt_ip", "47.114.134.129");
+            core->rtEndpoints[0].port = pm.get("rt_port", "7190");
+            // 截止高度角 / 星座筛选：记忆进 ini（默认 15° / 全系统，见 SolverTask.h）
+            core->cutoffDeg = pm.getNum("spp_cutoff", core->cutoffDeg, 0.0, 90.0);
+            const std::string sysStr = pm.get("spp_systems");
+            if (!sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
         }
     };
 

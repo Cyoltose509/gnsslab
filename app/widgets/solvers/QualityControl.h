@@ -17,7 +17,7 @@ using QC::QualityReport;
 
 // 前向声明，避免在头文件引入 GUI 依赖
 namespace GnssTask { struct SolveTask; struct EpochData; }
-namespace GuiPppProcessor { struct PppTask; }
+namespace Solvers::PppProcessor { struct PppTask; }
 
 namespace QualityControl {
     /// 在主程序中渲染质量分析界面 (需在 ImGui 上下文内调用)。

@@ -15,7 +15,11 @@
 #include "GuiSolverPanel.h"
 #include "Log.h"
 
-namespace GuiRealtimeProcessor {
+namespace Solvers::RealtimeProcessor {
+    // 实时质量分析滑动窗口上限（与 RTK 实时流一致，约 2 小时@1Hz）：
+    // 避免 QC::compute 随历元数无限增长，做增量式质量分析。
+    static constexpr size_t kRealtimeQcWindow = 7200;
+
     void SolveRealtimeThread(const std::shared_ptr<GnssTask::SolveTask> &task, const ConnectionConfig &config) {
         SPP spp;
         spp.setCutoffElevDeg(task->cutoffDeg); // 截止高度角：低于该仰角的卫星在解算中被剔除
@@ -54,6 +58,18 @@ namespace GuiRealtimeProcessor {
                             spp.ephTable = *eph;
                             spp.preprocess(obs);
 
+                            // 实时质量分析：把预处理后的原始观测并入 qcInput（与文件/OEM7 模式一致）。
+                            // 之前这一环漏了，导致 QC 每次算的都是空输入 → 一直显示"无有效双频观测"。
+                            {
+                                std::lock_guard<std::mutex> lk(task->qcInputMutex);
+                                task->qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
+                                if (task->qcInput.size() > kRealtimeQcWindow)
+                                    task->qcInput.erase(
+                                        task->qcInput.begin(),
+                                        task->qcInput.begin()
+                                            + (task->qcInput.size() - kRealtimeQcWindow));
+                            }
+
                             GnssTask::EpochData data;
                             data.getFromObs(obs);
                             if (!task->hasNav && !eph->empty())
@@ -69,25 +85,14 @@ namespace GuiRealtimeProcessor {
                             } catch (...) {
                                 data.solved = false;
                             }
-                            {
-                                std::lock_guard lock(task->mutex);
-                                const auto index = static_cast<int>(task->epochs.size()) - 1;
-                                {
-                                    std::lock_guard plk(task->plotMutex);
-                                    task->plotData.insert(index, data, task->refECEF);
-                                }
-                                const bool wasAtEnd = task->selectedEpoch == -1 || task->selectedEpoch == index;
-                                task->epochs.push_back(data);
-
-                                if (wasAtEnd) {
-                                    task->selectedEpoch = index+1;
-                                }
-                            }
+                            // 统一提交入口：与 RTK（commitRtkEpoch → CommitEpoch）同形，
+                            // 取代原先手写 push_back + plotData.insert + selectedEpoch 维护（且旧逻辑 index 计算有 off-by-one）。
+                            GnssTask::CommitEpoch(task, std::move(data));
 
                             const auto nowQc = std::chrono::steady_clock::now();
                             if (nowQc - lastQcTime > std::chrono::milliseconds(500)) {
                                 lastQcTime = nowQc;
-                                GuiSolverPanel::LaunchQC(task);
+                                Solvers::SolverPanel::LaunchQC(task);
                             }
                         } else {
                             // 检查连接是否依然有效

@@ -13,7 +13,7 @@
 
 #include "SolverTask.h"
 
-namespace GuiSolverPanel {
+namespace Solvers::SolverPanel {
     void RenderTask(const std::shared_ptr<GnssTask::SolverTaskBase> &job);
     void LaunchQC(const std::shared_ptr<GnssTask::SolveTask> &task);
     void ExportCsv(const std::shared_ptr<GnssTask::SolveTask> &task);
