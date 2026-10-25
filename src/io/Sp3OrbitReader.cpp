@@ -133,7 +133,7 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
         pvt.v = r[idx].hasVel ? r[idx].vel : Eigen::Vector3d::Zero();
         pvt.clockBias = r[idx].hasClock ? r[idx].clock : 0.0;
         pvt.clockDrift = r[idx].hasClockRate ? r[idx].clockRate : 0.0;
-        pvt.relativityCorrection = -2.0 * pvt.p.dot(pvt.v) / (C_MPS * C_MPS);
+        pvt.relativityCorrection = satRelativityCorrection(pvt.p, pvt.v);
         return pvt;
     }
     std::vector<double> tt(m);
@@ -185,7 +185,7 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
         pvt.clockBias = 0.0; // 无钟差列，钟差由调用方用 CLK 注入
         pvt.clockDrift = 0.0;
     }
-    pvt.relativityCorrection = -2.0 * pvt.p.dot(pvt.v) / (C_MPS * C_MPS);
+    pvt.relativityCorrection = satRelativityCorrection(pvt.p, pvt.v);
     return pvt;
 }
 

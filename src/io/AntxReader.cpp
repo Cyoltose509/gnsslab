@@ -1,5 +1,5 @@
 #include "AntxReader.h"
-#include <cmath>
+#include "CoordConvert.h"  // ECEFToSVBodyDCM：GNSS 卫星天线系机体框架
 #include <sstream>
 #include <charconv>  // std::from_chars：数据行解析比 strtod 快（无 locale）
 #include <string_view>
@@ -261,10 +261,8 @@ void AntxReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const Commo
     double gmst;
     Eigen::Vector3d rsun, rmoon;
     Geodesy::sunMoonECEF(epoch, rsun, rmoon, gmst);
-    Eigen::Vector3d ex, ey, ez;
-    Geodesy::satelliteBodyFrame(pTx, rsun, ex, ey, ez);
-
-    const Eigen::Vector3d pcoEcef = ex * pco.x() + ey * pco.y() + ez * pco.z();
+    const Eigen::Matrix3d M = ECEFToSVBodyDCM(pTx, rsun);
+    const Eigen::Vector3d pcoEcef = M.transpose() * pco;
     pTx += pcoEcef;
 }
 

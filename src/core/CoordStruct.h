@@ -1,5 +1,16 @@
 #pragma once
 
+// ============================================================================================
+// 坐标值类型层（CoordStruct.h）
+// 本文件只放"坐标数据"：XYZ/BLH/ENU/NED 值类型（Eigen::Vector3d 子类 + 命名访问器）
+// 与 FrameInfo 地球框架常量。它是"轻头"——只用到坐标类型的 TU（如 Ephemeris.h）
+// 可单独包含本文件，不必拖进 CoordConvert.h 的 Eigen/Geometry 与整套转换/姿态机械。
+// 坐标数学行为（转换函数族、DCM 构造族、姿态算子 AttQuat）一律在 CoordConvert.h。
+// 历史遗留：applyEarthRotation / isSaneECEF 是两个轻量行为助手（Sagnac 改正 /
+// 合理性判据），调用面窄且早于本分层存在，暂留本文件；如求彻底整齐可移至
+// CoordConvert.h（其调用方均已包含该头，搬迁零影响）。
+// ============================================================================================
+
 #include <Eigen/Eigen>
 #include "Const.h"   // OMEGA_EARTH, C_MPS（applyEarthRotation 需要）
 
@@ -153,24 +164,4 @@ inline void applyEarthRotation(Eigen::Vector3d &pTx, Eigen::Vector3d &vTx,
 
 inline bool isSaneECEF(const Eigen::Vector3d &v) {
     return v.allFinite() && v.squaredNorm() > 1.0e10 && v.squaredNorm() < 1.0e17;
-}
-
-
-// e → ENU 旋转矩阵 C_e^enu（行 = 当地 东/北/天 在 ECEF 中的方向余弦）。
-// 命名与归属同 CoordConvert.h 命名律的矩阵族（ECEFToNEDDCM 的孪生：差一个置换+天向符号）。
-// ⚠️ 为何留在本文件而非 CoordConvert.h：GnssStruct.h（computePositionDops）依赖它，而
-// GnssStruct.h 不能 include CoordConvert.h——后者经 MathUtils.h 把全局 using namespace std
-// 扩散进全部 solver TU，正是 GuiHelpers _Fn 事故的根因顺序。故此处是受包含关系约束的例外。
-inline Eigen::Matrix3d ECEFToENUDCM(const double B, const double L) {
-    const double sinB = std::sin(B);
-    const double cosB = std::cos(B);
-    const double sinL = std::sin(L);
-    const double cosL = std::cos(L);
-
-    Eigen::Matrix3d R;
-    R << -sinL, cosL, 0.0,
-            -sinB * cosL, -sinB * sinL, cosB,
-            cosB * cosL, cosB * sinL, sinB;
-
-    return R;
 }

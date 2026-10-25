@@ -53,6 +53,15 @@ inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
     return os;
 }
 
+// 卫星钟相对论改正（狭义+广义，秒）：−2(r·v)/c²。PVT.relativityCorrection 的唯一内核。
+// BRDC 星历（Ephemeris.cpp）与 SP3 精密轨道（Sp3OrbitReader.cpp）共用——BRDC 侧原用
+// 开普勒式 −2√(gm)/c²·e·√a·sinE，两者对开普勒轨道恒等（r·v = e√(μa)·sinE），含
+// 调和项时相差 ~mm 级；统一取 r·v 式：对任意轨道表示都成立，且直接用的就是
+// 解算出的位置/速度。
+inline double satRelativityCorrection(const Eigen::Vector3d &p, const Eigen::Vector3d &v) {
+    return -2.0 * p.dot(v) / (C_MPS * C_MPS);
+}
+
 // 基类：包含所有卫星通用的轨道参数
 struct Ephemeris {
     // --- 通用轨道参数 (所有系统都有) ---
@@ -154,7 +163,6 @@ inline ostream &operator<<(ostream &os, const Ephemeris &eph) {
     return os;
 }
 
-// GPS 星历：特有 IODE, TGD, AS 等
 struct GPSEphem : Ephemeris {
     GPSEphem() {
         type = 'G';
@@ -186,9 +194,6 @@ struct BDSEphem : Ephemeris {
     }
 };
 
-// Galileo 星历：RINEX 3.04 布局与 GPS 完全同构（同开普勒六根数 + 调和项），
-// 直接复用基类 Ephemeris::getPVT()。仅时间系统(GAL)与参考框架(GTRF≈GPS)不同。
-// IF 组合(L1+L5/E1+E5a)下 TGD 被吸收进接收机钟差，SPP 级可不单独修正。
 struct GalileoEphem : Ephemeris {
     GalileoEphem() {
         type = 'E';
@@ -196,38 +201,25 @@ struct GalileoEphem : Ephemeris {
         refFrame = Frame::GPS;
     }
 
-    double tgd{}; // E5a 群时延 (TGDE5a, RINEX 第6行第3列)
+    double tgd{};
 };
 
-// GLONASS 广播星历：RINEX 3.04 四行格式（epoch + 3 数据行），PZ-90 ECEF 框架。
-// 与 GPS/GAL/BDS 的开普勒传播不同，GLONASS 用"位置/速度/加速度数值积分"
-// 求得发射时刻卫星状态（RINEX 直接给出 tk 时刻的 X/Y/Z、Xdot/Ydot/Zdot、Xddot/Yddot/Zddot）。
-// GLONASS 广播星历时间取 GPS 时间系统：RINEX 里的 GLONASS 历元按 UTC(SU) 写，但常用 BRDC
-// 合并文件已把历元写成 UTC 墙钟（与 GPS 观测历元同一日历），故与 GPS/GAL/BDS 一样，把 toe 解析成
-// GPS 标签的日历 SOD，getPVT 内用 convertTimeSystem(t, timeSystem) 对齐即可（GPS→GPS 为 no-op，
-// dt 即为两日历之差，物理秒数正确，等价于 RTKLIB 的 utc2gpst 后做 timediff）。
-// GLONASS 钟差模型 τ = -τ_n + τ_d·(t - t_b)，与 RTKLIB geph2pos 一致。
 struct GlonassEphem : Ephemeris {
     GlonassEphem() {
         type = 'R';
-        // GLONASS 广播历元是 GLONASS 时间 = UTC(SU)（不施加跳秒，与 UTC 同走时），
-        // 与 GPS 相差 GPS-UTC 跳秒（2026 年为 18 s）。按原生时间系统解析，
-        // getPVT 内 convertTimeSystem(t, timeSystem) 负责把 GPS 观测时刻对齐到 UTC。
         timeSystem = TimeSystem::UTC;
         refFrame = Frame::PZ90;
     }
 
-    // tk 时刻的卫星状态（单位：km, km/s, km/s^2），直接来自 RINEX 三行数据
     double X{}, Y{}, Z{};
     double vX{}, vY{}, vZ{};
-    double aX{}, aY{}, aZ{};   // 日月引力加速度（luni-solar perturbing acceleration）
+    double aX{}, aY{}, aZ{};   // 日月引力加速度
     double tauN{};             // SV 钟差 τ_n (s)
     double tauD{};             // 相对频偏 τ_d (无量纲)
     double tk{};               // 信息帧时间 tk (UTC(SU) 周内秒，可选)
     int freqNum{};             // 频率通道号（FDMA 用）
     unsigned int health{};     // 健康/可用标志
 
-    // 参考历元（绝对时刻，UTC 标记），供 EphemerisTable::find 计算星历年龄
     CommonTime toeCommon{};
 
     PVT getPVT(CommonTime t) override;

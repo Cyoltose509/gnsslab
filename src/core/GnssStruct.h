@@ -439,6 +439,10 @@ struct Result {
     }
 };
 
+// 由位置/钟差协方差算 DOP 族（SPP/RTK/PPP 三处共用，集中在 ENU 投影这一易错步）：
+//   pdop = √tr(Qpos)；gdop = √(pdop² + σ²_clk)；tdop = σ_clk（clockVar ≤ 0 时记 0）
+//   hdop/vdop = ENU 投影协方差 C_enu = C_e^enu·Qpos·C_e^enuᵀ 的水平/天向迹
+// clockVar 传 0.0 表示不估计接收机钟差（RTK），此时 tdop = 0。
 inline void computePositionDops(Result &result, const Eigen::Matrix3d &Qpos, double clockVar, const Eigen::Vector3d &blh) {
     result.pdop = std::sqrt(Qpos(0, 0) + Qpos(1, 1) + Qpos(2, 2));
     result.gdop = std::sqrt(result.pdop * result.pdop + clockVar);

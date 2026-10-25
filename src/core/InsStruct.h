@@ -12,3 +12,18 @@ struct ImuSample {
 };
 
 using ImuLog = std::vector<ImuSample>;
+
+// 单历元姿态（欧拉角，rad）
+struct Attitude {
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+};
+
+// 带时间戳的姿态采样
+struct AttitudeSample {
+    double tow = 0.0;
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+};

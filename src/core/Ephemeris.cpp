@@ -77,7 +77,7 @@ PVT Ephemeris::getPVT(CommonTime t) {
     if (dt < -HALF_WEEK) dt += FULL_WEEK;
     sv.clockBias = a0 + a1 * dt + a2 * dt * dt;
     sv.clockDrift = a1 + 2 * a2 * dt;
-    sv.relativityCorrection = -2.0 * sqrt(refFrame.gm) / (C_MPS * C_MPS) * e * rootA * sin(Ek);
+    sv.relativityCorrection = satRelativityCorrection(sv.p, sv.v); // r·v 式（与 SP3 共用内核）
     fixTGD(sv);
     return sv;
 }

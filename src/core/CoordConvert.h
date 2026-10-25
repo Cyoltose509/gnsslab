@@ -1,59 +1,127 @@
 #pragma once
 
-#include "CoordStruct.h"  // ECEFToENUDCM 等（已含 Eigen/cmath），无循环依赖
+#include "CoordStruct.h"
 #include <Eigen/Eigen>
-#include <cmath>
-#include "MathUtils.h"   // Math::rotationZ（ECI↔ECEF 用）
-#include <Eigen/Geometry>  // Quaterniond / AngleAxisd（AttQuat 类）
+#include "MathUtils.h"
+#include "TimeConvert.h"
+#include <Eigen/Geometry>
+#include <utility>
 
-// 机体→导航 方向余弦矩阵 C_b^n 与欧拉角的互转（姿态/坐标转换）。
-// 导航系取 NED（x=北,y=东,z=地），机体取前-右-下；旋转顺序 yaw(ψ,z)-pitch(θ,y)-roll(φ,x)。
-inline Eigen::Matrix3d EulerToDCM(const double roll, const double pitch, const double yaw) {
+
+using DCM = Eigen::Matrix3d;
+
+inline DCM EulerToDCM(const double roll, const double pitch, const double yaw) {
     const double cr = std::cos(roll), sr = std::sin(roll);
     const double cp = std::cos(pitch), sp = std::sin(pitch);
     const double cy = std::cos(yaw), sy = std::sin(yaw);
-    Eigen::Matrix3d C;
+    DCM C;
     C << cp * cy, -cr * sy + sr * sp * cy, sr * sy + cr * sp * cy,
             cp * sy, cr * cy + sr * sp * sy, -sr * cy + cr * sp * sy,
             -sp, sr * cp, cr * cp;
     return C;
 }
 
-inline void DCMToEuler(const Eigen::Matrix3d &C, double &roll, double &pitch, double &yaw) {
+inline void DCMToEuler(const DCM &C, double &roll, double &pitch, double &yaw) {
     pitch = std::atan2(-C(2, 0), std::sqrt(C(2, 1) * C(2, 1) + C(2, 2) * C(2, 2)));
     roll = std::atan2(C(2, 1), C(2, 2));
     yaw = std::atan2(C(1, 0), C(0, 0));
 }
 
+inline DCM ECEFToENUDCM(const double B, const double L) {
+    const double sinB = std::sin(B);
+    const double cosB = std::cos(B);
+    const double sinL = std::sin(L);
+    const double cosL = std::cos(L);
 
-// ===================== 惯性导航坐标系族（i / e / n / b）转换轮子 =====================
-// 坐标系约定（与课件/指导书一致）：
-//   i 系（ECI，地心惯性系）：卫星星历解算框架；忽略岁差/章动时与 e 系只差一个格林尼治真恒星时旋转
-//        （完整岁差+章动+极移模型见 Geodesy::eciToECEF）。
-//   e 系（ECEF，地心地固系 WGS84）：XYZ 直角坐标；大地坐标 BLH 见 XYZToBLH / BLHToXYZ。
-//   n 系（导航系 NED）：x=北 y=东 z=地；INS 姿态/速度/位置积分框架。
-//   b 系（载体/机体系）：前-右-下；IMU 原始输出即在 b 系。
-//   ENU（东-北-天）：GNSS 侧惯用的局部框架，与 n 系差置换+天向符号（ENUToNED / NEDToENU）。
-// 方向余弦矩阵记法 C_a^b：v^b = C_a^b · v^a（列向量为 a 系各轴在 b 系的方向余弦）。
-// ⚠️ Math::rotationX/Y/Z 是负角约定（内部 AngleAxisd(-t)）；本文件新增 DCM 均已按该约定
-//    实现或显式验证，调用方不要再取负号。
-//
-// 命名律（新增转换函数必须遵守，勿再造 From 式 / 第三种连接符写法）：
-//   统一形状 <源>To<目标>[DCM]，连接符一律大写 To；缩写 token 一律全大写
-//   （ECEF/ECI/DCM；Euler 是人名不是缩写，保持首字母大写）：
-//   1) 系间旋转矩阵（C_a^b，返回 Matrix3d）：<源>To<目标>DCM，例：ECEFToNEDDCM(B,L) /
-//      ECEFToENUDCM(B,L) / ECIToECEFDCM(θ) / ECEFToECIDCM(θ) / EulerToDCM(r,p,y) /
-//      DCMToEuler(C,&r,&p,&y)。
-//   2) 坐标/向量在系间转换（CoordStruct.h 的结构体类型之间）：<源类型>To<目标类型>，
-//      token 用类型名全大写缩写（XYZ/BLH/ENU/NED），不带后缀。例：XYZToBLH / XYZToENU /
-//      XYZToNED / ENUToNED。
-//   两族一眼区分：有 DCM 后缀的是旋转矩阵，没有的是坐标/向量。
-//   Geodesy::eciToECEF 是完整岁差/章动/极移模型（类静态方法，小写开头遵循 Geodesy.h
-//   自身风格），与仅差 GMST 旋转的 ECIToECEFDCM 是两个函数，按需选用。
-//   注：局部变量仍按 camel 小写（recvEcef/rsunEcef/posEcef），缩写全大写只约束
-//   函数名——公共 API 面；rsunECEF 这类写法会驼峰断裂，可读性更差。
-// ============================================================================================
-// 坐标转换函数（computePositionDops 见 GnssStruct.h，依赖其中 Result 定义）
+    DCM R;
+    R << -sinL, cosL, 0.0,
+            -sinB * cosL, -sinB * sinL, cosB,
+            cosB * cosL, cosB * sinL, sinB;
+
+    return R;
+}
+
+
+inline DCM ECEFToLVLHDCM(const Eigen::Vector3d &pos, const Eigen::Vector3d &vel) {
+    const Eigen::Vector3d ur = pos.normalized(); // 径向(向外) Zb
+    Eigen::Vector3d ut;
+    if (vel.squaredNorm() > 1.0) ut = vel.normalized(); // 沿迹 Xb
+    else ut = Eigen::Vector3d(0, 0, 1);
+    Eigen::Vector3d uc = ur.cross(ut); // 轨道法向(角动量方向) Yb
+    if (uc.squaredNorm() < 1e-6) uc = Eigen::Vector3d(1, 0, 0);
+    uc.normalize();
+    ut = uc.cross(ur).normalized(); // 重新正交化：沿迹 = 法向 × 径向
+    DCM M;
+    M.row(0) = -ut; // Xb 沿迹
+    M.row(1) = uc; // Yb 轨道法向
+    M.row(2) = ur; // Zb 径向
+    return M;
+}
+
+inline DCM ECEFToSVBodyDCM(const Eigen::Vector3d &pTx, const Eigen::Vector3d &rsunEcef) {
+    const Eigen::Vector3d ez = -pTx.normalized();
+    const Eigen::Vector3d es = (rsunEcef - pTx).normalized();
+    const Eigen::Vector3d ey = ez.cross(es).normalized();
+    const Eigen::Vector3d ex = ey.cross(ez);
+    DCM M;
+    M.row(0) = ex;
+    M.row(1) = ey;
+    M.row(2) = ez;
+    return M;
+}
+
+inline DCM ECEFToNEDDCM(const double B, const double L) {
+    const double sinB = std::sin(B), cosB = std::cos(B);
+    const double sinL = std::sin(L), cosL = std::cos(L);
+    DCM C;
+    C << -sinB * cosL, -sinB * sinL, cosB,
+            -sinL, cosL, 0.0,
+            -cosB * cosL, -cosB * sinL, -sinB;
+    return C;
+}
+
+inline DCM NEDToECEFDCM(const double B, const double L) {
+    return ECEFToNEDDCM(B, L).transpose();
+}
+
+inline DCM ECIToECEFDCM(const CommonTime &t, double &gmstOut, const double xp = 0.0, const double yp = 0.0) {
+    const double jdFull = static_cast<double>(CommonTime2JulianDate(t).jd);
+    const double T = (jdFull - 2451545.0) / 36525.0; // 儒略世纪 (TT≈UTC，可忽略)
+    const double t2 = T * T, t3 = t2 * T;
+    double f[5];
+    fundamentalArguments(T, f);
+    // IAU 1976 岁差
+    const double ze = (2306.2181 * T + 0.30188 * t2 + 0.017998 * t3) * ARCSEC_TO_RAD;
+    const double th = (2004.3109 * T - 0.42665 * t2 - 0.041833 * t3) * ARCSEC_TO_RAD;
+    const double z = (2306.2181 * T + 1.09468 * t2 + 0.018203 * t3) * ARCSEC_TO_RAD;
+    const double eps = (84381.448 - 46.8150 * T - 0.00059 * t2 + 0.001813 * t3) * ARCSEC_TO_RAD;
+    DCM R1 = Math::rotationZ(-z);
+    DCM R2 = Math::rotationY(th);
+    DCM R3 = Math::rotationZ(-ze);
+    DCM R = R1 * R2;
+    const DCM P = R * R3; // P = Rz(-z)*Ry(th)*Rz(-ze)
+    // IAU 1980 章动
+    double dpsi, deps;
+    iau1980Nutation(T, f, dpsi, deps);
+    R1 = Math::rotationX(-eps - deps);
+    R2 = Math::rotationZ(-dpsi);
+    R3 = Math::rotationX(eps);
+    R = R1 * R2;
+    const DCM N = R * R3;
+    const double gmst = gmstFromTime(t);
+    double gast = gmst + dpsi * std::cos(eps);
+    gast += (0.00264 * std::sin(f[4]) + 0.000063 * std::sin(2.0 * f[4])) * ARCSEC_TO_RAD;
+    R1 = Math::rotationY(-xp);
+    R2 = Math::rotationX(-yp);
+    R3 = Math::rotationZ(gast);
+    const DCM W = R1 * R2;
+    R = W * R3;
+    const DCM NP = N * P;
+    gmstOut = gmst;
+    return R * NP;
+}
+
+
 inline BLH XYZToBLH(const XYZ &xyz, const FrameInfo &frame) {
     // 获取椭球参数
     const double a = frame.a;
@@ -142,6 +210,28 @@ inline XYZ ENUToXYZ(const ENU &enu, const XYZ &refXYZ, const FrameInfo &frame = 
     return resXYZ;
 }
 
+inline Eigen::Vector3d XYZToRTN(const Eigen::Vector3d &posEst, const Eigen::Vector3d &posRef,
+                                const Eigen::Vector3d &velRef) {
+    const Eigen::Vector3d b = ECEFToLVLHDCM(posRef, velRef) * (posEst - posRef);
+    return {b.z(), -b.x(), b.y()};
+}
+
+inline NED ENUToNED(const ENU &enu) { return {enu.N(), enu.E(), -enu.U()}; }
+inline ENU NEDToENU(const NED &ned) { return {ned.E(), ned.N(), -ned.D()}; }
+
+inline NED XYZToNED(const XYZ &xyz, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
+    const Eigen::Vector3d diff = xyz - refXYZ;
+    const auto refBLH = XYZToBLH(refXYZ, frame);
+    return {ECEFToNEDDCM(refBLH.B(), refBLH.L()) * diff};
+}
+
+inline XYZ NEDToXYZ(const NED &ned, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
+    const auto refBLH = XYZToBLH(refXYZ, frame);
+    const Eigen::Vector3d d = ECEFToNEDDCM(refBLH.B(), refBLH.L()).transpose() * Eigen::Vector3d(ned);
+    return {refXYZ.X() + d.x(), refXYZ.Y() + d.y(), refXYZ.Z() + d.z()};
+}
+
+
 inline double elevation(const XYZ &refXYZ, const XYZ &targetXYZ, const FrameInfo &frame = Frame::WGS84) {
     // 先转到ENU
     const ENU enu = XYZToENU(targetXYZ, refXYZ, frame);
@@ -157,13 +247,6 @@ inline double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ, const FrameInfo &
     return az;
 }
 
-// M6: SPP/RTK 共用——由接收机与卫星位置一次性算仰角+方位，消除两边重复的 elevation/azimuth 调用样板
-inline void satElevAzim(const XYZ &refXYZ, const XYZ &satPos, double &elev, double &azim,
-                        const FrameInfo &frame = Frame::WGS84) {
-    elev = elevation(refXYZ, satPos, frame);
-    azim = azimuth(refXYZ, satPos, frame);
-}
-
 inline void geometricRangeAndLos(const Eigen::Vector3d &satPos, const Eigen::Vector3d &recvPos,
                                  double &rho, Eigen::Vector3d &losUnit) {
     const Eigen::Vector3d d = recvPos - satPos;
@@ -172,86 +255,17 @@ inline void geometricRangeAndLos(const Eigen::Vector3d &satPos, const Eigen::Vec
 }
 
 
-struct RtnComponents {
-    double R = 0.0; // 径向误差(m)
-    double T = 0.0; // 沿迹误差(m)
-    double N = 0.0; // 法向误差(m)
-    double d3 = 0.0; // 三维位置误差模长(m)
-    bool hasFull = false;
-};
-
-/// posEst: 解算位置 ECEF(m)；posRef: 参考位置 ECEF(m)；velRef: 参考速度 ECEF(m/s)
-inline RtnComponents computeRTN(const Eigen::Vector3d &posEst, const Eigen::Vector3d &posRef,
-                                const Eigen::Vector3d &velRef) {
-    RtnComponents out;
-    const Eigen::Vector3d err = posEst - posRef;
-    out.d3 = err.norm();
-    const Eigen::Vector3d ur = posRef.normalized();
-    out.R = err.dot(ur);
-    if (velRef.squaredNorm() > 1.0) {
-        const Eigen::Vector3d ut = velRef.normalized();
-        const Eigen::Vector3d uc = ur.cross(ut).normalized();
-        out.T = err.dot(ut);
-        out.N = err.dot(uc);
-        out.hasFull = true;
-    }
-    return out;
-}
-
-inline NED ENUToNED(const ENU &enu) { return NED(enu.N(), enu.E(), -enu.U()); }
-inline ENU NEDToENU(const NED &ned) { return ENU(ned.E(), ned.N(), -ned.D()); }
-
-// e → n（NED）------------------------------------------------------------------
-// C_e^n：行 = 当地 北/东/地 在 ECEF 中的方向余弦。与 ECEFToENUDCM（C_e^enu）差一个置换。
-inline Eigen::Matrix3d ECEFToNEDDCM(const double B, const double L) {
-    const double sinB = std::sin(B), cosB = std::cos(B);
-    const double sinL = std::sin(L), cosL = std::cos(L);
-    Eigen::Matrix3d C;
-    C << -sinB * cosL, -sinB * sinL, cosB,
-            -sinL, cosL, 0.0,
-            -cosB * cosL, -cosB * sinL, -sinB;
-    return C;
-}
-
-inline Eigen::Matrix3d NEDToECEFDCM(const double B, const double L) {
-    return ECEFToNEDDCM(B, L).transpose();
-}
-
-// ECEF ↔ NED（带参考点；与 XYZToENU/ENUToXYZ 同构，只是导航系用 NED）
-inline NED XYZToNED(const XYZ &xyz, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
-    const Eigen::Vector3d diff = xyz - refXYZ;
-    const auto refBLH = XYZToBLH(refXYZ, frame);
-    return {ECEFToNEDDCM(refBLH.B(), refBLH.L()) * diff};
-}
-
-inline XYZ NEDToXYZ(const NED &ned, const XYZ &refXYZ, const FrameInfo &frame = Frame::WGS84) {
-    const auto refBLH = XYZToBLH(refXYZ, frame);
-    const Eigen::Vector3d d = ECEFToNEDDCM(refBLH.B(), refBLH.L()).transpose() * Eigen::Vector3d(ned);
-    return XYZ(refXYZ.X() + d.x(), refXYZ.Y() + d.y(), refXYZ.Z() + d.z());
-}
-
-// i → e ------------------------------------------------------------------------
-// C_e^i：v^e = C_e^i·v^i，theta = 格林娼治真恒星时 (rad)。
-// Math::rotationZ(theta) 的负角约定恰好等于 R3(theta)，与 Geodesy::eciToECEF 的
-// W*R3 分量同构；岁差/章动/极移请用 Geodesy::eciToECEF。
-inline Eigen::Matrix3d ECIToECEFDCM(const double theta) { return Math::rotationZ(theta); }
-inline Eigen::Matrix3d ECEFToECIDCM(const double theta) { return Math::rotationZ(theta).transpose(); }
-
-// 姿态四元数 -------------------------------------------------------------------
-// 统一约定：q 表示 C_b^n（v^n = q⊗v^b⊗q*）。Eigen::Quaterniond 系数顺序为
-// (x, y, z, w)（coeffs()），构造函数按 (w, x, y, z) 传参；一律经本类封装，
-// 调用方不直接碰系数（raw() 仅作与 Eigen 互操作的逃逸口）。
-// 命名法：一元运算用实例方法（toDCM/toEuler/rotate/update…），构造用静态工厂
-// （fromDCM/fromEuler/fromRotationVector），二元乘法走 operator*。
+// 姿态四元数
 class AttQuat {
 public:
-    AttQuat() = default;                             // 单位四元数
-    explicit AttQuat(const Eigen::Quaterniond &q);   // 显式：禁止隐式转换进本类
+    AttQuat() = default; // 单位四元数
+    explicit AttQuat(Eigen::Quaterniond q) : mQ(std::move(q)) {
+    }
 
     // ---- 静态工厂 ----
     static AttQuat identity() { return AttQuat(Eigen::Quaterniond::Identity()); }
 
-    static AttQuat fromDCM(const Eigen::Matrix3d &C) { return AttQuat(Eigen::Quaterniond(C)); }
+    static AttQuat fromDCM(const DCM &C) { return AttQuat(Eigen::Quaterniond(C)); }
 
     static AttQuat fromEuler(const double roll, const double pitch, const double yaw) {
         return AttQuat(Eigen::Quaterniond(EulerToDCM(roll, pitch, yaw)));
@@ -265,12 +279,12 @@ public:
     }
 
     // ---- 导出 ----
-    [[nodiscard]] Eigen::Matrix3d toDCM() const { return mQ.toRotationMatrix(); }
+    [[nodiscard]] DCM toDCM() const { return mQ.toRotationMatrix(); }
 
     void toEuler(double &roll, double &pitch, double &yaw) const { DCMToEuler(toDCM(), roll, pitch, yaw); }
 
     [[nodiscard]] Eigen::Vector3d toRotationVector() const {
-        const Eigen::AngleAxisd aa(normalized().toDCM());  // 先归一化再取轴角（Eigen 假定单位四元数）
+        const Eigen::AngleAxisd aa(normalized().toDCM()); // 先归一化再取轴角（Eigen 假定单位四元数）
         return aa.axis() * aa.angle();
     }
 
@@ -288,9 +302,6 @@ public:
         return n > 1e-12 ? AttQuat(Eigen::Quaterniond(mQ.coeffs() / n)) : identity(); // 防除零兜底
     }
 
-    // 姿态递推（b 系角速率 ω_ib^b 右乘更新）：q_{k+1} = q_k ⊗ exp(ω_ib^b·dt/2)。
-    // 对逐段常值 ω 精确（旋转矢量指数映射）；dt 内 ω 变化的整流误差（coning）
-    // 由导航机械编排层处理，本函数保持单步精确。
     [[nodiscard]] AttQuat update(const Eigen::Vector3d &omegaBody, const double dt) const {
         return (normalized() * fromRotationVector(omegaBody * dt)).normalized();
     }
@@ -298,8 +309,5 @@ public:
     [[nodiscard]] const Eigen::Quaterniond &raw() const { return mQ; }
 
 private:
-    Eigen::Quaterniond mQ{1.0, 0.0, 0.0, 0.0};  // (w, x, y, z)，默认单位
+    Eigen::Quaterniond mQ{1.0, 0.0, 0.0, 0.0}; // (w, x, y, z)，默认单位
 };
-
-inline AttQuat::AttQuat(const Eigen::Quaterniond &q) : mQ(q) {
-}
