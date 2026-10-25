@@ -118,17 +118,12 @@ void PPPStatic::bootstrapFirstEpoch(ObsData &obsData) {
 
 void PPPStatic::applyPriorClocks() {
     for (const auto &[sys, par]: sysCdtParam) {
-        const double absClk = mEkfInit
-                                  ? (mClkEstimate.count(sys) ? mClkEstimate.at(sys) : 0.0)
-                                  : mClkBase.count(sys)
-                                        ? mClkBase.at(sys)
-                                        : 0.0;
-        rClockBias[sys] = absClk;
+        rClockBias[sys] = clockPrior(sys);
     }
 }
 
 bool PPPStatic::wantCommonClock(const ObsData &obs) const {
-    if (mKinematic) return false;            // 运动学/LEO 不走公共钟+ISB
+    if (mKinematic) return false; // 运动学/LEO 不走公共钟+ISB
     if (ekf.isbInitVar <= 0.0) return false; // 未开启 ISB 估计
     bool gps = false;
     std::set<char> sys;
@@ -137,7 +132,7 @@ bool PPPStatic::wantCommonClock(const ObsData &obs) const {
         sys.insert(sat.system);
         if (sat.system == 'G') gps = true;
     }
-    for (char s : sys) {
+    for (char s: sys) {
         if (s != 'G' && sysCdtParam.find(s) == sysCdtParam.end())
             return false;
     }
@@ -266,7 +261,6 @@ double PPPStatic::pcvCorrection(const SatID &sat) const {
 
 void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
                                       double mapW, double tropoFixed) {
-    const double map = mapW; // 湿映射用于 ZTD 状态系数
     const FreqCombo &def = *freqComboFor(sat);
     const Variable vclk(mCurObs->station, sysCdtParam.at(sat.system));
     const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
@@ -289,15 +283,11 @@ void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
     const double L_IF = def.combinePhase(L1m, L2m) - pb + pcv - ionoK * 0.5;
 
     // 公共钟模型下，非参考系统的先验钟 = 参考系统(公共)钟 + 自身 ISB
-    const double clkRefPrior = mEkfInit
-        ? (mClkEstimate.count('G') ? mClkEstimate.at('G') : 0.0)
-        : mClkBase.count('G') ? mClkBase.at('G') : 0.0;
-    double clkMean = mEkfInit
-        ? (mClkEstimate.count(sat.system) ? mClkEstimate.at(sat.system) : 0.0)
-        : mClkBase.count(sat.system) ? mClkBase.at(sat.system) : 0.0;
+    const double clkRefPrior = clockPrior('G');
+    double clkMean = clockPrior(sat.system);
     if (mCommonClockActive && sat.system != 'G')
         clkMean += clkRefPrior;
-    const double ztdMean = mEkfInit ? mZtdEstimate : mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
+    const double ztdMean = ztdPrior();
     const double ambMean = mAmbEstimate.count(sat) ? mAmbEstimate.at(sat) : 0.0;
     const bool cbActive = mEkfInit && !osbCoversSystem(sat.system) &&
                           !(sat.system == 'R' && !osbCovers(sat));
@@ -329,14 +319,11 @@ void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
     mWindupAcc[sat] = acc;
     const double windup_m = mApplyWindup ? def.lambdaN * acc : 0.0;
 
-    // 粗差门限
-    constexpr double rejCode = 1.0e4; //NOLINT
-    constexpr double rejPhase = 1.0e4; //NOLINT
-    const double codePrefit = P_IF - (rho - dts - rel) - clkMean - ztdMean * map - tropoFixed - cbMean - ifcbMean;
-    const double phasePrefit = L_IF - (rho - dts - rel) - ambMean - clkMean - ztdMean * map - tropoFixed - windup_m; //NOLINT
+    const double codePrefit = P_IF - (rho - dts - rel) - clkMean - ztdMean * mapW - tropoFixed - cbMean - ifcbMean;
+    const double phasePrefit = L_IF - (rho - dts - rel) - ambMean - clkMean - ztdMean * mapW - tropoFixed - windup_m;
 
 
-    if (mProcEpoch > GATE_WARMUP && (std::abs(codePrefit) > rejCode || std::abs(phasePrefit) > rejPhase)) {
+    if (mProcEpoch > GATE_WARMUP && (std::abs(codePrefit) > 30.0 || std::abs(phasePrefit) > 30.0)) {
         satRejected.insert(sat);
         return;
     }
@@ -367,7 +354,8 @@ void PPPStatic::addObservationEquation(const EquID &eid, double prefit, const Ei
     if (mCommonClockActive) {
         const Variable vcommon(mCurObs->station, Parameter::cdt);
         ed.varCoeffData[vcommon] = 1.0;
-        if (const Parameter isbPar = sysCdtParam.at(eid.sat.system); isbPar != Parameter::cdt) {  // 非参考系统再叠加 ISB 状态
+        if (const Parameter isbPar = sysCdtParam.at(eid.sat.system); isbPar != Parameter::cdt) {
+            // 非参考系统再叠加 ISB 状态
             const Variable visb(mCurObs->station, isbPar);
             ed.varCoeffData[visb] = 1.0;
         }
@@ -434,10 +422,8 @@ double PPPStatic::computeIfAmbiguity(const SatID &sat, const TypeValueMap &tv,
     const double L_IF0 = def.combinePhase(L1m0, L2m0) - mOsb.phaseBias(def, sat)
                          + pcvCorrection(sat);
     // 与观测方程同源：首历元用 LSQ 引导的钟差/ZTD 先验，保证模糊度初值与首历元相位预fit=0 严格互补
-    const double clk0 = mEkfInit
-                            ? (mClkEstimate.count(sat.system) ? mClkEstimate.at(sat.system) : 0.0)
-                            : mClkBase.count(sat.system) ? mClkBase.at(sat.system) : 0.0;
-    const double ztd0 = mEkfInit ? mZtdEstimate : mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
+    const double clk0 = clockPrior(sat.system);
+    const double ztd0 = ztdPrior();
     const double windup0 = mApplyWindup && mWindupAcc.count(sat) ? def.lambdaN * mWindupAcc.at(sat) : 0.0;
     return L_IF0 - (rho0 - dts0 - rel0) - clk0 - ztd0 * map - tropoFixed - windup0;
 }
@@ -638,9 +624,7 @@ void PPPStatic::addZtdConstraint() {
     if (ztdSigma > 0.0) {
         const EquID eid(SatID('T', 0), std::string(src));
         EquData ed;
-        const double ztdCur = mEkfInit
-                                  ? mZtdEstimate
-                                  : mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
+        const double ztdCur = ztdPrior();
         ed.prefit = ztdTarget - ztdCur;
         ed.varCoeffData[vztd] = 1.0;
         ed.weight = 1.0 / (ztdSigma * ztdSigma);
@@ -803,139 +787,9 @@ void PPPStatic::solve(ObsData &obsData) {
     if (!mEkfInit && satPVTTransTime.size() < 4) {
         mFilterFrozen = true;
     } else if (!mEkfInit) {
-        Eigen::Vector3d xyzRef = mRefPos;
-        bool deferInit = false;
-        {
-            if (auto [pos, flag] = solveInitialPosition(obsData); !flag) deferInit = true;
-            else xyzRef = pos;
-            mAmbEstimate.clear();
-        }
-        if (deferInit) {
-            mFilterFrozen = true;
-        } else {
-            buildEquSys(obsData, xyzRef, csData, true);
-            mFilterFrozen = static_cast<int>(mEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
-            if (!mFilterFrozen) {
-                ekf.configure(mConfig.posNoise, mHasTropo, mConfig.ambNoise, mConfig.clockNoise);
-                ekf.isbProcNoise = mConfig.isbProcNoise;   // ISB 过程噪声(0=常数)
-                ekf.isbInitVar  = mConfig.isbInitVar;       // ISB 初方差
-                ekf.posVarFloor = mConfig.posVarFloor; // 位置后验方差下限：防 East 近退化方向被钉初值偏置
-                ekf.ztdInitVar = mConfig.ztdInitVar;
-                ekf.ambInitVar = mConfig.ambInitVar; // 模糊度初方差(RTKLIB 用 3600，我们默认 100)
-                ekf.ztdProcNoise = mConfig.ztdProcNoise;
-                double fpvH = mConfig.firstEpochPosVar;
-                ekf.posVarFloorVec = Eigen::Vector3d(mConfig.posVarFloor, mConfig.posVarFloor, mConfig.posVarFloor);
-                ekf.ztdInitValue = mConfig.ztdInitValue;
-                ekf.codeBiasProcNoise = mConfig.codeBiasProcNoise;
-                ekf.codeBiasInitVar = mConfig.codeBiasInitVar;
-                ekf.timeUpdate(mVarSet, &csData);
-                ekf.setBootstrapPosition(xyzRef, Eigen::Vector3d(fpvH, fpvH, mConfig.firstEpochPosVar));
-                {
-                    double refClk = 0.0;
-                    for (const auto &[s, p]: sysCdtParam)
-                        if (p == Parameter::cdt && mClkBase.count(s)) { refClk = mClkBase.at(s); break; }
-                    std::map<Variable, double> bootVals;
-                    std::map<Variable, double> bootVars;
-                    for (const auto &[sys, par]: sysCdtParam) {
-                        if (const auto it = mClkBase.find(sys); it != mClkBase.end()) {
-                            const double v = par == Parameter::cdt ? it->second : it->second - refClk;
-                            bootVals[Variable(obsData.station, par)] = v;
-                            // 参考系统钟差用 clockInitVar(白噪声)；ISB 载体(cdt2~4)用 isbInitVar(常数/随机游走)。
-                            const bool isbOn = par != Parameter::cdt && ekf.isbInitVar > 0.0;
-                            bootVars[Variable(obsData.station, par)] =
-                                isbOn ? ekf.isbInitVar : ekf.clockInitVar;
-                        }
-                    }
-                    if (mHasTropo) {
-                        bootVals[Variable(obsData.station, Parameter::ztd)] =
-                                mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
-                        bootVars[Variable(obsData.station, Parameter::ztd)] = mConfig.ztdInitVar;
-                    }
-                    if (!bootVals.empty()) ekf.setBootstrapStates(bootVals, &bootVars);
-                }
-                ekf.setBootstrapAmbiguity(obsData.station, mAmbEstimate, nullptr);
-                ekf.measUpdate(mEq);
-                mEkfInit = true;
-            }
-        }
+        initFilter(obsData, csData);
     } else {
-        double dt = 0.0;
-        if (mHasLastEpoch) {
-            dt = obsData.epoch - mLastEpochTime;
-            if (dt < 0.0) dt = 0.0;
-        }
-        const Eigen::Vector3d xyzEst = predictPosition(dt, obsData.epoch);
-        buildEquSys(obsData, xyzEst, csData, true);
-        mFilterFrozen = static_cast<int>(mEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
-        if (!mFilterFrozen) {
-            ekf.timeUpdate(mVarSet, &csData);
-            {
-                // 第一遍：各系统用自身码观测求重锚量 dclk
-                std::map<char, double> sysDclk;
-                double dclkRef = 0.0;
-                bool haveRef = false;
-                for (const auto &[sys, par]: sysCdtParam) {
-                    double sw = 0.0, swp = 0.0;
-                    for (const auto &[eid, ed]: mEq.obsEquData) {
-                        if (eid.sat.system != sys) continue;
-                        if (eid.sat.id == 0) continue; // 伪观测(ZTD 先验等)
-                        if (eid.obsType.empty() || eid.obsType[0] == 'L') continue; // 仅码
-                        sw += ed.weight;
-                        swp += ed.weight * ed.prefit;
-                    }
-                    if (!(sw > 0.0)) continue;
-                    const double dclk = swp / sw;
-                    if (!std::isfinite(dclk) || std::fabs(dclk) > 1.0e4) continue; // 防护：异常历元不重锚
-                    if (std::fabs(dclk) < 1e-12) continue;
-                    sysDclk[sys] = dclk;
-                    if (par == Parameter::cdt) { dclkRef = dclk; haveRef = true; }
-                }
-                if (!haveRef && !sysDclk.empty()) {
-                    double sw = 0.0, swp = 0.0;
-                    for (const auto &[s, d]: sysDclk) { sw += 1.0; swp += d; }
-                    dclkRef = swp / sw;
-                }
-                // 第二遍：预fit 扣减 + 重锚
-                if (mCommonClockActive) {
-                    // 公共钟 + ISB 重锚
-                    const Variable vcommon(obsData.station, Parameter::cdt);
-                    for (auto &[eid, ed]: mEq.obsEquData) {
-                        if (const auto it = ed.varCoeffData.find(vcommon); it != ed.varCoeffData.end())
-                            ed.prefit -= dclkRef * it->second; // 所有星方程均含 cdt(系数1)，整体扣 dclkRef
-                    }
-                    ekf.shiftState(vcommon, dclkRef);
-                    for (char sys: mSysSeen) {
-                        const Parameter par = sysCdtParam.at(sys);
-                        if (par == Parameter::cdt) continue; // 参考系统无 ISB
-                        const auto itd = sysDclk.find(sys);
-                        if (itd == sysDclk.end()) continue;
-                        const double disb = itd->second - dclkRef; // 相对参考系统的钟差偏差
-                        const Variable visb(obsData.station, par);
-                        for (auto &[eid, ed]: mEq.obsEquData) {
-                            if (eid.sat.system != sys) continue;
-                            if (const auto it = ed.varCoeffData.find(visb); it != ed.varCoeffData.end())
-                                ed.prefit -= disb * it->second;
-                        }
-                        ekf.shiftState(visb, disb);
-                    }
-                } else {
-                    // 旧口径：各系统独立绝对钟
-                    for (const auto &[sys, par]: sysCdtParam) {
-                        const Variable vclk(obsData.station, par);
-                        for (auto &[eid, ed]: mEq.obsEquData) {
-                            if (const auto it = ed.varCoeffData.find(vclk); it != ed.varCoeffData.end())
-                                ed.prefit -= dclkRef * it->second;
-                        }
-                        ekf.shiftState(vclk, dclkRef);
-                    }
-                }
-            }
-            // 位置先验 = 本历元线性化点（同源；静态方差不动，运动学由派生类在 timeUpdate 前后另行调 setBootstrapPosition）。
-            ekf.setBootstrapPosition(xyzEst, 0.0);
-            ekf.setBootstrapAmbiguity(obsData.station, mAmbEstimate, &csData);
-            ekf.savePrior();
-            ekf.measUpdate(mEq);
-        }
+        updateFilter(obsData, csData);
     }
     if (mFilterFrozen) {
         result.xyz = Eigen::Vector3d::Zero();
@@ -960,6 +814,153 @@ void PPPStatic::solve(ObsData &obsData) {
     computeElevAzim();
 }
 
+
+void PPPStatic::initFilter(ObsData &obsData, VariableDataMap &csData) {
+    Eigen::Vector3d xyzRef = mRefPos;
+    bool deferInit = false;
+    {
+        if (auto [pos, flag] = solveInitialPosition(obsData); !flag) deferInit = true;
+        else xyzRef = pos;
+        mAmbEstimate.clear();
+    }
+    if (deferInit) {
+        mFilterFrozen = true;
+    } else {
+        buildEquSys(obsData, xyzRef, csData, true);
+        mFilterFrozen = static_cast<int>(mEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
+        if (!mFilterFrozen) {
+            ekf.configure(mConfig.posNoise, mHasTropo, mConfig.ambNoise, mConfig.clockNoise);
+            ekf.isbProcNoise = mConfig.isbProcNoise; // ISB 过程噪声(0=常数)
+            ekf.isbInitVar = mConfig.isbInitVar; // ISB 初方差
+            ekf.posVarFloor = mConfig.posVarFloor; // 位置后验方差下限：防 East 近退化方向被钉初值偏置
+            ekf.ztdInitVar = mConfig.ztdInitVar;
+            ekf.ambInitVar = mConfig.ambInitVar; // 模糊度初方差(RTKLIB 用 3600，我们默认 100)
+            ekf.ztdProcNoise = mConfig.ztdProcNoise;
+            double fpvH = mConfig.firstEpochPosVar;
+            ekf.posVarFloorVec = Eigen::Vector3d(mConfig.posVarFloor, mConfig.posVarFloor, mConfig.firstEpochPosVar);
+            ekf.ztdInitValue = mConfig.ztdInitValue;
+            ekf.codeBiasProcNoise = mConfig.codeBiasProcNoise;
+            ekf.codeBiasInitVar = mConfig.codeBiasInitVar;
+            ekf.timeUpdate(mVarSet, &csData);
+            ekf.setBootstrapPosition(xyzRef, Eigen::Vector3d(fpvH, fpvH, mConfig.firstEpochPosVar));
+            {
+                double refClk = 0.0;
+                for (const auto &[s, p]: sysCdtParam)
+                    if (p == Parameter::cdt && mClkBase.count(s)) {
+                        refClk = mClkBase.at(s);
+                        break;
+                    }
+                std::map<Variable, double> bootVals;
+                std::map<Variable, double> bootVars;
+                for (const auto &[sys, par]: sysCdtParam) {
+                    if (const auto it = mClkBase.find(sys); it != mClkBase.end()) {
+                        const double v = par == Parameter::cdt ? it->second : it->second - refClk;
+                        bootVals[Variable(obsData.station, par)] = v;
+                        // 参考系统钟差用 clockInitVar(白噪声)；ISB 载体(cdt2~4)用 isbInitVar(常数/随机游走)。
+                        const bool isbOn = par != Parameter::cdt && ekf.isbInitVar > 0.0;
+                        bootVars[Variable(obsData.station, par)] =
+                                isbOn ? ekf.isbInitVar : ekf.clockInitVar;
+                    }
+                }
+                if (mHasTropo) {
+                    bootVals[Variable(obsData.station, Parameter::ztd)] =
+                            mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
+                    bootVars[Variable(obsData.station, Parameter::ztd)] = mConfig.ztdInitVar;
+                }
+                if (!bootVals.empty()) ekf.setBootstrapStates(bootVals, &bootVars);
+            }
+            ekf.setBootstrapAmbiguity(obsData.station, mAmbEstimate, nullptr);
+            ekf.measUpdate(mEq);
+            mEkfInit = true;
+        }
+    }
+}
+
+void PPPStatic::updateFilter(ObsData &obsData, VariableDataMap &csData) {
+    double dt = 0.0;
+    if (mHasLastEpoch) {
+        dt = obsData.epoch - mLastEpochTime;
+        if (dt < 0.0) dt = 0.0;
+    }
+    const Eigen::Vector3d xyzEst = predictPosition(dt, obsData.epoch);
+    buildEquSys(obsData, xyzEst, csData, true);
+    mFilterFrozen = static_cast<int>(mEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
+    if (!mFilterFrozen) {
+        ekf.timeUpdate(mVarSet, &csData);
+        {
+            // 第一遍：各系统用自身码观测求重锚量 dclk
+            std::map<char, double> sysDclk;
+            double dclkRef = 0.0;
+            bool haveRef = false;
+            for (const auto &[sys, par]: sysCdtParam) {
+                double sw = 0.0, swp = 0.0;
+                for (const auto &[eid, ed]: mEq.obsEquData) {
+                    if (eid.sat.system != sys) continue;
+                    if (eid.sat.id == 0) continue; // 伪观测(ZTD 先验等)
+                    if (eid.obsType.empty() || eid.obsType[0] == 'L') continue; // 仅码
+                    sw += ed.weight;
+                    swp += ed.weight * ed.prefit;
+                }
+                if (!(sw > 0.0)) continue;
+                const double dclk = swp / sw;
+                if (!std::isfinite(dclk) || std::fabs(dclk) > 1.0e4) continue; // 防护：异常历元不重锚
+                if (std::fabs(dclk) < 1e-12) continue;
+                sysDclk[sys] = dclk;
+                if (par == Parameter::cdt) {
+                    dclkRef = dclk;
+                    haveRef = true;
+                }
+            }
+            if (!haveRef && !sysDclk.empty()) {
+                double sw = 0.0, swp = 0.0;
+                for (const auto &[s, d]: sysDclk) {
+                    sw += 1.0;
+                    swp += d;
+                }
+                dclkRef = swp / sw;
+            }
+            // 第二遍：预fit 扣减 + 重锚
+            if (mCommonClockActive) {
+                // 公共钟 + ISB 重锚
+                const Variable vcommon(obsData.station, Parameter::cdt);
+                for (auto &[eid, ed]: mEq.obsEquData) {
+                    if (const auto it = ed.varCoeffData.find(vcommon); it != ed.varCoeffData.end())
+                        ed.prefit -= dclkRef * it->second; // 所有星方程均含 cdt(系数1)，整体扣 dclkRef
+                }
+                ekf.shiftState(vcommon, dclkRef);
+                for (char sys: mSysSeen) {
+                    const Parameter par = sysCdtParam.at(sys);
+                    if (par == Parameter::cdt) continue; // 参考系统无 ISB
+                    const auto itd = sysDclk.find(sys);
+                    if (itd == sysDclk.end()) continue;
+                    const double disb = itd->second - dclkRef; // 相对参考系统的钟差偏差
+                    const Variable visb(obsData.station, par);
+                    for (auto &[eid, ed]: mEq.obsEquData) {
+                        if (eid.sat.system != sys) continue;
+                        if (const auto it = ed.varCoeffData.find(visb); it != ed.varCoeffData.end())
+                            ed.prefit -= disb * it->second;
+                    }
+                    ekf.shiftState(visb, disb);
+                }
+            } else {
+                // 旧口径：各系统独立绝对钟
+                for (const auto &[sys, par]: sysCdtParam) {
+                    const Variable vclk(obsData.station, par);
+                    for (auto &[eid, ed]: mEq.obsEquData) {
+                        if (const auto it = ed.varCoeffData.find(vclk); it != ed.varCoeffData.end())
+                            ed.prefit -= dclkRef * it->second;
+                    }
+                    ekf.shiftState(vclk, dclkRef);
+                }
+            }
+        }
+        // 位置先验 = 本历元线性化点（同源；静态方差不动，运动学由派生类在 timeUpdate 前后另行调 setBootstrapPosition）。
+        ekf.setBootstrapPosition(xyzEst, 0.0);
+        ekf.setBootstrapAmbiguity(obsData.station, mAmbEstimate, &csData);
+        ekf.savePrior();
+        ekf.measUpdate(mEq);
+    }
+}
 
 bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
     mArRatio = 0.0;

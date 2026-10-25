@@ -61,25 +61,28 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
     }
 
     // 状态转移与过程噪声
+    // phi 默认单位阵；Q 仅对角线非零。下面按整数索引遍历（idxToVar_ 由 createIndex 同步建立），
+    // 不再每次反查 currentIndexData，也无需重写 phi(ii,ii)=1.0（单位阵已给出）。
     Eigen::MatrixXd phi = Eigen::MatrixXd::Identity(numUnk, numUnk);
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(numUnk, numUnk);
 
-    int ii = 0;
-    for (const auto &var: currentUnkSet) {
-        if (auto p = var.getParaType(); p == Parameter::dX || p == Parameter::dY || p == Parameter::dZ) {
-            phi(ii, ii) = 1.0; // 位置：携均值（随机常数）
-            if (posProcNoise > 0.0) Q(ii, ii) = posProcNoise; // 运动学 PPP：位置白噪声过程
+    for (int ii = 0; ii < numUnk; ++ii) {
+        const Variable &var = idxToVar_[ii];
+        const auto p = var.getParaType();
+        double q = 0.0;     // 过程噪声（对角）
+        bool carry = true;  // phi(ii,ii)=1：状态携均值（随机常数/随机游走）；false=重置为 0
+        if (p == Parameter::dX || p == Parameter::dY || p == Parameter::dZ) {
+            q = posProcNoise;                       // 位置：随机常数或白噪声过程
         } else if (p == Parameter::cdt || p == Parameter::cdt2 ||
                    p == Parameter::cdt3 || p == Parameter::cdt4) {
-            phi(ii, ii) = 1.0; // 钟差：携均值
             const bool isRef = p == Parameter::cdt;
             const bool isbOn = !isRef && isbInitVar > 0.0;
             const double pn = isbOn ? isbProcNoise : clockProcNoise; // 参考钟走 clock*；ISB 载体(cdt2~4)走 isb*
             const double iv = isbOn ? isbInitVar : clockInitVar;
             if (pn > 0.0) {
-                // 随机游走钟差
-                Q(ii, ii) = pn;
-            } else if (isRef || !isbOn) {
+                q = pn;                             // 随机游走钟差
+            } else {
+                // 随机常数钟差：方差钉死、与一切解耦（参考钟用 clockInitVar；ISB 用 isbInitVar）
                 for (int j = 0; j < numUnk; ++j) {
                     P(ii, j) = 0.0;
                     P(j, ii) = 0.0;
@@ -87,36 +90,27 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
                 P(ii, ii) = iv;
             }
         } else if (p == Parameter::ztd) {
-            phi(ii, ii) = 1.0; // 对流层湿延迟：随机游走
-            Q(ii, ii) = ztdProcNoise;
+            q = ztdProcNoise;                       // 对流层湿延迟：随机游走
         } else if (p == Parameter::ambiguity) {
             if (csData && (*csData)[var] >= 2.0) {
-                phi(ii, ii) = 1.0; // 软重置：钉在 reinit(prefit)，不漂移、不动位置
-                Q(ii, ii) = 0.0; // 无过程噪声
+                carry = false;                      // 软重置：钉在 reinit(prefit)，不漂移、不动位置
             } else if (csData && (*csData)[var] > 0.5) {
-                phi(ii, ii) = 0.0;
-                Q(ii, ii) = ambInitVar;
+                carry = false;
+                q = ambInitVar;                     // 重置：大初值
             } else {
-                phi(ii, ii) = 1.0; // 常数模糊度（随机游走方差=ambProcNoise）
-                Q(ii, ii) = ambProcNoise;
+                q = ambProcNoise;                   // 常数模糊度（随机游走）
             }
         } else if (p == Parameter::dOX || p == Parameter::dOY || p == Parameter::dOZ) {
-            // 接收机天线/参考点常值 ECEF 偏移
-            phi(ii, ii) = 1.0;
-            Q(ii, ii) = 1.0E-10;
+            q = 1.0E-10;                            // 接收机天线/参考点常值 ECEF 偏移
         } else if (p == Parameter::codeBias) {
-            // 每星伪距系统偏置
-            phi(ii, ii) = 1.0;
-            Q(ii, ii) = codeBiasProcNoise;
+            q = codeBiasProcNoise;                  // 每星伪距系统偏置
         } else if (p == Parameter::ifb) {
-            // 逐 GLONASS 星 IFCB
-            phi(ii, ii) = 1.0;
-            Q(ii, ii) = gloIfcbProcNoise;
+            q = gloIfcbProcNoise;                   // 逐 GLONASS 星 IFCB
         } else if (p == Parameter::iono) {
-            phi(ii, ii) = 1.0;
-            Q(ii, ii) = 1.0;
+            q = 1.0;
         }
-        ii++;
+        if (!carry) phi(ii, ii) = 0.0;
+        Q(ii, ii) = q;
     }
 
     kalmanFilter.reset(xhat, P);
@@ -197,9 +191,6 @@ void GnssEKF::measUpdate(EquSys &equSys) {
         }
     }
 
-    kalmanFilter.xhatminus = kalmanFilter.xhat;
-    kalmanFilter.Pminus = kalmanFilter.P;
-
     const double dx = getSolution(Parameter::dX, currentUnkSet, solution);
     const double dy = getSolution(Parameter::dY, currentUnkSet, solution);
     const double dz = getSolution(Parameter::dZ, currentUnkSet, solution);
@@ -211,7 +202,12 @@ void GnssEKF::measUpdate(EquSys &equSys) {
 
 void GnssEKF::createIndex(const VariableSet &varSet) {
     int index = 0;
-    for (const auto &var: varSet) currentIndexData[var] = index++;
+    idxToVar_.clear();
+    idxToVar_.reserve(varSet.size());
+    for (const auto &var: varSet) {
+        idxToVar_.push_back(var);
+        currentIndexData[var] = index++;
+    }
 }
 
 double GnssEKF::getSolution(const Parameter &type,

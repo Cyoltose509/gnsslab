@@ -156,6 +156,12 @@ protected:
 
     virtual void buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter);
 
+    /// 首历元引导：SPP 初位 + 建方程 + EKF 首次 timeUpdate/measUpdate。设 mEkfInit / mFilterFrozen。
+    void initFilter(ObsData &obsData, VariableDataMap &csData);
+
+    /// 常规历元：预测 + 重锚 + EKF timeUpdate/measUpdate。设 mFilterFrozen。
+    void updateFilter(ObsData &obsData, VariableDataMap &csData);
+
     virtual void bootstrapFirstEpoch(ObsData &obsData);
 
     void applyPriorClocks();
@@ -262,4 +268,16 @@ protected:
     bool mGapThisEpoch = false; // 观测中断恢复首历元标志
     long slipVerdicts = 0; // 本运行累计 Slip 判定数
     long ambResets = 0; // 本运行累计模糊度重置(newArc/Slip/Gap)数
+
+private:
+    /// 钟差先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值。
+    double clockPrior(const char sys) const {
+        return mEkfInit
+            ? (mClkEstimate.count(sys) ? mClkEstimate.at(sys) : 0.0)
+            : (mClkBase.count(sys) ? mClkBase.at(sys) : 0.0);
+    }
+    /// ZTD 先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值/配置初值。
+    double ztdPrior() const {
+        return mEkfInit ? mZtdEstimate : (mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue);
+    }
 };

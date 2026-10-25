@@ -172,6 +172,7 @@ public:
 
     VariableSet currentUnkSet;
     VariableIntMap currentIndexData;
+    std::vector<Variable> idxToVar_; // 与 currentIndexData 同步：idx -> var（timeUpdate 按整数索引遍历，免反查）
 
 private:
     [[nodiscard]] double initVariance(const Parameter &p) const;
