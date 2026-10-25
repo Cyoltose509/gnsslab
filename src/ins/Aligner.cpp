@@ -63,18 +63,17 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
                                     const SiteParams &sp,
                                     const double gyroScaleCountsPerRadS) {
     AlignQuality q;
-    const Eigen::Vector3d wB = gyrMean - gyroBiasCounts; // counts（罗盘只用方向，与单位无关）
+    const Eigen::Vector3d wB = gyrMean - gyroBiasCounts;
     const Eigen::Matrix3d C = alignDCM(-accMean, wB, sp);
     const AttQuat qAtt = AttQuat::fromDCM(C);
 
-    // C_b^n 的列即机体各轴在当地 NED 的方向（v^n = C_b^n·v^b）
     q.axisX = C.col(0);
     q.axisY = C.col(1);
     q.axisZ = C.col(2);
 
-    // 重力方向残差：旋进 n 系后应与当地天向 [0,0,g] 同向
+    // 重力方向残差
     const Eigen::Vector3d gB = -accMean;
-    const Eigen::Vector3d gRef = navGravity(sp.g);
+    const Eigen::Vector3d gRef = navGravity(sp.g);//NOLINT
     if (gB.norm() > 0.0 && gRef.norm() > 0.0) {
         q.gravityErrDeg = Math::angleBetween(qAtt.rotate(gB), gRef) * RAD_TO_DEG;
     }
@@ -85,7 +84,7 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
         q.earthRateErrDeg = Math::angleBetween(qAtt.rotate(wB), wRef) * RAD_TO_DEG;
     }
 
-    // 大小残差：换算到 rad/s 后才可与 ω_ie^n 比模长（未给标度因数则保持 0）
+    // 大小残差
     if (gyroScaleCountsPerRadS > 0.0) {
         const Eigen::Vector3d wRad = qAtt.rotate(wB) / gyroScaleCountsPerRadS;
         q.earthRateErrRad = (wRad - wRef).norm();
@@ -125,7 +124,6 @@ void Aligner::AlignStream::init(const int window, const SiteParams &site, const 
     count = 0;
 }
 
-// 喂入第 count 个样本（0 基），写出该历元姿态。与 alignSeries 第 i=count 步结果逐位一致。
 void Aligner::AlignStream::step(const ImuSample &s, AttitudeSample &out) {
     const size_t lo = count >= static_cast<size_t>(win) ? count - win + 1 : 0;
     const auto n = static_cast<double>(count - lo + 1);

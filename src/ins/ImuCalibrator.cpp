@@ -1,6 +1,27 @@
 #include "ImuCalibrator.h"
 #include "solver/SolverLSQ.h"
 
+#include <algorithm>
+
+#include <cstdint>
+
+namespace {
+    // 返回「轴(0/1/2) + 符号」合成的 0..5 键：正轴→2*ax，负轴→2*ax+1
+    int axisKey(const double a, const double b, const double c) {
+        int ax = 0;
+        double m = std::fabs(a);
+        if (std::fabs(b) > m) {
+            m = std::fabs(b);
+            ax = 1;
+        }
+        if (std::fabs(c) > m) {
+            m = std::fabs(c);
+            ax = 2;
+        }
+        const double v = ax == 0 ? a : ax == 1 ? b : c;
+        return v >= 0.0 ? 2 * ax : 2 * ax + 1;
+    }
+}
 
 
 Eigen::Vector3d ImuCalibrator::posForce(const Pos p, const double g) {
@@ -46,14 +67,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
     const size_t n = raw.size();
     if (n == 0 || f.size() != n || w.size() != n) return;
 
-    // 逐输出轴解一个 4 参数加权最小二乘，直接复用 GNSS 解算链的 SolverLSQ
-    // （同一数学：N=HᵀWH、b=HᵀWy、LDLT 分解），ins 侧不再另写一套正规方程：
-    //   raw_i(k) ≈ M(k,0)·f_i(0) + M(k,1)·f_i(1) + M(k,2)·f_i(2) + b(k)
-    // 未知数借用既有 Parameter 枚举作内部标签（不对外暴露，仅本函数可见）：
-    // dX/dY/dZ = 该轴对 X/Y/Z 方向比力的灵敏度（比例因子矩阵的一行），cdt = 常数项（零偏），
-    // 与伪距方程「dX·dx + dY·dy + dZ·dz + cdt」的结构同构。每轴独立求解 ⇒ 每个 Parameter
-    // 在各自 varSet 中恰出现一次，getSolution 按类型取回无歧义。
-    static const std::string kStation = "imu_calib"; // EquSys::station 是 string_view，须指向长活对象
+    static const std::string kStation = "imu_calib";
     const Variable vSx(kStation, Parameter::dX), vSy(kStation, Parameter::dY),
                    vSz(kStation, Parameter::dZ), vB(kStation, Parameter::cdt);
     SolverLSQ lsq;
@@ -74,8 +88,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
         M(k, 1) = lsq.getSolution(Parameter::dY);
         M(k, 2) = lsq.getSolution(Parameter::dZ);
         b(k) = lsq.getSolution(Parameter::cdt);
-        // 比例因子 1σ：varSet 顺序 {dX,dY,dZ,cdt}，该轴比例因子是列 0。
-        // covMatrix = N⁻¹（单位权重），乘后验方差因子 sigma0² 得参数协方差。
+        // 比例因子 1σ
         if (scaleSigma && lsq.covMatrix.rows() == 4) {
             (*scaleSigma)(k) = std::sqrt(std::max(0.0, lsq.covMatrix(0, 0))) * lsq.sigma0;
         }
@@ -94,11 +107,6 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
 }
 
 
-namespace {
-    const char *kPosName[6] = {"X上", "X下", "Y上", "Y下", "Z上", "Z下"};
-    const char *kRotName[6] = {"X正转", "X逆转", "Y正转", "Y逆转", "Z正转", "Z逆转"};
-} 
-
 // 完整标定（可变段数）。覆盖度不足时 ok=false 并填 errorMsg，不解出奇异矩阵。
 CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle, double g) {
     CalibReport r;
@@ -111,10 +119,10 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
 
     std::string miss;
     for (int p = 0; p < 6; ++p)
-        if (nPos[p] == 0) miss += std::string(" 位置") + kPosName[p];
+        if (nPos[p] == 0) miss += std::string(" 位置") + posLabel(static_cast<Pos>(p));
     for (int ax = 0; ax < 3; ++ax) {
-        if (nRot[2 * ax] == 0) miss += std::string(" 旋转") + kRotName[2 * ax];
-        if (nRot[2 * ax + 1] == 0) miss += std::string(" 旋转") + kRotName[2 * ax + 1];
+        if (nRot[2 * ax] == 0) miss += std::string(" 旋转") + rotLabel(static_cast<Rot>(2 * ax));
+        if (nRot[2 * ax + 1] == 0) miss += std::string(" 旋转") + rotLabel(static_cast<Rot>(2 * ax + 1));
     }
     if (!miss.empty()) {
         r.errorMsg = "覆盖不足，缺少：" + miss;
@@ -139,9 +147,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     r.accelScaleCounts = r.calib.accelM.diagonal();
     r.accelScaleG = r.accelScaleCounts * g;
 
-    // ---- 陀螺零偏：两位置法 b = (ω_上 + ω_下)/2，按轴从静置段均值取 ----
-    // 同位置多段时按段样本数加权池化（= 逆方差加权）：短段的噪声均值不会因「等权平均」被放大，
-    // 长段自然主导。故无需设「最短静置段」阈值——短段只管按自己的信息量贡献，换 IMU/采样率都自适应。
+    //陀螺零偏
     Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero();
     for (int ax = 0; ax < 3; ++ax) {
         double sumUp = 0.0, sumDn = 0.0, wUp = 0.0, wDn = 0.0;
@@ -157,10 +163,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
             gyroBias(ax) = 0.5 * (sumUp / wUp + sumDn / wDn);
     }
 
-    // ---- 陀螺比例因子：角位置法 K_eff = (Σ正 - Σ反)/(α·N段)，各旋转段扣零偏后累加 ----
-    // 约定每个旋转段转过一整圈（±turnAngle）。同一方向出现多段（重复实验、分段录制）时
-    // 必须按段数归一化：否则「两段正转」的计数和会被当成「一段转了两圈」，K 直接翻倍
-    // （合成压力测试 S16：重复两遍时旧公式 gyroKeff 恰好 +100%）。
+    //陀螺比例因子
     for (int ax = 0; ax < 3; ++ax) {
         const double b = gyroBias(ax);
         double s1 = 0.0, s2 = 0.0;
@@ -192,4 +195,126 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     return r;
 }
 
+std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log, const DetectParams &p) {
+    std::vector<CalibSegment> segs;
+    if (log.empty()) return segs;
+    const size_t N = log.size();
+
+    // 1) 每样本陀螺主轴模长 + 加速度主轴模长（加速度量级≈g，作为稳定的旋转阈值参考）
+    std::vector<double> m(N), am(N);
+    for (size_t i = 0; i < N; ++i) {
+        const auto &s = log[i];
+        m[i] = std::max({std::fabs(static_cast<double>(s.gx)),
+                         std::fabs(static_cast<double>(s.gy)),
+                         std::fabs(static_cast<double>(s.gz))});
+        am[i] = std::max({std::fabs(static_cast<double>(s.ax)),
+                          std::fabs(static_cast<double>(s.ay)),
+                          std::fabs(static_cast<double>(s.az))});
+    }
+    // 百分位（排序副本）
+    auto pctOf = [](const std::vector<double> &v, const double q) {
+        std::vector<double> c = v;
+        std::sort(c.begin(), c.end());
+        const size_t idx = std::min<size_t>(c.size() - 1, static_cast<size_t>(q * (c.size() - 1)));
+        return c[idx];
+    };
+    const double aMed = pctOf(am, 0.50);
+
+    // 2) 旋转阈值
+    const double thr = std::max(p.rotThrCounts, aMed * p.rotFrac);
+
+    // 3) 每样本「段键」
+    std::vector<int> key(N);
+    for (size_t i = 0; i < N; ++i) {
+        const auto &s = log[i];
+        if (m[i] > thr)
+            key[i] = 6 + axisKey(s.gx, s.gy, s.gz); // 6..11=旋转
+        else
+            key[i] = axisKey(s.ax, s.ay, s.az); // 0..5 =静置
+    }
+
+    // 4) 初分段（连续同键）
+    struct Run {
+        size_t i0, i1;
+        int key;
+    };
+    std::vector<Run> runs;
+    size_t i = 0;
+    while (i < N) {
+        const int k = key[i];
+        size_t j = i;
+        while (j < N && key[j] == k) ++j;
+        runs.push_back({i, j, k});
+        i = j;
+    }
+
+    // 4.5) 估计采样间隔
+    auto estimateDt = [](const ImuLog &_log) -> double {
+        if (_log.size() < 8) return 0.0;
+        std::vector<double> d;
+        d.reserve(_log.size() - 1);
+        for (size_t j = 1; j < _log.size(); ++j) {
+            if (const double v = _log[j].tow - _log[j - 1].tow; v > 0.0) d.push_back(v);
+        }
+        if (d.size() < _log.size() / 2) return 0.0;
+        const size_t mid = d.size() / 2;
+        std::nth_element(d.begin(), d.begin() + static_cast<long>(mid), d.end());
+        return d[mid];
+    };
+    const double dtEst = estimateDt(log);
+    const size_t minLen = dtEst > 0.0
+                              ? std::max<size_t>(1, static_cast<size_t>(std::llround(p.minSegSeconds / dtEst)))
+                              : static_cast<size_t>(p.minSegSamples);
+
+    // 5) 合并过短段
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (size_t k = 0; k < runs.size(); ++k) {
+            if (runs[k].i1 - runs[k].i0 >= minLen) continue;
+            const bool hasL = k > 0;
+            const bool hasR = k + 1 < runs.size();
+            if (!hasL && !hasR) break;
+            const size_t lenL = hasL ? runs[k - 1].i1 - runs[k - 1].i0 : 0;
+            const size_t lenR = hasR ? runs[k + 1].i1 - runs[k + 1].i0 : 0;
+            const bool toLeft = !hasR || (hasL && lenL >= lenR);
+            const size_t seg = toLeft ? k - 1 : k + 1; // 较长的邻段
+            runs[seg] = {std::min(runs[k].i0, runs[seg].i0), std::max(runs[k].i1, runs[seg].i1), runs[seg].key};
+            runs.erase(runs.begin() + static_cast<long>(k));
+            changed = true;
+            break;
+        }
+    }
+
+    // 6) 逐段用段落均值重分类
+    for (const auto &[i0, i1, _key]: runs) {
+        const size_t n = i1 - i0;
+        if (n == 0) continue;
+        const double inv = 1.0 / static_cast<double>(n);
+        double ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
+        for (size_t k = i0; k < i1; ++k) {
+            const auto &s = log[k];
+            ax += s.ax;
+            ay += s.ay;
+            az += s.az;
+            gx += s.gx;
+            gy += s.gy;
+            gz += s.gz;
+        }
+        CalibSegment seg;
+        seg.i0 = i0;
+        seg.i1 = i1;
+        if (_key >= 6) {
+            // 旋转
+            seg.isStatic = false;
+            seg.rot = static_cast<Rot>(axisKey(gx * inv, gy * inv, gz * inv));
+        } else {
+            // 静置
+            seg.isStatic = true;
+            seg.pos = static_cast<Pos>(axisKey(ax * inv, ay * inv, az * inv));
+        }
+        segs.push_back(seg);
+    }
+    return segs;
+}
 
