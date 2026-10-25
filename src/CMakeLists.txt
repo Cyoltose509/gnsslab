@@ -11,10 +11,17 @@ set(LIB_SOURCES
         time/TimeConvert.h
         time/TimeConvert.cpp
         time/TimeStruct.h
-        time/TimeStruct.cpp
         core/CoordConvert.h
         io/OEM7Reader.h
         io/OEM7Reader.cpp
+        io/AsciiLogReader.h
+        io/AsciiLogReader.cpp
+        core/InsStruct.h
+        core/InsMath.h
+        ins/Aligner.h
+        ins/Aligner.cpp
+        ins/ImuCalibrator.h
+        ins/ImuCalibrator.cpp
         io/OEM7SocketReader.h
         io/OEM7SocketReader.cpp
         io/SocketClient.h
@@ -72,6 +79,7 @@ add_library(gnss STATIC ${LIB_SOURCES})
 
 set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 set_source_files_properties(core/CycleSlip.cpp PROPERTIES COMPILE_FLAGS /bigobj)
+set_source_files_properties(solver/PPPStatic.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 
 target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}

@@ -12,7 +12,6 @@
 #include "CoordStruct.h"
 #include "Troposphere.h"
 #include "Weight.h"
-#include <cmath>
 
 bool SPP::processEpoch(ObsData &obsData) {
     try {
@@ -27,7 +26,6 @@ bool SPP::processEpoch(ObsData &obsData) {
 
 void SPP::preprocess(ObsData &obsData) {
     satRejected.clear();
-    setEphemeris(obsData.satEphemerisData);
 }
 
 bool SPP::loadBrdc(const std::string &path) {
@@ -39,8 +37,15 @@ bool SPP::loadBrdc(const std::string &path) {
 void SPP::solve(ObsData &obsData) {
     result.reset();
     lastWStats.clear();
-    rClockBias.clear();
-    vel = Vector3d(0, 0, 0);
+    bool isbAnyOn = (mConfig.isbInitVar > 0.0); // 常数/随机游走 ISB：上一历元终值钟差作为本历元暖启动
+    if (isbAnyOn) {
+        // 常数/随机游走 ISB：上一历元终值钟差作为本历元暖启动（跨历元载体），
+        // linearize 里对非参考系统施加"增量≈0"伪观测 → 等价于 EKF 的常数 ISB。
+        rClockBias = mPrevClockBias;
+    } else {
+        rClockBias.clear();
+    }
+    vel = Eigen::Vector3d(0, 0, 0);
     rClockDrift = 0.0;
     xyz = obsData.antennaPosition;
 
@@ -69,7 +74,7 @@ void SPP::solve(ObsData &obsData) {
 
         posSolver.solve(posEquations);
 
-        const Vector3d dxyz = {
+        const Eigen::Vector3d dxyz = {
             posSolver.getSolution(Parameter::dX),
             posSolver.getSolution(Parameter::dY),
             posSolver.getSolution(Parameter::dZ)
@@ -82,7 +87,7 @@ void SPP::solve(ObsData &obsData) {
 
         if (velEquations.obsEquData.size() >= 4) {
             velSolver.solve(velEquations);
-            const Vector3d dvel = {
+            const Eigen::Vector3d dvel = {
                 velSolver.getSolution(Parameter::dVX),
                 velSolver.getSolution(Parameter::dVY),
                 velSolver.getSolution(Parameter::dVZ)
@@ -106,6 +111,9 @@ void SPP::solve(ObsData &obsData) {
     if (iter >= 15) {
         throw InvalidSolver("too many iterations without convergence");
     }
+    if (isbAnyOn) {
+        mPrevClockBias = rClockBias;  // 记录本历元终值，供下一历元常数 ISB 先验
+    }
     readback(obsData);
 }
 
@@ -120,7 +128,7 @@ void SPP::readback(const ObsData &/*obsData*/) {
         }
         idx++;
     }
-    result.blh = XYZtoBLH(xyz, frame);
+    result.blh = XYZToBLH(xyz, frame);
     computePositionDops(result, pD.topLeftCorner(3, 3), clockVar, result.blh);
 
     result.sigmaP = result.pdop * posSolver.sigma0;
@@ -188,8 +196,6 @@ void SPP::linearize(ObsData &obsData, const int iter) {
     }
     const bool rejectOutlier = worstW > W_THRESHOLD;
 
-    // 高度角随机模型：a²+b²/sin²E，与 RTK/PPP 共用 Weight 类。
-    // a=b=sigIFCode/√2 使高仰角权 ≈ 1/sigIFCode²；首轮解算惰性初始化一次，迭代内复用。
     if (!mWeightInit) {
         mWeight = Weight(mConfig.sigIFCode / std::sqrt(2.0), mConfig.sigIFCode / std::sqrt(2.0),
                          std::sin(mConfig.cutoffElevRad));
@@ -214,7 +220,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
 
     double refHgt = 0.0;
     if (xyz.norm() > 1000.0) {
-        const auto BLH = XYZtoBLH(xyz, frame);
+        const auto BLH = XYZToBLH(xyz, frame);
         refHgt = BLH[2];
     }
 
@@ -222,7 +228,8 @@ void SPP::linearize(ObsData &obsData, const int iter) {
     int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
 
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        if (!ifCodeTypes.count(sat.system)) continue;
+        const FreqCombo *defp = freqComboFor(sat);
+        if (!defp) continue;
 
         if (satRejected.count(sat)) {
             continue;
@@ -251,7 +258,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
             continue;
         }
 
-        const FreqCombo &def = ifCodeTypes.at(sat.system);
+        const FreqCombo &def = *defp;
         if (!codeList.count(def.code1) || !codeList.count(def.code2)) {
             satRejected.insert(sat);
             nRejIF++;
@@ -263,7 +270,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         double rho = (pvt.p - xyz).norm();
         if (rho < 1.0) rho = 20000000.0;
 
-        const Vector3d los = {
+        const Eigen::Vector3d los = {
             -(pvt.p[0] - xyz[0]) / rho,
             -(pvt.p[1] - xyz[1]) / rho,
             -(pvt.p[2] - xyz[2]) / rho
@@ -280,7 +287,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         buildPosEquation(sat, pvt, los, rho, trop,
                          def.code1 + "+" + def.code2, obsVal, weight, dx, dy, dz, cdtVars[sat.system]);
         // 速度方程与位置方程共用同一个 LOS（接收机→卫星方向）
-        buildVelEquation(sat, codeList, pvt, los, elev, weight,
+        buildVelEquation(sat, codeList, pvt, los,  weight,
                          dvx, dvy, dvz, dcdt);
 
         activeSystems.insert(sat.system);
@@ -293,6 +300,22 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         if (auto it = cdtVars.find(sys); it != cdtVars.end())
             posEquations.varSet.insert(it->second);
     }
+    // ISB 先验（SPP 侧）：非参考系统的接收机钟差作为"常数/随机游走"伪观测，
+    // 把上一历元终值 rClockBias[sys] 当作先验（约束本历元增量≈0），与 EKF 里常数 ISB 等价。
+    // 参考系统(GPS)不施加——SPP 每历元重解主钟。GPS-only 无此伪观测 → 行为不变。
+    if (mConfig.isbInitVar > 0.0) {
+        for (char sys: activeSystems) {
+            if (sysCdtParam.at(sys) == Parameter::cdt) continue; // 参考系统跳过
+            if (!rClockBias.count(sys)) continue;                // 首历元无先验则跳过
+            const Variable &vclk = cdtVars.at(sys);
+            EquData ed;
+            ed.prefit = 0.0;                                    // 增量 delta≈0 → 绝对钟差保持上一历元值
+            ed.varCoeffData[vclk] = 1.0;
+            const double var = mConfig.isbInitVar + mConfig.isbProcNoise; // 常数(isbProcNoise=0)或随机游走
+            ed.weight = 1.0 / var;
+            posEquations.obsEquData[EquID(SatID('I', 0), "ISB_" + std::string(1, sys))] = ed;
+        }
+    }
     velEquations.varSet.insert(dvx);
     velEquations.varSet.insert(dvy);
     velEquations.varSet.insert(dvz);
@@ -300,7 +323,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
 }
 
 
-void SPP::buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
+void SPP::buildPosEquation(const SatID &sat, const PVT &pvt, const Eigen::Vector3d &los,
     const double rho, const double trop,
     const std::string &obsType, const double obsVal, const double weight,
     const Variable &dx, const Variable &dy, const Variable &dz,
@@ -322,8 +345,8 @@ void SPP::buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los
 }
 
 void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
-                           const PVT &pvt, const Vector3d &los,
-                           const double elev, const double posWeight,
+                           const PVT &pvt, const Eigen::Vector3d &los,
+                           const double posWeight,
                            const Variable &dvx, const Variable &dvy,
                            const Variable &dvz, const Variable &dcdt) {
     double dopplerVal = 0.0;
@@ -340,7 +363,9 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
         return;
     }
 
-    const double f = getFreq(sat.system, "L1");
+    // GLONASS 频率随通道号变化（FDMA），必须用逐星频率；其余系统用 (sys, band) 固定频率。
+    const double f = sat.system == 'R' ? getGlonassFreq('1', sat.chan) : getFreq(sat.system, "L1");
+    if (f <= 0.0) return; // 频率缺失（理论上不会发生），跳过速度方程避免 NaN
     const double lambda = C_MPS / f;
     const double rho_dot_obs = -lambda * dopplerVal;
 
@@ -354,7 +379,7 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
     ed.varCoeffData[dvz] = los[2];
     ed.varCoeffData[dcdt] = 1.0;
 
-    double velWeight = mWeight.weight(elev) / 40.0; // 速度观测噪声基准为位置观测的 √40 倍
+    const double velWeight = posWeight / 40.0;
     ed.weight = velWeight;
 
     const EquID eidVel(sat, "D1");
@@ -364,16 +389,13 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
 void SPP::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-        if (!ifCodeTypes.count(sat.system)) continue;
+        const FreqCombo *defp = freqComboFor(sat);
+        if (!defp) continue;
 
         Ephemeris *eph = ephTable.find(sat, obsData.epoch);
-        if (!eph) {
-            auto itEph = ephMap.find(sat);
-            if (itEph == ephMap.end()) continue;
-            eph = itEph->second;
-        }
+        if (!eph) continue;
 
-        const FreqCombo &def = ifCodeTypes.at(sat.system);
+        const FreqCombo &def = *defp;
         if (!codeList.count(def.code1) || !codeList.count(def.code2)) continue;
         const double obsVal = def.combineCodeFromObs(codeList);
 
@@ -386,33 +408,38 @@ void SPP::computeSatPos(ObsData &obsData) {
 }
 
 void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaultTypes) {
-    // 逐历元重扫全部观测类型既浪费、又会刷屏日志，故用"各系统可用且非零的码类型"做签名缓存：
-    // 签名不变 ⇒ 码类型集合没变，检测结果必然相同，直接沿用。
-    // （原先每历元无条件打 "Auto-detected IF types"，整日运行上万条，属纯噪声，已不再记录。）
     std::map<char, std::string> sig;
     for (const auto &[sat, tv]: obsData.satTypeValueData) {
         if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sat.system)) continue;
         std::string &s = sig[sat.system];
         for (const auto &[code, v]: tv) {
-            if (v == 0.0) continue; // 缺测/占位零值不算可用类型，否则签名会因单历元缺测抖动
+            if (v == 0.0) continue;
             s += code;
             s.push_back(',');
         }
     }
-    if (!ifCodeTypes.empty() && sig == ifCodeSig) return;
+    if (sig == ifCodeSig && (!ifCodeTypes.empty() || !mGloCombo.empty())) return;
     ifCodeSig = std::move(sig);
 
     std::set<char> sysList;
     for (const auto &[sat, tv]: obsData.satTypeValueData) sysList.insert(sat.system);
 
     IFCodeTypes detected;
+    mGloCombo.clear();
     for (char sys: sysList) {
         if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sys)) continue;
-        if (FreqCombo def = FreqCombo::detect(sys, obsData, mRequirePhaseForIF);
-            !def.code1.empty() && !def.code2.empty())
+        if (sys == 'R') {
+            for (const auto &[sat, tv]: obsData.satTypeValueData) {
+                if (sat.system != 'R') continue;
+                if (FreqCombo def = FreqCombo::detect('R', tv, sat.chan, mRequirePhaseForIF); !def.code1.empty() && !def.code2.empty())
+                    mGloCombo[sat] = def;
+            }
+        } else if (FreqCombo def = FreqCombo::detect(sys, obsData, mRequirePhaseForIF);
+                   !def.code1.empty() && !def.code2.empty()) {
             detected[sys] = def;
+        }
     }
-    if (detected.empty()) {
+    if (detected.empty() && mGloCombo.empty()) {
         LOG_WARN << (defaultTypes.empty() ? "未检测到可用的 IF 组合" : "未检测到可用的 IF 组合，回退默认");
         ifCodeTypes = defaultTypes;
         return;
@@ -431,30 +458,9 @@ void SPP::earthRotation() {
 
 void SPP::computeElevAzim() {
     for (auto const &[sat, pvt]: satPVTRecTime) {
-        double e, a;
-        satElevAzim(xyz, pvt.p, e, a, frame);
+        const double e = elevation(xyz, pvt.p, frame);
+        const double a = azimuth(xyz, pvt.p, frame);
         satElevData[sat] = e;
         satAzimData[sat] = a;
     }
-}
-
-bool SPP::estimateApproxPosition(const std::vector<ObsData> &epochs,
-                                 const std::vector<EphemerisTable> &ephs,
-                                 const std::set<char> &systems,
-                                 const double cutoffElevDeg, Vector3d &out) {
-    const size_t n = std::min(epochs.size(), ephs.size()); // 防止 ephs 较短时越界
-    for (size_t i = 0; i < n; ++i) {
-        if (ephs[i].gps.empty() && ephs[i].bds.empty()) continue; // 星历快照仍空
-        try {
-            SPP spp;
-            spp.ephTable = ephs[i];
-            spp.setEnabledSystems(systems);
-            spp.setCutoffElevDeg(cutoffElevDeg);
-            ObsData work = epochs[i];
-            work.antennaPosition = Vector3d::Zero(); // 线性化初值：地心冷启动
-            if (spp.processEpoch(work)) out = spp.result.xyz;
-            if (out.norm() > 1e6) return true;
-        } catch (...) { /* 该历元不可用，试下一个 */ }
-    }
-    return false;
 }

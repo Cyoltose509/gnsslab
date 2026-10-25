@@ -5,7 +5,6 @@
 #include "FreqCombo.h"
 #include "EphemerisTable.h"
 #include "Ephemeris.h"
-#include "CoordConvert.h"
 #include "CycleSlip.h"
 #include "Weight.h"
 #include <Eigen/Eigen>
@@ -13,6 +12,7 @@
 #include <set>
 #include <algorithm>
 #include <vector>
+#include <optional>
 
 
 class RTK {
@@ -21,10 +21,10 @@ public:
 
     ~RTK() = default;
 
-    // 解算器配置：集中魔法常量，替代散落的裸字面量与独立成员
+    // 解算器配置
     struct Config {
-        double cutoffElevRad = 10.0 * PI / 180.0; // 截止高度角(rad)
-        std::set<char> enabledSystems = {'G', 'C'}; // 参与解算的星座集合
+        double cutoffElevRad = 10.0 * DEG_TO_RAD; // 截止高度角(rad)
+        std::set<char> enabledSystems = {'G', 'R', 'E', 'C'}; // 参与解算的星座集合
         double arThreshold = 3.0; // LAMBDA 成功率阈值
         double minSinElev = 1e-3; // sin(el) 下限防除零
         double convEps = 1e-5; // 收敛阈值(m)
@@ -37,23 +37,23 @@ public:
 
         double codeOverPhaseVar = 10000.0; // 伪距:相位 方差比
         bool fullCovariance = true; // 双差满阵 R 求逆做 GLS；false=对角近似
-        double offDiagScale = 1.0; // 同类型双差相关项(σ²_ref)缩放：1=老师完整模型，0=退化为对角
         bool excludeGeoRef = true; // 参考星排除北斗 GEO
-        Weight phaseWeight{0.004, 0.003, 1e-3}; // 相位高度角方差模型（teacher 系数）
+        Weight phaseWeight{0.004, 0.003, 1e-3}; // 相位高度角方差模型
+
     };
 
     Config mConfig;
-    void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * PI / 180.0; }
+    void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * DEG_TO_RAD; }
 
     void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
 
 
     void setConfig(const Config &c) { mConfig = c; }
 
-    /// 双站历元时间对齐
-    static std::vector<std::pair<size_t, size_t> > matchEpochPairs(
-        const std::vector<ObsData> &base, const std::vector<ObsData> &rover,
-        double tolSec = 0.001);
+    /// 选参考星
+    static std::optional<SatID> selectRtkRefSat(const std::vector<SatID> &candidates,
+                                                const std::map<SatID, double> &roverElev,
+                                                bool excludeGeo);
 
     static double measStd(const double elev, const double sigma0, const double minSinElev) {
         const double s = (std::max)(std::sin(elev), minSinElev);
@@ -61,14 +61,20 @@ public:
     }
 
 
-    Vector3d mBaseXyz{0, 0, 0}; // 基准站
-    Vector3d mRoverApprox{0, 0, 0}; // 流动站
+    Eigen::Vector3d mBaseXyz{0, 0, 0}; // 基准站
+    Eigen::Vector3d mBaseXyzUser{0, 0, 0}; // 配置页显式填入的基站坐标
+    Eigen::Vector3d mRoverApprox{0, 0, 0}; // 流动站
     int mGfCommonMode = 2; // GF 共模抑制阈值
 
+    // SPP 自举精化记账（基准站/流动站线性化初值）。
+    // 只要几何变好就重估，星历补全后即锁定。
+    std::size_t mBaseEphSize = 0;   // 上次自举时已有星历的卫星数
+    std::size_t mRoverEphSize = 0;
 
-    Vector3d mBaselineFloat = Vector3d::Zero(); // 浮点基线
-    Vector3d mBaselineFixed = Vector3d::Zero(); // 固定基线
-    Vector3d mBaselineSigmaFixed = Vector3d::Zero(); // 固定基线标准差
+
+    Eigen::Vector3d mBaselineFloat = Eigen::Vector3d::Zero(); // 浮点基线
+    Eigen::Vector3d mBaselineFixed = Eigen::Vector3d::Zero(); // 固定基线
+    Eigen::Vector3d mBaselineSigmaFixed = Eigen::Vector3d::Zero(); // 固定基线标准差
 
     Result result;
 
@@ -77,19 +83,21 @@ public:
     std::map<SatID, double> satRoverElevData; // 流动站仰角：参考星按流动站高度角最大选取
     std::map<SatID, PVT> satPVTRecTime;
 
-    // 站间单差方差（本历元参与星，含参考星）：相位与伪距各一份
+    // 站间单差方差
     struct SdVar {
         double phase = 0.0, code = 0.0;
     };
 
     std::map<SatID, SdVar> mSdVar;
-    MatrixXd mDDWeight; // 双差权阵 P = R⁻¹（方程数×方程数）
-    bool mDDWeightReady = false; // 卫星集合与仰角不变时复用，避免迭代内反复求逆
+    Eigen::MatrixXd mDDWeight; // 双差权阵 P = R⁻¹（块对角：每块 = 一个「系统+观测类型」）
+    bool mDDWeightReady = false;
+    std::vector<std::vector<int>> mDDWeightBlocks; // 上述块的行下标集合，供 SolverLSQ 逐块算 HᵀPH（等价加速）
 
     bool processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph);
 
 
     std::set<SatID> mUsedSats;
+    std::map<char, SatID> mRtkRefSat; // 各系统参考星
 
 private:
     struct SysCombo {
@@ -97,22 +105,39 @@ private:
         bool ok = false;
     };
 
+    // 双差方程缓存
+    struct DDCache {
+        SatID sat, ref;
+        char sys = 0;
+        PVT pvt;                         // 本星 PVT（位置，迭代内几何项重算用）
+        double obsBase[4] = {0, 0, 0, 0};   // [L1,L2,C1,C2] 基准站观测值
+        double obsRover[4] = {0, 0, 0, 0};  // 流动站观测值
+        double refObsBase[4] = {0, 0, 0, 0};
+        double refObsRover[4] = {0, 0, 0, 0};
+        double phaseVar = 0, codeVar = 0;
+        double refPhaseVar = 0, refCodeVar = 0;
+        Variable amb[2];                 // 相位 freq1/freq2 模糊度变量
+        double lambda[2] = {0, 0};       // freq1/freq2 波长
+        PVT refPvt;                      // 参考星 PVT（迭代内几何项重算用）
+    };
+
     const ObsData *mRtkBase = nullptr;
     const ObsData *mRtkRover = nullptr;
     std::map<char, SysCombo> mRtkCombos;
-    std::map<char, SatID> mRtkRefSat;
     std::map<char, std::vector<SatID> > mRtkPartSats;
     std::map<char, std::map<std::string, std::map<SatID, double> > > mRtkFixedMap;
     EphemerisTable *mEph = nullptr;
     std::set<SatID> mRtkSlipExclude;
 
-    bool solveFloat(EquSys &eq, SolverLSQ &solver, Vector3d &baseline);
+    std::vector<DDCache> mDDCache;        // 本历元参与双差的非参考星缓存
+    std::map<char, PVT> mCachedRefPvt;    // 各系统参考星 PVT
 
-    /// 站间单差方差（每系统每星，含参考星）。
+    bool solveFloat(EquSys &eq, SolverLSQ &solver, Eigen::Vector3d &baseline);
+
+    /// 站间单差方差
     void computeSdVariance();
 
-    /// 构造双差随机模型：单差方差 → 双差方差协方差阵 R → 求逆得权阵 P（GLS）。
-    /// 行序与 eq.obsEquData 的遍历顺序一致，结果存 mDDWeight。
+    /// 构造双差随机模型
     void buildStochasticModel(const EquSys &eq);
 
     /// 首次组装方程时构建满阵权并回填 ed.weight = P 的对角元。
@@ -120,28 +145,34 @@ private:
 
     bool tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat);
 
-    void buildEquSys(EquSys &eq, const Vector3d &roverPos, bool fixed);
+
+    void buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed);
 
     void detectFreqCombinations();
 
     bool buildGeometry();
 
-    void readback(const EquSys &eqFloat, const SolverLSQ &solverFloat, const Vector3d &posEcef);
+    void buildDDCache();
+
+    void readback(const EquSys &eqFloat, const SolverLSQ &solverFloat, const Eigen::Vector3d &posEcef);
 
     void detectSlips();
 
-    void addDoubleDiffEquation(EquSys &eq, const SatID &sat,
-                               const Vector3d &ddLos, double ddGeom,
+    void addDoubleDiffEquation(EquSys &eq, const DDCache &c,
+                               const Eigen::Vector3d &ddLos, double ddGeom,
                                int freq, bool isPhase, bool fixed) const;
 
 
     static const char *freqLabel(const int freq, const bool isPhase) {
-        return freq == 1 ? (isPhase ? "L1" : "C1") : (isPhase ? "L2" : "C2");
+        return freq == 1 ? (isPhase ? "L1" : "C1") : isPhase ? "L2" : "C2";
     }
 
     static Variable ambVar(const SatID &sat, const int freqIdx) {
         return makeAmbiguityVar("rover", sat, freqLabel(freqIdx, true));
     }
+
+    static Eigen::Vector3d estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph,
+                                          const std::set<char> &systems, double cutoffElevDeg);
 
     std::map<SatID, CycleSlip> mSlipDetBase;
     std::map<SatID, CycleSlip> mSlipDetRover;

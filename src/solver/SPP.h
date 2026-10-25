@@ -17,60 +17,76 @@ class SPP {
 protected:
     struct Config {
         // —— 基础段：SPP 与 PPP 都读 ——
-        double cutoffElevRad = 10.0 * PI / 180.0; // 截止高度角(rad)
-        std::set<char> enabledSystems{}; // 参与解算的星座集合（空=不筛选，全部参与）
-        double sigIFCode = 0.3; // IF 码观测噪声基准
+        double cutoffElevRad = 15.0 * DEG_TO_RAD;
+        std::set<char> enabledSystems{};
+        double sigIFCode = 1.273;
         double convEps = 1e-4; // 收敛阈值(m)
         int maxIter = 10; // 最大迭代
         int minCheckIter = 2; // 起始收敛检查的迭代
         // —— PPP / LEO 专有段：SPP 不读 ——
-        double sigmaPhase = 0.005; // IF 相位量测噪声(PPP 默认)
+        double sigmaPhase = 0.01273; // IF 相位量测噪声(PPP 默认)
         double troZtdSigma = 0.05; // TRO ZTD 先验 sigma
         double arRatioThreshold = 3.0; // LAMBDA 成功率阈值
-        double arSigGate = 0.5; // 固定模糊度 sigma 上限(m)
+        double arSigGate = 5.0; // 进入 LAMBDA 的浮点模糊度 std 上限(m)
         double posNoise = 0.0; // 位置过程噪声(静态0)
+
+        double posVarFloor = 1.0E-6;// 位置后验方差下限(m^2)
         double ambNoise = 1.0E-8; // 模糊度过程噪声
+
+        double ambInitVar = 3600.0;// 模糊度初方差(m^2)
         double clockNoise = 0.0; // 钟差过程噪声
         double ztdInitValue = 0.0; // ZTD 初值
-        double ztdInitVar = 0.0144; // ZTD 初方差
+        double ztdInitVar = 0.36;// ZTD 初方差(m^2)
         double ztdProcNoise = 1.0E-8; // ZTD 随机游走噪声
         double ztdPriorSigma = 0.30; // ZWD 先验 sigma(m)
-        double firstEpochPosVar = 0.0; // 首历元位置先验方差
+
+        double firstEpochPosVar = 3600.0;// 首历元位置先验方差(m^2)
         int minSatsForUpdate = 0; // 滤波更新最少卫星(PPP 默认0=不限)
+
+        // 内部码偏/IFCB 估计：取消开关，改为「自动规则」——外部 OSB 未覆盖的星才估内部码偏/IFCB，
+        // OSB 已覆盖则跳过（避免与 OSB 共线）。过程噪声/初方差参数保留供调节。
+        double gloIfcbProcNoise = 1.0E-8;   // 逐星 IFCB 随机常数过程噪声(m^2/epoch)
+        double gloIfcbInitVar = 900.0;      // 逐星 IFCB 初方差(m^2)
+
+        double keepAmbMaxGap = 0.0;// 观测中断(间隙)恢复时的模糊度策略阈值(s)。
+        double codeBiasProcNoise = 1.0E-8;   // 码偏置随机常数过程噪声(m^2/epoch)
+        double codeBiasInitVar = 900.0;// 码偏置初方差(m^2)
         int maxReanchorIter = 8; // LEO 重锚定最大迭代
         double sppResidualThr = 10.0; // SPP 后验残差 RMS 阈值(m)
+        // ISB（系统间偏差）过程噪声/初方差：非参考系统接收机钟差(cdt2~4)不再当白噪声，
+        // 改以"常数(isbProcNoise=0)"或"随机游走(isbProcNoise>0)"估计（对齐老师"ISB 当常数/随机游走估"）。
+        // SPP 是逐历元 LSQ，无跨历元状态；此处用于给每历元非参考系统钟差加"上一历元值"伪观测先验
+        // （等价于 EKF 里的常数 ISB）。参考系统(GPS)不施加——SPP 每历元重解主钟。GPS-only 不受影响。
+        // 默认 RW-ISB：isbProcNoise=1.0e-3、isbInitVar=1.0。由 SPP 解算入口（spp_cli / ppp_cli / leo_cli / GUI 处理器）经 setIsbProcNoise 注入。
+        double isbProcNoise = 1.0e-3; // 0=常数 ISB；>0=随机游走(m^2/epoch)，默认 RW-ISB
+        double isbInitVar = 1.0;   // ISB 初方差(m^2)，>0 启用；SPP 侧作伪观测先验方差
     };
 
     Config mConfig;
-
-    // 高度角随机模型（σ²=a²+(b/sinE)²），与 RTK/PPP 共用 Weight 类。
-    // 由 mConfig.sigIFCode / cutoffElevRad 在解算开始时同步，避免散落裸公式。
     Weight mWeight;
     bool mWeightInit = false; // mWeight 首轮解算惰性初始化一次，迭代内不再重建
 
 public:
-    void setEphemeris(const SatEphemerisMap &ephs) {
-        ephMap = ephs;
-    }
-
     bool loadBrdc(const std::string &path);
 
     void detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaultTypes = {});
 
-    void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * PI / 180.0; }
+    void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * DEG_TO_RAD; }
 
     /// ZTD 先验 sigma 旋钮（诊断用：调到很大即关闭 ZTD 状态约束，仅留卫星观测估计）
     void setZtdPriorSigma(const double s) { mConfig.ztdPriorSigma = s; }
 
-    void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
+    /// TRO 产品 ZTD 约束 sigma(m)：>0 且 TRO 含该站时生效并覆盖 ztdPriorSigma；调大=让 ZTD 自由估计。
+    void setTroZtdSigma(const double s) { mConfig.troZtdSigma = s; }
 
-    /// 从一批历元中用 SPP 估计一个近似坐标（冷启动：线性化初值取地心）。
-    /// 逐历元尝试，首个解出 |xyz| > 1e6 m 的即采纳；全部失败返回 false。
-    /// 供 RTK 基准站/流动站求线性化初值使用（原本由 GUI 内联实现）。
-    static bool estimateApproxPosition(const std::vector<ObsData> &epochs,
-                                       const std::vector<EphemerisTable> &ephs,
-                                       const std::set<char> &systems,
-                                       double cutoffElevDeg, Vector3d &out);
+    /// ISB 估计模式（对齐老师"ISB 当常数/随机游走估"）：proc==0 为"常数 ISB"，
+    /// proc>0 为"随机游走 ISB"(m^2/epoch)；init 为初方差(m^2)。参考系统(GPS)钟差不受影响。
+    void setIsbProcNoise(const double proc, const double init) {
+        mConfig.isbProcNoise = proc;
+        mConfig.isbInitVar = init;
+    }
+
+    void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
 
     virtual bool processEpoch(ObsData &obsData);
 
@@ -96,8 +112,8 @@ public:
 
     virtual ~SPP() = default;
 
-    Vector3d xyz{0, 0, 0};
-    Vector3d vel{0, 0, 0};
+    Eigen::Vector3d xyz{0, 0, 0};
+    Eigen::Vector3d vel{0, 0, 0};
     FrameInfo frame = Frame::WGS84;
     Result result{};
     SatValueMap satElevData{};
@@ -116,15 +132,33 @@ protected:
     /// GPS 与 BDS 各自钟差 [m]
     std::map<char, double> rClockBias{};
 
-    /// 系统→钟差参数映射（仅 GPS + BDS）；LEO 经继承链访问，故置于 protected
+    /// 上一历元各系统终值钟差 [m]：ISB 常数/随机游走估计的跨历元载体（SPP 是逐历元 LSQ，
+    /// 无跨历元状态，故用此成员把上一历元解出的钟差当作本历元先验起点）。
+    /// isbInitVar<=0 时不使用（保持 rClockBias 每历元清空的历史行为）。
+    std::map<char, double> mPrevClockBias{};
+
+    /// 系统→钟差参数映射；多系统各自独立钟差=吸收 ISB。LEO 经继承链访问，故置于 protected
     static inline std::map<char, Parameter> sysCdtParam = {
         {'G', Parameter::cdt},
         {'C', Parameter::cdt2},
+        {'R', Parameter::cdt3},
+        {'E', Parameter::cdt4},
     };
 
-    SatEphemerisMap ephMap{};
-
     IFCodeTypes ifCodeTypes{}; // 系统 → FreqCombo（码名 + 频率/系数/波长，及 MW/GF 组合）
+
+    /// GLONASS 每星 IF 组合（FDMA 通道号决定频率）
+    std::map<SatID, FreqCombo> mGloCombo;
+
+    /// 取卫星的 IF 频率组合：G/C/E 用系统级，R 用逐星（FDMA）。无可用组合返回 nullptr。
+    [[nodiscard]] const FreqCombo *freqComboFor(const SatID &sat) const {
+        if (sat.system == 'R') {
+            const auto it = mGloCombo.find(sat);
+            return it == mGloCombo.end() ? nullptr : &it->second;
+        }
+        const auto it = ifCodeTypes.find(sat.system);
+        return it == ifCodeTypes.end() ? nullptr : &it->second;
+    }
 
     /// 上一次 IF 码类型检测的"各系统可用码类型"签名；不变则跳过重扫
     std::map<char, std::string> ifCodeSig;
@@ -140,8 +174,8 @@ protected:
     virtual void buildResidualMap();
 
     void buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
-                          const PVT &pvt, const Vector3d &los,
-                          double elev, double posWeight,
+                          const PVT &pvt, const Eigen::Vector3d &los,
+                          double posWeight,
                           const Variable &dvx, const Variable &dvy,
                           const Variable &dvz, const Variable &dcdt);
 
@@ -157,7 +191,7 @@ private:
     void linearize(ObsData &obsData, int iter);
 
     /// 构建单颗卫星的位置观测方程（IF 组合）
-    void buildPosEquation(const SatID &sat, const PVT &pvt, const Vector3d &los,
+    void buildPosEquation(const SatID &sat, const PVT &pvt, const Eigen::Vector3d &los,
                           double rho, double trop,
                           const string &obsType, double obsVal, double weight,
                           const Variable &dx, const Variable &dy,

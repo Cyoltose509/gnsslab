@@ -14,6 +14,7 @@ public:
 
     double squaredRatio;
 
+
 protected:
     int lambda(const Eigen::VectorXd &a, const Eigen::MatrixXd &Q,
                Eigen::MatrixXd &F, Eigen::VectorXd &s, const int &m = 2);

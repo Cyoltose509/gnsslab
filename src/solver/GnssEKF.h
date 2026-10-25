@@ -1,5 +1,7 @@
 #pragma once
 
+
+
 #include "GnssStruct.h"
 #include "SolverKalman.h"
 
@@ -25,7 +27,7 @@ public:
 
     [[nodiscard]] double getSolution(const Variable &var) const;
 
-    void forceValue(const Variable &var, double v) { mForceValue[var] = v; }
+    void forceValue(const Variable &var, const double v) { mForceValue[var] = v; }
 
     /// 保存“量测更新前”的先验(xhatminus/Pminus)。
     /// 供 rtkpost 式迭代抗差使用：检出粗差后必须回到**同一**先验重解，
@@ -34,18 +36,6 @@ public:
         savedXhatminus = kalmanFilter.xhatminus;
         savedPminus = kalmanFilter.Pminus;
         hasSaved = true;
-    }
-
-    /// 恢复到 savePrior() 时刻的先验，随后可再次 measUpdate() 重解。
-    bool restorePrior() {
-        if (!hasSaved) return false;
-        kalmanFilter.xhatminus = savedXhatminus;
-        kalmanFilter.Pminus = savedPminus;
-        kalmanFilter.xhat = savedXhatminus;
-        kalmanFilter.P = savedPminus;
-        solution = kalmanFilter.xhat;
-        covMatrix = kalmanFilter.P;
-        return true;
     }
 
     void configure(const double posNoise, const bool hasTropo,
@@ -96,18 +86,77 @@ public:
         }
     }
 
-    /// 模糊度引导：把状态强制置为码减相位初值。
-    /// 若给出 csData，则**只**引导本历元被标记重置(>=0.5，见 resetAmbiguity 写入的 1.0/2.0)的模糊度；
-    /// 已收敛的模糊度必须交给滤波自行演化——否则每历元把它们全部写回初值，
-    /// measUpdate refined 出的估计会被覆盖，模糊度永远累积不了信息（PPP 收敛被拖到小时级）。
+    /// 逐分量首历元位置先验方差(m^2)
+    void setBootstrapPosition(const Eigen::Vector3d &p, const Eigen::Vector3d &posVar) {
+        if (currentUnkSet.empty()) return; // timeUpdate 尚未建索引时无效
+        for (const auto &var: currentUnkSet) {
+            const auto pt = var.getParaType();
+            const int idx = currentIndexData[var];
+            if (pt == Parameter::dX) {
+                xhat(idx) = p[0];
+                kalmanFilter.xhat(idx) = p[0];
+                kalmanFilter.xhatminus(idx) = p[0];
+            } else if (pt == Parameter::dY) {
+                xhat(idx) = p[1];
+                kalmanFilter.xhat(idx) = p[1];
+                kalmanFilter.xhatminus(idx) = p[1];
+            } else if (pt == Parameter::dZ) {
+                xhat(idx) = p[2];
+                kalmanFilter.xhat(idx) = p[2];
+                kalmanFilter.xhatminus(idx) = p[2];
+            }
+        }
+        for (const auto &var: currentUnkSet) {
+            const auto pt = var.getParaType();
+            if (pt != Parameter::dX && pt != Parameter::dY && pt != Parameter::dZ) continue;
+            const int idx = currentIndexData[var];
+            const double pv = pt == Parameter::dX ? posVar[0] : pt == Parameter::dY ? posVar[1] : posVar[2];
+            kalmanFilter.Pminus(idx, idx) = pv;
+            kalmanFilter.P(idx, idx) = pv;
+            P(idx, idx) = pv;
+        }
+    }
+
+
+    void shiftState(const Variable &var, const double delta) {
+        if (currentUnkSet.empty()) return;
+        if (const auto it = currentIndexData.find(var); it != currentIndexData.end()) {
+            const int idx = it->second;
+            kalmanFilter.xhat(idx) += delta;
+            kalmanFilter.xhatminus(idx) += delta;
+        }
+    }
+
+    /// 首历元钟差/ZTD 引导
+    void setBootstrapStates(const std::map<Variable, double> &values,
+                            const std::map<Variable, double> *vars = nullptr) {
+        if (currentUnkSet.empty()) return;
+        for (const auto &[var, value]: values) {
+            if (const auto it = currentIndexData.find(var); it != currentIndexData.end()) {
+                const int idx = it->second;
+                kalmanFilter.xhat(idx) = value;
+                kalmanFilter.xhatminus(idx) = value;
+                double v = -1.0;
+                if (vars) {
+                    if (const auto vit = vars->find(var); vit != vars->end()) v = vit->second;
+                }
+                if (v > 0.0) {
+                    kalmanFilter.Pminus(idx, idx) = v;
+                    kalmanFilter.P(idx, idx) = v;
+                    P(idx, idx) = v;
+                }
+            }
+        }
+    }
+
+    /// 模糊度引导
     void setBootstrapAmbiguity(const std::string &station, const std::map<SatID, double> &amb,
                                const VariableDataMap *csData = nullptr) {
         if (currentUnkSet.empty()) return;
         for (const auto &[sat, value]: amb) {
             const Variable vamb = makeAmbiguityVar(station, sat, "IF");
             if (csData) {
-                const auto itc = csData->find(vamb);
-                if (itc == csData->end() || itc->second < 0.5) continue; // 仅新弧段/周跳重置
+                if (const auto itc = csData->find(vamb); itc == csData->end() || itc->second < 0.5) continue; // 仅新弧段/周跳重置
             }
             if (auto it = currentIndexData.find(vamb); it != currentIndexData.end()) {
                 const int idx = it->second;
@@ -116,6 +165,8 @@ public:
             }
         }
     }
+
+    void setPosProcNoise(const double v) { posProcNoise = v; }
 
     virtual ~GnssEKF() = default;
 
@@ -128,19 +179,22 @@ private:
     bool firstTime;
     bool useTropo = true;
     double posProcNoise = 0.0;
+
 public:
-    // 以下成员原由透传 getter/setter 暴露，按项目约定改为公有成员。
-    // 声明顺序与旧布局完全一致，仅翻转访问符，避免改变 kalmanFilter 前成员偏移导致 ABI 不匹配。
     double ambProcNoise = 1.0E-8;
+    double ambInitVar = 100.0;
     double clockProcNoise = 0.0;
     double ztdProcNoise = 1.0E-6;
+    double posVarFloor = 0.0;
+    Eigen::Vector3d posVarFloorVec = Eigen::Vector3d(0.0, 0.0, 0.0);
     double ztdInitVar = 0.04;
     double ztdInitValue = 0.0;
     double clockInitVar = 1.0E4;
-    Eigen::VectorXd solution;        // 后验状态向量 x
-    Eigen::MatrixXd covMatrix;       // 后验协方差 P
+    Eigen::VectorXd solution; // 后验状态向量 x
+    Eigen::MatrixXd covMatrix; // 后验协方差 P
     Eigen::VectorXd postfitResidual;
     Eigen::Vector3d dxyz;
+
 private:
     Eigen::VectorXd xhat;
     Eigen::MatrixXd P;
@@ -149,14 +203,19 @@ private:
 
     SolverKalman kalmanFilter;
 
-    // 迭代抗差用：量测更新前的先验快照。
-    // 必须放**类末尾**：部分重链时 lib/gnss.lib 里的 GnssEKF.cpp 仍是旧布局，
-    // 新增成员若插在 kalmanFilter 之前会改变其偏移，导致 ABI 不匹配。
     Eigen::VectorXd savedXhatminus;
     Eigen::MatrixXd savedPminus;
     bool hasSaved = false;
 
-    // 周跳软重置用：slip 重置时 PPP 把"跳变后正确模糊度(prefit)"钉进此表，timeUpdate 取用。
-    // 放类末尾(同 saved*)，避免改变 kalmanFilter 前成员偏移导致 ABI 不匹配。
     std::map<Variable, double> mForceValue;
+
+public:
+
+    double codeBiasProcNoise = 1.0E-8;
+    double codeBiasInitVar = 1.0;
+    double isbProcNoise = 0.0;
+    double isbInitVar = 0.0;
+
+    double gloIfcbProcNoise = 1.0E-8;
+    double gloIfcbInitVar = 1.0;
 };

@@ -3,15 +3,13 @@
 using namespace std;
 
 
-void SolverLSQ::solve(EquSys &equSys) {
-    solveImpl(equSys, nullptr);
+void SolverLSQ::computeCovariance() {
+    if (!mHasDecomp) return;  // 尚未求解过，无分解可复用
+    const int n = static_cast<int>(mLastDecomp.rows());
+    covMatrix = mLastDecomp.solve(Eigen::MatrixXd::Identity(n, n));
 }
 
-void SolverLSQ::solve(EquSys &equSys, const MatrixXd *fullWeight) {
-    solveImpl(equSys, fullWeight);
-}
-
-void SolverLSQ::solveImpl(EquSys &equSys, const MatrixXd *fullWeight) {
+void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd *fullWeight, const bool computeCov) {
     // 仅在变量集合内容变化时重建索引缓存，避免每次求解 O(n) 线性扫描
     if (m_varSetCache != equSys.varSet) {
         m_varSetCache = equSys.varSet;
@@ -57,32 +55,53 @@ void SolverLSQ::solveImpl(EquSys &equSys, const MatrixXd *fullWeight) {
         throw InvalidSolver("fullWeight rows mismatch hMatrix rows");
     }
 
-    // ---- 正规方程 ----
-    // 满阵权（观测误差相关，如双差共享参考星）走广义最小二乘 N = Hᵀ·P·H；
-    // 否则退化为 weights.asDiagonal() 的对角加权最小二乘。
-    // 两种分支必须分开写：Product 与 Product·DiagonalWrapper 之间 Eigen 无法归约公共类型。
-    MatrixXd N;
-    VectorXd b;
+    Eigen::MatrixXd N;
+    Eigen::VectorXd b;
     if (fullWeight) {
-        N = hMatrix.transpose() * (*fullWeight) * hMatrix;
-        b = hMatrix.transpose() * (*fullWeight) * prefit;
+        if (mWeightBlocks && !mWeightBlocks->empty()) {
+            N = Eigen::MatrixXd::Zero(numUnk, numUnk);
+            b = Eigen::VectorXd::Zero(numUnk);
+            for (const auto &blk: *mWeightBlocks) {
+                const int kk = static_cast<int>(blk.size());
+                if (kk == 0) continue;
+                Eigen::MatrixXd Hblk(kk, numUnk);  // kk 行 × n 列，行 j = hMatrix 第 blk[j] 行
+                Eigen::VectorXd yblk(kk);
+                for (int j = 0; j < kk; ++j) {
+                    Hblk.row(j) = hMatrix.row(blk[j]);
+                    yblk(j) = prefit(blk[j]);
+                }
+                Eigen::MatrixXd Pblk(kk, kk);
+                for (int a = 0; a < kk; ++a)
+                    for (int c = 0; c < kk; ++c)
+                        Pblk(a, c) = (*fullWeight)(blk[a], blk[c]);
+                Eigen::MatrixXd HP = Hblk.transpose() * Pblk;  // n × kk
+                N += HP * Hblk;                         // n × n
+                b += HP * yblk;                         // n × 1
+            }
+        } else {
+            N = hMatrix.transpose() * *fullWeight * hMatrix;
+            b = hMatrix.transpose() * *fullWeight * prefit;
+        }
     } else {
         N = hMatrix.transpose() * weights.asDiagonal() * hMatrix;
         b = hMatrix.transpose() * weights.asDiagonal() * prefit;
     }
 
     try {
-        const LDLT<MatrixXd> ldlt(N);
-        state = ldlt.solve(b);
-        covMatrix = ldlt.solve(MatrixXd::Identity(N.rows(), N.cols()));
+        // 缓存分解供 computeCovariance() 复用；computeCov=false 时跳过协方差阵 O(n³) 计算。
+        mLastDecomp.compute(N);
+        state = mLastDecomp.solve(b);
+        if (computeCov)
+            covMatrix = mLastDecomp.solve(Eigen::MatrixXd::Identity(N.rows(), N.cols()));
+        mHasDecomp = true;
     } catch (...) {
-        throw InvalidSolver("LDLT failed, matrix singular or ill-conditioned");
+        throw InvalidSolver("Eigen::LDLT failed, matrix singular or ill-conditioned");
     }
 
     v = prefit - hMatrix * state;
     if (const int dof = numObs - numUnk; dof > 0) {
         // 后验方差因子：满阵时后验二次型用 P，否则用 diag(weights)
-        sigma0 = fullWeight ? sqrt(v.dot((*fullWeight) * v) / dof)
+        sigma0 = fullWeight ? sqrt(v.dot(*fullWeight * v) / dof)
                             : sqrt((v.array() * weights.array() * v.array()).sum() / dof);
     } else {
         sigma0 = 1.0; // 方程数刚好等于未知数，无法估计 sigma0
@@ -91,7 +110,7 @@ void SolverLSQ::solveImpl(EquSys &equSys, const MatrixXd *fullWeight) {
 
 double SolverLSQ::getSolution(const Parameter &type,
                               VariableSet &currentUnkSet,
-                              const VectorXd &stateVec) {
+                              const Eigen::VectorXd &stateVec) {
     auto varIt = currentUnkSet.begin();
     int index = 0;
     while (varIt != currentUnkSet.end()) {
@@ -102,5 +121,5 @@ double SolverLSQ::getSolution(const Parameter &type,
         ++varIt;
     }
 
-    throw InvalidRequest("SolverLSQ::Type not found in state vector.");
+    throw InvalidRequest(std::string("SolverLSQ::Type not found in state vector: ") + type.toString());
 }

@@ -1,22 +1,22 @@
+
 #include <iostream>
 #include "ARLambda.h"
 #include "MathUtils.h"
 
-using namespace Eigen;
 
 
-VectorXd ARLambda::resolve(VectorXd &ambFloat,
-                           const MatrixXd &ambCov) {
+Eigen::VectorXd ARLambda::resolve(Eigen::VectorXd &ambFloat,
+                           const Eigen::MatrixXd &ambCov) {
     // Check input
     if (ambFloat.size() != ambCov.rows() || ambFloat.size() != ambCov.cols()) {
         std::cout << "The dimension of input does not match." << std::endl;
         std::cout << "Cannot perform Ambiguity Resolution!" << std::endl;
         return ambFloat;
     }
-    MatrixXd F; //NOLINT
-    VectorXd S; //NOLINT
+    Eigen::MatrixXd F; //NOLINT
+    Eigen::VectorXd S; //NOLINT
     if (lambda(ambFloat, ambCov, F, S, 2) == 0 && F.rows() == ambFloat.size()) {
-        VectorXd ambFixed = VectorXd::Zero(ambFloat.size());
+        Eigen::VectorXd ambFixed = Eigen::VectorXd::Zero(ambFloat.size());
         for (int i = 0; i < ambFloat.size(); i++) {
             ambFixed(i) = F(i, 0);
         }
@@ -27,12 +27,13 @@ VectorXd ARLambda::resolve(VectorXd &ambFloat,
 }
 
 
-int ARLambda::factorize(const MatrixXd &Q, MatrixXd &L, VectorXd &D) {
+
+int ARLambda::factorize(const Eigen::MatrixXd &Q, Eigen::MatrixXd &L, Eigen::VectorXd &D) {
     const int n = static_cast<int>(Q.rows());
-    MatrixXd QC = MatrixXd::Zero(Q.rows(), Q.cols());
+    Eigen::MatrixXd QC = Eigen::MatrixXd::Zero(Q.rows(), Q.cols());
     QC = Q;
-    L = MatrixXd::Zero(n, n);
-    D = VectorXd::Zero(n);
+    L = Eigen::MatrixXd::Zero(n, n);
+    D = Eigen::VectorXd::Zero(n);
 
     for (int i = n - 1; i >= 0; i--) {
         D(i) = QC(i, i);
@@ -48,7 +49,7 @@ int ARLambda::factorize(const MatrixXd &Q, MatrixXd &L, VectorXd &D) {
     return 0;
 }
 
-void ARLambda::gauss(MatrixXd &L, MatrixXd &Z, const int i, const int j) {
+void ARLambda::gauss(Eigen::MatrixXd &L, Eigen::MatrixXd &Z, const int i, const int j) {
     const auto n = static_cast<int>(L.rows());
     if (const int mu = static_cast<int>(round(L(i, j))); mu != 0) {
         for (int k = i; k < n; k++) L(k, j) -= static_cast<double>(mu) * L(k, i);
@@ -56,7 +57,7 @@ void ARLambda::gauss(MatrixXd &L, MatrixXd &Z, const int i, const int j) {
     }
 }
 
-void ARLambda::permute(MatrixXd &L, VectorXd &D, const int j, const double del, MatrixXd &Z) {
+void ARLambda::permute(Eigen::MatrixXd &L, Eigen::VectorXd &D, const int j, const double del, Eigen::MatrixXd &Z) {
     const auto n = static_cast<int>(L.rows());
     const double eta = D(j) / del;
     const double lam = D(j + 1) * L(j + 1, j) / del;
@@ -76,7 +77,7 @@ void ARLambda::permute(MatrixXd &L, VectorXd &D, const int j, const double del, 
     for (int k = 0; k < n; k++) std::swap(Z(k, j), Z(k, j + 1));
 }
 
-void ARLambda::reduction(MatrixXd &L, VectorXd &D, MatrixXd &Z) {
+void ARLambda::reduction(Eigen::MatrixXd &L, Eigen::VectorXd &D, Eigen::MatrixXd &Z) {
     const auto n = static_cast<int>(L.rows());
     int j(n - 2), k(n - 2);
 
@@ -97,7 +98,7 @@ void ARLambda::reduction(MatrixXd &L, VectorXd &D, MatrixXd &Z) {
     }
 }
 
-int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, VectorXd &s, const int &m) {
+int ARLambda::search(Eigen::MatrixXd &L, Eigen::VectorXd &D, Eigen::VectorXd &zs, Eigen::MatrixXd &zn, Eigen::VectorXd &s, const int &m) {
     // TODO: CHECK UNEXPECTED INPUT
     // n - number of float parameters
     // m - number of fixed solutions
@@ -106,18 +107,17 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
     // zs - nxn
     // zn - nxm
     // s  - m
-    constexpr int LOOPMAX = 10000;
 
     const int n = L.rows();
 
-    zn = MatrixXd::Zero(n, m);
-    s = VectorXd::Zero(m);
+    zn = Eigen::MatrixXd::Zero(n, m);
+    s = Eigen::VectorXd::Zero(m);
 
-    MatrixXd S = MatrixXd::Zero(n, n);
-    VectorXd dist = VectorXd::Zero(n);
-    VectorXd zb = VectorXd::Zero(n);
-    VectorXd z = VectorXd::Zero(n);
-    VectorXd step = VectorXd::Zero(n);
+    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd dist = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd zb = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd z = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd step = Eigen::VectorXd::Zero(n);
 
     int k = n - 1;
     dist[k] = 0.0;
@@ -126,9 +126,18 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
     double y = zb(k) - z(k);
     step(k) = sign(y);
 
-    int c(0), nn(0), imax(0);
+    int nn(0), imax(0);
     double maxDist = 1E99;
-    for (; c < LOOPMAX; c++) {
+    // 迭代上限：LAMBDA 整数搜索不保证在有限步内收敛（病态协方差/多维时可能发散）。
+    // 超限必须判失败并返回 -1，让上层退回浮点解；若无此保护，search 会带着未填满的
+    // zn/s 数组返回 0（"成功"），上层据此取到垃圾整数值——AR 静默给出错误固定解。
+    // （2026-10-24 一次"去 using namespace Eigen"的清理误删了此检查，导致
+    //  test_ar 的 ar_oneDimTight_fixed / ar_oneDimAmbiguous_notFixed / ar_twoDimTight_fixed
+    //  三项回归失败：模糊度被固定成 -10 而非 10、且不该固定的场景被判为已固定。）
+    // 正常结束只有一条路：else 分支里 k==n-1 的 break（搜索收敛）。循环自然跑完 = 耗尽 = 失败。
+    constexpr int LOOPMAX = 10000;
+    bool converged = false;
+    for (int c(0); c < LOOPMAX; c++) {
         if (const double newDist = dist(k) + y * y / D(k); newDist < maxDist) {
             if (k != 0) {
                 dist(--k) = newDist;
@@ -157,13 +166,19 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
                 step(0) = -step(0) - sign(step(0));
             }
         } else {
-            if (k == n - 1) break;
+            if (k == n - 1) {
+                converged = true; // 搜索正常收敛：候选已全部枚举完
+                break;
+            }
             k++;
             z(k) += step(k);
             y = zb(k) - z(k);
             step(k) = -step(k) - sign(step(k));
         }
     }
+    // 迭代耗尽 ⇒ 候选集不完整，zn/s 不可信，判失败（上层退回浮点解，不做固定）
+    if (!converged) return -1;
+
     for (int i = 0; i < m - 1; i++) {
         for (int j = i + 1; j < m; j++) {
             if (s(i) < s(j)) continue;
@@ -172,26 +187,27 @@ int ARLambda::search(MatrixXd &L, VectorXd &D, VectorXd &zs, MatrixXd &zn, Vecto
         }
     }
 
-    if (c >= LOOPMAX) {
-        return -1;
-    }
-
     return 0;
 }
 
-int ARLambda::lambda(const VectorXd &a, const MatrixXd &Q, MatrixXd &F, VectorXd &s, const int &m) {
+int ARLambda::lambda(const Eigen::VectorXd &a, const Eigen::MatrixXd &Q, Eigen::MatrixXd &F, Eigen::VectorXd &s, const int &m) {
     if (a.size() != Q.rows() || Q.rows() != Q.cols()) return -1;
     if (m < 1) return -1;
 
     const int n = static_cast<int>(a.size());
 
-    MatrixXd L = MatrixXd::Zero(n, n);
-    MatrixXd E = MatrixXd::Zero(n, m);
+    Eigen::MatrixXd L = Eigen::MatrixXd::Zero(n, n);
+    Eigen::MatrixXd E = Eigen::MatrixXd::Zero(n, m);
 
-    VectorXd D = VectorXd::Zero(n);
-    VectorXd z = VectorXd::Zero(n);
-    MatrixXd Z = MatrixXd::Identity(n, n);
+    Eigen::VectorXd D = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd z = Eigen::VectorXd::Zero(n);
+    Eigen::MatrixXd Z = Eigen::MatrixXd::Identity(n, n);
 
+    // factorize 失败（协方差非正定 / D(i)<=0）必须判失败返回：否则 D 全零会让 search 里
+    // y*y/D(k) 除零得 NaN，搜索路径崩坏并"固定"出错误整数值（如 -10 而非 10）。
+    // （2026-10-24 一次"去 using namespace Eigen"的清理误删了此检查，导致
+    //  test_ar 的 ar_oneDimTight_fixed / ar_oneDimAmbiguous_notFixed / ar_twoDimTight_fixed
+    //  三项回归失败。）
     if (factorize(Q, L, D) != 0) return -1;
     reduction(L, D, Z);
     z = Z.transpose() * a;
