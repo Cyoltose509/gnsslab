@@ -51,28 +51,49 @@ void convertTimeSystem(CommonTime &in_time, const TimeSystem targetSys) {
     in_time += dt;
 }
 
+// 日历 ↔ "距 1970-01-01 的天数"（Howard Hinnant 的 days_from_civil / civil_from_days），
+// 精确且无依赖。原先内联在 app/download/ProductMeta.cpp 的匿名 namespace 里，
+// 搬到这里是因为它与"产品元数据"无关，是通用日历算法；2026-10-24 起进一步升级为
+// 全文件唯一的日历内核——convertJD2YMD/convertYMD2JD 也委派到这两个函数
+// （JD 只是 days 的 +2440587.5 平移表示），不再维护第二套格里历闰逻辑。
+long daysFromCivil(long y, const unsigned m, const unsigned d) {
+    y -= m <= 2;
+    const long era = (y >= 0 ? y : y - 399) / 400;
+    const auto yoe = static_cast<unsigned>(y - era * 400);
+    const auto mp = m > 2u ? m - 3u : m + 9u;
+    const auto doy = (153u * mp + 2u) / 5u + d - 1u;
+    const auto doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return era * 146097L + static_cast<long>(doe) - 719468L;
+}
+
+void civilFromDays(long z, int &y, unsigned &m, unsigned &d) {
+    z += 719468L;
+    const long era = (z >= 0 ? z : z - 146096) / 146097;
+    const auto doe = static_cast<unsigned>(z - era * 146097L);
+    const auto yoe = (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
+    y = static_cast<int>(yoe) + static_cast<int>(era) * 400;
+    const auto doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
+    const auto mp = (5u * doy + 2u) / 153u;
+    d = doy - (153u * mp + 2u) / 5u + 1u;
+    m = mp < 10u ? mp + 3u : mp - 9u;
+    y += m <= 2;
+}
+
 //
 void convertJD2YMD(const double jd, int &iyear, int &imonth, int &iday) {
-    const double a = std::floor(jd + 0.5);
-    const double b = a + 1537;
-    const double c = std::floor((b - 122.1) / 365.25);
-    const double d = std::floor(365.25 * c);
-    const double e = std::floor((b - d) / 30.6001);
-    // 调用方传入的 jday 恒为「整数 + 0.5」，故末尾 (jd+0.5)-floor(jd+0.5) 恒为 0，直接略去。
-    iday = static_cast<int>(b) - d - std::floor(30.6001 * e); //NOLINT
-    imonth = static_cast<int>(e) - 1 - 12. * std::floor(e / 14); //NOLINT
-    iyear = static_cast<int>(c) - 4715 - std::floor((7 + imonth) / 10); //NOLINT
+    // 日历内核统一走 Hinnant 整数算法（civilFromDays）。JD 是 days 的平移表示：
+    // JD(历元 00:00) = days + 2440587.5；Fliegel 旧式的 a=floor(jd+0.5)（取当日
+    // 中午 JD）对应 days = floor(jd+0.5) − 2440588，对任意小数部分都与旧实现同解。
+    // 调用方传入的 jd 恒为「整数 + 0.5」（见 CommonTime2CivilTime 等），此式稳健。
+    unsigned m = 0, d = 0;
+    civilFromDays(static_cast<long>(std::floor(jd + 0.5)) - 2440588L, iyear, m, d);
+    imonth = static_cast<int>(m);
+    iday = static_cast<int>(d);
 }
 
 double convertYMD2JD(int iyear, int imonth, const int iday) {
-    if (imonth <= 2) {
-        imonth += 12;
-        iyear -= 1;
-    }
-
-    const double B = 2 - std::floor(iyear / 100) + std::floor(iyear / 400);
-    const double jd_double = std::floor(365.25 * (iyear + 4716)) + std::floor(30.6001 * (imonth + 1)) + B + iday - 1524.5;
-    return jd_double;
+    // 同上：JD = days + 2440587.5，整数运算精确（2440587.5 二进制精确表示）。
+    return static_cast<double>(daysFromCivil(iyear, imonth, iday)) + 2440587.5;
 }
 
 void convertSOD2HMS(double sod, int &hh, int &mm, double &sec) {
@@ -240,30 +261,4 @@ void WeekSecond2CommonTime(const WeekSecond &wk, CommonTime &ct) {
     const long mday = wk.MJDEpoch() + 7 * wk.week + dow; //NOLINT
     const double sod(wk.sow - SEC_PER_DAY * dow);
     ct.set(mday, sod, wk.timeSystem);
-}
-
-// 日历 ↔ "距 1970-01-01 的天数"（Howard Hinnant 的 days_from_civil / civil_from_days），
-// 精确且无依赖。原先内联在 app/download/ProductMeta.cpp 的匿名 namespace 里，
-// 搬到这里是因为它与"产品元数据"无关，是通用日历算法。口径说明见 TimeConvert.h。
-long daysFromCivil(long y, const unsigned m, const unsigned d) {
-    y -= m <= 2;
-    const long era = (y >= 0 ? y : y - 399) / 400;
-    const auto yoe = static_cast<unsigned>(y - era * 400);
-    const auto mp = m > 2u ? m - 3u : m + 9u;
-    const auto doy = (153u * mp + 2u) / 5u + d - 1u;
-    const auto doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
-    return era * 146097L + static_cast<long>(doe) - 719468L;
-}
-
-void civilFromDays(long z, int &y, unsigned &m, unsigned &d) {
-    z += 719468L;
-    const long era = (z >= 0 ? z : z - 146096) / 146097;
-    const auto doe = static_cast<unsigned>(z - era * 146097L);
-    const auto yoe = (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
-    y = static_cast<int>(yoe) + static_cast<int>(era) * 400;
-    const auto doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
-    const auto mp = (5u * doy + 2u) / 153u;
-    d = doy - (153u * mp + 2u) / 5u + 1u;
-    m = mp < 10u ? mp + 3u : mp - 9u;
-    y += m <= 2;
 }

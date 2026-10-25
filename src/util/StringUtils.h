@@ -135,6 +135,12 @@ inline bool endsWithIC(const std::string &s, const char *suf) {
     return sl >= kl && ls.compare(sl - kl, kl, suf) == 0;
 }
 
+/// 取路径的文件名（含扩展名），跨平台支持 / 与 \ 分隔符。
+inline std::string baseName(const std::string &path) {
+    const size_t p = path.find_last_of("/\\");
+    return p == std::string::npos ? path : path.substr(p + 1);
+}
+
 static std::string wideToAcp(const std::wstring &w) {
     if (w.empty()) return {};
     const int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -209,4 +215,35 @@ bool forEachLine(const std::string &path, F &&fn) {
     }
     if (!carry.empty()) fn(std::string_view(carry)); // 末行无换行符
     return true;
+}
+inline std::string fileContentHash(const std::string &path) {
+    // FNV-1a 64
+    auto fnv = [](const char *b, const size_t n, uint64_t h) {
+        for (size_t i = 0; i < n; ++i) {
+            h ^= static_cast<uint8_t>(b[i]);
+            h *= 1099511628211ULL;
+        }
+        return h;
+    };
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return std::string("ERR:") + path;
+    uint64_t h = 1469598103934665603ULL;
+    f.seekg(0, std::ios::end);
+    const std::streamoff sz = f.tellg();
+    f.seekg(0);
+    h = fnv(reinterpret_cast<const char *>(&sz), sizeof(sz), h);
+    constexpr std::streamoff kBlock = 1 << 18;
+    std::vector<char> buf(kBlock);
+    if (const std::streamoff head = std::min<std::streamoff>(sz, kBlock); head > 0) {
+        f.read(buf.data(), head);
+        h = fnv(buf.data(), static_cast<size_t>(f.gcount()), h);
+    }
+    if (sz > 1 << 19) {
+        f.seekg(sz - kBlock);
+        f.read(buf.data(), kBlock);
+        h = fnv(buf.data(), static_cast<size_t>(f.gcount()), h);
+    }
+    char out[20];
+    std::snprintf(out, sizeof(out), "%016llx", static_cast<unsigned long long>(h));
+    return out;
 }
