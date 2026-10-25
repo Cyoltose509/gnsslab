@@ -5,13 +5,14 @@
 #include "widgets/tools/GuiTimeConverter.h"
 #include "widgets/tools/GuiCoordConverter.h"
 #include "widgets/tools/GuiLsqSolver.h"
+#include "widgets/tools/GuiInsPanel.h"
 #include "widgets/tools/GuiFtpDownload.h"
 #include "widgets/solvers/GuiSolverPanel.h"
 #include "widgets/solvers/GuiSppProcessor.h"
 #include "widgets/solvers/GuiPppProcessor.h"
 #include "widgets/solvers/GuiLeoProcessor.h"
 #include "widgets/solvers/GuiRtkProcessor.h"
-#include "widgets/solvers/GuiHelpers.h"   // isSp3Path（旧单栏星历键迁移用）
+#include "widgets/solvers/GuiHelpers.h"
 #include "core/PathMemory.h"
 #include "version.h"
 #include "Log.h"
@@ -24,7 +25,12 @@ namespace {
     void stopAndJoinTasks(TaskList &tasks) {
         for (const auto &task: tasks) {
             task->stop = true;
-            if (const auto c = task->solveResult()) c->stop = true;
+            if (const auto c = task->solveResult()) {
+                c->stop = true;
+                // QC 线程在主线程退出路径上 join（不会 self-join 死锁）；确保其随程序关闭一并结束，
+                // 否则 detached QC 线程可能滞留后台继续算质量分析。
+                if (c->qcWorker.joinable()) c->qcWorker.join();
+            }
         }
         for (const auto &task: tasks) {
             if (task->worker.joinable()) task->worker.join();
@@ -58,7 +64,7 @@ void Application::Shutdown() {
     LOG_INFO << "GnssLab 退出";
     stopAndJoinTasks(m_tasks);
     stopAndJoinTasks(m_closingTasks);
-    GuiFtpDownload::Shutdown();   // 后台下载/扫描线程须在 GUI 销毁前收尾
+    Tools::FtpDownload::Shutdown();   // 后台下载/扫描线程须在 GUI 销毁前收尾
     m_ui.Shutdown();
 }
 
@@ -86,10 +92,14 @@ void Application::RenderMenuBar() {
             ImGui::MenuItem("时间转换", nullptr, &m_showTimeConverter);
             ImGui::MenuItem("坐标转换", nullptr, &m_showCoordConverter);
             ImGui::MenuItem("最小二乘工具", nullptr, &m_showLsqSolver);
+            if (ImGui::BeginMenu("惯导标定与对准")) {
+                if (ImGui::MenuItem("六位置法标定")) OpenInsCalib();
+                if (ImGui::MenuItem("静态解析粗对准")) OpenInsAlign();
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
-        // 下载面板开关：顶级菜单项，放在"工具"右边
-        ImGui::MenuItem("下载", nullptr, &GuiFtpDownload::s_open);
+        ImGui::MenuItem("下载", nullptr, &Tools::FtpDownload::s_open);
         if (ImGui::BeginMenu("帮助")) {
             if (ImGui::MenuItem("关于", nullptr))
                 m_showAbout = true;
@@ -155,7 +165,7 @@ void Application::RenderTaskTabList() {
         if (ImGui::BeginTabItem(label.c_str(), &open, tabFlags)) {
             activeTask = i;
             if (taskToFocus == i) taskToFocus = -1;
-            GuiSolverPanel::RenderTask(task);
+            Solvers::SolverPanel::RenderTask(task);
             ImGui::EndTabItem();
         }
 
@@ -226,15 +236,15 @@ void Application::RenderTasks() {
 }
 
 void Application::OpenSppSolve() {
-    const auto task = std::make_shared<GuiSppProcessor::SppTask>();
+    const auto task = std::make_shared<Solvers::SppProcessor::SppTask>();
     auto &core = *task->core;
 
-    core.obsPathBuf = GnssCore::PathMemory::instance().get("spp_obs");
-    if (!core.obsPathBuf.empty())
-        core.navFiles = GnssTask::ScanNavFiles(core.obsPathBuf);
+    core.obsPathBuf = AppConfig::PathMemory::instance().get("spp_obs");
+    core.brdcPathBuf = AppConfig::PathMemory::instance().get("spp_brdc");
 
-    core.rtIpBuf = GnssCore::PathMemory::instance().get("rt_ip", "47.114.134.129");
-    core.rtPortBuf = GnssCore::PathMemory::instance().get("rt_port", "7190");
+    core.rtEndpoints.resize(1);
+    core.rtEndpoints[0].ip = AppConfig::PathMemory::instance().get("rt_ip", "47.114.134.129");
+    core.rtEndpoints[0].port = AppConfig::PathMemory::instance().get("rt_port", "7190");
 
     LOG_INFO << "[任务] 新建 SPP 配置：观测=" << core.obsPathBuf;
 
@@ -248,18 +258,12 @@ void Application::OpenSppSolve() {
 }
 
 void Application::OpenPppSolve() {
-    const auto task = std::make_shared<GuiPppProcessor::PppTask>();
+    const auto task = std::make_shared<Solvers::PppProcessor::PppTask>();
 
-    const auto &cfg = GnssCore::PathMemory::instance();
+    const auto &cfg = AppConfig::PathMemory::instance();
     task->obsPathBuf = cfg.get("ppp_obs");
     task->sp3PathBuf = cfg.get("ppp_sp3");
     task->brdcPathBuf = cfg.get("ppp_brdc");
-    if (const std::string legacy = cfg.get("ppp_orb"); !legacy.empty()) {
-        // 旧单栏键名按扩展名迁移
-        if (GuiHelpers::isSp3Path(legacy)) { if (task->sp3PathBuf.empty()) task->sp3PathBuf = legacy; } else {
-            if (task->brdcPathBuf.empty()) task->brdcPathBuf = legacy;
-        }
-    }
     task->clkPathBuf = cfg.get("ppp_clk");
     task->osbPathBuf = cfg.get("ppp_osb");
     task->atxPathBuf = cfg.get("ppp_atx");
@@ -279,19 +283,13 @@ void Application::OpenPppSolve() {
 }
 
 void Application::OpenLeoSolve() {
-    const auto task = std::make_shared<GuiLeoProcessor::LeoTask>();
+    const auto task = std::make_shared<Solvers::LeoProcessor::LeoTask>();
 
     // 载入用户上次选择（项目外 ini）；无记录则留空，由用户填写。不再预填默认路径。
-    const auto &cfg = GnssCore::PathMemory::instance();
+    const auto &cfg = AppConfig::PathMemory::instance();
     task->leoObsPathBuf = cfg.get("leo_obs");
     task->gnssSp3PathBuf = cfg.get("leo_gnss_sp3");
     task->gnssBrdcPathBuf = cfg.get("leo_gnss_brdc");
-    if (const std::string legacy = cfg.get("leo_gnss_orb"); !legacy.empty()) {
-        // 旧单栏键名按扩展名迁移
-        if (GuiHelpers::isSp3Path(legacy)) { if (task->gnssSp3PathBuf.empty()) task->gnssSp3PathBuf = legacy; } else {
-            if (task->gnssBrdcPathBuf.empty()) task->gnssBrdcPathBuf = legacy;
-        }
-    }
     task->gnssClkPathBuf = cfg.get("leo_gnss_clk");
     task->osbPathBuf = cfg.get("leo_osb");
     task->atxPathBuf = cfg.get("leo_atx");
@@ -309,10 +307,10 @@ void Application::OpenLeoSolve() {
 }
 
 void Application::OpenRtkSolve() {
-    const auto task = std::make_shared<GuiRtkProcessor::RtkTask>();
+    const auto task = std::make_shared<Solvers::RtkProcessor::RtkTask>();
 
     // 载入用户上次选择（项目外 ini）；无记录则留空，由用户填写。
-    const auto &cfg = GnssCore::PathMemory::instance();
+    const auto &cfg = AppConfig::PathMemory::instance();
     task->baseObsPathBuf = cfg.get("rtk_base");
     task->roverObsPathBuf = cfg.get("rtk_rover");
     task->navPathBuf = cfg.get("rtk_nav");
@@ -329,18 +327,40 @@ void Application::OpenRtkSolve() {
     m_taskToFocus = m_activeTask;
 }
 
+void Application::OpenInsCalib() {
+    const auto task = Tools::InsPanel::MakeSixPosCalibTask();
+    LOG_INFO << "[任务] 新建 六位置法标定 配置";
+    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->loading = false;
+    task->done = false;
+    m_tasks.push_back(task);
+    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
+    m_taskToFocus = m_activeTask;
+}
+
+void Application::OpenInsAlign() {
+    const auto task = Tools::InsPanel::MakeStaticAlignTask();
+    LOG_INFO << "[任务] 新建 静态解析粗对准 配置";
+    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->loading = false;
+    task->done = false;
+    m_tasks.push_back(task);
+    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
+    m_taskToFocus = m_activeTask;
+}
+
 void Application::Render() {
     RenderMenuBar();
 
     // ---- 工具子窗口（浮动） ----
     if (m_showTimeConverter)
-        GuiTimeConverter::Render(&m_showTimeConverter);
+        Tools::TimeConverter::Render(&m_showTimeConverter);
     if (m_showCoordConverter)
-        GuiCoordConverter::Render(&m_showCoordConverter);
+        Tools::CoordConverter::Render(&m_showCoordConverter);
     if (m_showLsqSolver)
-        GuiLsqSolver::Render(&m_showLsqSolver);
-    if (GuiFtpDownload::s_open)
-        GuiFtpDownload::Render(&GuiFtpDownload::s_open);
+        Tools::LsqSolver::Render(&m_showLsqSolver);
+    if (Tools::FtpDownload::s_open)
+        Tools::FtpDownload::Render(&Tools::FtpDownload::s_open);
 
     // ---- 任务内容（全视口标签页） ----
     RenderTasks();

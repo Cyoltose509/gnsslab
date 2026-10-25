@@ -9,7 +9,7 @@ static std::set<char> parseSystems(const std::string &s) {
     return out;
 }
 
-SolveConfig loadConfig(const IniFile &ini) {
+SolveConfig loadConfig(const AppConfig::IniFile &ini) {
     SolveConfig c;
 
     // ---- [input] ----
@@ -20,6 +20,10 @@ SolveConfig loadConfig(const IniFile &ini) {
     c.roverPath = ini.get("input", "rover", "");
     c.ip       = ini.get("input", "ip", "");
     c.port     = ini.getInt("input", "port", 0);
+    c.baseIp   = ini.get("input", "base_ip", c.baseIp);
+    c.basePort = ini.getInt("input", "base_port", c.basePort);
+    c.roverIp  = ini.get("input", "rover_ip", c.roverIp);
+    c.roverPort = ini.getInt("input", "rover_port", c.roverPort);
 
     c.sp3  = ini.get("input", "sp3", "");
     c.clk  = ini.get("input", "clk", "");
@@ -48,9 +52,6 @@ SolveConfig loadConfig(const IniFile &ini) {
     c.useCycleSlip = ini.getInt("solver", "use_cycle_slip", c.useCycleSlip);
     c.useGfCycleSlip = ini.getInt("solver", "use_gf_cycle_slip", c.useGfCycleSlip);
     c.fullCovariance = ini.getInt("solver", "full_covariance", c.fullCovariance);
-    c.satPCO      = ini.getInt("solver", "sat_pco", c.satPCO);
-    c.satPCV      = ini.getInt("solver", "sat_pcv", c.satPCV);
-    c.rcvPCO      = ini.getInt("solver", "rcv_pco", c.rcvPCO);
     c.solidTide   = ini.getInt("solver", "solid_tide", c.solidTide);
     c.kinematic   = ini.getInt("solver", "kinematic", c.kinematic);
     c.posNoise    = ini.getD("solver", "pos_noise", c.posNoise);
@@ -65,10 +66,21 @@ SolveConfig loadConfig(const IniFile &ini) {
     c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
     c.sppVsPredThresh = ini.getD("solver", "spp_vs_pred_thresh", c.sppVsPredThresh);
     c.firstEpochPosVar = ini.getD("solver", "first_epoch_pos_var", c.firstEpochPosVar);
-    c.firstEpochSPP = ini.getInt("solver", "first_epoch_spp", c.firstEpochSPP);
     c.ztdInitValue = ini.getD("solver", "ztd_init", c.ztdInitValue);
     c.ztdInitVar   = ini.getD("solver", "ztd_init_var", c.ztdInitVar);
     c.ambInitVar  = ini.getD("solver", "amb_init_var", c.ambInitVar);
+    c.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.keepAmbMaxGap);
+    c.codeBiasProcNoise = ini.getD("solver", "code_bias_proc_noise", c.codeBiasProcNoise);
+    c.codeBiasInitVar   = ini.getD("solver", "code_bias_init_var", c.codeBiasInitVar);
+    // 逐 GLONASS 星 IFCB 改为「自动规则」：OSB 未覆盖的星才估内部 IFCB，故不再读 estimate_glo_ifcb / estimate_code_bias 开关。
+    c.gloIfcbProcNoise  = ini.getD("solver", "glo_ifcb_proc_noise", c.gloIfcbProcNoise);
+    c.gloIfcbInitVar    = ini.getD("solver", "glo_ifcb_init_var", c.gloIfcbInitVar);
+    // ISB 过程噪声/初方差：标量 isb_proc_noise / isb_init_var。
+    // isbInitVar<=0 ⇒ 未启用 ISB（非参考系统 cdt2~4 走 clock* 白噪声旧口径，逐历元自由重估）。
+    // 默认 RW-ISB：isb_proc_noise=1.0e-3、isb_init_var=1.0（GLONASS 同样走 RW-ISB）。
+    c.isbProcNoise      = ini.getD("solver", "isb_proc_noise", c.isbProcNoise);
+    c.isbInitVar        = ini.getD("solver", "isb_init_var", c.isbInitVar);
+    c.posVarFloor       = ini.getD("solver", "pos_var_floor", c.posVarFloor);
 
     // ---- [output] ----
     c.csvPath = ini.get("output", "csv", "");
