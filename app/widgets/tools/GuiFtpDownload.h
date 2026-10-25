@@ -2,7 +2,7 @@
 
 #include "download/ProductMeta.h"
 
-namespace GuiFtpDownload {
+namespace Tools::FtpDownload {
     extern bool s_open;
 
     void Render(bool *p_open);

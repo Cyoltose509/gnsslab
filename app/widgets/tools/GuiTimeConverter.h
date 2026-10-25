@@ -1,7 +1,7 @@
 #pragma once
 
 
-namespace GuiTimeConverter
+namespace Tools::TimeConverter
 {
     void Render(bool* p_open);
 }

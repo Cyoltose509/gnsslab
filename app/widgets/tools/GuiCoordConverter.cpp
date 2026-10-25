@@ -7,7 +7,7 @@
 #include <cstring>
 #include <cmath>
 
-namespace GuiCoordConverter {
+namespace Tools::CoordConverter {
     // ========== Frame selection ==========
     static const char *FRAME_NAMES[] = {"WGS84", "GPS", "CGCS2000", "PZ90"};
     static constexpr int FRAME_COUNT = 4;
@@ -49,9 +49,9 @@ namespace GuiCoordConverter {
     // ========== Conversions ==========
     static const FrameInfo &CurFrame() { return *FRAMES[s_FrameIdx]; }
 
-    static void SyncXYZtoBLH() {
+    static void SyncXYZToBLH() {
         try {
-            const BLH blh = XYZtoBLH({s_X, s_Y, s_Z}, CurFrame());
+            const BLH blh = XYZToBLH({s_X, s_Y, s_Z}, CurFrame());
             s_B_deg = blh.B() * RAD_TO_DEG;
             s_L_deg = blh.L() * RAD_TO_DEG;
             s_H = blh.H();
@@ -59,9 +59,9 @@ namespace GuiCoordConverter {
         }
     }
 
-    static void SyncBLHtoXYZ() {
+    static void SyncBLHToXYZ() {
         try {
-            XYZ xyz = BLHtoXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
+            XYZ xyz = BLHToXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
             s_X = xyz.X();
             s_Y = xyz.Y();
             s_Z = xyz.Z();
@@ -69,10 +69,10 @@ namespace GuiCoordConverter {
         }
     }
 
-    static void SyncXYZtoENU() {
+    static void SyncXYZToENU() {
         try {
-            const XYZ refXYZ = BLHtoXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
-            const ENU enu = XYZtoENU({s_TgtX, s_TgtY, s_TgtZ}, refXYZ, CurFrame());
+            const XYZ refXYZ = BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
+            const ENU enu = XYZToENU({s_TgtX, s_TgtY, s_TgtZ}, refXYZ, CurFrame());
             s_E = enu.E();
             s_N = enu.N();
             s_U = enu.U();
@@ -80,10 +80,10 @@ namespace GuiCoordConverter {
         }
     }
 
-    static void SyncENUtoXYZ() {
+    static void SyncENUToXYZ() {
         try {
-            const XYZ refXYZ = BLHtoXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
-            const XYZ xyz = ENUtoXYZ({s_E, s_N, s_U}, refXYZ, CurFrame());
+            const XYZ refXYZ = BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
+            const XYZ xyz = ENUToXYZ({s_E, s_N, s_U}, refXYZ, CurFrame());
             s_TgtX = xyz.X();
             s_TgtY = xyz.Y();
             s_TgtZ = xyz.Z();
@@ -114,8 +114,8 @@ namespace GuiCoordConverter {
     void Render(bool *p_open) {
         if (!s_Initialized) {
             s_Initialized = true;
-            SyncXYZtoBLH();
-            SyncXYZtoENU();
+            SyncXYZToBLH();
+            SyncXYZToENU();
         }
 
         ImGui::SetNextWindowSize(ImVec2(560, 340), ImGuiCond_FirstUseEver);
@@ -130,8 +130,8 @@ namespace GuiCoordConverter {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120);
         if (ImGui::Combo("##frame", &s_FrameIdx, FRAME_NAMES, FRAME_COUNT)) {
-            SyncXYZtoBLH();
-            SyncXYZtoENU();
+            SyncXYZToBLH();
+            SyncXYZToENU();
         }
 
         ImGui::Spacing();
@@ -146,10 +146,10 @@ namespace GuiCoordConverter {
 
         if (xyz_edited) {
             s_XyzBlhSrc = 0;
-            SyncXYZtoBLH();
+            SyncXYZToBLH();
         } else if (blh_edited) {
             s_XyzBlhSrc = 1;
-            SyncBLHtoXYZ();
+            SyncBLHToXYZ();
         }
 
         ImGui::Spacing();
@@ -172,15 +172,15 @@ namespace GuiCoordConverter {
 
         if (tgt_edited) {
             s_EnuSrc = 0;
-            SyncXYZtoENU();
+            SyncXYZToENU();
         } else if (enu_edited) {
             s_EnuSrc = 1;
-            SyncENUtoXYZ();
+            SyncENUToXYZ();
         }
 
         if (ref_edited) {
-            if (s_EnuSrc == 0) SyncXYZtoENU();
-            else SyncENUtoXYZ();
+            if (s_EnuSrc == 0) SyncXYZToENU();
+            else SyncENUToXYZ();
         }
 
         ImGui::End();

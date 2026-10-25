@@ -17,7 +17,7 @@
 #include <thread>
 #include <vector>
 
-namespace GuiFtpDownload {
+namespace Tools::FtpDownload {
     bool s_open = false;
 
     // ---------- 静态状态 ----------
@@ -605,4 +605,4 @@ namespace GuiFtpDownload {
         if (s_dlThread.joinable()) s_dlThread.join();
     }
 
-} // namespace GuiFtpDownload
+} // namespace Tools::FtpDownload

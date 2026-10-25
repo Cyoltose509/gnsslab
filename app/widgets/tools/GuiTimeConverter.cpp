@@ -6,7 +6,7 @@
 #include <ctime>
 #include <cstring>
 
-namespace GuiTimeConverter {
+namespace Tools::TimeConverter {
     // ---------- Configuration ----------
     static constexpr int SYS_COUNT = 4;
 

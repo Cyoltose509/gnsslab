@@ -5,15 +5,15 @@
 #include <string>
 #include <algorithm>
 
-namespace GuiLsqSolver {
+namespace Tools::LsqSolver {
     static int s_NumObs = 4;
     static int s_NumUnk = 3;
     static std::vector<double> s_H; // m * n
     static std::vector<double> s_L; // m
     static std::vector<double> s_W; // m * m (Full weight matrix)
 
-    static VectorXd s_X;
-    static MatrixXd s_Q;
+    static Eigen::VectorXd s_X;
+    static Eigen::MatrixXd s_Q;
     static double s_Sigma0 = 0;
     static std::string s_Error;
 
@@ -72,8 +72,8 @@ namespace GuiLsqSolver {
             }
         }
 
-        s_X = VectorXd::Zero(s_NumUnk);
-        s_Q = MatrixXd::Zero(s_NumUnk, s_NumUnk);
+        s_X = Eigen::VectorXd::Zero(s_NumUnk);
+        s_Q = Eigen::MatrixXd::Zero(s_NumUnk, s_NumUnk);
         s_Sigma0 = 0;
     }
 

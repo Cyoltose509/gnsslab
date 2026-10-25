@@ -1,5 +1,5 @@
 #pragma once
 
-namespace GuiLsqSolver {
+namespace Tools::LsqSolver {
     void Render(bool *p_open);
 }

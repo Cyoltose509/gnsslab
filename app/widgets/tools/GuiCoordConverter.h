@@ -1,7 +1,7 @@
 #pragma once
 
 
-namespace GuiCoordConverter
+namespace Tools::CoordConverter
 {
     void Render(bool* p_open);
 }
