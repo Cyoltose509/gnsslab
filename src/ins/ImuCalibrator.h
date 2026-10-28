@@ -14,8 +14,12 @@ struct CalibReport {
     Eigen::Vector3d accelScaleSigma = Eigen::Vector3d::Zero(); // 比例因子 1σ（LSB/(m/s²)，同 accelScaleCounts 单位）
     double accelRms = 0.0; // 六位置拟合残差 RMS（LSB）
     double dt = 0.005; // 采样间隔 (s)
-    Eigen::Vector3d gyroKeff = Eigen::Vector3d::Zero(); // LSB/rad（各轴）
+    Eigen::Vector3d gyroKeff = Eigen::Vector3d::Zero(); // LSB/rad（各轴，= gyroM 对角）
     Eigen::Vector3d gyroBiasPhys = Eigen::Vector3d::Zero(); // 陀螺零偏（rad/s）
+    // 陀螺标定矩阵 M_g 与交轴耦合（选做项）：角位置法正反转相减，
+    // 每个旋转轴 ax 同时累加三轴输出，正反转差即 M_g 第 ax 列。
+    Eigen::Matrix3d gyroM = Eigen::Matrix3d::Zero(); // LSB/rad，行=输出轴，列=输入轴
+    Eigen::Matrix3d gyroCross = Eigen::Matrix3d::Zero(); // 交轴耦合（无量纲，对角置 0）
 
     // M = K (I + S + N)：δs 与 N 同用标称 K_nom（解码当量导出），见 applyNominal()
     Eigen::Matrix3d accelCross = Eigen::Matrix3d::Zero(); // 交轴耦合误差（无量纲，对角置 0）
@@ -91,4 +95,15 @@ public:
 
 
     static void applyNominal(CalibReport &r, double kAccel, double kGyroRad);
+
+    // ---- 误差补偿（完整模型）：GUI 显示 / CSV 导出与后续解算共用的唯一实现 ----
+    // 加计 f = M_a⁻¹(a_raw − b_a)（比例因子与交轴耦合随 M_a⁻¹ 一并纠正，输出 m/s²）；
+    // 陀螺 ω = (I+N_g)⁻¹(g_raw − b_g)（含交轴耦合；LSB 域，转物理单位再除 S_g）。
+    struct CompMat {
+        Eigen::Matrix3d accelMinv; // M_a⁻¹
+        Eigen::Matrix3d gyroIgN;   // (I+N_g)⁻¹
+    };
+    static CompMat compMatrices(const CalibReport &r);
+    static void compensate(const CompMat &m, const CalibReport &r, const ImuSample &s,
+                           Eigen::Vector3d &f, Eigen::Vector3d &w);
 };

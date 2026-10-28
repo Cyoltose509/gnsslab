@@ -41,6 +41,11 @@ public:
 
     bool processEpoch(ObsData &obs) override;
 
+    /// 统一参数注入：仅调 SPP::applyOptions（截止角/系统/ISB）+ leo_cli 实际设置的子集。
+    /// 切勿调 PPPStatic::applyOptions——会覆盖 LEO ctor 的专有值（setTropo(false) /
+    /// mApplySolidTide=false / mUseCycleSlip=false / sigmaPhase·ambNoise·firstEpochPosVar 等）。
+    void applyOptions(const SolverOptions &o) override;
+
 public:
     /// 参考轨道给的是质心 CoM，本类解的是天线相位中心 ARP。
     /// 评测方(harness_leo)需要同口径比较时用它把 CoM 真值转到 ARP；无辅助文件则返回原点。

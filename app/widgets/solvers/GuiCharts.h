@@ -34,14 +34,13 @@ namespace Solvers::Charts {
                        const std::vector<double> &float_e = {},
                        const std::vector<double> &float_n = {},
                        const std::vector<double> &float_u = {},
-                       int epochCount = -1);
+                       int epochCount = -1,
+                       float plotH = 380.0f);   // 绘图区高度；由调用方按容器给，不再写死
 
 
-    void renderENPlanView(const std::vector<double> &enu_e,
-                          const std::vector<double> &enu_n,
-                          const std::vector<double> &enu_solved,
-                          float sizePx,
-                          const std::string &centerLabel);
+    // E-N 平面图（含中心点拖拽）是渲染内部函数，声明在 GuiCharts.cpp 的匿名命名空间里，
+    // 因为它依赖 PosTabView 的完整定义（参考坐标指针 / 回调 / ENU 序列）。
+
 
     void renderRatioPlot(const std::vector<double> &times,
                          const std::vector<double> &ratioVals,
@@ -55,7 +54,7 @@ namespace Solvers::Charts {
                                int &selectedEpoch, int epochCount, bool &newed,
                                const double *codeLo, const double *codeHi,
                                const double *phaseLo, const double *phaseHi,
-                               float plotH = 320.0f);
+                               float plotH = 0.0f);   // 0 = 填满容器剩余高度（默认）
 
     struct SatRowView {
         SatID sat;
@@ -188,6 +187,9 @@ namespace Solvers::Charts {
         // 相位残差（PlotData::satResPhaseTimes/Vals）。残差图有"码/相位"切换，两份都要给；
         // 只有当前选中的那一份会被画，但快照是全量（不许抽稀，见 GuiSolverPanel）。
         std::map<SatID, std::vector<double>> resPhaseT, resPhaseV;
+        // 是否存在可画残差（与当前码/相位模式无关）。判定"要不要画残差图"必须用它：
+        // 切模式只深拷对应那一份，用 resV.empty() 判断会在切相位那一帧误判成"无数据"。
+        bool hasResidualData = false;
         bool robustRes = false; double resYlo = -8, resYhi = 8;
         bool robustResPhase = false; double resPhaseYlo = -0.5, resPhaseYhi = 0.5;
         int *resMode = nullptr;          // 0=码(伪距)残差 1=载波相位残差，指向 SolveTask::resMode

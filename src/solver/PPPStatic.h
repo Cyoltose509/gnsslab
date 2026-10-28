@@ -89,6 +89,10 @@ public:
 
     void setPosVarFloor(const double v) { mConfig.posVarFloor = v; }
 
+    /// 统一参数注入：逐字还原 ppp_cli 的 init lambda（截止角/系统/ISB 走 SPP::applyOptions，
+    /// 其余 PPP 专有参数在此设置），保持 CLI 与 GUI 行为一致。不碰 ekf.clockInitVar。
+    void applyOptions(const SolverOptions &o) override;
+
     void setZtdProcNoise(const double q) { mConfig.ztdProcNoise = q; }
 
     void setAmbInitVar(const double v) { mConfig.ambInitVar = v; }

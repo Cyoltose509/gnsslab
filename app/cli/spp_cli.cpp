@@ -17,18 +17,16 @@
 #include "ObsFormat.h"
 #include "OEM7SocketReader.h"
 #include "Log.h"
-#include "core/SolveConfig.h"
+#include "SolverOptions.h"
 #include "CliCommon.h"
 #include "SolveDriver.h"
 #include "core/IniFile.h"
 
 namespace {
-    void runSppFile(const SolveConfig &cfg) {
+    void runSppFile(const SolverOptions &cfg) {
         std::vector<GnssTask::EpochData> epochs;
         SPP spp;
-        spp.setCutoffElevDeg(cfg.cutoffDeg);
-        spp.setEnabledSystems(cfg.systems);
-        spp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar);
+        spp.applyOptions(cfg);
 
         std::vector<std::string> navs;
         if (!cfg.navPath.empty()) navs.push_back(cfg.navPath);
@@ -41,8 +39,7 @@ namespace {
 
         Eigen::Vector3d ref(0, 0, 0);
 
-        const auto fmt = GnssTask::classifyObsPath(cfg.obsPath);
-        if (fmt == GnssTask::ObsFormat::Oem7) {
+        if (const auto fmt = GnssTask::classifyObsPath(cfg.obsPath); fmt == GnssTask::ObsFormat::Oem7) {
             SolveDriver::Oem7FileSource src;
             if (!src.open(cfg.obsPath)) {
                 std::cerr << "SPP 无法打开 OEM7: " << cfg.obsPath << "\n";
@@ -70,12 +67,10 @@ namespace {
         Cli::dumpCsv(epochs, GnssTask::SolverMode::Spp, ref, false, cfg);
     }
 
-    void runSppRealtime(const SolveConfig &cfg) {
+    void runSppRealtime(const SolverOptions &cfg) {
         std::vector<GnssTask::EpochData> epochs;
         SPP spp;
-        spp.setCutoffElevDeg(cfg.cutoffDeg);
-        spp.setEnabledSystems(cfg.systems);
-        spp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar);
+        spp.applyOptions(cfg);
 
         std::atomic stop{false};
         std::thread waiter;
@@ -119,8 +114,7 @@ namespace {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
-                    auto eph = reader.ephSnapshot();
-                    if (eph) spp.ephTable = *eph;
+                    if (auto eph = reader.ephSnapshot()) spp.ephTable = *eph;
                     try { spp.preprocess(obs); } catch (...) {
                     }
                     GnssTask::EpochData data;
@@ -149,14 +143,14 @@ namespace {
     }
 }
 
-int main(int argc, char **argv) {
-    std::string ini = argc > 1 ? argv[1] : "spp.ini";
+int main(const int argc, char **argv) {
+    const std::string ini = argc > 1 ? argv[1] : "spp.ini";
     AppConfig::IniFile f;
     if (!f.load(ini)) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolveConfig cfg = loadConfig(f);
+    const SolverOptions cfg = loadConfig(f);
     Log::init("cli_gnsslab.log");
     std::cout << "[SPP] 模式=" << cfg.source << " obs=" << cfg.obsPath
             << " nav=" << (cfg.navPath.empty() ? "(伴生自动扫描)" : cfg.navPath) << "\n";

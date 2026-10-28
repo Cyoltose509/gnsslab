@@ -1098,3 +1098,31 @@ bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
 }
 
 PPPStatic::~PPPStatic() = default;
+
+void PPPStatic::applyOptions(const SolverOptions &o) {
+    // 基础段（SPP 级）：截止角 / 系统 / ISB
+    SPP::applyOptions(o);
+    // PPP 专有段：逐字还原 ppp_cli 的 init lambda，保证 CLI 与 GUI 行为一致。
+    // 注意：不碰 ekf.clockInitVar（由 ctor 设定，CLI 也不改）。
+    mApplySolidTide = o.solidTide != 0;
+    setMeasNoise(o.sigIFCode, o.sigPhase);
+    setFirstEpochPosVar(o.firstEpochPosVar);
+    setTropo(true, o.ztdInitValue, o.ztdInitVar, o.ztdQ);
+    setAmbInitVar(o.ambInitVar);
+    setZtdProcNoise(o.ztdQ);
+    setZtdPriorSigma(o.ztdPrior);
+    if (o.kinematic) setPosProcNoise(o.posNoise);
+    else             setPosProcNoise(o.staticPosNoise);
+    setPosVarFloor(o.posVarFloor);
+    setAmbProcNoise(o.ambQ);
+    setTroZtdSigma(o.troZtdSigma);
+    mUseAR = o.useAR != 0;
+    mUseCycleSlip = o.useCycleSlip != 0;
+    mUseTroGrad = o.useTroGrad != 0;
+    mTropoMap = o.tropoMap;
+    mApplyWindup = o.applyWindup != 0;
+    setCodeBiasProcNoise(o.codeBiasProcNoise, o.codeBiasInitVar);
+    setGloIfcbProcNoise(o.gloIfcbProcNoise, o.gloIfcbInitVar);
+    setIsbProcNoise(o.isbProcNoise, o.isbInitVar);
+    setKeepAmbMaxGap(o.keepAmbMaxGap);
+}

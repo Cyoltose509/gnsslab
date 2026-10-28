@@ -48,6 +48,7 @@ set(LIB_SOURCES
         core/FreqCombo.cpp
         core/CycleSlip.h
         core/CycleSlip.cpp
+        solver/SolverOptions.h
         solver/SPP.h
         solver/SPP.cpp
         solver/PPPStatic.h

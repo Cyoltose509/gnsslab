@@ -57,6 +57,22 @@ namespace SolveDriver {
         }
     }
 
+    /// 把一个已解算的 RTK 历元提交到结果表；首历元顺带锁存基准站坐标为参考点。
+    /// 文件模式（ReaderThread/SolverThread）与实时模式（RTK 双流会话）共用。
+    inline void commitRtk(const std::shared_ptr<GnssTask::SolveTask> &core, const RTK &rtk,
+                          const ObsData &rover) {
+        GnssTask::EpochData data;
+        data.getFromObs(rover);
+        feedRtk(data, rtk);
+        const Eigen::Vector3d baseXyz = rtk.mBaseXyz;
+        GnssTask::CommitEpoch(core, std::move(data), [&](int, GnssTask::EpochData &) {
+            if (!core->initializedRefECEF) {
+                core->refECEF = XYZ(baseXyz.x(), baseXyz.y(), baseXyz.z());
+                core->initializedRefECEF = true;
+            }
+        });
+    }
+
     template<typename Solver, typename OnEpoch, typename BeforeSolve>
     void solveStream(ObsSource &src, Solver &solver, OnEpoch onEpoch, BeforeSolve beforeSolve) {
         GnssTask::ObsItem item;

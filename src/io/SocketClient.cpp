@@ -1,7 +1,7 @@
 #include "SocketClient.h"
 #include "Const.h"
 
-bool SocketClient::connect(const std::string& ip, const unsigned short port) {
+bool SocketClient::connect(const std::string &ip, const unsigned short port) {
     init_winsock();
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -18,8 +18,6 @@ bool SocketClient::connect(const std::string& ip, const unsigned short port) {
         return false;
     }
 
-    // 非阻塞连接 + select 超时：避免关闭程序时实时线程卡在 connect()（默认 TCP 重传超时可达数十秒），
-    // 否则 stop 已置位也无法退出，进程残留后台。
 #ifdef _WIN32
     u_long nonBlock = 1;
     ioctlsocket(sock, FIONBIO, &nonBlock);
@@ -28,7 +26,7 @@ bool SocketClient::connect(const std::string& ip, const unsigned short port) {
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    if (socket_connect(sock, reinterpret_cast<sockaddr*>(&addrSrv), sizeof(addrSrv)) < 0) {
+    if (socket_connect(sock, reinterpret_cast<sockaddr *>(&addrSrv), sizeof(addrSrv)) < 0) {
 #ifdef _WIN32
         const int err = WSAGetLastError();
 #else
@@ -55,7 +53,7 @@ bool SocketClient::connect(const std::string& ip, const unsigned short port) {
     }
     int errCode = 0;
     int len = sizeof(errCode);
-    getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&errCode), &len);
+    getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&errCode), &len);
     if (errCode != 0) {
         socket_close(sock);
         sock = SOCKET_INVALID;
@@ -104,10 +102,13 @@ void SocketClient::close() {
 
 bool SocketClient::setReceiveTimeout(const int timeoutMs) {
     if (sock == SOCKET_INVALID) return false;
+    recvTimeoutMs = timeoutMs;
 
+    // 仍尽量设置 SO_RCVTIMEO 作为次级保护；但实测在某些 Windows 环境 recv() 不会按此超时返回，
+    // 因此 receive() 主动用 select/poll 做有界等待，保证最长阻塞不超过 recvTimeoutMs。
 #ifdef _WIN32
     const int tv = timeoutMs;
-    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv)) == 0;
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&tv), sizeof(tv)) == 0;
 #else
     struct timeval tv;
     tv.tv_sec = timeoutMs / MS_PER_SEC;
@@ -116,11 +117,34 @@ bool SocketClient::setReceiveTimeout(const int timeoutMs) {
 #endif
 }
 
-int SocketClient::receive(unsigned char* buffer, const int maxLen) {
+int SocketClient::receive(unsigned char *buffer, const int maxLen, const int timeoutMs) {
     if (!connected || sock == SOCKET_INVALID) {
         return -1;
     }
-    const int ret = socket_receive(sock, reinterpret_cast<char*>(buffer), maxLen);
+
+    if (const int effTimeout = timeoutMs >= 0 ? timeoutMs : recvTimeoutMs; effTimeout >= 0) {
+#ifdef _WIN32
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(sock, &rfds);
+        timeval tv;
+        tv.tv_sec = effTimeout / 1000;
+        tv.tv_usec = effTimeout % 1000 * 1000;
+        if (const int sel = select(0, &rfds, nullptr, nullptr, &tv); sel <= 0) {
+            return -1; // 超时或异常：上层当作"本帧未就绪"，由泵决定重试
+        }
+#else
+        pollfd pfd{};
+        pfd.fd = sock;
+        pfd.events = POLLIN;
+        const int sel = poll(&pfd, 1, effTimeout);
+        if (sel <= 0) {
+            return -1;
+        }
+#endif
+    }
+
+    const int ret = socket_receive(sock, reinterpret_cast<char *>(buffer), maxLen);
     if (ret == 0) {
         connected = false;
     } else if (ret < 0) {

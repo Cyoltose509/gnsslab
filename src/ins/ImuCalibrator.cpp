@@ -15,7 +15,7 @@ namespace {
             ax = 1;
         }
         if (std::fabs(c) > m) {
-            m = std::fabs(c);
+            m = std::fabs(c); //NOLINT
             ax = 2;
         }
         const double v = ax == 0 ? a : ax == 1 ? b : c;
@@ -26,25 +26,27 @@ namespace {
 
 Eigen::Vector3d ImuCalibrator::posForce(const Pos p, const double g) {
     switch (p) {
-        case XUP: return { g, 0, 0};
+        case XUP: return {g, 0, 0};
         case XDN: return {-g, 0, 0};
-        case YUP: return { 0, g, 0};
-        case YDN: return { 0,-g, 0};
-        case ZUP: return { 0, 0, g};
-        case ZDN: return { 0, 0,-g};
+        case YUP: return {0, g, 0};
+        case YDN: return {0, -g, 0};
+        case ZUP: return {0, 0, g};
+        case ZDN: return {0, 0, -g};
     }
     return Eigen::Vector3d::Zero();
 }
 
 void ImuCalibrator::rawMean(const ImuLog &log, Eigen::Vector3d &acc, Eigen::Vector3d &gyr) {
-    acc.setZero(); gyr.setZero();
+    acc.setZero();
+    gyr.setZero();
     if (log.empty()) return;
-    for (const auto &s : log) {
+    for (const auto &s: log) {
         acc += Eigen::Vector3d(s.ax, s.ay, s.az);
         gyr += Eigen::Vector3d(s.gx, s.gy, s.gz);
     }
     const auto n = static_cast<double>(log.size());
-    acc /= n; gyr /= n;
+    acc /= n;
+    gyr /= n;
 }
 
 double ImuCalibrator::medianDt(const ImuLog &log, const double fallback) {
@@ -69,7 +71,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
 
     static const std::string kStation = "imu_calib";
     const Variable vSx(kStation, Parameter::dX), vSy(kStation, Parameter::dY),
-                   vSz(kStation, Parameter::dZ), vB(kStation, Parameter::cdt);
+            vSz(kStation, Parameter::dZ), vB(kStation, Parameter::cdt);
     SolverLSQ lsq;
     for (int k = 0; k < 3; ++k) {
         EquSys equ;
@@ -114,8 +116,8 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
 
     int nPos[6] = {0, 0, 0, 0, 0, 0};
     int nRot[6] = {0, 0, 0, 0, 0, 0};
-    for (const auto &[fst, snd] : seg.pos) nPos[static_cast<int>(fst)]++;
-    for (const auto &[fst, snd] : seg.rot) nRot[static_cast<int>(fst)]++;
+    for (const auto &[fst, snd]: seg.pos) nPos[static_cast<int>(fst)]++;
+    for (const auto &[fst, snd]: seg.rot) nRot[static_cast<int>(fst)]++;
 
     std::string miss;
     for (int p = 0; p < 6; ++p)
@@ -135,7 +137,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     raw.reserve(seg.pos.size());
     f.reserve(seg.pos.size());
     w.reserve(seg.pos.size());
-    for (const auto &[fst, samples] : seg.pos) {
+    for (const auto &[fst, samples]: seg.pos) {
         Eigen::Vector3d acc, gyr;
         rawMean(samples, acc, gyr);
         raw.push_back(acc);
@@ -151,48 +153,64 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     r.accelScaleCounts = r.calib.accelM.diagonal();
     r.accelScaleG = r.accelScaleCounts * g;
 
-    // N 的归一化基准最终取标称 K_nom（见 applyNominal）；此处先用三轴均值兜底，
-    // 保证未调用 applyNominal 时 N 也有值，之后被覆写为同一基准。
-    const double knorm = r.accelScaleCounts.mean();
-    if (knorm != 0.0) {
+    if (const double knorm = r.accelScaleCounts.mean(); knorm != 0.0) {
         r.accelCross = r.calib.accelM / knorm;
-        r.accelCross.diagonal().setZero(); // 对角已归入 δs，交轴耦合只取非对角
+        r.accelCross.diagonal().setZero();
     }
-    r.accelBiasPhys = r.calib.accelM.inverse() * r.calib.accelB; // 等效输入比力误差 (m/s²)
+    r.accelBiasPhys = r.calib.accelM.inverse() * r.calib.accelB;
 
     //陀螺零偏
     Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero();
     for (int ax = 0; ax < 3; ++ax) {
         double sumUp = 0.0, sumDn = 0.0, wUp = 0.0, wDn = 0.0;
         int nUp = 0, nDn = 0;
-        for (const auto &[p, samples] : seg.pos) {
+        for (const auto &[p, samples]: seg.pos) {
             Eigen::Vector3d acc, gyr;
             rawMean(samples, acc, gyr);
             const auto wt = static_cast<double>(samples.size());
-            if (p == 2 * ax) { sumUp += gyr(ax) * wt; wUp += wt; ++nUp; }
-            else if (p == 2 * ax + 1) { sumDn += gyr(ax) * wt; wDn += wt; ++nDn; }
+            if (p == 2 * ax) {
+                sumUp += gyr(ax) * wt;
+                wUp += wt;
+                ++nUp;
+            } else if (p == 2 * ax + 1) {
+                sumDn += gyr(ax) * wt;
+                wDn += wt;
+                ++nDn;
+            }
         }
         if (wUp > 0.0 && wDn > 0.0)
             gyroBias(ax) = 0.5 * (sumUp / wUp + sumDn / wDn);
     }
 
-    //陀螺比例因子
+    // 陀螺比例因子 + 交轴耦合
+    Eigen::Matrix3d gyroM = Eigen::Matrix3d::Zero();
     for (int ax = 0; ax < 3; ++ax) {
-        const double b = gyroBias(ax);
-        double s1 = 0.0, s2 = 0.0;
+        double s1[3] = {0.0, 0.0, 0.0}, s2[3] = {0.0, 0.0, 0.0};
         int nSeg = 0;
-        for (const auto &[rr, samples] : seg.rot) {
+        for (const auto &[rr, samples]: seg.rot) {
             if (rr != 2 * ax && rr != 2 * ax + 1) continue;
             ++nSeg;
-            for (const auto &s : samples) {
+            for (const auto &s: samples) {
                 const int32_t v[3] = {s.gx, s.gy, s.gz};
-                const double val = v[ax] - b;
-                if (rr == 2 * ax) s1 += val;
-                else s2 += val;
+                for (int i = 0; i < 3; ++i) {
+                    const double val = static_cast<double>(v[i]) - gyroBias(i);
+                    if (rr == 2 * ax) s1[i] += val;
+                    else s2[i] += val;
+                }
             }
             r.nRot[rr] += static_cast<int>(samples.size());
         }
-        r.gyroKeff(ax) = nSeg > 0 ? (s1 - s2) / (turnAngle * nSeg) : 0.0;
+        for (int i = 0; i < 3; ++i)
+            gyroM(i, ax) = nSeg > 0 ? (s1[i] - s2[i]) / (turnAngle * nSeg) : 0.0;
+    }
+    r.gyroM = gyroM;
+    r.gyroKeff = gyroM.diagonal(); // 对角 = 各轴有效比例因子
+    {
+        // 交轴耦合归一化兜底（applyNominal 会用标称 K_eff,nom 覆写）
+        if (const double gnorm = r.gyroKeff.mean(); gnorm != 0.0) {
+            r.gyroCross = gyroM / gnorm;
+            r.gyroCross.diagonal().setZero();
+        }
     }
     r.calib.gyroBias = gyroBias;
 
@@ -213,9 +231,10 @@ void ImuCalibrator::applyNominal(CalibReport &r, const double kAccel, const doub
     r.nominalKeff = kG;
     r.accelDeltaS = r.accelScaleCounts / kA - Eigen::Vector3d::Ones();
     r.gyroDeltaS = r.gyroKeff / kG - Eigen::Vector3d::Ones();
-    // N 与 δs 用同一基准，保证 M = K_nom (I + S + N) 自洽
     r.accelCross = r.calib.accelM / kA;
     r.accelCross.diagonal().setZero();
+    r.gyroCross = r.gyroM / kG;
+    r.gyroCross.diagonal().setZero();
 }
 
 std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log) {
@@ -227,12 +246,16 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
     std::vector<double> m(N), am(N);
     for (size_t i = 0; i < N; ++i) {
         const auto &s = log[i];
-        m[i] = std::max({std::fabs(static_cast<double>(s.gx)),
-                         std::fabs(static_cast<double>(s.gy)),
-                         std::fabs(static_cast<double>(s.gz))});
-        am[i] = std::max({std::fabs(static_cast<double>(s.ax)),
-                          std::fabs(static_cast<double>(s.ay)),
-                          std::fabs(static_cast<double>(s.az))});
+        m[i] = std::max({
+            std::fabs(static_cast<double>(s.gx)),
+            std::fabs(static_cast<double>(s.gy)),
+            std::fabs(static_cast<double>(s.gz))
+        });
+        am[i] = std::max({
+            std::fabs(static_cast<double>(s.ax)),
+            std::fabs(static_cast<double>(s.ay)),
+            std::fabs(static_cast<double>(s.az))
+        });
     }
     // 百分位（排序副本）
     auto pctOf = [](const std::vector<double> &v, const double q) {
@@ -341,3 +364,15 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
     return segs;
 }
 
+ImuCalibrator::CompMat ImuCalibrator::compMatrices(const CalibReport &r) {
+    CompMat m;
+    m.accelMinv = r.calib.accelM.inverse();
+    m.gyroIgN = (Eigen::Matrix3d::Identity() + r.gyroCross).inverse();
+    return m;
+}
+
+void ImuCalibrator::compensate(const CompMat &m, const CalibReport &r, const ImuSample &s,
+                               Eigen::Vector3d &f, Eigen::Vector3d &w) {
+    f = m.accelMinv * (Eigen::Vector3d(s.ax, s.ay, s.az) - r.calib.accelB);
+    w = m.gyroIgN * (Eigen::Vector3d(s.gx, s.gy, s.gz) - r.calib.gyroBias);
+}

@@ -2,6 +2,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include "SolverTask.h"
+#include "SolverOptions.h"   // 统一参数对象：RunSingleStationSolve 构造 opts 注入解算器
 
 #include "RinexObsReader.h"
 #include "OEM7Reader.h"
@@ -150,8 +151,14 @@ namespace GnssTask {
             LOG_INFO << "[解算] 开始: 截止高度角 " << core->cutoffDeg << "°, 系统="
                     << (sys.empty() ? std::string("全部") : sys);
 
-            solver.setCutoffElevDeg(core->cutoffDeg);
-            solver.setEnabledSystems(core->enabledSystems);
+            // 统一参数注入：GUI 仅暴露 截止角/星座 两个旋钮（其余取 SolverOptions 默认 =
+            // RTKLIB 常量，与 CLI 一致），并透传 kinematic 开关（仅 PPP 用到）。
+            // 顺带修复了此前 GUI PPP 路径不灌解算参数、与 CLI 结果不一致的 bug。
+            SolverOptions opts;
+            opts.cutoffDeg = core->cutoffDeg;
+            opts.systems = core->enabledSystems;
+            opts.kinematic = job->wantsKinematic();
+            solver.applyOptions(opts);
             if (!job->initSolver(&solver)) {
                 LOG_ERROR << "[解算] 解算器初始化失败（产品加载返回 false）";
                 core->solvingDone = true;

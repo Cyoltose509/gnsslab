@@ -7,6 +7,7 @@
 #include "RinexNavStore.h"   // loadBrdc：广播星历加载（与 PPP 一致，类内加载）
 #include "FreqCombo.h"
 #include "Weight.h"
+#include "SolverOptions.h"   // 统一参数对象：applyOptions 注入
 #include <Eigen/Eigen>
 #include <set>
 
@@ -87,6 +88,10 @@ public:
     }
 
     void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
+
+    /// 统一参数注入入口：把 SolverOptions 灌入本解算器。
+    /// SPP 级只设截止角/系统/ISB；派生类（PPP/LEO）覆盖以追加专有参数。
+    virtual void applyOptions(const SolverOptions &o);
 
     virtual bool processEpoch(ObsData &obsData);
 

@@ -594,3 +594,17 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
                                           std::sqrt(solverFix.covMatrix(2, 2)));
     return true;
 }
+
+void RTK::applyOptions(const SolverOptions &o) {
+    // 把 SolverOptions 转回 RTK::Config：仅覆盖 CLI/GUI 实际设置的字段，
+    // 其余 RTK::Config 默认值（arThreshold / minSinElev / convEps / maxIter* /
+    // minSats / codeOverPhaseVar / excludeGeoRef / phaseWeight）保留。
+    Config rc;
+    rc.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
+    rc.enabledSystems = o.systems;
+    rc.useAR = o.useAR != 0;
+    rc.useCycleSlip = o.useCycleSlip != 0;
+    rc.useGfCycleSlip = o.useGfCycleSlip != 0;
+    rc.fullCovariance = o.fullCovariance != 0;
+    setConfig(rc);
+}

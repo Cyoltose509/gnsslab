@@ -18,7 +18,7 @@ public:
 
     virtual void close();
 
-    bool getNextEpoch(ObsData &obs);
+    bool getNextEpoch(ObsData &obs, bool block = true);
 
     bool getNextImu(ImuSample &s) {
         std::vector<uint8_t> message;
@@ -73,7 +73,7 @@ protected:
     ImuLog mImuLog; // IMU 累积缓存（与 currentObs 同构：parseImu 写入、getImuLog 读出）
     Eigen::Vector3d antennaPosition{0, 0, 0}; // 默认值
 
-    virtual bool getNextMessage(std::vector<uint8_t> &message);
+    virtual bool getNextMessage(std::vector<uint8_t> &message, bool block = true);
 
     bool parseGNSSMessage(const std::vector<uint8_t> &message);
 

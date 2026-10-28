@@ -118,6 +118,27 @@ namespace Tools::InsPanel::insui {
             }
         }
 
+        // 补偿结果显示：画三段补偿序列（t 应为相对时间，单位自定）
+        inline void drawCompChart(const char *title, const std::vector<double> &t,
+                                  const std::vector<double> &a, const std::vector<double> &b,
+                                  const std::vector<double> &c, const bool chartNew) {
+            if (t.empty() || a.empty()) {
+                ImGui::TextDisabled("（无数据）");
+                return;
+            }
+            const int n = static_cast<int>(t.size());
+            if (ImPlot::BeginPlot(title, ImVec2(-1, kFileChartH))) {
+                ImPlot::SetupAxes("时间 t (s)", "值");
+                ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
+                const double xmax = t.back() - t.front();
+                fitXToLatest(chartNew, xmax);
+                ImPlot::PlotLine("X", t.data(), a.data(), n, lineSpec(kColX));
+                ImPlot::PlotLine("Y", t.data(), b.data(), n, lineSpec(kColY));
+                ImPlot::PlotLine("Z", t.data(), c.data(), n, lineSpec(kColZ));
+                ImPlot::EndPlot();
+            }
+        }
+
         inline void drawScaleBars(const char *title, const bool ready, const double v[3], const ImVec4 &fill,
                            const char *fmt = "%.1f") {
             if (ImPlot::BeginPlot(title, ImVec2(-1, kChartHeight))) {

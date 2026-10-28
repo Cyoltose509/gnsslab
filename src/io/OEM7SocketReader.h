@@ -14,14 +14,14 @@ public:
     void close() override;
 
     bool isConnected() const { return socketClient.isConnected(); }
+    bool isStale(const std::chrono::milliseconds ms) const { return socketClient.idleTooLong(ms); }
 
-    // 半开连接检测：超过 ms 未收到任何数据即视为对端已失联，应触发重连
-    bool isStale(std::chrono::milliseconds ms) const { return socketClient.idleTooLong(ms); }
+    bool setReceiveTimeout(const int timeoutMs) { return socketClient.setReceiveTimeout(timeoutMs); }
 
-    bool setReceiveTimeout(int timeoutMs) { return socketClient.setReceiveTimeout(timeoutMs); }
-
-    bool getNextMessage(std::vector<uint8_t> &message) override;
+    bool getNextMessage(std::vector<uint8_t> &message, bool block = true) override;
 
 private:
     SocketClient socketClient;
+
+    static constexpr size_t kMaxFrameBytes = 16384;
 };

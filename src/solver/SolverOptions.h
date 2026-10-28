@@ -1,10 +1,9 @@
 #pragma once
+
 #include <set>
 #include <string>
 
-namespace AppConfig { struct IniFile; }
-
-struct SolveConfig {
+struct SolverOptions {
     std::string source = "file";
     std::string obsPath;
     std::string navPath;
@@ -22,7 +21,7 @@ struct SolveConfig {
     int realtimeSec = 0;
     int maxEpochs = 0;
 
-
+    // —— 解算器参数（applyOptions 注入） ——
     double cutoffDeg = 15.0;
     std::set<char> systems{'G', 'C'};
     double sigIFCode = 1.273, sigPhase = 0.01273;
@@ -57,12 +56,10 @@ struct SolveConfig {
     double isbInitVar = 1.0;
     double posVarFloor = 1.0E-6;
 
-
+    // —— 输出 ——
     std::string csvPath;
     double refX = 0, refY = 0, refZ = 0;
     bool hasRef = false;
 
     double baseCoordX = 0, baseCoordY = 0, baseCoordZ = 0;
 };
-
-SolveConfig loadConfig(const AppConfig::IniFile &ini);

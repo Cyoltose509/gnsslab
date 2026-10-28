@@ -98,6 +98,9 @@ namespace GnssTask {
 
         virtual void beforeSolveEpoch(void *solver, ObsItem *item);
 
+        /// 解算器参数注入时是否走运动学分支（仅 PPP 用到）。默认 false。
+        virtual bool wantsKinematic() const { return false; }
+
         std::shared_ptr<EphemerisTable> lastGoodEph;
 
         virtual bool afterSolveEpoch(void *solver, EpochData *data, ObsItem *item, int index);

@@ -464,3 +464,10 @@ void SPP::computeElevAzim() {
         satAzimData[sat] = a;
     }
 }
+
+void SPP::applyOptions(const SolverOptions &o) {
+    // SPP 级参数：截止角 / 系统 / ISB（与 CLI spp_cli 手写一致）
+    setCutoffElevDeg(o.cutoffDeg);
+    setEnabledSystems(o.systems);
+    setIsbProcNoise(o.isbProcNoise, o.isbInitVar);
+}

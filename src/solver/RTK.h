@@ -7,6 +7,7 @@
 #include "Ephemeris.h"
 #include "CycleSlip.h"
 #include "Weight.h"
+#include "SolverOptions.h"   // 统一参数对象：applyOptions 注入
 #include <Eigen/Eigen>
 #include <map>
 #include <set>
@@ -49,6 +50,10 @@ public:
 
 
     void setConfig(const Config &c) { mConfig = c; }
+
+    /// 统一参数注入：把 SolverOptions 转回 RTK::Config（仅覆盖 CLI/GUI 实际设置的字段，
+    /// 其余 RTK::Config 默认值保留），等价于原先手填 RTK::Config 的写法。
+    void applyOptions(const SolverOptions &o);
 
     /// 选参考星
     static std::optional<SatID> selectRtkRefSat(const std::vector<SatID> &candidates,

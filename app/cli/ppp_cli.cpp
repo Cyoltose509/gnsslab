@@ -9,13 +9,13 @@
 #include "PPPKinematic.h"
 #include "ObsFormat.h"
 #include "Log.h"
-#include "core/SolveConfig.h"
+#include "SolverOptions.h"
 #include "CliCommon.h"
 #include "SolveDriver.h"
 #include "core/IniFile.h"
 
 namespace {
-    void runPpp(const SolveConfig &cfg) {
+    void runPpp(const SolverOptions &cfg) {
         std::vector<GnssTask::EpochData> epochs;
 
         auto init = [&](auto &ppp) -> bool {
@@ -28,29 +28,8 @@ namespace {
             if (!cfg.tro.empty()) ppp.loadTro(cfg.tro);
             if (!cfg.ionex.empty()) ppp.loadIonex(cfg.ionex);
 
-            ppp.mApplySolidTide = cfg.solidTide != 0;
-            ppp.setMeasNoise(cfg.sigIFCode, cfg.sigPhase);
-            ppp.setFirstEpochPosVar(cfg.firstEpochPosVar);
-            ppp.setTropo(true, cfg.ztdInitValue, cfg.ztdInitVar, cfg.ztdQ);
-            ppp.setAmbInitVar(cfg.ambInitVar);
-            ppp.setZtdProcNoise(cfg.ztdQ);
-            ppp.setZtdPriorSigma(cfg.ztdPrior);
-            if (cfg.kinematic) ppp.setPosProcNoise(cfg.posNoise);
-            else ppp.setPosProcNoise(cfg.staticPosNoise);
-            ppp.setPosVarFloor(cfg.posVarFloor);
-            ppp.setEnabledSystems(cfg.systems);
-            ppp.setCutoffElevDeg(cfg.cutoffDeg);
-            ppp.setAmbProcNoise(cfg.ambQ);
-            ppp.setTroZtdSigma(cfg.troZtdSigma);
-            ppp.mUseAR = cfg.useAR != 0;
-            ppp.mUseCycleSlip = cfg.useCycleSlip != 0;
-            ppp.mUseTroGrad = cfg.useTroGrad != 0;
-            ppp.mTropoMap = cfg.tropoMap;
-            ppp.mApplyWindup = cfg.applyWindup != 0;
-            ppp.setCodeBiasProcNoise(cfg.codeBiasProcNoise, cfg.codeBiasInitVar);
-            ppp.setGloIfcbProcNoise(cfg.gloIfcbProcNoise, cfg.gloIfcbInitVar);
-            ppp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar);
-            ppp.setKeepAmbMaxGap(cfg.keepAmbMaxGap);
+            // 统一参数注入：PPPStatic::applyOptions 逐字还原原先的 ~21 项手写设置。
+            ppp.applyOptions(cfg);
             return true;
         };
 
@@ -64,8 +43,7 @@ namespace {
         SolveDriver::RinexFileSource rsrc;
         SolveDriver::Oem7FileSource osrc;
         SolveDriver::ObsSource *src = nullptr;
-        const auto fmt = GnssTask::classifyObsPath(cfg.obsPath);
-        if (fmt == GnssTask::ObsFormat::Oem7) {
+        if (const auto fmt = GnssTask::classifyObsPath(cfg.obsPath); fmt == GnssTask::ObsFormat::Oem7) {
             if (!osrc.open(cfg.obsPath)) {
                 std::cerr << "PPP 无法打开 OEM7: " << cfg.obsPath << "\n";
                 Cli::dumpEmpty(GnssTask::SolverMode::Ppp, cfg);
@@ -81,7 +59,7 @@ namespace {
             src = &rsrc;
         } else {
             std::cerr << "PPP 无法识别观测文件格式: "
-                      << cfg.obsPath << "\n";
+                    << cfg.obsPath << "\n";
             Cli::dumpEmpty(GnssTask::SolverMode::Ppp, cfg);
             return;
         }
@@ -109,7 +87,7 @@ int main(const int argc, char **argv) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolveConfig cfg = loadConfig(f);
+    const SolverOptions cfg = loadConfig(f);
     Log::init("cli_gnsslab.log");
     std::cout << "[PPP] obs=" << cfg.obsPath
             << " 运动学=" << (cfg.kinematic ? "是" : "否") << "\n";

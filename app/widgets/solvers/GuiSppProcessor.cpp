@@ -10,7 +10,7 @@
 #include <sstream>
 #include <thread>
 #include "Log.h"
-#include "GuiRealtimeProcessor.h"
+#include "GuiRealtime.h"
 
 namespace Solvers::SppProcessor {
     void SppTask::renderConfigPanel() {
@@ -60,16 +60,15 @@ namespace Solvers::SppProcessor {
                         pm.set("rt_port", port);
                         pm.setNum("spp_cutoff", core->cutoffDeg);
                         pm.set("spp_systems", GnssTask::sysSetToString(core->enabledSystems));
-                        RealtimeProcessor::ConnectionConfig config;
-                        config.ip = ip;
-                        config.port = std::atoi(port.c_str()); //NOLINT
                         state = State::Running;
                         loading = true;
                         core->loading = true;
                         if (worker.joinable()) worker.join();
                         this->stop = false; // 与 RTK 实时一致：双停止标志都清
                         core->stop = false;
-                        this->worker = std::thread(RealtimeProcessor::SolveRealtimeThread, this->core, config);
+                        this->worker = std::thread(Realtime::RunSpp,
+                                                   std::static_pointer_cast<SppTask>(this->shared_from_this()),
+                                                   core->rtEndpoints[0]);
                     });
                 ImGui::EndTabItem();
             }

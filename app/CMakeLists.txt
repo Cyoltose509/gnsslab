@@ -49,7 +49,7 @@ add_executable(GnssLab WIN32
         widgets/solvers/GuiRtkProcessor.cpp
         widgets/solvers/GuiCharts.cpp
         widgets/solvers/GuiHelpers.cpp
-        widgets/solvers/GuiRealtimeProcessor.cpp
+        widgets/solvers/GuiRealtime.cpp
         widgets/solvers/QualityControl.cpp
         widgets/tools/GuiFtpDownload.cpp
         download/ProductMeta.cpp
@@ -98,8 +98,6 @@ set(CLI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cli)
 set(CLI_COMMON
     ${CMAKE_CURRENT_SOURCE_DIR}/core/IniFile.h
     ${CMAKE_CURRENT_SOURCE_DIR}/core/IniFile.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/SolveConfig.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/SolveConfig.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/Csv.h
     ${CMAKE_CURRENT_SOURCE_DIR}/core/Csv.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/DualObsPairing.h

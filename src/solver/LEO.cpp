@@ -118,3 +118,19 @@ bool LEO::processEpoch(ObsData &obs) {
     }
     return ok;
 }
+
+void LEO::applyOptions(const SolverOptions &o) {
+    // 仅调 SPP 基类注入 + leo_cli 实际设置的子集。
+    // 切勿调 PPPStatic::applyOptions：否则会覆盖 LEO ctor 的专有值
+    // （setTropo(false) / mApplySolidTide=false / mUseCycleSlip=false /
+    //  mConfig.sigmaPhase=0.003 / ambNoise=1e-7 / firstEpochPosVar=1.0 / minSatsForUpdate=4 等）。
+    SPP::applyOptions(o);                 // 截止角 / 系统 / ISB（与 leo_cli 一致）
+    mApplySolidTide = o.solidTide != 0;
+    setMeasNoise(o.sigIFCode, o.sigPhase);
+    setPosProcNoise(o.posNoise);
+    setKeepAmbMaxGap(o.keepAmbMaxGap);
+    mMotionThresh = o.motionThresh;
+    mSppVsPredThresh = o.sppVsPredThresh;
+    // 注：setIsbProcNoise 已在 SPP::applyOptions 内设置；
+    //     LEO ctor 的 setTropo(false) / mConfig.sigmaPhase=0.003 等保持，与 leo_cli 行为一致。
+}

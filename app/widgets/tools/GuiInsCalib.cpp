@@ -425,14 +425,12 @@ namespace Tools::InsPanel {
         }
 
         CalibReport rep;
-        std::vector<PerFileChart> fcSnap;
         bool aReady = false, hResult = false;
         Eigen::Vector3d accS;
         double arm = 0.0;
         {
             std::lock_guard lk(resultMutex);
             rep = report;
-            fcSnap = fileCharts;
             aReady = accelReady.load();
             hResult = hasResult.load();
             accS = accelScaleGp;
@@ -499,7 +497,7 @@ namespace Tools::InsPanel {
             {
                 const int ua = gResultUnit[UR_ACC_SCALE];
                 // LSB/g -> LSB/(m/s²): ÷g；LSB/Gal: 1 Gal = 0.01 m/s²，即 ×0.01/g
-                const double f = ua == 0 ? 1.0 : (ua == 1 ? 1.0 / g : 0.01 / g);
+                const double f = ua == 0 ? 1.0 : ua == 1 ? 1.0 / g : 0.01 / g;
                 const Eigen::Vector3d v = accS * f;
                 const Eigen::Vector3d sg = rep.accelScaleSigma * g * f;
                 int d = 0;
@@ -536,12 +534,12 @@ namespace Tools::InsPanel {
                         aReady);
             }
             {
-                const bool deg = (gResultUnit[UR_GYRO_KEFF] == 1);
+                const bool deg = gResultUnit[UR_GYRO_KEFF] == 1;
                 const Eigen::Vector3d v = deg ? rep.gyroKeff * DEG_TO_RAD : rep.gyroKeff;
                 rowUnit("陀螺有效比例因子 K_eff,g", UR_GYRO_KEFF, v, "%.1f", kGyroKeffU, 2, hResult);
             }
             {
-                const bool degH = (gResultUnit[UR_GYRO_SCALE] == 1);
+                const bool degH = gResultUnit[UR_GYRO_SCALE] == 1;
                 const Eigen::Vector3d v = degH ? rep.calib.gyroScale * DEG_TO_RAD / 3600.0
                                                : rep.calib.gyroScale;
                 rowUnit("陀螺比例因子 S_g", UR_GYRO_SCALE, v, degH ? "%.4f" : "%.1f", kGyroScaleU, 2, hResult);
@@ -565,7 +563,7 @@ namespace Tools::InsPanel {
         ImGui::Spacing();
         if (aReady) {
             ImGui::Spacing();
-            ImGui::Text("加速度计交轴耦合矩阵 N_a（无量纲，对角为 0）");
+            ImGui::Text("加速度计交轴耦合矩阵 Na");
             if (ImGui::BeginTable("##cross_tbl", 4,
                                   ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
@@ -583,6 +581,32 @@ namespace Tools::InsPanel {
                         ImGui::TableSetColumnIndex(1 + j);
                         char b[48];
                         std::snprintf(b, sizeof(b), "%.7f", rep.accelCross(i, j));
+                        ImGui::TextUnformatted(b);
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
+        if (hResult) {
+            ImGui::Spacing();
+            ImGui::Text("陀螺交轴耦合矩阵 Ng");
+            if (ImGui::BeginTable("##gcross_tbl", 4,
+                                  ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
+                ImGui::TableSetupColumn("");
+                ImGui::TableSetupColumn("输入 X");
+                ImGui::TableSetupColumn("输入 Y");
+                ImGui::TableSetupColumn("输入 Z");
+                ImGui::TableHeadersRow();
+                static const char *kOutG[3] = {"输出 X", "输出 Y", "输出 Z"};
+                for (int i = 0; i < 3; ++i) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(kOutG[i]);
+                    for (int j = 0; j < 3; ++j) {
+                        ImGui::TableSetColumnIndex(1 + j);
+                        char b[48];
+                        std::snprintf(b, sizeof(b), "%.7f", rep.gyroCross(i, j));
                         ImGui::TextUnformatted(b);
                     }
                 }
@@ -629,6 +653,11 @@ namespace Tools::InsPanel {
                 const bool okDs = hResult && maxds < 0.05;
                 std::snprintf(v, sizeof(v), "%.3f %%", maxds * 100.0);
                 qcRow("陀螺比例因子误差", "max|δs_g| < 5 %", hResult, v, okDs);
+
+                const double maxNg = rep.gyroCross.cwiseAbs().maxCoeff();
+                const bool okNg = hResult && maxNg < 1e-2;
+                std::snprintf(v, sizeof(v), "%.3f %%", maxNg * 100.0);
+                qcRow("陀螺交轴耦合", "max|N_g| < 1 %", hResult, v, okNg);
                 ImGui::EndTable();
             }
         }
@@ -668,13 +697,43 @@ namespace Tools::InsPanel {
         }
 
         ImGui::Spacing();
-        ImGui::Text("各文件原始输出");
-        for (const auto &fc: fcSnap) {
-            ImGui::Spacing();
-            ImGui::Text("%s   [%s]%s", fc.name.c_str(), fc.det.c_str(),
-                        fc.dup ? "（重复，未计入标定）" : "");
-            twoCol([&] { drawAccelChart((fc.name + " · 加速度计").c_str(), fc, chartNew); },
-                   [&] { drawGyroChart((fc.name + " · 陀螺仪").c_str(), fc, chartNew); });
+        ImGui::Separator();
+        if (const auto segLabels = compSegLabels(); segLabels.empty()) {
+            ImGui::TextDisabled("标定完成后可选择段查看补偿结果");
+        } else {
+            ImGui::Text("补偿结果显示（所选段：%s）", segLabels[compSel].c_str());
+            if (CalibReport r; !snapshotReport(r)) {
+                ImGui::TextDisabled("（尚无标定结果）");
+            } else {
+                ImuLog seg;
+                {
+                    std::lock_guard lk(resultMutex);
+                    const int np = static_cast<int>(compSegs.pos.size());
+                    const int nr = static_cast<int>(compSegs.rot.size());
+                    const int k = std::clamp(compSel, 0, np + nr - 1);
+                    seg = k < np ? compSegs.pos[k].second : compSegs.rot[k - np].second;
+                }
+                if (seg.empty()) {
+                    ImGui::TextDisabled("（该段无样本，请重新标定）");
+                } else {
+                    const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r);
+                    std::vector<double> t, fx, fy, fz, gx, gy, gz;
+                    t.reserve(seg.size());
+                    fx.reserve(seg.size()); fy.reserve(seg.size()); fz.reserve(seg.size());
+                    gx.reserve(seg.size()); gy.reserve(seg.size()); gz.reserve(seg.size());
+                    for (const auto &s: seg) {
+                        t.push_back(s.tow);
+                        Eigen::Vector3d _f, _g;
+                        ImuCalibrator::compensate(cm, r, s, _f, _g);
+                        fx.push_back(_f(0)); fy.push_back(_f(1)); fz.push_back(_f(2));
+                        gx.push_back(_g(0)); gy.push_back(_g(1)); gz.push_back(_g(2));
+                    }
+                    std::vector<double> tel; toElapsed(t, tel);
+                    twoCol(
+                        [&] { drawCompChart("补偿后比力 f (m/s²)", tel, fx, fy, fz, chartNew); },
+                        [&] { drawCompChart("补偿后角速率 ω (LSB, 零偏+交轴已扣)", tel, gx, gy, gz, chartNew); });
+                }
+            }
         }
     }
 
@@ -693,7 +752,6 @@ namespace Tools::InsPanel {
         CalibReport r;
         if (!snapshotReport(r)) return;
         exportCsvDialog(*this, "calib_result.csv", "calib_result.csv", [&](Csv::Writer &w) {
-            // 每个量只导出界面结果表当前所选单位（gResultUnit）的一套数值，单位写入行名括号
             static const char *kAccScaleU[3] = {"LSB/g", "LSB/(m/s^2)", "LSB/Gal"};
             static const char *kAccBiasU[5] = {"LSB", "m/s^2", "mg", "mGal", "Gal"};
             static const char *kDsU[3] = {"无量纲", "ppm", "%"};
@@ -712,7 +770,7 @@ namespace Tools::InsPanel {
             const int udg = gResultUnit[UR_GYRO_DS];
 
             // 加速度计比例因子（LSB/g 基准）：LSB/(m/s^2) ÷g；LSB/Gal ×0.01/g（1 Gal = 0.01 m/s²）
-            const double af = ua == 0 ? 1.0 : (ua == 1 ? 1.0 / g : 0.01 / g);
+            const double af = ua == 0 ? 1.0 : ua == 1 ? 1.0 / g : 0.01 / g;
             const Eigen::Vector3d ka = r.accelScaleG * af;
             const Eigen::Vector3d ksg = r.accelScaleSigma * g * af;
             w.row("加速度计比例因子(" + std::string(kAccScaleU[ua]) + ")", Csv::fx(ka(0), 4),
@@ -734,7 +792,7 @@ namespace Tools::InsPanel {
                       Csv::fx(r.calib.accelM(k, 2), 6));
             }
             // K_nom 跟随比例因子单位：LSB/g ×g；LSB/Gal ×0.01
-            const double kn = ua == 0 ? r.nominalAccelK * g : (ua == 1 ? r.nominalAccelK : r.nominalAccelK * 0.01);
+            const double kn = ua == 0 ? r.nominalAccelK * g : ua == 1 ? r.nominalAccelK : r.nominalAccelK * 0.01;
             w.row("标称比例因子K_nom(" + std::string(kAccScaleU[ua]) + ")", Csv::fx(kn, 6), "", "");
             w.row("加速度计比例因子误差delta_s(" + std::string(kDsU[uda]) + ")",
                   Csv::sci(r.accelDeltaS(0) * kDsMul[uda], 9), Csv::sci(r.accelDeltaS(1) * kDsMul[uda], 9),
@@ -761,6 +819,13 @@ namespace Tools::InsPanel {
             w.row("陀螺比例因子误差delta_s(" + std::string(kDsU[udg]) + ")",
                   Csv::sci(r.gyroDeltaS(0) * kDsMul[udg], 6), Csv::sci(r.gyroDeltaS(1) * kDsMul[udg], 6),
                   Csv::sci(r.gyroDeltaS(2) * kDsMul[udg], 6));
+            // 陀螺交轴耦合矩阵 N_g（无量纲，对角置 0，选做项）
+            for (int k = 0; k < 3; ++k) {
+                const std::string rn = "Ng" + std::to_string(k) + "0, Ng" + std::to_string(k) + "1, Ng" +
+                                       std::to_string(k) + "2";
+                w.row(rn, Csv::sci(r.gyroCross(k, 0), 9), Csv::sci(r.gyroCross(k, 1), 9),
+                      Csv::sci(r.gyroCross(k, 2), 9));
+            }
             w.row("dt(s)", Csv::fx(r.dt, 6));
             w.row("六位置拟合RMS(LSB)", Csv::fx(r.accelRms, 4));
             w.row("nPos(每位置历元数)", r.nPos[0], r.nPos[1], r.nPos[2], r.nPos[3], r.nPos[4], r.nPos[5]);
@@ -816,7 +881,6 @@ namespace Tools::InsPanel {
         ImuLog seg;
         std::string label;
         std::string defName;
-        bool isPos = false;
         int selIdx = -1;
         {
             std::lock_guard lk(resultMutex);
@@ -825,7 +889,6 @@ namespace Tools::InsPanel {
                 selIdx = k;
                 if (k < np) {
                     seg = compSegs.pos[k].second;
-                    isPos = true;
                     defName = compPosFileName(compSegs.pos[k].first);
                 } else {
                     seg = compSegs.rot[k - np].second;
@@ -841,21 +904,18 @@ namespace Tools::InsPanel {
             selIdx >= 0 && selIdx < static_cast<int>(segLabels.size()))
             label = segLabels[selIdx];
 
-        const Eigen::Matrix3d Minv = r.calib.accelM.inverse();
-        const int bx = static_cast<int>(std::lround(r.calib.gyroBias(0)));
-        const int by = static_cast<int>(std::lround(r.calib.gyroBias(1)));
-        const int bz = static_cast<int>(std::lround(r.calib.gyroBias(2)));
+        const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r); // 完整模型：f=M_a⁻¹(a−b_a)，ω=(I+N_g)⁻¹(ω−b_g)
         exportCsvDialog(*this, defName, defName + "（" + label + "）", [&](Csv::Writer &w) {
-            if (isPos) {
-                w.row("tow", "comp_fx(m/s2)", "comp_fy(m/s2)", "comp_fz(m/s2)");
-                for (const auto &s: seg) {
-                    const Eigen::Vector3d f = Minv * (Eigen::Vector3d(s.ax, s.ay, s.az) - r.calib.accelB);
-                    w.row(Csv::fx(s.tow, 3), Csv::fx(f(0), 5), Csv::fx(f(1), 5), Csv::fx(f(2), 5));
-                }
-            } else {
-                w.row("tow", "raw_gx", "raw_gy", "raw_gz", "comp_gx", "comp_gy", "comp_gz");
-                for (const auto &s: seg)
-                    w.row(Csv::fx(s.tow, 3), s.gx, s.gy, s.gz, s.gx - bx, s.gy - by, s.gz - bz);
+            // 静置段与旋转段统一：加计补偿后比力 + 陀螺原始/完整模型补偿计数，同一文件导出
+            w.row("tow", "comp_fx(m/s2)", "comp_fy(m/s2)", "comp_fz(m/s2)",
+                  "raw_gx", "raw_gy", "raw_gz", "comp_gx", "comp_gy", "comp_gz");
+            for (const auto &s: seg) {
+                Eigen::Vector3d f, g;
+                ImuCalibrator::compensate(cm, r, s, f, g);
+                w.row(Csv::fx(s.tow, 3),
+                      Csv::fx(f(0), 5), Csv::fx(f(1), 5), Csv::fx(f(2), 5),
+                      s.gx, s.gy, s.gz,
+                      Csv::fx(g(0), 4), Csv::fx(g(1), 4), Csv::fx(g(2), 4));
             }
         });
     }

@@ -2,6 +2,7 @@
 #include "GuiCharts.h"
 
 #include "Const.h"
+#include "CoordConvert.h" // ENUToXYZ（E-N 中心点拖拽 → 参考坐标平移）
 #include <cmath>
 #include <algorithm>
 #include <cstdlib>
@@ -150,10 +151,11 @@ namespace Solvers::Charts {
                        const std::vector<double> &float_e,
                        const std::vector<double> &float_n,
                        const std::vector<double> &float_u,
-                       const int epochCount) {
+                       const int epochCount,
+                       const float plotH) {
         const int n = static_cast<int>(times.size());
         const int nEpoch = epochCount > 0 ? epochCount : n;
-        if (n <= 0 || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, 380))) return;
+        if (n <= 0 || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, plotH))) return;
         ImPlot::SetupAxes("Epoch", "E/N/U (m)");
         if (fixedY) ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
         std::vector<double> tt, fe, fn, fu;
@@ -290,10 +292,24 @@ namespace Solvers::Charts {
         const double *lo = phase ? phaseLo : codeLo;
         const double *hi = phase ? phaseHi : codeHi;
 
-        // SPP 不做载波相位，相位残差恒空：明说一句，避免误以为图坏了
-        if (phase && V.empty()) ImGui::TextDisabled("(无相位残差：该模式不使用载波相位)");
+        // SPP 不做载波相位，相位残差恒空：明说一句，避免误以为图坏了。
+        // ⚠️ 必须与切换按钮同行：曾写成独立的一行 TextDisabled，切到相位时整块内容纵向撑高、
+        // 容器的固定高度装不下 → 父 Child 长出上下滑条，绘图区被裁出可视范围（图"消失"）。
+        if (phase && V.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(无相位残差：该模式不使用载波相位)");
+        }
 
-        if (ImPlot::BeginPlot(phase ? "相位残差序列" : "伪距残差序列", ImVec2(-1, plotH))) {
+        // 高度一律取「容器剩余空间」，且不超过调用方给的上限（plotH）：
+        // 写死 plotH 会让 绘图区+单选行 的总高超过父 Child，父容器出滑条。
+        // 再减一个 ItemSpacing：ImPlot 之后的行距也会计入子窗口内容高度，不减会顶出 3~4px 滑条。
+        float ph = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
+        if (plotH > 0.0f && plotH < ph) ph = plotH;
+        if (ph < 120.0f) ph = 120.0f;
+
+        // 标题由外层 SectionHeader 负责，故关掉 ImPlot 自带标题（省一行高度）；
+        // 同时标签固定为 "##residualSeries"，切模式不换 ID，避免切一次重建一次绘图状态。
+        if (ImPlot::BeginPlot("##residualSeries", ImVec2(-1, ph), ImPlotFlags_NoTitle)) {
             ImPlot::SetupAxes("Epoch", phase ? "载波相位残差 (m)" : "码(伪距)残差 (m)");
             {
                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, std::max(10.0, static_cast<double>(epochCount)), ImPlotCond_Once);
@@ -346,10 +362,15 @@ namespace Solvers::Charts {
     void RenderSkyplot(const std::map<SatID, std::vector<GnssTask::SkyPoint> > &tracks,
                        const std::vector<std::pair<SatID, GnssTask::SkyPoint> > &curPts,
                        const float sizePx) {
+        // 天顶图是正方形：宽、高都要受容器约束。只按宽度取尺寸时，若容器高度不足，
+        // 正方形会撑出父 Child → 天顶图所在面板出现上下滑条（此前即如此）。
         const float availW = ImGui::GetContentRegionAvail().x;
-        const float sizeW = std::max(220.0f, std::min(availW, sizePx));
+        const float availH = ImGui::GetContentRegionAvail().y;
+        float sizeW = std::min(availW, sizePx);
+        if (availH > 60.0f) sizeW = std::min(sizeW, availH - ImGui::GetStyle().ItemSpacing.y);
+        sizeW = std::max(160.0f, sizeW);
         constexpr float pad = 30.0f;
-        const float R = std::max(70.0f, (sizeW - 2.0f * pad) / 2.0f);
+        const float R = std::max(40.0f, (sizeW - 2.0f * pad) / 2.0f);
         const ImVec2 c0 = ImGui::GetCursorScreenPos();
         const float cx = c0.x + pad + R, cy = c0.y + pad + R;
         ImGui::Dummy(ImVec2(sizeW, sizeW));
@@ -827,12 +848,16 @@ namespace Solvers::Charts {
         }
 
 
-        void renderENPlanView(const std::vector<double> &enu_e,
-                              const std::vector<double> &enu_n,
-                              const std::vector<double> &enu_solved,
-                              const float sizePx) {
+        // E-N 平面图：尺寸完全由所在单元格决定（可拉伸），中心标记可拖动以搬移参考点。
+        // fixedH > 0 用于竖向堆叠场景（此时没有表格行高可借用）；0 = 用尽父级剩余空间。
+        void renderENPlanView(const PosTabView &v, const float fixedH = 0.0f) {
+            const auto &enu_e = v.enu_e;
+            const auto &enu_n = v.enu_n;
+            const auto &enu_solved = v.enu_solved;
             if (enu_e.empty() || enu_n.empty() || enu_solved.empty()) return;
-            if (!ImGui::BeginChild("##enplan", ImVec2(sizePx, sizePx), ImGuiChildFlags_FrameStyle)) {
+            // ⚠️ 尺寸 (0,0) = 用尽父容器剩余空间：宽随表格列宽、高随行高。
+            // 旧实现写死 sizePx×sizePx 正方形，拖宽列只会多出空白区域（右侧"空了"）。
+            if (!ImGui::BeginChild("##enplan", ImVec2(0, fixedH), ImGuiChildFlags_FrameStyle)) {
                 ImGui::EndChild();
                 return;
             }
@@ -850,7 +875,7 @@ namespace Solvers::Charts {
                     xn.push_back(nn);
                 }
                 const int m = static_cast<int>(xe.size());
-                // 对称等距坐标范围 -> 正方形显示
+                // 对称等距坐标范围（1:1 显示比例由数据范围保证，不依赖控件是否正方形）
                 double r = 1e-6;
                 for (int i = 0; i < m; ++i)
                     r = std::max(r, std::max(std::abs(xe[i]), std::abs(xn[i])));
@@ -858,9 +883,6 @@ namespace Solvers::Charts {
                 ImPlot::SetupAxes("E (m) ", "N (m) ");
                 ImPlot::SetupAxisLimits(ImAxis_X1, -r, r, ImPlotCond_Once);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, -r, r, ImPlotCond_Once);
-                double zx = 0, zy = 0;
-                ImPlot::DragLineX(99, &zx, ImVec4(0.95f, 0.6f, 0.1f, 0.9f), 1.0f, ImPlotDragToolFlags_NoInputs);
-                ImPlot::DragLineY(99, &zy, ImVec4(0.95f, 0.6f, 0.1f, 0.9f), 1.0f, ImPlotDragToolFlags_NoInputs);
                 // 轨迹连线（淡）
                 if (m > 1) {
                     ImPlotSpec ls;
@@ -876,15 +898,33 @@ namespace Solvers::Charts {
                     ps.LineColor = ImVec4(0.2f, 0.9f, 0.4f, 0.9f);
                     ImPlot::PlotScatter("解算轨迹", xe.data(), xn.data(), m, ps);
                 }
-                // 中心标记（参考点）
-                {
-                    double o[1] = {};
-                    ImPlotSpec cs;
-                    cs.Marker = ImPlotMarker_Asterisk;
-                    cs.MarkerSize = 5.0f;
-                    cs.LineColor = ImVec4(0.95f, 0.6f, 0.1f, 1.0f);
-                    ImPlot::PlotScatter("参考点", o, o, 1, cs);
+                // —— 中心点（参考点）拖拽：拖动即把参考坐标搬到松手处 ——
+                // ENU 坐标本来就是"相对参考点"的，所以标记平时钉在原点；拖动时暂时离开原点，
+                // 松手后把 refECEF 平移 (ΔE,ΔN)，下一帧轨迹整体平移、标记回到原点。
+                // 状态跨帧保存（ImPlot 拖拽工具本身就跨帧）：只有一块 E-N 图，用函数内静态量即可。
+                static double cx = 0.0, cy = 0.0; // 待定中心（当前 ENU 系，m）
+                static bool wasHeld = false;
+                bool held = false;
+                ImPlot::DragPoint(0, &cx, &cy, ImVec4(0.95f, 0.6f, 0.1f, 1.0f), 7.0f,
+                                  ImPlotDragToolFlags_NoFit, nullptr, nullptr, &held);
+                // 十字线跟随待定中心，明确"搬到哪"
+                ImPlot::DragLineX(99, &cx, ImVec4(0.95f, 0.6f, 0.1f, 0.55f), 1.0f,
+                                  ImPlotDragToolFlags_NoInputs);
+                ImPlot::DragLineY(99, &cy, ImVec4(0.95f, 0.6f, 0.1f, 0.55f), 1.0f,
+                                  ImPlotDragToolFlags_NoInputs);
+                if (!held) {
+                    if (wasHeld && v.refECEF && (std::abs(cx) > 1e-9 || std::abs(cy) > 1e-9)) {
+                        // 水平位移（E,N）→ ECEF 增量：老参考点的 ENU 基做反变换，三个分量都会变。
+                        const Eigen::Vector3d oldRef = *v.refECEF;
+                        *v.refECEF = ENUToXYZ(Eigen::Vector3d(cx, cy, 0.0), oldRef);
+                        // 与手输参考坐标同语义：用户已指定参考真值，解算结束的"均值确认"不得覆盖
+                        if (v.userRefProvided) *v.userRefProvided = true;
+                        if (v.onRefChanged) v.onRefChanged(); // 重算 ENU 序列
+                    }
+                    cx = 0.0; // 未拖动 / 已提交：标记回到原点
+                    cy = 0.0;
                 }
+                wasHeld = held;
                 ImPlot::EndPlot();
             }
             ImGui::EndChild();
@@ -894,38 +934,42 @@ namespace Solvers::Charts {
             if (v.epochCount > 0 && !v.times.empty() && !v.show3d &&
                 !v.enu_e.empty() && !v.enu_n.empty() && !v.enu_u.empty()) {
                 SectionHeader("ENU 收敛轨迹 / E-N 平面图", nullptr);
+                // 行高取本区域剩余高度（视口内自适应，窗口拉高图就跟着长），不再写死 380。
+                const ImGuiStyle &style = ImGui::GetStyle();
+                float rowH = ImGui::GetContentRegionAvail().y - style.ItemSpacing.y;
+                rowH = std::max(280.0f, std::min(rowH, 720.0f));
+                bool newed = v.newed;
                 if (!v.showEnPlan) {
-                    bool newed = v.newed;
                     renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
                                   *v.selectedEpoch, newed, v.fixedY,
-                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
+                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount, rowH);
                     return;
                 }
-                // 左：ENU 时间序列（拉伸）；右：E-N 平面图（正方形，高=序列高）。
-                constexpr float h = 380.0f;
-                constexpr float planW = h; // 正方形：宽=高
                 const float availX = ImGui::GetContentRegionAvail().x;
-                bool newed = v.newed;
-                if (availX >= planW + 360.0f) {
+                // 左：ENU 时间序列；右：E-N 平面图。两列都是 Stretch + Resizable，
+                // 分隔条可以自由拖拽（旧实现右列 WidthFixed + 内部正方形，拉宽只会留空白）。
+                const float planRatio = std::clamp(380.0f / std::max(availX, 1.0f), 0.22f, 0.6f);
+                if (availX >= 640.0f) {
                     if (ImGui::BeginTable("##enuRow", 2,
                                           ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-                        ImGui::TableSetupColumn("series", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-                        ImGui::TableSetupColumn("plan", ImGuiTableColumnFlags_WidthFixed, planW);
-                        ImGui::TableNextRow();
+                        ImGui::TableSetupColumn("series", ImGuiTableColumnFlags_WidthStretch, 1.0f - planRatio);
+                        ImGui::TableSetupColumn("plan", ImGuiTableColumnFlags_WidthStretch, planRatio);
+                        ImGui::TableNextRow(ImGuiTableRowFlags_None, rowH);
                         ImGui::TableSetColumnIndex(0);
                         renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
                                       *v.selectedEpoch, newed, v.fixedY,
-                                      v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
+                                      v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount, rowH);
                         ImGui::TableSetColumnIndex(1);
-                        renderENPlanView(v.enu_e, v.enu_n, v.enu_solved, planW);
+                        renderENPlanView(v);
                         ImGui::EndTable();
                     }
                 } else {
-                    // 宽度不足时竖向堆叠：序列在上，平面图在下
+                    // 宽度不足时竖向堆叠：序列在上，平面图在下（给固定高度，避免抢走整页）
                     renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
                                   *v.selectedEpoch, newed, v.fixedY,
-                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
-                    renderENPlanView(v.enu_e, v.enu_n, v.enu_solved, planW);
+                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount,
+                                  std::max(220.0f, rowH * 0.55f));
+                    renderENPlanView(v, std::min(rowH, 380.0f));
                 }
             }
         }
@@ -946,7 +990,10 @@ namespace Solvers::Charts {
                 bool *resTg = v.renderToggles ? &v.renderToggles->residual : nullptr;
                 // LEO: plot3d 开关控制左列；SPP/PPP 无开关，天顶图恒显示
                 const bool left = vis(d3Tg, true);
-                const bool right = vis(resTg, v.showResidual) && !v.resT.empty(); //NOLINT
+                // ⚠️ 判「有没有残差可画」必须与码/相位模式无关：切到相位时伪距那两张表是空的
+                // （快照只深拷当前显示的那一份），曾用 !v.resT.empty() 判断 → 相位模式下
+                // 整块被当成「已隐藏」，图直接消失。
+                const bool right = vis(resTg, v.showResidual) && v.hasResidualData;
                 if (left || right) {
                     const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
                     // LEO 模式恒开两列（保证隐藏图的开关仍可点）；SPP/PPP 按实际列数
@@ -960,8 +1007,11 @@ namespace Solvers::Charts {
                         if (ImGui::BeginChild("##leftpanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
                             SectionHeader(v.renderToggles ? "LEO 轨迹 (ECEF XYZ)" : "天顶图", d3Tg);
                             if (left) {
+                                // 高度取容器剩余空间：写死 rowH 会连标题行一起算进总高 → 溢出出滑条
+                                float fillH = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
+                                if (fillH < 120.0f) fillH = 120.0f;
                                 if (v.show3d)
-                                    RenderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, rowH);
+                                    RenderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, fillH);
                                 else
                                     RenderSkyplot(v.skyTracks, v.curSkyPts, 460.0f); // SPP/PPP 走天顶图
                             } else {
@@ -983,7 +1033,7 @@ namespace Solvers::Charts {
                                     renderSatResidualPlot(v.resT, v.resV,
                                                           v.resPhaseT, v.resPhaseV, v.resMode,
                                                           *v.selectedEpoch, v.epochCount, rnewed,
-                                                          &ylo, &yhi, &plo, &phi, rowH);
+                                                          &ylo, &yhi, &plo, &phi, 0.0f); // 0 = 填满容器
                                 } else {
                                     ImGui::TextDisabled("(已隐藏)");
                                 }

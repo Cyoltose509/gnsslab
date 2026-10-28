@@ -58,7 +58,7 @@ void OEM7Reader::close() {
     mEphSnap.reset();
 }
 
-bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
+bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message, [[maybe_unused]] const bool block) {
     while (buffer.size() - bufferIndex >= 3) {
         // 统一扫描同步头：短头 0xAA 0x44 0x12（标准 OEM7 帧）与长头 0xAA 0x44 0x13（紧凑 IMU 记录）。
         size_t start = bufferIndex;
@@ -113,10 +113,10 @@ bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message) {
         message.assign(buffer.begin() + static_cast<long long>(bufferIndex),
                        buffer.begin() + static_cast<long long>(bufferIndex) + totalLen);
         bufferIndex += totalLen;
-            return true;
-        }
-        return false;
+        return true;
     }
+    return false;
+}
 
 bool OEM7Reader::isCompactImuRecord(const std::vector<uint8_t> &buf, const size_t start) {
     if (start + 56 > buf.size()) return false;
@@ -586,10 +586,12 @@ bool OEM7Reader::parseBestPos(const std::vector<uint8_t> &message) {
     return false;
 }
 
-bool OEM7Reader::getNextEpoch(ObsData &obs) {
+bool OEM7Reader::getNextEpoch(ObsData &obs, const bool block) {
     while (true) {
         std::vector<uint8_t> message;
-        if (!getNextMessage(message)) return false;
+        if (!getNextMessage(message, block)) {
+            return false;
+        }
         parseImu(message); // 流式路径也累积 IMU，与 readAll 一致；避免对准 .DAT 中 GNSS/IMU 交错时静默丢 IMU 样本。非 IMU 帧返回 false 不累积。
         if (parseGNSSMessage(message)) {
             if (!currentObs.satTypeValueData.empty()) {
