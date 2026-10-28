@@ -837,7 +837,7 @@ void PPPStatic::initFilter(ObsData &obsData, VariableDataMap &csData) {
             ekf.ambInitVar = mConfig.ambInitVar; // 模糊度初方差(RTKLIB 用 3600，我们默认 100)
             ekf.ztdProcNoise = mConfig.ztdProcNoise;
             double fpvH = mConfig.firstEpochPosVar;
-            ekf.posVarFloorVec = Eigen::Vector3d(mConfig.posVarFloor, mConfig.posVarFloor, mConfig.firstEpochPosVar);
+            ekf.posVarFloorVec = Eigen::Vector3d(mConfig.posVarFloor, mConfig.posVarFloor, mConfig.posVarFloor);
             ekf.ztdInitValue = mConfig.ztdInitValue;
             ekf.codeBiasProcNoise = mConfig.codeBiasProcNoise;
             ekf.codeBiasInitVar = mConfig.codeBiasInitVar;

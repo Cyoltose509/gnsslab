@@ -25,30 +25,10 @@ public:
         // 首历元位置先验方差 1.0 m²
         mConfig.firstEpochPosVar = 1.0;
         mConfig.ambNoise = 1.0E-7;
-        // 相位 sigma：LEO 走**运动学**滤波（8km/s），需更强观测权值让滤波跟得上动态，
-        // 故必须比静态(SPP::Config 的 0.01273)更紧。实测(Swarm-C, sigIFCode=0.1)：
-        // 0.003→全程 1.615m/tail 2.181m（最优）；0.006→1.729m；0.01273→2.631m；0.02→3.346m。
-        // 勿"统一"成静态最优值——运动学与静态的最优权值不同。
         mConfig.sigmaPhase = 0.003;
         mConfig.minSatsForUpdate = 4;
-        // 星载接收机不随地壳形变，固体潮位移对 LEO 不适用（对地面站才需要）。
         mApplySolidTide = false;
-        // 卫星天线 PCO **必须施加**：IGS/COD 的 SP3 轨道参考点是卫星质心(CoM)，而观测值参考
-        // 天线相位中心(APC)，两者相差 ATX 里的卫星 PCO（GPS 可达 1~2 m）。这与接收机在地面
-        // 还是星上无关。
-        // 历史坑：2026-09-11 曾据「COD SP3 已在天线相位中心」把 LEO 的 satPCO 关掉并写进
-        // 默认配置(leo.ini sat_pco=0)，该判断错误（地面 PPP 侧 2026-10-07 实测 sat_pco=0 会
-        // 使偏差 21.3→28.9cm 变差）。2026-10-21 在 Swarm-C 24h 上重测：sat_pco 0→1 使
-        // 3D RMS 1.321→1.078 m、>1m 占比 23.78%→2.10%、连续弧段 0.891→0.738 m。
-        // 卫星 PCO 现为「ATX 已加载即自动施加」（无开关）：只要有天线文件就必然生效，勿需再设标志。
-        // 首历元不用 σ=1cm 高程伪观测钉先验高度：LEO 的 RINEX 头位置是过期快照(8km/s 机动)，
-        // 且无 ZTD 状态不存在「高度↔ZTD」退化。钉住会把矛盾泄进钟差(实测 LSQ 钟差 −5811km)。
         mPinInitHeight = false;
-        // 周跳时**不**把模糊度硬钉回"码减相位"初值（forceValue）。LEO 以 8km/s 运动，
-        // 模糊度必须能跟随动态演化；钉死会让它长期停在粗值上。
-        // 实测(Swarm-C, sigIFCode=0.1)：开 mwSlip 全程 RMS 3.620m / tail 1.314m / U+0.754m；
-        // 关 ⇒ 1.172m / 1.205m / U+0.633m（全程 3.1× 改善）。检测器本身仍跑（保留 newArc/Gap 判定），
-        // 只是不再 forceValue。
         mUseCycleSlip = false;
     }
 
