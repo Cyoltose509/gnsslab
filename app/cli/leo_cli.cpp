@@ -9,7 +9,7 @@
 #include "SolverTask.h"
 #include "SPP.h"
 #include "LEO.h"
-#include "ObsFormat.h"      // classifyObsPath：RINEX/OEM7 三值判别（Unknown 显式报错）
+#include "ObsFormat.h"
 
 #include "Sp3OrbitReader.h"
 #include "Log.h"
@@ -28,8 +28,6 @@ void runLeo(const SolveConfig &cfg) {
         Cli::dumpEmpty(GnssTask::SolverMode::Leo, cfg);
         return;
     }
-    // 观测文件格式三值判别（与 SPP/RTK/PPP 同一入口）：RINEX 或 OEM7 日志，
-    // 无法识别时明确报错，不再默认落进 RINEX 读取器报"无法打开 RINEX"误导用户
     SolveDriver::RinexFileSource rsrc;
     SolveDriver::Oem7FileSource osrc;
     SolveDriver::ObsSource *src = nullptr;
@@ -73,13 +71,11 @@ void runLeo(const SolveConfig &cfg) {
     LEO leo;
     leo.setCutoffElevDeg(cfg.cutoffDeg);
     leo.setEnabledSystems(cfg.systems);
-    leo.mApplySolidTide = cfg.solidTide != 0; // 卫星/接收机 PCO、PCV 现已由 ATX 文件自动决定
+    leo.mApplySolidTide = cfg.solidTide != 0;
     leo.setMeasNoise(cfg.sigIFCode, cfg.sigPhase);
-    // 位置过程噪声：此前 leo_cli 漏下发，ini 里 pos_noise 被静默忽略（A/B 全同值）。
-    // SolveConfig 默认 100 与 PPPKinematic/LEO 的基类默认一致，故不写该键时行为不变。
     leo.setPosProcNoise(cfg.posNoise);
     leo.setKeepAmbMaxGap(cfg.keepAmbMaxGap);
-    leo.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar); // ISB：非参考系统钟差当常数/随机游走估(对齐老师)
+    leo.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar);
     leo.mMotionThresh = cfg.motionThresh;
     leo.mSppVsPredThresh = cfg.sppVsPredThresh;
 
@@ -101,11 +97,10 @@ void runLeo(const SolveConfig &cfg) {
     bool leoRefInit = false;
     Eigen::Vector3d leoRef(0, 0, 0);
 
-    // LEO 特有：位置合理性校验 + 参考轨道 RTN 标注。通用的解算与回填已由 solveStationStream 完成。
     SolveDriver::solveStationStream(*src, leo,
         [&](LEO &, const GnssTask::ObsItem &item, GnssTask::EpochData &data) {
             const Eigen::Vector3d leoPos = data.sppResult.xyz;
-            if (!data.solved || leoPos.squaredNorm() <= 1e12) {  // 未解出 或 非合理 ECEF 位置
+            if (!data.solved || leoPos.squaredNorm() <= 1e12) {
                 data.solved = false;
                 epochs.push_back(std::move(data));
                 return true;
@@ -129,7 +124,7 @@ void runLeo(const SolveConfig &cfg) {
     Cli::dumpCsv(epochs, GnssTask::SolverMode::Leo, hasRefOrbit ? leoRef : ref, hasRefOrbit, cfg);
 }
 
-} // namespace
+}
 
 int main(const int argc, char **argv) {
     const std::string ini = argc > 1 ? argv[1] : "leo.ini";

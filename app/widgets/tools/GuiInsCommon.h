@@ -42,7 +42,7 @@ namespace Tools::InsPanel::insui {
         }
 
         constexpr float kChartHeight = 360.0f;
-        constexpr float kFileChartH = 220.0f; // 每个文件原始波形图的高度（比大图紧凑）
+        constexpr float kFileChartH = 220.0f;
         constexpr ImVec4 kColX(0.90f, 0.30f, 0.30f, 1.00f);
         constexpr ImVec4 kColY(0.30f, 0.90f, 0.30f, 1.00f);
         constexpr ImVec4 kColZ(0.30f, 0.50f, 1.00f, 1.00f);
@@ -73,7 +73,7 @@ namespace Tools::InsPanel::insui {
         void exportCsvDialog(Task &task, const std::string &defaultName, const std::string &displayName,
                              BuildFn build) {
             std::wstring out;
-            if (!Solvers::Helpers::saveCSVDialog(defaultName, out)) return; // 用户取消
+            if (!Solvers::Helpers::saveCSVDialog(defaultName, out)) return;
             Csv::Writer w;
             build(w);
             if (!w.save(out, true)) {

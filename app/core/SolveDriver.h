@@ -35,8 +35,8 @@ namespace SolveDriver {
         data.rtkStat = r.stat;
         data.rtkRatio = r.ratio;
         data.rtkBaseFloat = rtk.mBaselineFloat;
-        if (r.stat == 1) data.rtkFixedBaseline = rtk.mBaselineFixed; // 固定基线（相对 mBaseXyz，仅固定解有效）
-        data.rtkFloatXyz = rtk.mBaseXyz + rtk.mBaselineFloat; // 浮点解 ECEF，供 ENU 浮点对比线
+        if (r.stat == 1) data.rtkFixedBaseline = rtk.mBaselineFixed;
+        data.rtkFloatXyz = rtk.mBaseXyz + rtk.mBaselineFloat;
 
         const int n = static_cast<int>(data.satIds.size());
         for (int i = 0; i < n; ++i) {
@@ -62,7 +62,7 @@ namespace SolveDriver {
         GnssTask::ObsItem item;
         while (src.next(item)) {
             GnssTask::EpochData data;
-            data.getFromObs(item.obs); // 观测骨架（satIds/elevations/…），回填前必须先铺好
+            data.getFromObs(item.obs);
             beforeSolve(solver, item);
             bool ok = false;
             try { ok = solver.processEpoch(item.obs); } catch (...) { ok = false; }
@@ -110,7 +110,6 @@ namespace SolveDriver {
         data.getFromSPP(spp);
     }
 
-    // ---- RINEX 文件源 ----
     struct RinexFileSource : ObsSource {
         std::fstream f;
         RinexObsReader rdr;
@@ -138,7 +137,6 @@ namespace SolveDriver {
         }
     };
 
-    // ---- OEM7 日志源（逐历元携带星历快照） ----
     struct Oem7FileSource : ObsSource {
         OEM7Reader reader;
         bool open(const std::string &path) { return reader.open(path); }
@@ -194,7 +192,6 @@ namespace SolveDriver {
         };
     }
 
-    // RINEX 首历元探测（首跳快进对齐用）：单独开流解析第一历元，不动目标 reader。
     inline CommonTime probeRinexFirstEpoch(const std::string &path, bool &ok) {
         ok = false;
         try {
@@ -208,7 +205,6 @@ namespace SolveDriver {
         } catch (...) { return CommonTime(); }
     }
 
-    // 调用方持有（生命周期须覆盖配对全程）：两路 reader + 流 + OEM7 首历元缓存。
     struct DualObsHandles {
         OEM7Reader oemBase, oemRover;
         RinexObsReader rnxBase, rnxRover;
@@ -246,7 +242,6 @@ namespace SolveDriver {
         return true;
     }
 
-    // RTK 文件模式输入校验（GUI 红字与 CLI stderr 共用同一份判定；空串=通过）。
     inline std::string rtkFileInputError(const std::string &basePath, const std::string &roverPath,
                                          const std::string &navPath) {
         if (basePath.empty() || roverPath.empty()) return "请先选择基准站与流动站观测文件";
@@ -259,7 +254,6 @@ namespace SolveDriver {
         return {};
     }
 
-    // 广播星历加载 + 空校验（任一侧 RINEX 时必需；OEM7 内嵌快照可自足，不强制 nav）。
     inline bool loadRtkNav(const std::string &navPath, EphemerisTable &navTable, std::string &err) {
         RinexNavStore nav;
         nav.loadFile(navPath, navTable);
@@ -276,17 +270,10 @@ namespace SolveDriver {
                           const std::function<bool()> &shouldStop,
                           OnAttempt onAttempt, OnPair onPair) {
 
-        // ⚠️ base/rover 及其星历快照必须与 haveBase/haveRover 同寿命（循环外）。
-        // 若声明在循环内，则"本轮保留未重读的那一路"会在下一轮变成默认构造的空 ObsData
-        // （epoch = (0,0)），判定时它永远比对面"更旧"→ 无限重读另一侧、一个历元都配不上。
         bool haveBase = false, haveRover = false;
         ObsData base, rover;
         std::shared_ptr<EphemerisTable> baseEph, roverEph;
 
-        // 半开连接判定（配对器自有语义，不能用 socket 的"最后收字节时间"）：
-        // 配对时会长时间"握住"一侧历元去追另一侧，被握住的那侧根本没被读取，
-        // 若按字节静默判死就会误杀（实测 t=6s 即误判断线）。
-        // 正确口径：只有在"正在主动轮询该侧、却连续 kIdleEpochMs 拿不到任何历元"时才判死。
         constexpr auto kIdleEpochMs = std::chrono::milliseconds(10000);
         bool basePolling = false, roverPolling = false;
         std::chrono::steady_clock::time_point basePollSince{}, roverPollSince{};

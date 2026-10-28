@@ -30,7 +30,6 @@ namespace Cli {
         std::cout << "已写出 " << epochs.size() << " 历元 -> " << path << "\n";
     }
 
-    // 解析失败/异常时给个 CSV 兜底，避免空文件
     void dumpEmpty(const GnssTask::SolverMode mode, const SolveConfig &cfg) {
         dumpCsv({}, mode, Eigen::Vector3d(0, 0, 0), false, cfg);
     }

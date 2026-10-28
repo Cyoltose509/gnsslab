@@ -47,7 +47,6 @@ void Solvers::Helpers::renderRealtimeConfig(GnssTask::SolverTaskBase *task,
     renderCancelButton(task);
 }
 
-// 由逐星伪距残差估计稳健 Y 轴范围
 Solvers::Helpers::RobustResRange Solvers::Helpers::computeRobustResRange(const std::map<SatID, std::vector<double> > &satRes,
                                                                        const double minHalf) {
     std::vector<double> all_v;
@@ -67,7 +66,6 @@ Solvers::Helpers::RobustResRange Solvers::Helpers::computeRobustResRange(const s
     return r;
 }
 
-// InputText 直接绑定 std::string
 static int inputTextResizeCallback(ImGuiInputTextCallbackData *data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
         auto *str = static_cast<std::string *>(data->UserData);

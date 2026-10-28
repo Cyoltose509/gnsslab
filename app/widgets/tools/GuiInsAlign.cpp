@@ -69,7 +69,6 @@ namespace Tools::InsPanel {
         Aligner::AlignStream st;
         st.init(win, sp);
 
-        // 整段均值用累计和（与 Aligner::solve 的 mean 口径一致，无需另存原始 log）。
         Eigen::Vector3d sumAcc = Eigen::Vector3d::Zero(), sumGyr = Eigen::Vector3d::Zero();
         long long count = 0;
         std::vector<AttitudeSample> seriesLocal;
@@ -294,11 +293,10 @@ namespace Tools::InsPanel {
 
         ImGui::Spacing();
 
-        // 抽稀缓冲 → 三条曲线（yaw/pitch/roll 各自相对首样本的历时）
         std::vector<AttitudeSample> pts;
         {
             std::lock_guard lk(resultMutex);
-            pts = plotPts; // 抽稀缓冲 ≤~4k
+            pts = plotPts;
         }
         std::vector<double> px, py, pp, pr;
         if (!pts.empty()) {
@@ -314,7 +312,7 @@ namespace Tools::InsPanel {
             }
         }
         std::vector<double> pt;
-        toElapsed(px, pt); // 横轴：相对首样本的历时（绝对 tow≈1.47e9 会把刻度挤成一串同值）
+        toElapsed(px, pt);
         const bool chartNew = chartDirty.exchange(false);
         auto drawAtt = [&](const char *title, const std::vector<double> &y, const ImVec4 &col) {
             if (pt.empty()) {

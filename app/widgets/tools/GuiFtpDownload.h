@@ -46,7 +46,7 @@ namespace Tools::FtpDownload {
         std::string dirUrl;
         ProductType type = ProductType::Unknown;
         int year = 0, doy = 0, spanDays = 1;
-        std::string localPath; // 非空 = 本地已有
+        std::string localPath;
     };
 
     static Pending s_pending;

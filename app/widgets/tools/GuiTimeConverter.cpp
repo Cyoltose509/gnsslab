@@ -16,7 +16,7 @@ namespace Tools::TimeConverter {
         TimeSystem::TAI
     };
 
-    // Label colors per system
+
     static constexpr ImVec4 SYS_COLORS[SYS_COUNT] = {
         {1.0f, 1.0f, 1.0f, 1.0f}, // UTC  - white
         {0.4f, 1.0f, 0.4f, 1.0f}, // GPS  - green

@@ -4,11 +4,8 @@
 #include "CoordStruct.h"
 #include "CoordConvert.h"
 
-#include <cstring>
-#include <cmath>
 
 namespace Tools::CoordConverter {
-    // ========== Frame selection ==========
     static const char *FRAME_NAMES[] = {"WGS84", "GPS", "CGCS2000", "PZ90"};
     static constexpr int FRAME_COUNT = 4;
     static const FrameInfo *FRAMES[] = {
@@ -16,7 +13,7 @@ namespace Tools::CoordConverter {
     };
     static int s_FrameIdx = 0;
 
-    // ========== XYZ <-> BLH ==========
+
     static double s_X = -2700000.0;
     static double s_Y = 4700000.0;
     static double s_Z = 3300000.0;
@@ -25,10 +22,10 @@ namespace Tools::CoordConverter {
     static double s_L_deg = 0.0;
     static double s_H = 0.0;
 
-    // 0 = XYZ last edited, 1 = BLH last edited
+
     static int s_XyzBlhSrc = 0;
 
-    // ========== ENU ==========
+
     static double s_RefB_deg = 30.0;
     static double s_RefL_deg = 114.0;
     static double s_RefH = 50.0;
@@ -41,12 +38,12 @@ namespace Tools::CoordConverter {
     static double s_N = 0.0;
     static double s_U = 0.0;
 
-    // 0 = XYZ last edited, 1 = ENU last edited
+
     static int s_EnuSrc = 0;
 
     static bool s_Initialized = false;
 
-    // ========== Conversions ==========
+
     static const FrameInfo &CurFrame() { return *FRAMES[s_FrameIdx]; }
 
     static void SyncXYZToBLH() {
@@ -110,7 +107,6 @@ namespace Tools::CoordConverter {
         return edited;
     }
 
-    // ========== Render ==========
     void Render(bool *p_open) {
         if (!s_Initialized) {
             s_Initialized = true;
@@ -124,7 +120,6 @@ namespace Tools::CoordConverter {
             return;
         }
 
-        // --- Frame selector ---
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("参考系:");
         ImGui::SameLine();
@@ -138,7 +133,7 @@ namespace Tools::CoordConverter {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ======== XYZ <-> BLH ========
+
         ImGui::SeparatorText("XYZ <-> BLH");
 
         const bool xyz_edited = InputRow3("##xyz", "X (m)", &s_X, "Y (m)", &s_Y, "Z (m)", &s_Z, "%.4f");
@@ -156,7 +151,7 @@ namespace Tools::CoordConverter {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ======== ENU ========
+
         ImGui::SeparatorText("站心坐标 (ENU)");
 
         // Reference point

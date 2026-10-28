@@ -10,7 +10,6 @@
 #include "SolverTask.h"
 #include "imgui.h"
 
-/// 跨页面复用的 GNSS 可视化 widget
 namespace Solvers::Charts {
 
     struct SatRow {
@@ -19,7 +18,7 @@ namespace Solvers::Charts {
         double elevDeg = 0;               // 仰角(°)
         double azimDeg = 0;               // 方位角(°)
         bool hasAzim = false;
-        double satX = 0, satY = 0, satZ = 0;  // 卫星 ECEF 位置(m)
+        double satX = 0, satY = 0, satZ = 0;
         bool hasSatXYZ = false;
         std::vector<std::pair<std::string, std::string>> extra;
     };
@@ -37,7 +36,7 @@ namespace Solvers::Charts {
                        const std::vector<double> &float_u = {},
                        int epochCount = -1);
 
-    // E-N 平面图（rtkpost 风格）：以参考点为原点逐历元描点；正方形布局，中心十字标记参考点。
+
     void renderENPlanView(const std::vector<double> &enu_e,
                           const std::vector<double> &enu_n,
                           const std::vector<double> &enu_solved,
@@ -48,8 +47,6 @@ namespace Solvers::Charts {
                          const std::vector<double> &ratioVals,
                          int &selectedEpoch, bool &newed, int epochCount = -1);
 
-    // 逐卫星残差图：内置「码(伪距) / 载波相位」切换（resMode，可为 nullptr=固定码残差）。
-    // 两组数据都要传：切换是即时的，不能等下一次解算。
     void renderSatResidualPlot(const std::map<SatID, std::vector<double>> &satResT,
                                const std::map<SatID, std::vector<double>> &satResV,
                                const std::map<SatID, std::vector<double>> &phaseT,

@@ -14,7 +14,7 @@
 #include "GnssStruct.h"
 #include "SolverTask.h"
 #include "SPP.h"
-#include "ObsFormat.h"      // classifyObsPath：RINEX/OEM7 三值判别（文件模式分发唯一入口）
+#include "ObsFormat.h"
 #include "OEM7SocketReader.h"
 #include "Log.h"
 #include "core/SolveConfig.h"
@@ -23,17 +23,13 @@
 #include "core/IniFile.h"
 
 namespace {
-    // ---------------------------------------------------------------------------
-    // SPP（文件模式：RINEX 或 OEM7）—— 单站解算由 SolveDriver::solveAll 统一驱动
-    // ---------------------------------------------------------------------------
     void runSppFile(const SolveConfig &cfg) {
         std::vector<GnssTask::EpochData> epochs;
         SPP spp;
         spp.setCutoffElevDeg(cfg.cutoffDeg);
         spp.setEnabledSystems(cfg.systems);
-        spp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar); // ISB：非参考系统钟差当常数/随机游走估(对齐老师)
+        spp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar);
 
-        // 广播星历：优先用 nav，空则扫伴生文件
         std::vector<std::string> navs;
         if (!cfg.navPath.empty()) navs.push_back(cfg.navPath);
         else navs = GnssTask::ScanNavFiles(cfg.obsPath);
@@ -74,20 +70,16 @@ namespace {
         Cli::dumpCsv(epochs, GnssTask::SolverMode::Spp, ref, false, cfg);
     }
 
-    // ---------------------------------------------------------------------------
-    // SPP（实时流模式：OEM7 socket）—— 连接/重连由本函数管理，逐历元核心复用 SolveDriver 回填
-    // ---------------------------------------------------------------------------
     void runSppRealtime(const SolveConfig &cfg) {
         std::vector<GnssTask::EpochData> epochs;
         SPP spp;
         spp.setCutoffElevDeg(cfg.cutoffDeg);
         spp.setEnabledSystems(cfg.systems);
-        spp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar); // ISB：非参考系统钟差当常数/随机游走估(对齐老师)
+        spp.setIsbProcNoise(cfg.isbProcNoise, cfg.isbInitVar);
 
         std::atomic stop{false};
         std::thread waiter;
         if (cfg.realtimeSec <= 0 && cfg.maxEpochs <= 0) {
-            // 无计时/计数限制时，等待用户回车停止
             waiter = std::thread([&] {
                 std::cin.get();
                 stop = true;
@@ -155,7 +147,7 @@ namespace {
         if (cfg.hasRef) ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);
         Cli::dumpCsv(epochs, GnssTask::SolverMode::Spp, ref, false, cfg);
     }
-} // namespace
+}
 
 int main(int argc, char **argv) {
     std::string ini = argc > 1 ? argv[1] : "spp.ini";

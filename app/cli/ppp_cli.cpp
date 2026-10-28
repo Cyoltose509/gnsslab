@@ -7,7 +7,7 @@
 #include "SPP.h"
 #include "PPPStatic.h"
 #include "PPPKinematic.h"
-#include "ObsFormat.h"      // classifyObsPath：RINEX/OEM7 三值判别（Unknown 显式报错）
+#include "ObsFormat.h"
 #include "Log.h"
 #include "core/SolveConfig.h"
 #include "CliCommon.h"
@@ -28,7 +28,7 @@ namespace {
             if (!cfg.tro.empty()) ppp.loadTro(cfg.tro);
             if (!cfg.ionex.empty()) ppp.loadIonex(cfg.ionex);
 
-            ppp.mApplySolidTide = cfg.solidTide != 0; // 卫星/接收机 PCO、PCV 现已由 ATX 文件自动决定
+            ppp.mApplySolidTide = cfg.solidTide != 0;
             ppp.setMeasNoise(cfg.sigIFCode, cfg.sigPhase);
             ppp.setFirstEpochPosVar(cfg.firstEpochPosVar);
             ppp.setTropo(true, cfg.ztdInitValue, cfg.ztdInitVar, cfg.ztdQ);
@@ -61,8 +61,6 @@ namespace {
             Cli::dumpEmpty(GnssTask::SolverMode::Ppp, cfg);
             return;
         }
-        // 观测文件格式三值判别（与 SPP/RTK/LEO 同一入口）：RINEX 或 OEM7 日志，
-        // 无法识别时明确报错，不再默认落进 RINEX 读取器报"无法打开 RINEX"误导用户
         SolveDriver::RinexFileSource rsrc;
         SolveDriver::Oem7FileSource osrc;
         SolveDriver::ObsSource *src = nullptr;

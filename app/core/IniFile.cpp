@@ -18,7 +18,6 @@ bool IniFile::load(const std::string &path) {
     if (!f) return false;
     std::string line, cur;
     while (std::getline(f, line)) {
-        // 去掉行内注释
         for (const char c : {'#', ';'}) {
             if (const size_t h = line.find(c); h != std::string::npos) line = line.substr(0, h);
         }
@@ -83,4 +82,4 @@ void IniFile::erase(const std::string &sec, const std::string &key) {
     if (const auto it = sections.find(sec); it != sections.end()) it->second.erase(key);
 }
 
-} // namespace AppConfig
+}

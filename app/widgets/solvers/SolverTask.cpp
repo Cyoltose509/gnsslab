@@ -32,7 +32,7 @@ namespace GnssTask {
     void SolverTaskBase::setError(std::string msg) {
         std::lock_guard lk(errorMutex);
         errorMsg = std::move(msg);
-        hasError.store(true); // 先写完消息再置标志，保证标志为真时消息已可见
+        hasError.store(true);
     }
 
     void SolverTaskBase::clearError() {
@@ -75,7 +75,7 @@ namespace GnssTask {
                 core->obsQueue.pop();
                 return !core->stop.load();
             }
-            return false; // 队列空 ⇒ 上一条 wait 只可能因 readDone 或 stop 醒来
+            return false;
         }
     }
 
@@ -89,14 +89,12 @@ namespace GnssTask {
             std::lock_guard plk(core->plotMutex);
             core->plotData.insert(idx, core->epochs.back(), core->refECEF);
         } catch (...) {
-            // 绘图插入失败（例如残差 map 分配失败）不该让整次解算中断，历元已入列
         }
         if (core->selectedEpoch == -1 || core->selectedEpoch == idx - 1) core->selectedEpoch = idx;
         core->solvingProgress = idx + 1;
         core->solvedCount = static_cast<int>(core->epochs.size());
     }
 
-    // 渲染侧同步：外层 Task 的 loading/done/错误态镜像到共享 core。
     void SolverTaskBase::beforeSolveEpoch(void *solver, ObsItem *item) {
         if (!item || !item->eph) return; // RINEX 路径 eph 恒空，天然跳过
         const EphemerisTable *tbl = item->eph.get();

@@ -48,15 +48,14 @@ namespace Solvers::Charts {
         for (int i = 0; i < n; ++i) {
             if (!std::isfinite(times[i])) continue;
             if (!keptIdx.empty() && times[i] - tt.back() > thr) {
-                tt.push_back(tt.back()); // 断点 x（复用前一点 x，使 ImPlot 在此断开）
-                keptIdx.push_back(-1); // NaN 占位
+                tt.push_back(tt.back());
+                keptIdx.push_back(-1);
             }
             tt.push_back(times[i]);
             keptIdx.push_back(i);
         }
     }
 
-    // 按 buildBrokenAxis 结果对齐单条 y 序列（非有限 y 一并置 NaN，保持与 tt 等长）
     static void alignBrokenY(const std::vector<int> &keptIdx,
                              const std::vector<double> &y,
                              std::vector<double> &vv) {
@@ -72,7 +71,6 @@ namespace Solvers::Charts {
         }
     }
 
-    // 卫星数据列表
     void renderSatelliteTable(const std::vector<SatRow> &rows, int &selectedSatIdx, const char *id) {
         if (rows.empty()) {
             ImGui::TextDisabled("(无卫星)");

@@ -46,7 +46,6 @@ namespace Tools::FtpDownload {
         d = tm.tm_mday;
     }
 
-    // 标签式多选
     static bool tagChip(const char *label, const bool on) {
         constexpr ImVec4 accent(0.26f, 0.59f, 0.98f, 1.00f);
         int colors = 3;
@@ -167,7 +166,6 @@ namespace Tools::FtpDownload {
             LOG_ERROR << "[下载] 失败 " << m.filename << " — " << log;
     }
 
-    // 从确认弹窗发起下载：先标记再起线程，芯片本帧就换成进度条（不等新线程被调度）。
     static void startDownload(const Pending &p) {
         s_downloading = true;
         {
@@ -181,11 +179,10 @@ namespace Tools::FtpDownload {
         m.spanDays = p.spanDays;
         m.filename = p.remoteName;
         markDownloading(p.dirUrl + p.remoteName);
-        if (s_dlThread.joinable()) s_dlThread.join(); // 反复再起可先收尾上一次
+        if (s_dlThread.joinable()) s_dlThread.join();
         s_dlThread = std::thread(runDownload, p.dirUrl, m);
     }
 
-    // ---------- 过滤：从缓存里挑出"选中类型 × 覆盖所选日 × 选中数据中心"的文件 ----------
     struct Match {
         ProductMeta m;
         std::string dirUrl;
@@ -206,7 +203,6 @@ namespace Tools::FtpDownload {
             for (const auto &m: it->second.items) {
                 if (!types.count(m.type)) continue;
                 if (!m.covers(year, doy)) continue;
-                // 广播星历目录里是 BRDC/各测站文件，文件名不含 COD 之类的分析中心码 ⇒ 豁免过滤
                 if (m.type != ProductType::NAV && !dcs.empty() && !dcs.count(m.datacenter)) continue;
                 if (!seen.insert(m.filename).second) continue;
                 out.push_back({m, d});
@@ -217,11 +213,10 @@ namespace Tools::FtpDownload {
         return out;
     }
 
-    // ---------- 渲染 ----------
     void Render(bool *p_open) {
         if (!s_open) return;
 
-        if (s_year == 0) today(s_year, s_month, s_day); // 默认当天
+        if (s_year == 0) today(s_year, s_month, s_day);
         if (s_dcOn.size() != ProductMeta::knownDatacenters().size())
             s_dcOn.assign(ProductMeta::knownDatacenters().size(), 0);
 
@@ -231,7 +226,6 @@ namespace Tools::FtpDownload {
             return;
         }
 
-        // ---- 产品类型（标签多选）----
         {
             ImGui::TextUnformatted("产品类型");
             ImGui::SameLine();
@@ -247,13 +241,11 @@ namespace Tools::FtpDownload {
                 x += w + gap;
             }
             if (s_typeOn[7]) {
-                // 天线文件
                 ImGui::SameLine();
                 ImGui::TextDisabled("(镜像无 ATX 源)");
             }
         }
 
-        // ---- 数据中心（标签多选；全不选 = 不过滤）----
         {
             const auto &dcs = ProductMeta::knownDatacenters();
             ImGui::TextUnformatted("数据中心");
@@ -271,7 +263,6 @@ namespace Tools::FtpDownload {
             }
         }
 
-        // ---- 日期（年月日，不要年积日）----
         {
             ImGui::TextUnformatted("日期");
             ImGui::SameLine();
@@ -311,7 +302,6 @@ namespace Tools::FtpDownload {
 
         ImGui::Separator();
 
-        // ---- 需求目录 → 必要时后台补扫 ----
         std::set<ProductType> types;
         for (int i = 0; i < 8; ++i)
             if (s_typeOn[i]) types.insert(static_cast<ProductType>(i));
@@ -333,7 +323,7 @@ namespace Tools::FtpDownload {
         }
 
         std::vector<Match> matches;
-        int nMissing = 0; // 已确认不存在 / 未发布的目录数（负缓存，避免误以为卡死）
+        int nMissing = 0;
         std::vector<std::string> missingUrls;
         {
             std::lock_guard lk(s_mtx);
@@ -393,7 +383,7 @@ namespace Tools::FtpDownload {
                         }
                     }
 
-                    // 宽度按最长的 "100%" 预留，好让下载期间百分比变化时不推动后面的芯片
+
                     const float w = downloading
                                         ? chipWidth((label + "  100%").c_str())
                                         : chipWidth(label.c_str());

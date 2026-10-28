@@ -27,8 +27,6 @@ namespace {
             task->stop = true;
             if (const auto c = task->solveResult()) {
                 c->stop = true;
-                // QC 线程在主线程退出路径上 join（不会 self-join 死锁）；确保其随程序关闭一并结束，
-                // 否则 detached QC 线程可能滞留后台继续算质量分析。
                 if (c->qcWorker.joinable()) c->qcWorker.join();
             }
         }
@@ -193,7 +191,6 @@ void Application::RenderTasks() {
         );
 
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        // 与任务宿主一样是"背景件"：不许它抢 z 序，否则会把工具窗/配置窗压住
         constexpr ImGuiWindowFlags flags =
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
@@ -208,7 +205,7 @@ void Application::RenderTasks() {
         return;
     }
 
-    // 渲染每个任务的标签页
+
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -220,7 +217,7 @@ void Application::RenderTasks() {
             ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
-    // 用固定 ID 的窗口做全视口容器
+
     if (ImGui::Begin("##task_host", nullptr, windowFlags)) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
 
@@ -285,7 +282,7 @@ void Application::OpenPppSolve() {
 void Application::OpenLeoSolve() {
     const auto task = std::make_shared<Solvers::LeoProcessor::LeoTask>();
 
-    // 载入用户上次选择（项目外 ini）；无记录则留空，由用户填写。不再预填默认路径。
+
     const auto &cfg = AppConfig::PathMemory::instance();
     task->leoObsPathBuf = cfg.get("leo_obs");
     task->gnssSp3PathBuf = cfg.get("leo_gnss_sp3");
@@ -309,7 +306,7 @@ void Application::OpenLeoSolve() {
 void Application::OpenRtkSolve() {
     const auto task = std::make_shared<Solvers::RtkProcessor::RtkTask>();
 
-    // 载入用户上次选择（项目外 ini）；无记录则留空，由用户填写。
+
     const auto &cfg = AppConfig::PathMemory::instance();
     task->baseObsPathBuf = cfg.get("rtk_base");
     task->roverObsPathBuf = cfg.get("rtk_rover");
@@ -352,7 +349,7 @@ void Application::OpenInsAlign() {
 void Application::Render() {
     RenderMenuBar();
 
-    // ---- 工具子窗口（浮动） ----
+
     if (m_showTimeConverter)
         Tools::TimeConverter::Render(&m_showTimeConverter);
     if (m_showCoordConverter)
@@ -362,7 +359,7 @@ void Application::Render() {
     if (Tools::FtpDownload::s_open)
         Tools::FtpDownload::Render(&Tools::FtpDownload::s_open);
 
-    // ---- 任务内容（全视口标签页） ----
+
     RenderTasks();
 }
 

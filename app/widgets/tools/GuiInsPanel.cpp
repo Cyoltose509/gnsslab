@@ -12,7 +12,6 @@ namespace Tools::InsPanel {
     std::shared_ptr<GnssTask::SolverTaskBase> MakeSixPosCalibTask() {
         auto t = std::make_shared<SixPosCalibTask>();
         const auto &pm = AppConfig::PathMemory::instance();
-        // 文件列表持久化（单一键，'|' 分隔）
         if (const std::string files = pm.get("ins_cal_files"); !files.empty()) {
             size_t pos = 0;
             while (pos < files.size()) {

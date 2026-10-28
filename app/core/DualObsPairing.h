@@ -14,11 +14,10 @@ namespace SolveDriver {
             static constexpr int kWindow = 32; // 滑动窗口内的间隔样本数
             static constexpr int kMinSamples = 3; // 少于此数视为未就绪
             static constexpr double kMinDelta = 1e-6; // ≤此值视为重复历元，不计入
-            static constexpr double kMaxSaneGap = 900.0; // ≥15min 视为中断/时间回绕，不计入
+            static constexpr double kMaxSaneGap = 900.0; // ≥此值视为中断/时间回绕，不计入
 
             void reset();
 
-            /// 按时间顺序喂入该路读到的每个历元时间（秒）
             void observe(double epochSec);
 
             [[nodiscard]] double interval() const;

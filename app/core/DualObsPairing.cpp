@@ -38,8 +38,8 @@ namespace SolveDriver {
                 return a.second < b.second;
             });
         if (best->second >= 2) return static_cast<double>(best->first) / 1000.0;
-        // 众数不可靠（间隔抖动到 1ms 量级分散）：退化为中位数
-        std::vector<double> v(mDeltas);
+        // 众数不可靠
+        std::vector v(mDeltas);
         std::nth_element(v.begin(), v.begin() + static_cast<long>(v.size()) / 2, v.end());
         return v[v.size() / 2];
     }
@@ -53,7 +53,6 @@ namespace SolveDriver {
         return 0.5 * (ia < ib ? ia : ib);
     }
 
-    // ---------------- DualObsPairing ----------------
     DualObsPairing::DualObsPairing(Puller basePull, Puller roverPull)
         : mBasePull(std::move(basePull)), mRoverPull(std::move(roverPull)) {
     }
@@ -75,14 +74,13 @@ namespace SolveDriver {
                     out.rover = mRover;
                     out.baseEph = std::move(mBaseEph);
                     out.roverEph = std::move(mRoverEph);
-                    // 已消费：下一轮重新拉取，避免重复配对同一历元
                     mHaveBase = mHaveRover = false;
                     return true;
                 case Action::AdvanceBase:
-                    if (!stepBase()) return false; // 基准站历元更旧，丢弃重读
+                    if (!stepBase()) return false;
                     break;
                 case Action::AdvanceRover:
-                    if (!stepRover()) return false; // 流动站历元更旧，丢弃重读
+                    if (!stepRover()) return false;
                     break;
             }
         }
@@ -90,8 +88,7 @@ namespace SolveDriver {
 
     DualObsPairing::Action DualObsPairing::classify(const CommonTime &baseEpoch, const CommonTime &roverEpoch, double tol) {
         if (std::fabs(baseEpoch - roverEpoch) <= tol) return Action::Pair;
-        // |Δ| > tol 时等价于 (base < rover - tol) 的判定（差值已大于 tol，二者大小关系无歧义）
-        return (baseEpoch < roverEpoch) ? Action::AdvanceBase : Action::AdvanceRover;
+        return baseEpoch < roverEpoch ? Action::AdvanceBase : Action::AdvanceRover;
     }
 
     EphemerisTable *DualObsPairing::selectEph(const EphPtr &baseEph, const EphPtr &roverEph) {
@@ -113,7 +110,7 @@ namespace SolveDriver {
             return false;
         }
         mBaseEph = std::move(eph);
-        mBaseIv.observe(mBase.weekSecond.sow); // 估采样间隔 / 配对窗口
+        mBaseIv.observe(mBase.weekSecond.sow);
         mHaveBase = true;
         return true;
     }

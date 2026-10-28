@@ -9,10 +9,10 @@
 #include <string>
 #include <d3d11.h>
 #include <wincodec.h>
-#include <shobjidl.h>   // IFileOpenDialog / IFileSaveDialog（现代 DPI 清晰对话框）
+#include <shobjidl.h>
 #include <tchar.h>
 
-// ========== DX11 file-scope globals ==========
+
 static ID3D11Device *g_pd3dDevice = nullptr;
 static ID3D11DeviceContext *g_pd3dDeviceContext = nullptr;
 static IDXGISwapChain *g_pSwapChain = nullptr;
@@ -20,11 +20,11 @@ static ID3D11RenderTargetView *g_mainRenderTargetView = nullptr;
 static bool g_SwapChainOccluded = false;
 static UINT g_ResizeWidth = 0;
 static UINT g_ResizeHeight = 0;
-static HWND g_mainHwnd = nullptr;   // 主窗口句柄（对话框归属 + DPI 上下文）
+static HWND g_mainHwnd = nullptr;
 
 // ========== 帧截屏（PNG 导出）==========
 static bool g_captureReq = false;
-static bool g_captureRegion = false;          // true=只截子区域
+static bool g_captureRegion = false;
 static int g_capX = 0, g_capY = 0, g_capW = 0, g_capH = 0;
 static std::wstring g_capturePath;
 static bool SavePixelsToPNG(const wchar_t *path, int x0, int y0, int w, int h,
@@ -138,8 +138,6 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 void Gui::Initialize(const char *title, const float width, const float height) {
     if (m_initialized) return;
 
-    // COM：GUI 主线程用单线程套间(STA) —— IFileDialog(现代文件对话框) 要求 STA；
-    // WIC(PNG 编码) 在 STA/MTA 均可。
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -296,8 +294,6 @@ void Gui::EndFrame() const {
     g_SwapChainOccluded = hr == DXGI_STATUS_OCCLUDED;
 }
 
-// ========== PNG 导出：DX11 后台缓冲读回 + WIC 编码 ==========
-// 从 srcBGRA(整帧) 中裁剪 [x0,y0,w,h] 区域，转 RGBA 后写 PNG。
 static bool SavePixelsToPNG(const wchar_t *path, int x0, int y0, int w, int h,
                             UINT srcPitch, const BYTE *srcBGRA) {
     if (w <= 0 || h <= 0) return false;
@@ -316,7 +312,6 @@ static bool SavePixelsToPNG(const wchar_t *path, int x0, int y0, int w, int h,
     frame->SetSize((UINT)w, (UINT)h);
     WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppRGBA;
     frame->SetPixelFormat(&fmt);
-    // 后台缓冲为 BGRA(内存序 B,G,R,A)，逐行转 RGBA 写入（D3D11 纹理行 0 = 屏幕顶部，无需翻转）
     std::vector<BYTE> rgba((size_t)w * h * 4);
     for (int y = 0; y < h; y++) {
         const BYTE *s = srcBGRA + (size_t)(y0 + y) * srcPitch + (size_t)x0 * 4;

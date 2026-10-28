@@ -34,7 +34,6 @@ namespace Tools::InsPanel {
 
     void SixPosCalibTask::startCalib() {
         {
-            // 实验室常量无条件持久化（校验失败也落盘，同四解算器铁律）
             const auto &cfg = AppConfig::PathMemory::instance();
             cfg.setNum("ins_g", g);
             cfg.setNum("ins_lat", latDeg);
@@ -42,7 +41,6 @@ namespace Tools::InsPanel {
             cfg.setNum("ins_turn", turnAngleDeg);
             cfg.setNum("ins_k_acc", kAccelLsb);
             cfg.setNum("ins_k_gyro", kGyroLsb);
-            // 文件列表持久化（单一键，'|' 分隔）
             std::string joined;
             for (size_t i = 0; i < filePaths.size(); ++i) {
                 if (i) joined += '|';
@@ -116,7 +114,7 @@ namespace Tools::InsPanel {
 
         std::set<std::string> seenHash;
         int nStatic = 0, nRot = 0;
-        std::vector<PerFileChart> fcs; // 逐文件的原始波形（任意数量文件）
+        std::vector<PerFileChart> fcs;
 
         auto buildRaw = [&](const ImuLog &L, PerFileChart &fc) {
             if (L.empty()) return;
@@ -161,7 +159,6 @@ namespace Tools::InsPanel {
             fc.name = name;
             buildRaw(log, fc);
 
-            // 重复文件去重：仅影响标定聚合，波形依旧展示
             const std::string hash = fileContentHash(path);
             if (seenHash.count(hash)) {
                 ++dups;

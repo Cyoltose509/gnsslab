@@ -103,21 +103,18 @@ namespace Solvers::Helpers {
         double lo = -8.0, hi = 8.0;
     };
 
-    // 逐星残差的稳健 Y 轴范围：取全体 1%~99% 分位的中点对称展开。
-    // minHalf 是半宽下限（米）：码残差 1 m、相位残差量级只有 cm，必须传小值，
-    // 否则相位曲线会被挤成一条直线（曾因固定 1 m 下限导致相位图"看起来没数据"）。
     RobustResRange computeRobustResRange(const std::map<SatID, std::vector<double> > &satRes,
                                          double minHalf = 1.0);
 
 
-    // 路径取文件名（去掉目录部分）
+
     std::string baseName(const std::string &p);
 
     void beginConfigBody(const std::string &idBase, const GnssTask::SolverTaskBase &task);
 
     void endConfigBody();
 
-    // 「取消」按钮
+
     template<class Task>
     void renderCancelButton(Task *task) {
         if (ImGui::Button("取消", ImVec2(80, 40))) {
@@ -146,8 +143,6 @@ namespace Solvers::Helpers {
         task->stop = false;
         auto core = task->solveResult();
         core->stop = false;
-        // 参考点状态随每次解算复位：initializedRefECEF 若残留，新解算会沿用上一轮锁存的
-        // 参考点（RTK = 上一轮首历元的 mBaseXyz），基线/ENU/CSV 全部锚到错误基准。
         core->initializedRefECEF = false;
         core->refAutoConfirmed = false;
         core->filePath = obsPath;
@@ -172,7 +167,6 @@ namespace Solvers::Helpers {
                               const std::function<void()> &onStart,
                               const std::function<void()> &extraContent = {});
 
-    // 读取历元数量并钳制选中历元
     template<class Task>
     std::pair<int, int> readEpochView(const std::shared_ptr<Task> &task) {
         std::lock_guard lock(task->mutex);
