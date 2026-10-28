@@ -50,21 +50,20 @@ void runRtk(const SolveConfig &cfg) {
     }
 
     EphemerisTable navTable;
-    // 双站格式必须一致：混合格式（RINEX+OEM7）此前会整队落进 OEM7 分支必败，
-    // 且错误信息指不到真正原因，这里显式报错
+    // 双站格式独立判别：混合格式（一 RINEX 一 OEM7）合法——两路 reader 各自构造、
+    // 星历按侧分发（OEM7 内嵌快照优先，纯 RINEX 回落 navTable）。
+    // 早期"全局 oem7 标志 + 成对 reader"实现曾强制两站同格式一刀切报错，
+    // 但配对接口（DualObsPairing::Puller / selectEph）本就与格式无关，此处放开。
     const GnssTask::ObsFormat fmtBase = GnssTask::classifyObsPath(cfg.basePath);
     const GnssTask::ObsFormat fmtRover = GnssTask::classifyObsPath(cfg.roverPath);
     if (fmtBase == GnssTask::ObsFormat::Unknown || fmtRover == GnssTask::ObsFormat::Unknown) {
-        std::cerr << "RTK 无法识别观测文件格式（支持 RINEX .??O/.rnx/.obs 与 OEM7 .log/.oem7）\n";
+        std::cerr << "RTK 无法识别观测文件格式\n";
         Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
         return;
     }
-    if (fmtBase != fmtRover) {
-        std::cerr << "RTK 基准站与流动站文件格式不一致（需同为 RINEX 或同为 OEM7）\n";
-        Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
-        return;
-    }
-    const bool oem7 = (fmtBase == GnssTask::ObsFormat::Oem7);
+    const bool baseRinex = fmtBase == GnssTask::ObsFormat::Rinex;
+    const bool roverRinex = fmtRover == GnssTask::ObsFormat::Rinex;
+    const bool anyRinex = baseRinex || roverRinex; // 任一侧 RINEX 即需外部广播星历
     bool refInit = false;
     Eigen::Vector3d ref(0, 0, 0);
 
@@ -81,89 +80,43 @@ void runRtk(const SolveConfig &cfg) {
         epochs.push_back(data);
     };
 
-    if (oem7) {
-        OEM7Reader br, rr;
-        if (!br.open(cfg.basePath) || !rr.open(cfg.roverPath)) {
-            std::cerr << "RTK 无法打开 OEM7 日志\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
-            return;
-        }
-        // 双站历元配对统一走 SolveDriver::DualObsPairing：配对窗口自适应采样间隔
-        // （= 半个采样间隔，1Hz/5Hz/10Hz 通吃；样本不足时 tol=0 只推进不配对，绝不错配相邻历元）。
-        auto nextBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> bool {
-            if (!br.getNextEpoch(o)) return false;
-            e = br.ephSnapshot();
-            return true;
-        };
-        auto nextRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> bool {
-            if (!rr.getNextEpoch(o)) return false;
-            e = rr.ephSnapshot();
-            return true;
-        };
-        SolveDriver::DualObsPairing p(nextBase, nextRover);
-        SolveDriver::DualObsPairing::Pair pr;
-        while (p.next(pr)) {
-            EphemerisTable *eph = SolveDriver::DualObsPairing::selectEph(pr.baseEph, pr.roverEph);
-            processOne(pr.base, pr.rover, eph);
-        }
-    } else {
+    // 任一侧为 RINEX 即加载外部广播星历（OEM7 侧有内嵌快照可自足，不强制 nav）
+    if (anyRinex) {
         if (cfg.navPath.empty()) {
-            std::cerr << "RTK RINEX 模式需要广播星历 [input] nav\n";
+            std::cerr << "RTK RINEX 模式需要广播星历 [input] nav（任一观测文件为 RINEX 即需要）\n";
             Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
             return;
         }
-        RinexNavStore nav;
-        nav.loadFile(cfg.navPath, navTable);
-        if (navTable.gps.empty() && navTable.bds.empty()) {
-            std::cerr << "RTK 广播星历为空\n";
+        std::string navErr;
+        if (!SolveDriver::loadRtkNav(cfg.navPath, navTable, navErr)) {
+            std::cerr << "RTK " << navErr << "\n";
             Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
             return;
         }
-        std::fstream baseFile(cfg.basePath, std::ios::in);
-        std::fstream roverFile(cfg.roverPath, std::ios::in);
-        if (!baseFile.is_open() || !roverFile.is_open()) {
-            std::cerr << "RTK 无法打开 RINEX 观测文件\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
-            return;
-        }
-        RinexObsReader baseRdr, roverRdr;
-        baseRdr.pFileStream = &baseFile;
-        roverRdr.pFileStream = &roverFile;
+    }
 
-        // 失败快出：基准站首历元解析（同时校验文件可用性）
-        try { baseRdr.parseRinexObs(); }
-        catch (...) { std::cerr << "RTK 基准站 RINEX 解析失败\n"; Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg); return; }
+    // ---- per-side reader + 首跳快进对齐 + 配对器：与 GUI ReaderThread 共用同一套
+    // （原两端各写一份 makePull/probeRinexFirst/快进，近 90 行逐字相同）----
+    SolveDriver::DualObsHandles h;
+    SolveDriver::DualObsPairing::Puller nextBase, nextRover;
+    std::string openErr;
+    if (!SolveDriver::openDualObsSources(baseRinex, roverRinex, cfg.basePath, cfg.roverPath,
+                                         h, nextBase, nextRover, openErr)) {
+        std::cerr << "RTK " << openErr << "\n";
+        Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
+        return;
+    }
 
-        // 把基准站流跳到流动站首历元附近（与 GUI 一致的对齐加速；保留首跳优化）
-        try {
-            RinexObsReader probeRdr;
-            std::fstream probeFile(cfg.roverPath, std::ios::in);
-            if (probeFile.is_open()) {
-                probeRdr.pFileStream = &probeFile;
-                const ObsData rover0 = probeRdr.parseRinexObs();
-                baseRdr.fastForwardToEpoch(rover0.epoch);
-            }
-        } catch (...) { /* 探测失败退回逐历元 */ }
-
-        // 双站配对统一走 SolveDriver::DualObsPairing：两路各自独立取下一历元（无参
-        // parseRinexObs），由配对器按时间对齐；首跳加速已在上面完成。RINEX 用全量 navTable。
-        auto nextBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> bool {
-            try { o = baseRdr.parseRinexObs(); }
-            catch (const EndOfFile &) { return false; } catch (...) { return false; }
-            e = nullptr;
-            return true;
-        };
-        auto nextRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> bool {
-            try { o = roverRdr.parseRinexObs(); }
-            catch (const EndOfFile &) { return false; } catch (...) { return false; }
-            e = nullptr;
-            return true;
-        };
-        SolveDriver::DualObsPairing p(nextBase, nextRover);
-        SolveDriver::DualObsPairing::Pair pr;
-        while (p.next(pr)) {
-            processOne(pr.base, pr.rover, &navTable);
-        }
+    // ---- 配对解算：星历按侧分发（base 快照优先 → rover 快照 → navTable，与 selectEph 语义一致）----
+    // 双站历元配对统一走 SolveDriver::DualObsPairing：配对窗口自适应采样间隔
+    // （= 半个采样间隔，1Hz/5Hz/10Hz 通吃；样本不足时 tol=0 只推进不配对，绝不错配相邻历元）。
+    SolveDriver::DualObsPairing p(nextBase, nextRover);
+    SolveDriver::DualObsPairing::Pair pr;
+    while (p.next(pr)) {
+        EphemerisTable *eph = pr.baseEph ? pr.baseEph.get()
+                          : pr.roverEph ? pr.roverEph.get()
+                          : &navTable;
+        processOne(pr.base, pr.rover, eph);
     }
 
     if (cfg.hasRef) ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);
@@ -194,6 +147,10 @@ void runRtkRealtime(const SolveConfig &cfg) {
     rc.fullCovariance = cfg.fullCovariance != 0;
     rtk.setConfig(rc);
 
+    // 与 GUI 一致：显式基站坐标（norm>1e3 才生效，语义同 RTK::processEpoch 的 mBaseXyzUser）
+    if (Eigen::Vector3d(cfg.baseCoordX, cfg.baseCoordY, cfg.baseCoordZ).norm() > 1e3)
+        rtk.mBaseXyzUser = Eigen::Vector3d(cfg.baseCoordX, cfg.baseCoordY, cfg.baseCoordZ);
+
     const std::string &bip = cfg.baseIp.empty() ? "127.0.0.1" : cfg.baseIp;
     const std::string &rip = cfg.roverIp.empty() ? "127.0.0.1" : cfg.roverIp;
     const int bport = cfg.basePort > 0 ? cfg.basePort : 7190;
@@ -212,61 +169,98 @@ void runRtkRealtime(const SolveConfig &cfg) {
     baseRdr.setReceiveTimeout(200);
     roverRdr.setReceiveTimeout(200);
 
+    // realtime_sec>0 计时停止（SolveConfig 注释承诺的行为；此前 CLI 实现漏掉，
+    // 只认 max_epochs，导致 realtime_sec 单独设置时永不停止）。
+    const auto tStart = std::chrono::steady_clock::now();
+    auto timedOut = [&] {
+        return cfg.realtimeSec > 0 &&
+               std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tStart).count() >= cfg.realtimeSec;
+    };
+
     // 配对窗口自适应采样间隔（原理见 app/core/DualObsPairing.h 的内部采样间隔估计）：
     // 1Hz/5Hz/10Hz 通吃，未就绪时返回 0（只推进不配对），绝不会错配相邻历元。
     // 实时路径只持有一个 DualObsPairing 实例，通过 observeBase/observeRover/pairWindow 完成配对判定，
     // 不再出现 IntervalEstimator 类型名。
+    // 双流轮询 + 配对核心与 GUI SolveRealtimeThread 共用（pumpRealtimePair）；
+    // CLI 差异仅在连接失败即退出、历元上限与结果收集（vector + 一次性 dump）。
     SolveDriver::DualObsPairing pairing;
-    ObsData base, rover;
-    std::shared_ptr<EphemerisTable> baseEph, roverEph;
-    bool haveBase = false, haveRover = false;
     long long nProc = 0, nOk = 0, nAligned = 0;
-    while (true) {
-        if (cfg.maxEpochs > 0 && static_cast<int>(epochs.size()) >= cfg.maxEpochs) break;
-        if (!haveBase) {
-            ObsData b;
-            if (baseRdr.getNextEpoch(b)) { base = std::move(b); baseEph = baseRdr.ephSnapshot(); pairing.observeBase(base.weekSecond.sow); haveBase = true; }
-            else if (!baseRdr.isConnected()) break;
+    // 实时诊断计数（现场判断"是没数据 / 是判死断线 / 是配对不上"三者的唯一依据）
+    long long nBaseEp = 0, nRoverEp = 0, nIdle = 0;
+    auto elapsedSec = [&] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - tStart).count();
+    };
+    auto heartbeat = [&](const char *side) {
+        static auto lastBeat = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastBeat < std::chrono::seconds(10)) return;
+        lastBeat = now;
+        std::cerr << "[RTK实时] t=" << static_cast<int>(elapsedSec()) << "s base历元=" << nBaseEp
+                  << " rover历元=" << nRoverEp << " 空轮询=" << nIdle
+                  << " 配对=" << nAligned << " 解算=" << nProc << " (poll=" << side << ")\n";
+    };
+    auto getBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
+        heartbeat("base");
+        if (!baseRdr.getNextEpoch(o)) {
+            if (!baseRdr.isConnected()) {
+                std::cerr << "[RTK实时] base 连接断开 (t=" << static_cast<int>(elapsedSec()) << "s)\n";
+                return -1;
+            }
+            ++nIdle;
+            return 0;
         }
-        if (!haveRover) {
-            ObsData r;
-            if (roverRdr.getNextEpoch(r)) { rover = std::move(r); roverEph = roverRdr.ephSnapshot(); pairing.observeRover(rover.weekSecond.sow); haveRover = true; }
-            else if (!roverRdr.isConnected()) break;
+        ++nBaseEp;
+        e = baseRdr.ephSnapshot();
+        return 1;
+    };
+    auto getRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
+        heartbeat("rover");
+        if (!roverRdr.getNextEpoch(o)) {
+            if (!roverRdr.isConnected()) {
+                std::cerr << "[RTK实时] rover 连接断开 (t=" << static_cast<int>(elapsedSec()) << "s)\n";
+                return -1;
+            }
+            ++nIdle;
+            return 0;
         }
-        if (!haveBase || !haveRover) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            continue;
-        }
-        ++nAligned;
-        // 配对判定与星历选择统一走 SolveDriver::DualObsPairing（与文件模式同一条逻辑）。
-        // 实时路径是"轮询+超时+断连重连"，IO 形态与文件不同，故保留自身 haveBase/haveRover
-        // 轮询结构，仅复用配对器暴露的 classify / selectEph。
-        const double tol = pairing.pairWindow();
-        const auto act = SolveDriver::DualObsPairing::classify(base.epoch, rover.epoch, tol);
-        if (act == SolveDriver::DualObsPairing::Action::Pair) {
-            EphemerisTable *eph = SolveDriver::DualObsPairing::selectEph(baseEph, roverEph);
+        ++nRoverEp;
+        e = roverRdr.ephSnapshot();
+        return 1;
+    };
+    SolveDriver::pumpRealtimePair(
+        pairing, getBase, getRover, [&] { return timedOut(); },
+        [&] {
+            if (cfg.maxEpochs > 0 && static_cast<int>(epochs.size()) >= cfg.maxEpochs) return false;
+            ++nAligned;
+            return true;
+        },
+        [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
             ++nProc;
             bool ok = false;
-            try { ok = rtk.processEpoch(base, rover, *eph); }
+            try { ok = rtk.processEpoch(b, r, *eph); }
             catch (const std::exception &e) { std::cerr << "[RTK实时] processEpoch 异常: " << e.what() << "\n"; ok = false; }
             catch (...) { ok = false; }
             if (ok) {
                 const Result &res = rtk.result;
                 if (res.numSats > 0) {
                     GnssTask::EpochData data;
-                    SolveDriver::fillFromObs(data, rover);
+                    SolveDriver::fillFromObs(data, r);
                     SolveDriver::feedRtk(data, rtk);
                     epochs.push_back(data);
                     ++nOk;
                 }
+                // 诊断进度：每 20 历元打一行状态/ratio/卫星数/σ/配对窗口，
+                // 用于现场判断"float 收敛中 / 永不固定 / 历元饿死"。
+                if (nProc % 20 == 0)
+                    std::cerr << "[RTK实时] #" << nProc
+                              << " stat=" << (res.stat == 1 ? "FIX" : res.stat == 2 ? "FLOAT" : "INV")
+                              << " ratio=" << res.ratio
+                              << " sats=" << res.numSats
+                              << " sigF=" << res.sigmaPFloat
+                              << " tol=" << pairing.pairWindow() << "s\n";
             }
-            haveBase = haveRover = false;
-        } else if (act == SolveDriver::DualObsPairing::Action::AdvanceBase) {
-            haveBase = false;    // 基准站历元过时，丢弃重读
-        } else {
-            haveRover = false;   // 流动站历元过时，丢弃重读
-        }
-    }
+            return true;
+        });
     std::cerr << "[RTK实时] 对齐尝试=" << nAligned << " process=" << nProc << " 有效历元=" << epochs.size()
               << " (base/rover 连接=" << bip << ":" << bport << "/" << rip << ":" << rport << ")\n";
 

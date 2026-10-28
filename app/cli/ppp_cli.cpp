@@ -82,7 +82,7 @@ namespace {
             }
             src = &rsrc;
         } else {
-            std::cerr << "PPP 无法识别观测文件格式（支持 RINEX .??O/.rnx/.obs 与 OEM7 .log/.oem7）: "
+            std::cerr << "PPP 无法识别观测文件格式: "
                       << cfg.obsPath << "\n";
             Cli::dumpEmpty(GnssTask::SolverMode::Ppp, cfg);
             return;

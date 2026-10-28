@@ -26,7 +26,7 @@ namespace Cli {
             std::cerr << "无法打开输出文件: " << path << "\n";
             return;
         }
-        GnssTask::exportCsv(out, epochs, mode, ref, hasRefOrbit, false);
+        GnssTask::exportCsv(out, epochs, mode, ref, hasRefOrbit);
         std::cout << "已写出 " << epochs.size() << " 历元 -> " << path << "\n";
     }
 

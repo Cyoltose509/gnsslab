@@ -49,7 +49,7 @@ void runLeo(const SolveConfig &cfg) {
         }
         src = &rsrc;
     } else {
-        std::cerr << "LEO 无法识别观测文件格式（支持 RINEX .??O/.rnx/.obs 与 OEM7 .log/.oem7）: "
+        std::cerr << "LEO 无法识别观测文件格式: "
                   << cfg.obsPath << "\n";
         Cli::dumpEmpty(GnssTask::SolverMode::Leo, cfg);
         return;
