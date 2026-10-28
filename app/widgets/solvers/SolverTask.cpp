@@ -4,13 +4,17 @@
 #include "SolverTask.h"
 
 #include "RinexObsReader.h"
-#include "OEM7Reader.h"         // ReadOem7ObsToQueue：OEM7 日志逐历元读取（三家共用）
-#include "PPPStatic.h"        // RunSingleStationSolve<PPPStatic> / <PPPKinematic> 的显式实例化需要完整定义
+#include "OEM7Reader.h"
+#include "PPPStatic.h"
 #include "PPPKinematic.h"
 #include "LEO.h"
-#include "QualityControl.h"   // QC::makeQCObsEpoch
+#include "QualityControl.h"
 #include "Log.h"
-#include "SolveDriver.h"      // 单站解算编排共享层：fillFrom* / solveStationStream（CLI 与 GUI 共用）
+#include "SolveDriver.h"
+#include "GuiSolverPanel.h"   // SolverPanel::LaunchQC：读取线程收尾触发质量分析
+#include "GuiSppProcessor.h"  // RunSingleStationReader/RunDualThreadJob 显式实例化
+#include "GuiPppProcessor.h"
+#include "GuiLeoProcessor.h"
 
 #include <chrono>
 #include <fstream>
@@ -93,6 +97,27 @@ namespace GnssTask {
     }
 
     // 渲染侧同步：外层 Task 的 loading/done/错误态镜像到共享 core。
+    void SolverTaskBase::beforeSolveEpoch(void *solver, ObsItem *item) {
+        if (!item || !item->eph) return; // RINEX 路径 eph 恒空，天然跳过
+        const EphemerisTable *tbl = item->eph.get();
+        if (tbl->gps.empty() && tbl->bds.empty() && lastGoodEph) tbl = lastGoodEph.get();
+        else if (!tbl->gps.empty() || !tbl->bds.empty()) lastGoodEph = item->eph;
+        static_cast<SPP *>(solver)->ephTable = *tbl; // shared_ptr 元素深拷贝廉价
+    }
+
+    // 默认 afterSolveEpoch：首历元参考点初始化（SPP 原先无锁、PPP 有锁，统一加锁版）。
+    bool SolverTaskBase::afterSolveEpoch(void *, EpochData *data, ObsItem *, int) {
+        if (!data->solved) return false;
+        if (const auto core = solveResult()) {
+            std::lock_guard lk(core->mutex);
+            if (!core->initializedRefECEF) {
+                core->refECEF = data->sppResult.xyz;
+                core->initializedRefECEF = true;
+            }
+        }
+        return true;
+    }
+
     void SyncTaskStatus(const std::shared_ptr<SolverTaskBase> &task, const std::shared_ptr<SolveTask> &core) {
         core->loading.store(task->loading.load());
         core->done.store(task->done.load());
@@ -185,6 +210,57 @@ namespace GnssTask {
 
     template void RunSingleStationSolve<LEO>(
         const std::shared_ptr<SolveTask> &, LEO &, const std::shared_ptr<SolverTaskBase> &);
+
+    template <class Task>
+    void RunSingleStationReader(const std::shared_ptr<Task> &task, const char *tag) {
+        const auto core = task->solveResult();
+        try {
+            LOG_INFO << tag << " 读取文件: " << core->filePath;
+            if (const int ok = GnssTask::ReadObsToQueue(core, core->stop); ok >= 0) {
+                bool hasQcInput = false;
+                {
+                    std::lock_guard lk(core->qcInputMutex);
+                    hasQcInput = !core->qcInput.empty();
+                }
+                if (hasQcInput) Solvers::SolverPanel::LaunchQC(core);
+                else core->qcReady = true; // 无 QC 输入：直接置完成位
+            }
+        } catch (const std::exception &e) {
+            core->setError(e.what());
+        }
+        core->loading = false;
+    }
+
+    template <class Task>
+    void RunDualThreadJob(const std::shared_ptr<Task> &task, const char *tag,
+                          void (*solveFn)(const std::shared_ptr<Task> &)) {
+        std::thread thRead(RunSingleStationReader<Task>, task, tag);
+        std::thread thSolve(solveFn, task);
+        thRead.join();
+        thSolve.join();
+        task->state = SolverTaskBase::State::Done;
+        task->done = true;
+        task->loading = false;
+        GnssTask::SyncTaskStatus(task, task->solveResult());
+    }
+
+    // 三个单站解算器各实例化一份，函数体留在 .cpp（理由同 RunSingleStationSolve）。
+    template void RunSingleStationReader<Solvers::SppProcessor::SppTask>(
+        const std::shared_ptr<Solvers::SppProcessor::SppTask> &, const char *);
+    template void RunSingleStationReader<Solvers::PppProcessor::PppTask>(
+        const std::shared_ptr<Solvers::PppProcessor::PppTask> &, const char *);
+    template void RunSingleStationReader<Solvers::LeoProcessor::LeoTask>(
+        const std::shared_ptr<Solvers::LeoProcessor::LeoTask> &, const char *);
+
+    template void RunDualThreadJob<Solvers::SppProcessor::SppTask>(
+        const std::shared_ptr<Solvers::SppProcessor::SppTask> &, const char *,
+        void (*)(const std::shared_ptr<Solvers::SppProcessor::SppTask> &));
+    template void RunDualThreadJob<Solvers::PppProcessor::PppTask>(
+        const std::shared_ptr<Solvers::PppProcessor::PppTask> &, const char *,
+        void (*)(const std::shared_ptr<Solvers::PppProcessor::PppTask> &));
+    template void RunDualThreadJob<Solvers::LeoProcessor::LeoTask>(
+        const std::shared_ptr<Solvers::LeoProcessor::LeoTask> &, const char *,
+        void (*)(const std::shared_ptr<Solvers::LeoProcessor::LeoTask> &));
 
     void PlotData::insert(const int index, const EpochData &ep, const XYZ &refECEF) {
         times.push_back(index);
@@ -305,11 +381,11 @@ namespace GnssTask {
         resRangeReady = false;
         resYlo = -8.0;
         resYhi = 8.0;
+        resPhaseRangeReady = false;
+        resPhaseYlo = -0.5;
+        resPhaseYhi = 0.5;
     }
 
-    // ----------------------------------------------------------
-    // 伴生文件扫描
-    // ----------------------------------------------------------
     std::string AutoDetectNav(const std::string &obsPath) {
         const auto &cands = ScanNavFiles(obsPath);
         return cands.empty() ? std::string() : cands.front();
@@ -322,7 +398,6 @@ namespace GnssTask {
             core->qcInput.clear(); // 重新收集原始观测，供质量分析（与解算解耦）
         }
 
-        // 广播星历改由解算线程 SPP/PPP/LEO::loadBrdc 在类内加载（三者一致），读取线程仅发 navReady 信号
         {
             std::lock_guard lk(core->queueMutex);
             core->navReady = true;
@@ -372,10 +447,6 @@ namespace GnssTask {
         return ok;
     }
 
-    // OEM7 日志读取（从 Solvers::SppProcessor::ReaderThread 抽出，SPP/PPP/LEO 三家共用）。
-    // 与 RINEX 版的差异：OEM7 内含广播星历，逐历元携带 ephSnapshot 入队，
-    // 由解算线程的 beforeSolveEpoch 钩子注入 solver.ephTable；navReady 在打开
-    // 文件成功后即发出（RINEX 版打开前就发，因为星历来自外部 BRDC 文件）。
     int ReadOem7ObsToQueue(const std::shared_ptr<SolveTask> &core, const std::atomic<bool> &stopFlag) {
         const std::string &path = core->filePath;
         {

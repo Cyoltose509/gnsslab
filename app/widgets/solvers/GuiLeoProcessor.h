@@ -2,17 +2,12 @@
 
 #include <string>
 #include <memory>
-#include <thread>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <queue>
 #include <algorithm>
 
 #include "GnssStruct.h"
-#include "SolverTask.h"   // 复用 SolveTask / EpochData / PlotData / RenderTask / LaunchQC
-#include "core/PathMemory.h"     // 辅助文件列表 / 参考 PRN 跨会话记忆
-#include "Sp3OrbitReader.h"   // 参考轨道 SP3 读取（initSolver 加载、afterSolveEpoch 查 PVT）
+#include "SolverTask.h"
+#include "core/PathMemory.h"
+#include "Sp3OrbitReader.h"
 
 namespace Solvers::LeoProcessor {
     struct LeoTask : GnssTask::SolverTaskBase {
@@ -30,22 +25,14 @@ namespace Solvers::LeoProcessor {
 
         std::shared_ptr<GnssTask::SolveTask> core;  // 渲染/存储基础设施
 
-        // 渲染层的两个多态点（见 Solvers::SolverPanel::RenderTask）
         std::shared_ptr<GnssTask::SolveTask> solveResult() override { return core; }
-        void renderConfigPanel() override;   // 定义见 .cpp
+        void renderConfigPanel() override;
 
-        // ---- 解算钩子（骨架见 RunSingleStationSolve）----
         bool initSolver(void *solver) override;
         bool afterSolveEpoch(void *solver, GnssTask::EpochData *data,
                              GnssTask::ObsItem *item, int index) override;
-        // OEM7 模式星历注入（RINEX 模式不实现：星历来自 initSolver 的 SP3/BRDC）
-        void beforeSolveEpoch(void *solver, GnssTask::ObsItem *item) override;
+        // beforeSolveEpoch 不 override：走基类默认实现（OEM7 星历快照回退注入）
 
-        // OEM7 内嵌星历的上一帧非空快照（toe 不变时各历元共享同一 shared_ptr）
-        std::shared_ptr<EphemerisTable> lastGoodEph;
-
-        // 参考轨道读取与判定：initSolver 负责加载，afterSolveEpoch 逐历元查 PVT，故须跨钩子共享。
-        // refSat 在 initSolver 里按 SP3 实际卫星改写（不参与构造期初始化：refPrn 那时才定下来）。
         Sp3OrbitReader refRdr;
         SatID refSat;
         bool hasRefOrbit = false;
@@ -53,7 +40,6 @@ namespace Solvers::LeoProcessor {
         LeoTask() {
             core = std::make_shared<GnssTask::SolveTask>();
             const auto &cfg = AppConfig::PathMemory::instance();
-            // 回填各路径输入框（此前只回填了 aux 历史与 refPrn，主路径框仍全空）
             leoObsPathBuf = cfg.get("leo_obs");
             gnssSp3PathBuf = cfg.get("leo_gnss_sp3");
             gnssBrdcPathBuf = cfg.get("leo_gnss_brdc");
@@ -65,14 +51,11 @@ namespace Solvers::LeoProcessor {
                 if (std::find(auxFiles.begin(), auxFiles.end(), r) == auxFiles.end())
                     auxFiles.push_back(r);
             }
-            const std::string prnStr = cfg.get("leo_ref_prn");
-            if (!prnStr.empty()) {
+            if (const std::string prnStr = cfg.get("leo_ref_prn"); !prnStr.empty()) {
                 try { refPrn = std::stoi(prnStr); } catch (...) {}
             }
-            // 截止高度角 / 星座筛选：记忆进 ini（默认 15° / 全系统，见 SolverTask.h）
             core->cutoffDeg = cfg.getNum("leo_cutoff", core->cutoffDeg, 0.0, 90.0);
-            const std::string sysStr = cfg.get("leo_systems");
-            if (!sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
+            if (const std::string sysStr = cfg.get("leo_systems"); !sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
             refSat = SatID('L', refPrn);   // 兜底初值，initSolver 里按 SP3 实际内容改写
         }
 

@@ -37,14 +37,27 @@ namespace Solvers::Charts {
                        const std::vector<double> &float_u = {},
                        int epochCount = -1);
 
+    // E-N 平面图（rtkpost 风格）：以参考点为原点逐历元描点；正方形布局，中心十字标记参考点。
+    void renderENPlanView(const std::vector<double> &enu_e,
+                          const std::vector<double> &enu_n,
+                          const std::vector<double> &enu_solved,
+                          float sizePx,
+                          const std::string &centerLabel);
+
     void renderRatioPlot(const std::vector<double> &times,
                          const std::vector<double> &ratioVals,
                          int &selectedEpoch, bool &newed, int epochCount = -1);
 
+    // 逐卫星残差图：内置「码(伪距) / 载波相位」切换（resMode，可为 nullptr=固定码残差）。
+    // 两组数据都要传：切换是即时的，不能等下一次解算。
     void renderSatResidualPlot(const std::map<SatID, std::vector<double>> &satResT,
                                const std::map<SatID, std::vector<double>> &satResV,
+                               const std::map<SatID, std::vector<double>> &phaseT,
+                               const std::map<SatID, std::vector<double>> &phaseV,
+                               int *resMode,
                                int &selectedEpoch, int epochCount, bool &newed,
-                               const double *yLo = nullptr, const double *yHi = nullptr,
+                               const double *codeLo, const double *codeHi,
+                               const double *phaseLo, const double *phaseHi,
                                float plotH = 320.0f);
 
     struct SatRowView {
@@ -162,9 +175,11 @@ namespace Solvers::Charts {
 
         bool fixedY = false;
         std::vector<double> times, enu_e, enu_n, enu_u;
+        std::vector<double> enu_solved;
         bool newed = false;
-
-        // Ratio 时序（RTK/LEO/PPP）：showRatio 由 mode 门控；固定解/浮点解 ENU 对比
+        bool showEnPlan = true;
+        std::string refCenterLabel;
+        bool *userRefProvided = nullptr;
         bool showRatio = false;
         std::vector<double> ratioVals;
         bool hasFloatSeries = false;
@@ -173,8 +188,12 @@ namespace Solvers::Charts {
         std::map<SatID, std::vector<GnssTask::SkyPoint>> skyTracks;
         std::vector<std::pair<SatID, GnssTask::SkyPoint>> curSkyPts;
         std::map<SatID, std::vector<double>> resT, resV;
+        // 相位残差（PlotData::satResPhaseTimes/Vals）。残差图有"码/相位"切换，两份都要给；
+        // 只有当前选中的那一份会被画，但快照是全量（不许抽稀，见 GuiSolverPanel）。
         std::map<SatID, std::vector<double>> resPhaseT, resPhaseV;
         bool robustRes = false; double resYlo = -8, resYhi = 8;
+        bool robustResPhase = false; double resPhaseYlo = -0.5, resPhaseYhi = 0.5;
+        int *resMode = nullptr;          // 0=码(伪距)残差 1=载波相位残差，指向 SolveTask::resMode
 
         bool showSigmaDop = false;
         bool isRtk = false;              // RTK 模式：DOP 不含 TDOP（双差消钟差），图表/文本均不显示 TDOP

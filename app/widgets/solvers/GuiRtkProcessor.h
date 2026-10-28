@@ -22,25 +22,22 @@ namespace Solvers::RtkProcessor {
     using GnssTask::stringToSysSet;
 
     struct RtkTask : GnssTask::SolverTaskBase {
-
         std::string baseObsPathBuf;
         std::string roverObsPathBuf;
         std::string navPathBuf;
 
-        // 基站坐标（可选）：勾选则使用 surveyed ECEF 坐标，否则由 RTK 内部自举（观测 BESTPOS/头文件或 SPP）
         bool useBaseCoord = false;
         Eigen::Vector3d baseXyz{0, 0, 0};
 
         std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
-        // 解算参数直接持一份 RTK::Config：默认值只在 RTK 里声明一次，GUI 不再抄一遍
+
         RTK::Config rtkCfg{};
         double cutoffDeg = rtkCfg.cutoffElevRad * RAD_TO_DEG; // 面板按度编辑，初值取自 solver 默认
 
         std::shared_ptr<GnssTask::SolveTask> core; // 渲染/存储基础设施
-
-        // 渲染层的两个多态点（见 Solvers::SolverPanel::RenderTask）
         std::shared_ptr<GnssTask::SolveTask> solveResult() override { return core; }
-        void renderConfigPanel() override;   // 定义见 .cpp
+
+        void renderConfigPanel() override; // 定义见 .cpp
 
         RTK rtk{};
 
@@ -54,7 +51,7 @@ namespace Solvers::RtkProcessor {
         std::mutex pairMtx;
         std::condition_variable pairCv;
         std::atomic<bool> readDone{false};
-        std::atomic<bool> solvingDone{false};  // 全部历元已解算完成（命名对齐 SPP/PPP/LEO）
+        std::atomic<bool> solvingDone{false}; // 全部历元已解算完成（命名对齐 SPP/PPP/LEO）
         std::atomic<int> totalEpochs{0};
         EphemerisTable navTable; // 全量广播星历（RINEX 路径，逐历元共享传给 processEpoch）
 
@@ -67,7 +64,6 @@ namespace Solvers::RtkProcessor {
             navPathBuf = pm.get("rtk_nav");
             if (const std::string sysStr = pm.get("rtk_systems"); !sysStr.empty()) enabledSystems = stringToSysSet(sysStr);
             cutoffDeg = pm.getNum("rtk_cutoff", cutoffDeg, 0.0, 90.0);
-            // 实时流端点统一进 SolveTask::rtEndpoints：[0]=基准站 [1]=流动站（与 SPP 共用存储）。
             core->rtEndpoints.resize(2);
             core->rtEndpoints[0].ip = pm.get("rtk_rt_base_ip", "8.148.22.229");
             core->rtEndpoints[0].port = pm.get("rtk_rt_base_port", "2002");
@@ -75,8 +71,10 @@ namespace Solvers::RtkProcessor {
             core->rtEndpoints[1].port = pm.get("rtk_rt_rover_port", "3002");
             if (const std::string manualStr = pm.get("rtk_base_manual"); !manualStr.empty() && manualStr != "0") useBaseCoord = true;
             if (const std::string xyzStr = pm.get("rtk_base_xyz"); !xyzStr.empty()) {
-                double v[3]{0, 0, 0}; int n = 0;
-                std::stringstream ss(xyzStr); std::string tok;
+                double v[3]{0, 0, 0};
+                int n = 0;
+                std::stringstream ss(xyzStr);
+                std::string tok;
                 while (n < 3 && std::getline(ss, tok, ',') && std::sscanf(tok.c_str(), "%lf", &v[n]) == 1) ++n;
                 if (n == 3) baseXyz = Eigen::Vector3d(v[0], v[1], v[2]);
             }
@@ -86,6 +84,4 @@ namespace Solvers::RtkProcessor {
             if (core) core->stop = true;
         }
     };
-
-
 }

@@ -267,29 +267,54 @@ namespace Solvers::Charts {
         ImPlot::EndPlot();
     }
 
-    // 逐卫星残差图
+    // 逐卫星残差图（码/相位可切换）
     void renderSatResidualPlot(const std::map<SatID, std::vector<double> > &satResT,
                                const std::map<SatID, std::vector<double> > &satResV,
+                               const std::map<SatID, std::vector<double> > &phaseT,
+                               const std::map<SatID, std::vector<double> > &phaseV,
+                               int *resMode,
                                int &selectedEpoch, const int epochCount, bool &newed,
-                               const double *yLo, const double *yHi, const float plotH) {
-        if (ImPlot::BeginPlot("伪距残差序列", ImVec2(-1, plotH))) {
-            ImPlot::SetupAxes("Epoch", "码(伪距)残差 (m)");
+                               const double *codeLo, const double *codeHi,
+                               const double *phaseLo, const double *phaseHi,
+                               const float plotH) {
+        // 切换：码(伪距) / 载波相位。状态由调用方持有（SolveTask::resMode），这里只读写。
+        int mode = resMode ? *resMode : 0;
+        ImGui::PushID("resmode");
+        if (ImGui::RadioButton("伪距", mode == 0)) mode = 0;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("相位", mode == 1)) mode = 1;
+        ImGui::PopID();
+        if (resMode) *resMode = mode;
+        const bool phase = mode == 1;
+
+        const auto &T = phase ? phaseT : satResT;
+        const auto &V = phase ? phaseV : satResV;
+        const double *lo = phase ? phaseLo : codeLo;
+        const double *hi = phase ? phaseHi : codeHi;
+
+        // SPP 不做载波相位，相位残差恒空：明说一句，避免误以为图坏了
+        if (phase && V.empty()) ImGui::TextDisabled("(无相位残差：该模式不使用载波相位)");
+
+        if (ImPlot::BeginPlot(phase ? "相位残差序列" : "伪距残差序列", ImVec2(-1, plotH))) {
+            ImPlot::SetupAxes("Epoch", phase ? "载波相位残差 (m)" : "码(伪距)残差 (m)");
             {
                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, std::max(10.0, static_cast<double>(epochCount)), ImPlotCond_Once);
-                if (yLo && yHi && std::isfinite(*yLo) && std::isfinite(*yHi) && *yHi > *yLo)
-                    ImPlot::SetupAxisLimits(ImAxis_Y1, *yLo, *yHi, ImPlotCond_Once);
+                if (lo && hi && std::isfinite(*lo) && std::isfinite(*hi) && *hi > *lo)
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, *lo, *hi, ImPlotCond_Once);
             }
 
-            auto plotOne = [&](const std::map<SatID, std::vector<double> > &T,
-                               const std::map<SatID, std::vector<double> > &V,
+            auto plotOne = [&](const std::map<SatID, std::vector<double> > &Ts,
+                               const std::map<SatID, std::vector<double> > &Vs,
                                const std::string &suffix) {
-                for (auto &[sat, vals]: V) {
-                    auto it = T.find(sat);
-                    if (it == T.end() || vals.empty()) continue;
-                    if (it->second.size() < vals.size()) continue;
+                for (auto &[sat, vals]: Vs) {
+                    auto it = Ts.find(sat);
+                    if (it == Ts.end() || vals.empty()) continue;
+                    // 不许静默丢整颗星：times/vals 理论上逐历元同步 push，长度应相等；
+                    // 万一失同步（历史数据、外部注入），按重叠前缀画，尾部缺失只丢点不丢星。
+                    const auto n = static_cast<int>(std::min(it->second.size(), vals.size()));
+                    if (n <= 0) continue;
                     const double *t = it->second.data();
                     const double *v = vals.data();
-                    const auto n = static_cast<int>(vals.size());
                     const std::string base = sat.toString() + suffix;
                     std::vector<double> tt, vv;
                     tt.reserve(n + 4);
@@ -308,7 +333,7 @@ namespace Solvers::Charts {
                 }
             };
 
-            plotOne(satResT, satResV, "");
+            plotOne(T, V, "");
             double sx = selectedEpoch;
             ImPlot::DragLineX(1, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
             int se = static_cast<int>(std::lround(sx));
@@ -520,16 +545,19 @@ namespace Solvers::Charts {
         }
 
         // 参考真值 ECEF 输入（含剪贴板坐标解析）
+        // 注意：用户一旦手动修改，即视为「提供了参考真值」(userRefProvided=true)，
+        // 后续解算完成时的「均值确认」不再覆盖（见 GuiSolverPanel 的 maybeConfirmRef）。
         void renderRefECEFInput(const PosTabView &v) {
             if (v.refECEF && v.showRefEnu && v.showRefInput) {
                 ImGui::Text("参考真值:");
                 ImGui::SameLine();
                 ImGui::PushItemWidth(200);
-                if (ImGui::InputDouble("X/m", &(*v.refECEF)[0])) { if (v.onRefChanged) v.onRefChanged(); }
+                bool changed = false;
+                if (ImGui::InputDouble("X/m", &(*v.refECEF)[0])) changed = true;
                 ImGui::SameLine();
-                if (ImGui::InputDouble("Y/m", &(*v.refECEF)[1])) { if (v.onRefChanged) v.onRefChanged(); }
+                if (ImGui::InputDouble("Y/m", &(*v.refECEF)[1])) changed = true;
                 ImGui::SameLine();
-                if (ImGui::InputDouble("Z/m", &(*v.refECEF)[2])) { if (v.onRefChanged) v.onRefChanged(); }
+                if (ImGui::InputDouble("Z/m", &(*v.refECEF)[2])) changed = true;
                 ImGui::SameLine();
                 if (ImGui::Button("剪贴板")) {
                     if (const char *c = ImGui::GetClipboardText()) {
@@ -545,8 +573,12 @@ namespace Solvers::Charts {
                         if (cnt >= 1) (*v.refECEF)[0] = val[0];
                         if (cnt >= 2) (*v.refECEF)[1] = val[1];
                         if (cnt >= 3) (*v.refECEF)[2] = val[2];
-                        if (v.onRefChanged) v.onRefChanged();
+                        changed = (cnt >= 1);
                     }
+                }
+                if (changed) {
+                    if (v.userRefProvided) *v.userRefProvided = true;
+                    if (v.onRefChanged) v.onRefChanged();
                 }
             }
         }
@@ -662,7 +694,8 @@ namespace Solvers::Charts {
                         ImGui::TableSetupColumn("Y/m", ImGuiTableColumnFlags_WidthFixed, 92);
                         ImGui::TableSetupColumn("Z/m", ImGuiTableColumnFlags_WidthFixed, 92);
                     }
-                    ImGui::TableSetupColumn("3D-RMS/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                    ImGui::TableSetupColumn("RMS/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                    ImGui::TableHeadersRow();
                     auto rrow = [&](const char *label, const Eigen::Vector3d &p, const double rms) {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
@@ -697,7 +730,7 @@ namespace Solvers::Charts {
                 ImGui::SeparatorText("其他");
                 if (const int nC = v.isRtk ? 5 : 6;
                     ImGui::BeginTable("##dop", nC,
-                        ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                                      ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                     ImGui::TableSetupColumn("PDOP");
                     ImGui::TableSetupColumn("GDOP");
                     ImGui::TableSetupColumn("HDOP");
@@ -795,15 +828,107 @@ namespace Solvers::Charts {
             }
         }
 
-        // ENU 收敛轨迹
+
+        void renderENPlanView(const std::vector<double> &enu_e,
+                              const std::vector<double> &enu_n,
+                              const std::vector<double> &enu_solved,
+                              const float sizePx) {
+            if (enu_e.empty() || enu_n.empty() || enu_solved.empty()) return;
+            if (!ImGui::BeginChild("##enplan", ImVec2(sizePx, sizePx), ImGuiChildFlags_FrameStyle)) {
+                ImGui::EndChild();
+                return;
+            }
+            if (ImPlot::BeginPlot("E-N 平面图", ImVec2(-1, -1), ImPlotFlags_NoLegend | ImPlotFlags_NoBoxSelect)) {
+                // 仅取已解算历元
+                std::vector<double> xe, xn;
+                const int n = static_cast<int>(enu_e.size());
+                xe.reserve(n);
+                xn.reserve(n);
+                for (int i = 0; i < n; ++i) {
+                    if (enu_solved[i] < 0.5) continue;
+                    const double e = enu_e[i], nn = enu_n[i];
+                    if (!std::isfinite(e) || !std::isfinite(nn)) continue;
+                    xe.push_back(e);
+                    xn.push_back(nn);
+                }
+                const int m = static_cast<int>(xe.size());
+                // 对称等距坐标范围 -> 正方形显示
+                double r = 1e-6;
+                for (int i = 0; i < m; ++i)
+                    r = std::max(r, std::max(std::abs(xe[i]), std::abs(xn[i])));
+                r *= 1.15;
+                ImPlot::SetupAxes("E (m) ", "N (m) ");
+                ImPlot::SetupAxisLimits(ImAxis_X1, -r, r, ImPlotCond_Once);
+                ImPlot::SetupAxisLimits(ImAxis_Y1, -r, r, ImPlotCond_Once);
+                double zx = 0, zy = 0;
+                ImPlot::DragLineX(99, &zx, ImVec4(0.95f, 0.6f, 0.1f, 0.9f), 1.0f, ImPlotDragToolFlags_NoInputs);
+                ImPlot::DragLineY(99, &zy, ImVec4(0.95f, 0.6f, 0.1f, 0.9f), 1.0f, ImPlotDragToolFlags_NoInputs);
+                // 轨迹连线（淡）
+                if (m > 1) {
+                    ImPlotSpec ls;
+                    ls.LineColor = ImVec4(0.5f, 0.7f, 0.9f, 0.35f);
+                    ls.LineWeight = 1.0f;
+                    ImPlot::PlotLine("轨迹", xe.data(), xn.data(), m, ls);
+                }
+                // 逐历元描点
+                if (m > 0) {
+                    ImPlotSpec ps;
+                    ps.Marker = ImPlotMarker_Circle;
+                    ps.MarkerSize = 2.5f;
+                    ps.LineColor = ImVec4(0.2f, 0.9f, 0.4f, 0.9f);
+                    ImPlot::PlotScatter("解算轨迹", xe.data(), xn.data(), m, ps);
+                }
+                // 中心标记（参考点）
+                {
+                    double o[1] = {};
+                    ImPlotSpec cs;
+                    cs.Marker = ImPlotMarker_Asterisk;
+                    cs.MarkerSize = 5.0f;
+                    cs.LineColor = ImVec4(0.95f, 0.6f, 0.1f, 1.0f);
+                    ImPlot::PlotScatter("参考点", o, o, 1, cs);
+                }
+                ImPlot::EndPlot();
+            }
+            ImGui::EndChild();
+        }
+
         void renderEnuConvergence(const PosTabView &v) {
             if (v.epochCount > 0 && !v.times.empty() && !v.show3d &&
                 !v.enu_e.empty() && !v.enu_n.empty() && !v.enu_u.empty()) {
-                SectionHeader("ENU 收敛轨迹", nullptr);
+                SectionHeader("ENU 收敛轨迹 / E-N 平面图", nullptr);
+                if (!v.showEnPlan) {
+                    bool newed = v.newed;
+                    renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
+                                  *v.selectedEpoch, newed, v.fixedY,
+                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
+                    return;
+                }
+                // 左：ENU 时间序列（拉伸）；右：E-N 平面图（正方形，高=序列高）。
+                constexpr float h = 380.0f;
+                constexpr float planW = h; // 正方形：宽=高
+                const float availX = ImGui::GetContentRegionAvail().x;
                 bool newed = v.newed;
-                renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
-                              *v.selectedEpoch, newed, v.fixedY,
-                              v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
+                if (availX >= planW + 360.0f) {
+                    if (ImGui::BeginTable("##enuRow", 2,
+                                          ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+                        ImGui::TableSetupColumn("series", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                        ImGui::TableSetupColumn("plan", ImGuiTableColumnFlags_WidthFixed, planW);
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
+                                      *v.selectedEpoch, newed, v.fixedY,
+                                      v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
+                        ImGui::TableSetColumnIndex(1);
+                        renderENPlanView(v.enu_e, v.enu_n, v.enu_solved, planW);
+                        ImGui::EndTable();
+                    }
+                } else {
+                    // 宽度不足时竖向堆叠：序列在上，平面图在下
+                    renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
+                                  *v.selectedEpoch, newed, v.fixedY,
+                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount);
+                    renderENPlanView(v.enu_e, v.enu_n, v.enu_solved, planW);
+                }
             }
         }
 
@@ -850,14 +975,17 @@ namespace Solvers::Charts {
                         if (right || v.renderToggles) {
                             ImGui::TableSetColumnIndex(ci++); //NOLINT
                             if (ImGui::BeginChild("##respanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                                SectionHeader("伪距残差序列", resTg);
+                                SectionHeader(v.resMode && *v.resMode == 1 ? "相位残差序列" : "伪距残差序列", resTg);
                                 if (right) {
                                     const double ylo = v.robustRes ? v.resYlo : -8.0;
                                     const double yhi = v.robustRes ? v.resYhi : 8.0;
+                                    const double plo = v.robustResPhase ? v.resPhaseYlo : -0.5;
+                                    const double phi = v.robustResPhase ? v.resPhaseYhi : 0.5;
                                     bool rnewed = v.newed;
                                     renderSatResidualPlot(v.resT, v.resV,
+                                                          v.resPhaseT, v.resPhaseV, v.resMode,
                                                           *v.selectedEpoch, v.epochCount, rnewed,
-                                                          &ylo, &yhi, rowH);
+                                                          &ylo, &yhi, &plo, &phi, rowH);
                                 } else {
                                     ImGui::TextDisabled("(已隐藏)");
                                 }

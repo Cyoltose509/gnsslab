@@ -3,7 +3,7 @@
 #include <windows.h>
 
 #include "GuiHelpers.h"
-#include "SolverTask.h"   // GnssTask::SolverTaskBase 完整定义（beginConfigBody 读 cfgIndex）
+#include "SolverTask.h"
 #include "core/PathMemory.h"
 #include "Log.h"
 
@@ -16,8 +16,40 @@
 #include <map>
 
 
+void Solvers::Helpers::renderRealtimeConfig(GnssTask::SolverTaskBase *task,
+                                            std::vector<GnssTask::RealtimeEndpoint> *endpoints,
+                                            const std::vector<std::string> &labels,
+                                            double *cutoffDeg, std::set<char> *systems,
+                                            const std::function<void()> &onStart,
+                                            const std::function<void()> &extraContent) {
+    const size_t n = endpoints ? endpoints->size() : 0;
+    ImGui::Text("连接到 Oem7 实时流 (socket)：");
+    ImGui::PushItemWidth(200);
+    for (size_t i = 0; i < n && i < labels.size(); ++i) {
+        if (!labels[i].empty()) ImGui::Text("%s：", labels[i].c_str());
+        inputTextStd(("IP 地址##rt_ep_" + std::to_string(i)).c_str(), &(*endpoints)[i].ip);
+        inputTextStd(("端口##rt_ep_" + std::to_string(i)).c_str(), &(*endpoints)[i].port);
+    }
+    ImGui::PopItemWidth();
+    ImGui::Separator();
+
+    renderCutoffAndSystems(cutoffDeg, systems);
+
+    if (extraContent) {
+        ImGui::Separator();
+        extraContent();
+    }
+    ImGui::Separator();
+    if (ImGui::Button("开始解算", ImVec2(200, 40))) {
+        if (onStart) onStart();
+    }
+    ImGui::SameLine();
+    renderCancelButton(task);
+}
+
 // 由逐星伪距残差估计稳健 Y 轴范围
-Solvers::Helpers::RobustResRange Solvers::Helpers::computeRobustResRange(const std::map<SatID, std::vector<double> > &satRes) {
+Solvers::Helpers::RobustResRange Solvers::Helpers::computeRobustResRange(const std::map<SatID, std::vector<double> > &satRes,
+                                                                       const double minHalf) {
     std::vector<double> all_v;
     for (const auto &[_, vs]: satRes)
         for (double v: vs) all_v.push_back(v);
@@ -28,8 +60,8 @@ Solvers::Helpers::RobustResRange Solvers::Helpers::computeRobustResRange(const s
     const double lo = all_v[static_cast<size_t>(0.01 * n)];
     const double hi = all_v[static_cast<size_t>(0.99 * n)];
     double half = 0.5 * (hi - lo);
-    if (!(half > 0.0)) half = 1.0;
-    half = std::max(1.0, std::min(half, 20.0));
+    if (!(half > 0.0)) half = minHalf;
+    half = std::max(minHalf, std::min(half, 20.0));
     r.lo = -half;
     r.hi = half;
     return r;
@@ -58,7 +90,7 @@ bool Solvers::Helpers::inputTextStd(const char *label, std::string *str, const I
 void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *iniKey,
                          const GuiFileFilter *filters, const int nFilters,
                          const std::function<void(const std::string &)> &onSelect,
-                         const char *obsIniKey) {
+                         const char *obsIniKey, std::string *autoNavBuf) {
     static std::map<std::string, std::string> synced;
     ImGui::Text("%s:", label);
     ImGui::PushItemWidth(-200.0f);
@@ -81,6 +113,9 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
             const std::string p = wideToAcp(wpath);
             *buf = p;
             if (onSelect) onSelect(p);
+            if (autoNavBuf) {
+                if (const std::string d = GnssTask::AutoDetectNav(p); !d.empty()) *autoNavBuf = d;
+            }
             AppConfig::PathMemory::instance().addRecent(iniKey, p);
             AppConfig::PathMemory::instance().set(iniKey, p);
         }
@@ -95,6 +130,9 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
             if (ImGui::Selectable(r.c_str())) {
                 *buf = r;
                 if (onSelect) onSelect(r);
+                if (autoNavBuf) {
+                    if (const std::string d = GnssTask::AutoDetectNav(r); !d.empty()) *autoNavBuf = d;
+                }
                 AppConfig::PathMemory::instance().set(iniKey, r);
                 AppConfig::PathMemory::instance().addRecent(iniKey, r);
             }
@@ -119,6 +157,9 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
                             DownloadStore::dirFor(ptype, yd->first, yd->second) + local.front();
                     *buf = p;
                     if (onSelect) onSelect(p);
+                    if (autoNavBuf) {
+                        if (const std::string d = GnssTask::AutoDetectNav(p); !d.empty()) *autoNavBuf = d;
+                    }
                     AppConfig::PathMemory::instance().set(iniKey, p);
                     AppConfig::PathMemory::instance().addRecent(iniKey, p);
                     LOG_INFO << "[获取] 本地命中 " << ProductMeta::typeDir(ptype) << " "
@@ -195,7 +236,13 @@ void Solvers::Helpers::endConfigBody() {
     ImGui::EndChild();
 }
 
-bool Solvers::Helpers::saveCSVDialog(const std::string &defaultName, std::wstring &outPath) {
+bool Solvers::Helpers::saveFileDialog(const std::string &defaultName, std::wstring &outPath,
+                                      const GuiFileFilter *filters, const int nFilters,
+                                      const wchar_t *defExt) {
     const std::wstring wDef = acpToWide(defaultName);
-    return ShowSaveFileDialog(outPath, fCsv, 2, wDef.c_str(), L"csv");
+    return ShowSaveFileDialog(outPath, filters, nFilters, wDef.c_str(), defExt);
+}
+
+bool Solvers::Helpers::saveCSVDialog(const std::string &defaultName, std::wstring &outPath) {
+    return saveFileDialog(defaultName, outPath, fCsv, 2, L"csv");
 }

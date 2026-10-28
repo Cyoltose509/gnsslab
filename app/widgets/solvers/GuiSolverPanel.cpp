@@ -11,34 +11,27 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
-#include <iterator>
 #include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
 #include "GuiCharts.h"
-#include "Csv.h"           // 通用 CSV 轮子（读写）；GNSS 导出内容在 SolverTask.h，由 task->exportCsv 调用
 #include "StringUtils.h"
 #include "Log.h"
 #include "widgets/tools/GuiInsPanel.h"
 
 namespace Solvers::SolverPanel {
-    // 渲染只需可视化，不需要逐历元全量点：LEO 一天 86400 历元 ×8 星 ≈ 69 万条(数十 MB)，
-    // 若每帧在锁内整份拷贝，60fps 下就是 GB/s 级拷贝并长期占锁饿死解算线程
-    // （实测 GUI 比 harness 慢约 30×）。故按最大点数等间隔抽样后再拷。
-    // 用模板以便 rtnTimes 与 rtnR/T/N 用**同一套采样索引**（长度须保持一致，否则绘图错位）。
-    //
-    // 步长按 2 的幂量化（只增不减、无状态）：旧写法 step=size/maxPts 逐帧重算，size 每涨 1
-    // 全体采样索引就漂移一次，已绘的点每帧换一拨 → 解算途中曲线"游动"（视觉抖动/闪烁）。
-    // 量化后 src 在同一个 2 倍区间内增长时索引集合不变；跨 2 的幂边界才整体重采样一次
-    // （86400 点全天最多 log2(86400/3000)≈5 次，且旧点集是新点集的子集，无跳变感）。
-    template <typename T>
+    // ⚠️ 仅用于 LEO 的 3D 轨迹 / RTN 序列（轨迹是几何量、可达 86400 点，必须压缩）。
+    // 时序类图（ENU/σ/DOP/Ratio/伪距与相位残差/星空轨迹）一律全量，禁止走这里。
+    template<typename T>
     static void copySampled(const std::vector<T> &src, std::vector<T> &dst,
                             const size_t maxPts = 3000) {
-        if (src.size() <= maxPts) { dst = src; return; }
+        if (src.size() <= maxPts) {
+            dst = src;
+            return;
+        }
         size_t step = 1;
         while (step * maxPts < src.size()) step <<= 1; // ≥ ceil(size/maxPts) 的最小 2 的幂
         dst.clear();
@@ -47,16 +40,6 @@ namespace Solvers::SolverPanel {
             dst.push_back(src[i]);
         if ((src.size() - 1) % step != 0)
             dst.push_back(src.back()); // 保留末点，保证画到最新历元
-    }
-
-    // 逐星序列（残差时序 / 天顶图轨迹）：每颗星内部独立等距抽样。
-    // 同一颗星的 t 与 v 序列等长，故用同一 maxPts 得到同一套索引，绘图不会错位。
-    template <typename T>
-    static void copySampledMap(const std::map<SatID, std::vector<T> > &src,
-                               std::map<SatID, std::vector<T> > &dst, const size_t maxPts) {
-        dst.clear();
-        for (const auto &[sat, v]: src)
-            copySampled(v, dst[sat], maxPts);
     }
 
     static QualityReport buildReport(GnssTask::SolveTask &task) {
@@ -90,29 +73,22 @@ namespace Solvers::SolverPanel {
         });
     }
 
-    // ------------------------------------------------------------------
-    // 各解算系统的"结果呈现"差异只有一处：状态行后缀（CSV 列定义已归到 SolveTask::exportCsv，
-    // 由解算任务域按 mode 负责，见 SolverTask.h）。主流程只剩通用骨架。
-    // ------------------------------------------------------------------
     struct SolverUi {
-        // 构建右侧面板「解状态」行（固定/浮点 + ratio）；SPP 用 statusNone 留空（不显示该块）
         void (*solveStatusLine)(std::string &, ImVec4 &, const GnssTask::EpochData &);
     };
 
-    // CSV 写出委托给 SolveTask::exportCsv（业务 schema 在 SolverTask.h，CSV 轮子在 Csv.h），
-    // GUI 与 CLI 共用同一份定义，不再在此处硬编码。
 
-    static const char *solveStatLabel(unsigned char stat) {
+    static const char *solveStatLabel(const unsigned char stat) {
         return stat == 1 ? "固定(Fixed)" : "浮点(Float)";
     }
-    static ImVec4 solveStatColor(unsigned char stat) {
+
+    static ImVec4 solveStatColor(const unsigned char stat) {
         return stat == 1 ? ImVec4(0.3f, 1, 0.3f, 1) : ImVec4(1, 0.8f, 0.2f, 1);
     }
 
-    // 不显示解状态块（SPP 无模糊度固定概念）
-    static void statusNone(std::string &, ImVec4 &, const GnssTask::EpochData &) {}
+    static void statusNone(std::string &, ImVec4 &, const GnssTask::EpochData &) {
+    }
 
-    // RTK：用 RTK 专用字段（与 sppResult 同源，rtkStat/rtkRatio 由 SolveDriver::feedRtk 复制而来）
     static void statusRtk(std::string &text, ImVec4 &color, const GnssTask::EpochData &cur) {
         char buf[200];
         snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
@@ -133,10 +109,10 @@ namespace Solvers::SolverPanel {
     }
 
     static const SolverUi &solverUi(const GnssTask::SolverMode m) {
-        static const SolverUi generic{&statusNone};     // SPP
-        static const SolverUi ppp{&statusAmbig};
-        static const SolverUi leo{&statusAmbig};
-        static const SolverUi rtk{&statusRtk};
+        static constexpr SolverUi generic{&statusNone}; // SPP
+        static constexpr SolverUi ppp{&statusAmbig};
+        static constexpr SolverUi leo{&statusAmbig};
+        static constexpr SolverUi rtk{&statusRtk};
         switch (m) {
             case GnssTask::SolverMode::Leo: return leo;
             case GnssTask::SolverMode::Rtk: return rtk;
@@ -169,15 +145,15 @@ namespace Solvers::SolverPanel {
         std::lock_guard lk(task->mutex);
         if (sel < 0 || sel >= static_cast<int>(task->epochs.size())) return curPts;
         auto &ep = task->epochs[sel];
-        return Solvers::Charts::buildCurSkyPoints(sel, ep.satIds.size(),
-                                            [&](const size_t i) {
-                                                Solvers::Charts::SkyView v;
-                                                v.sat = ep.satIds[i];
-                                                v.azimRad = ep.azimuths[i];
-                                                v.elevRad = ep.elevations[i];
-                                                v.used = ep.solved && !ep.rejected[i];
-                                                return v;
-                                            }, 0.0);
+        return Charts::buildCurSkyPoints(sel, ep.satIds.size(),
+                                                  [&](const size_t i) {
+                                                      Charts::SkyView v;
+                                                      v.sat = ep.satIds[i];
+                                                      v.azimRad = ep.azimuths[i];
+                                                      v.elevRad = ep.elevations[i];
+                                                      v.used = ep.solved && !ep.rejected[i];
+                                                      return v;
+                                                  }, 0.0);
     }
 
     void RenderTaskImpl(const std::shared_ptr<GnssTask::SolveTask> &task);
@@ -210,7 +186,7 @@ namespace Solvers::SolverPanel {
         const bool hasError = task->errorFlag();
 
         const bool busy = !isDone && !hasError;
-        auto [epochCount, selectedIdx] = Solvers::Helpers::readEpochView(task);
+        auto [epochCount, selectedIdx] = Helpers::readEpochView(task);
         int selectedEpochLocal = selectedIdx;
 
         if (!isRealtime && busy) {
@@ -221,18 +197,19 @@ namespace Solvers::SolverPanel {
 
         if (ImGui::BeginTabBar("##qa_tabs")) {
             if (ImGui::BeginTabItem("定位解算")) {
-                Solvers::Charts::PosTabView v;
+                Charts::PosTabView v;
                 v.epochCount = epochCount;
                 v.selectedEpoch = &selectedEpochLocal;
                 v.selectedSatIdx = &task->selectedSatIdx;
+                v.resMode = &task->resMode;
                 v.refECEF = &task->refECEF;
-                // 读 epochs/refECEF + 写 plotData：与 SolverThread 写方口径一致，
-                // 先 mutex（保护 epochs/refECEF）再 plotMutex（保护 plotData），顺序相同故不会死锁。
                 v.onRefChanged = [&] {
                     std::lock_guard lk(task->mutex);
                     std::lock_guard plk(task->plotMutex);
                     task->plotData.refreshENU(task->epochs, task->refECEF);
                 };
+                v.showEnPlan = task->mode != GnssTask::SolverMode::Leo;
+                v.userRefProvided = &task->userRefProvided;
 
                 if (hasError) {
                     v.statusText = std::string("状态: ") + task->errorMessage();
@@ -247,7 +224,6 @@ namespace Solvers::SolverPanel {
                     v.statusText = "处理结束：未解出任何历元，请检查观测文件与产品是否匹配";
                     v.statusColor = ImVec4(1, 0.3f, 0.3f, 1);
                 }
-                // epochCount==0 且仍在干活时，空态提示走"稍候"文案而不是"无解算历元"
                 v.busy = busy;
 
                 // 天顶图轨迹增量构建（独立于下方锁，内部自行持锁）
@@ -257,40 +233,46 @@ namespace Solvers::SolverPanel {
                     std::lock_guard lk(task->mutex);
                     auto &cur = task->epochs[selectedIdx]; //NOLINT
 
-                    // 按启用星座过滤卫星列表：筛选后只显示勾选系统的卫星（其余不出现在列表里）
                     std::vector<int> visIdx;
                     visIdx.reserve(static_cast<int>(cur.satIds.size()));
                     for (int i = 0; i < static_cast<int>(cur.satIds.size()); ++i)
                         if (task->enabledSystems.count(cur.satIds[i].system)) visIdx.push_back(i);
 
-                    v.satRows = Solvers::Charts::buildSatRows(visIdx.size(),
-                                                        [&](const size_t i) {
-                                                            const int oi = static_cast<int>(visIdx[i]);
-                                                            Solvers::Charts::SatRowView _v;
-                                                            _v.sat = cur.satIds[oi];
-                                                            _v.used = !cur.rejected[oi] && cur.solved;
-                                                            _v.elevRad = cur.elevations[oi];
-                                                            _v.azimRad = cur.azimuths[oi];
-                                                            const bool haveXYZ = cur.satPVTs[oi].p.squaredNorm() > 1.0;
-                                                            _v.hasXYZ = haveXYZ;
-                                                            if (haveXYZ) {
-                                                                _v.x = cur.satPVTs[oi].p[0];
-                                                                _v.y = cur.satPVTs[oi].p[1];
-                                                                _v.z = cur.satPVTs[oi].p[2];
-                                                            }
-                                                            return _v;
-                                                        },
-                                                        [&](Solvers::Charts::SatRow &sr, const size_t i) {
-                                                            const int oi = static_cast<int>(visIdx[i]);
-                                                            const auto it = cur.sppResult.postRes.find(cur.satIds[oi]);
-                                                            sr.extra.emplace_back(
-                                                                "伪距残差(m)", it != cur.sppResult.postRes.end()
-                                                                               ? fmt4(it->second)
-                                                                               : std::string("-"));
-                                                        });
+                    v.satRows = Charts::buildSatRows(visIdx.size(),
+                                                              [&](const size_t i) {
+                                                                  const int oi = visIdx[i];
+                                                                  Charts::SatRowView _v;
+                                                                  _v.sat = cur.satIds[oi];
+                                                                  _v.used = !cur.rejected[oi] && cur.solved;
+                                                                  _v.elevRad = cur.elevations[oi];
+                                                                  _v.azimRad = cur.azimuths[oi];
+                                                                  const bool haveXYZ = cur.satPVTs[oi].p.squaredNorm() > 1.0;
+                                                                  _v.hasXYZ = haveXYZ;
+                                                                  if (haveXYZ) {
+                                                                      _v.x = cur.satPVTs[oi].p[0];
+                                                                      _v.y = cur.satPVTs[oi].p[1];
+                                                                      _v.z = cur.satPVTs[oi].p[2];
+                                                                  }
+                                                                  return _v;
+                                                              },
+                                                              [&](Charts::SatRow &sr, const size_t i) {
+                                                                  const int oi = visIdx[i];
+                                                                  const auto &pr = cur.sppResult.postRes;
+                                                                  const auto &pp = cur.sppResult.postResPhase;
+                                                                  const auto itC = pr.find(cur.satIds[oi]);
+                                                                  const auto itP = pp.find(cur.satIds[oi]);
+                                                                  sr.extra.emplace_back(
+                                                                      "伪距残差(m)", itC != pr.end()
+                                                                                       ? fmt4(itC->second)
+                                                                                       : std::string("-"));
+                                                                  // SPP 不做载波相位 → postResPhase 恒空，显示 "-"
+                                                                  sr.extra.emplace_back(
+                                                                      "相位残差(m)", itP != pp.end()
+                                                                                         ? fmt4(itP->second)
+                                                                                         : std::string("-"));
+                                                              });
                     v.hasSatRows = true;
 
-                    // 选中卫星按过滤后的行号映射回原始索引（selectedSatIdx 存的是过滤行号）
                     if (task->selectedSatIdx >= 0 && task->selectedSatIdx < static_cast<int>(visIdx.size())) {
                         const int oi = visIdx[task->selectedSatIdx];
                         v.showObsDetail = true;
@@ -316,33 +298,34 @@ namespace Solvers::SolverPanel {
                         v.numSatsResult = cur.numSatsResult;
                         v.numObs = cur.numObs;
 
-                        // ---- 三表（坐标表 / 参考+ENU(RTN) 表 / DOP+状态表）数据 ----
-                        const bool isRtkMode = (task->mode == GnssTask::SolverMode::Rtk);
-                        const bool isLeoMode = (task->mode == GnssTask::SolverMode::Leo);
-                        const bool canFixed  = isRtkMode || isLeoMode ||
-                                               (task->mode == GnssTask::SolverMode::Ppp);
-                        const bool isFixed = isRtkMode ? (cur.rtkStat == 1) : (r.stat == 1);
+
+                        const bool isRtkMode = task->mode == GnssTask::SolverMode::Rtk;
+                        const bool isLeoMode = task->mode == GnssTask::SolverMode::Leo;
+                        const bool canFixed = isRtkMode || isLeoMode ||
+                                              task->mode == GnssTask::SolverMode::Ppp;
+                        const bool isFixed = isRtkMode ? cur.rtkStat == 1 : r.stat == 1;
                         v.hasFixedDistinction = canFixed;
                         v.hasFixed = isFixed;
 
-                        // 浮点/固定 ECEF 显示值（RTK 浮点=基站+基线浮点；PPP/LEO 用 xyzFloat/xyzFixed）
                         Eigen::Vector3d xyzFloat = r.xyzFloat;
-                        Eigen::Vector3d xyzFixed = (r.xyzFixed.squaredNorm() > 1.0) ? r.xyzFixed : r.xyz;
+                        Eigen::Vector3d xyzFixed = r.xyzFixed.squaredNorm() > 1.0 ? r.xyzFixed : r.xyz;
                         if (isRtkMode) {
                             xyzFloat = cur.rtkFloatXyz;
-                            xyzFixed = (cur.rtkStat == 1) ? r.xyz : cur.rtkFloatXyz;
+                            xyzFixed = cur.rtkStat == 1 ? r.xyz : cur.rtkFloatXyz;
                         }
-                        if (xyzFloat.squaredNorm() < 1.0) xyzFloat = r.xyz;   // 兜底：无浮点解时用当前解
+                        if (xyzFloat.squaredNorm() < 1.0) xyzFloat = r.xyz; // 兜底：无浮点解时用当前解
                         v.xyzFloatDisp = xyzFloat;
                         v.xyzFixedDisp = xyzFixed;
-                        v.sigmaFloatDisp = (r.sigmaPFloat > 0) ? r.sigmaPFloat : r.sigmaP;
-                        v.sigmaFixedDisp = (r.sigmaPFixed > 0) ? r.sigmaPFixed : r.sigmaP;
+                        v.sigmaFloatDisp = r.sigmaPFloat > 0 ? r.sigmaPFloat : r.sigmaP;
+                        v.sigmaFixedDisp = r.sigmaPFixed > 0 ? r.sigmaPFixed : r.sigmaP;
 
-                        // 基线（RTK 专用）
                         if (isRtkMode) {
                             v.hasBaseline = true;
                             v.baseFloatDisp = cur.rtkBaseFloat;
-                            if (cur.rtkStat == 1) v.baseFixedDisp = r.xyz - task->refECEF;
+                            if (cur.rtkStat == 1)
+                                v.baseFixedDisp = cur.rtkFixedBaseline.norm() > 0
+                                                      ? cur.rtkFixedBaseline
+                                                      : r.xyz - task->refECEF;
                         }
 
                         // 速度
@@ -352,7 +335,6 @@ namespace Solvers::SolverPanel {
                             v.sigmaVDisp = r.sigmaV;
                         }
 
-                        // 参考 + ENU/RTN 表（仅区分固定/浮点的模式；LEO 无参考轨道不显示）
                         v.showRefTable = canFixed && (!isLeoMode || !task->leoRefTraj.empty());
                         v.isLeoRtn = isLeoMode;
                         v.refDisp = task->refECEF;
@@ -387,69 +369,75 @@ namespace Solvers::SolverPanel {
                     {
                         std::lock_guard plk(task->plotMutex);
                         auto &pp = task->plotData; //NOLINT
-                        // 等距抽样拷贝：24h 数据整份拷约 35MB/帧（含 4 张逐星残差 map），
-                        // 60fps 下是 GB/s 级 memcpy 且长期占锁饿死解算线程。抽样后降到 ~1MB/帧。
-                        // 所有与 times 共用 X 轴的序列必须用**同一 maxPts**（索引一致才不错位）；
-                        // 短数据（≤maxPts）仍是全量拷贝，无精度损失。
-                        constexpr size_t kPlotPts = 3000;
-                        copySampled(pp.times, v.times, kPlotPts);
-                        copySampled(pp.enu_e, v.enu_e, kPlotPts);
-                        copySampled(pp.enu_n, v.enu_n, kPlotPts);
-                        copySampled(pp.enu_u, v.enu_u, kPlotPts);
+                        // ⚠️ 时序类序列一律全量快照，禁止抽稀（用户 10-13 明确要求「抽稀全删」）。
+                        // 曾在此用 copySampled(...,3000)/copySampledMap(...,1500) 把 ENU/σ/DOP/Ratio/
+                        // 伪距残差改成抽样，属重构回归：残差图会缺历元、看起来像"点被吃掉"。
+                        v.times = pp.times;
+                        v.enu_e = pp.enu_e;
+                        v.enu_n = pp.enu_n;
+                        v.enu_u = pp.enu_u;
+                        {
+                            std::vector<double> solvedFlag;
+                            solvedFlag.reserve(static_cast<int>(task->epochs.size()));
+                            for (const auto &ep : task->epochs) solvedFlag.push_back(ep.solved ? 1.0 : 0.0);
+                            v.enu_solved = std::move(solvedFlag);
+                        }
                         v.newed = pp.newed;
-                        // 一次性语义：取走即清。GuiCharts 的渲染函数本意是通过引用清 newed
-                        // （见 GuiCharts.cpp:185/248/340），但 PosTabView 以 const 传入、调用处
-                        // 传的是局部拷贝，pp.newed 永远无人复位 → 永真 → ENU/Ratio/DOP/σ 四张图
-                        // 每帧都执行 SetupAxisLimits(X1,0,last,ImPlotCond_Always)：用户一缩放/平移，
-                        // 下一帧就被拽回，观感就是"图一直在闪/跳"。在此清零后，X 轴跟随最新历元
-                        // 每个新数据批次只生效一次，交互权交还用户。
                         pp.newed = false;
-                        v.fixedY = true; // SPP 收敛到米级，固定 Y 轴 ±1m 便于观察微小漂移
-                        // 逐星残差：每星独立抽到 1500 点（残差图自带 X 轴，不与其他序列共用）
-                        constexpr size_t kResPts = 1500;
-                        copySampledMap(pp.satResTimes, v.resT, kResPts);
-                        copySampledMap(pp.satResVals, v.resV, kResPts);
-                        copySampledMap(pp.satResPhaseTimes, v.resPhaseT, kResPts);
-                        copySampledMap(pp.satResPhaseVals, v.resPhaseV, kResPts);
+                        v.fixedY = true;
+                        // 残差两份都可能是几十 MB（24h@1Hz 全量、不抽稀）。视图每帧重建，
+                        // 所以只深拷当前显示的那一份；切模式后下一帧自然补上，不会缺数据。
+                        if (task->resMode == 1) {
+                            v.resPhaseT = pp.satResPhaseTimes;
+                            v.resPhaseV = pp.satResPhaseVals;
+                        } else {
+                            v.resT = pp.satResTimes;
+                            v.resV = pp.satResVals;
+                        }
                         if (isDone && !pp.resRangeReady) {
-                            auto [lo, hi] = Solvers::Helpers::computeRobustResRange(pp.satResVals);
+                            auto [lo, hi] = Helpers::computeRobustResRange(pp.satResVals);
                             pp.resYlo = lo;
                             pp.resYhi = hi;
                             pp.resRangeReady = true;
                         }
+                        // 相位残差量级 ~cm：半宽下限给 0.01 m，否则会被码残差的 1 m 下限压成直线
+                        if (isDone && !pp.resPhaseRangeReady) {
+                            auto [lo, hi] = Helpers::computeRobustResRange(pp.satResPhaseVals, 0.01);
+                            pp.resPhaseYlo = lo;
+                            pp.resPhaseYhi = hi;
+                            pp.resPhaseRangeReady = true;
+                        }
                         v.robustRes = pp.resRangeReady;
                         v.resYlo = pp.resYlo;
                         v.resYhi = pp.resYhi;
-                        copySampled(pp.sigmaPs, v.sigmaPs, kPlotPts);
-                        copySampled(pp.sigmaPFloatVals, v.sigmaPFloatVals, kPlotPts);
-                        copySampled(pp.sigmaVs, v.sigmaVs, kPlotPts);
+                        v.robustResPhase = pp.resPhaseRangeReady;
+                        v.resPhaseYlo = pp.resPhaseYlo;
+                        v.resPhaseYhi = pp.resPhaseYhi;
+                        v.sigmaPs = pp.sigmaPs;
+                        v.sigmaPFloatVals = pp.sigmaPFloatVals;
+                        v.sigmaVs = pp.sigmaVs;
                         sigmaVNonZero = std::any_of(pp.sigmaVs.begin(), pp.sigmaVs.end(),
                                                     [](const double x) { return x > 1e-6; });
-                        copySampled(pp.pdops, v.pdops, kPlotPts);
-                        copySampled(pp.gdops, v.gdops, kPlotPts);
-                        copySampled(pp.hdops, v.hdops, kPlotPts);
-                        copySampled(pp.vdops, v.vdops, kPlotPts);
-                        copySampled(pp.tdops, v.tdops, kPlotPts);
-                        copySampled(pp.ratioVals, v.ratioVals, kPlotPts);
-                        copySampled(pp.float_e, v.float_e, kPlotPts);
-                        copySampled(pp.float_n, v.float_n, kPlotPts);
-                        copySampled(pp.float_u, v.float_u, kPlotPts);
-                        v.showRatio = (task->mode == GnssTask::SolverMode::Rtk ||
-                                       task->mode == GnssTask::SolverMode::Ppp ||
-                                       task->mode == GnssTask::SolverMode::Leo);
+                        v.pdops = pp.pdops;
+                        v.gdops = pp.gdops;
+                        v.hdops = pp.hdops;
+                        v.vdops = pp.vdops;
+                        v.tdops = pp.tdops;
+                        v.ratioVals = pp.ratioVals;
+                        v.float_e = pp.float_e;
+                        v.float_n = pp.float_n;
+                        v.float_u = pp.float_u;
+                        v.showRatio = task->mode == GnssTask::SolverMode::Rtk ||
+                                      task->mode == GnssTask::SolverMode::Ppp ||
+                                      task->mode == GnssTask::SolverMode::Leo;
                         v.hasFloatSeries = v.showRatio;
-                        // RTK：参考坐标即基站坐标，解算页只读展示（不提供编辑）
-                        v.showBaseXyz = (task->mode == GnssTask::SolverMode::Rtk);
-                        v.isRtk = (task->mode == GnssTask::SolverMode::Rtk);
+                        v.showBaseXyz = task->mode == GnssTask::SolverMode::Rtk;
+                        v.isRtk = task->mode == GnssTask::SolverMode::Rtk;
                         v.baseXyz = &task->refECEF;
                     }
                     {
-                    std::lock_guard lk(task->mutex);
-                    // 天顶图轨迹：24h×8 星约 11MB/帧，抽到每星 1500 点（断点判据已改自适应，
-                    // 见 Solvers::Charts::RenderSkyplot，否则抽样后的间隔会被误判成断点）
-                    copySampledMap(task->skyTracks, v.skyTracks, 1500);
-                        // 仅当实际估计了速度（>5% 历元有非零速度）时才显示 SigmaV；
-                        // PPP / 静态 SPP 速度为 0，避免画出单个尖峰。
+                        std::lock_guard lk(task->mutex);
+                        v.skyTracks = task->skyTracks; // 全量（同样不抽稀）
                         int solvedCnt = 0, velCnt = 0;
                         for (const auto &ep: task->epochs) {
                             if (!ep.solved) continue;
@@ -462,18 +450,16 @@ namespace Solvers::SolverPanel {
                     v.curSkyPts = BuildCurrentSkyPoints(task, selectedIdx); // 内部自行持锁
                     v.showSigmaDop = true;
 
-                    // 固定率（PPP/RTK/LEO）：实时统计固定解占已解算历元的比例。
-                    // 固定判据与状态行一致：RTK 用 rtkStat==1；PPP/LEO 用 sppResult.stat==1（0 视为浮点）。
                     if (v.showRatio && epochCount > 0) {
                         int fixedCnt = 0, totalCnt = 0;
                         {
                             std::lock_guard lk(task->mutex);
-                            for (const auto &ep : task->epochs) {
+                            for (const auto &ep: task->epochs) {
                                 if (!ep.solved) continue;
                                 ++totalCnt;
-                                const bool isFixed = (task->mode == GnssTask::SolverMode::Rtk)
-                                        ? (ep.rtkStat == 1)
-                                        : (ep.sppResult.stat == 1);
+                                const bool isFixed = task->mode == GnssTask::SolverMode::Rtk
+                                                         ? ep.rtkStat == 1
+                                                         : ep.sppResult.stat == 1;
                                 if (isFixed) ++fixedCnt;
                             }
                         }
@@ -495,7 +481,6 @@ namespace Solvers::SolverPanel {
                         v.showRefEnu = false; // LEO 不编辑/显示参考真值
                         v.leoPos3d = task->leoPos3d;
                         v.leoRef3d = task->leoRef3d;
-                        // 抽样拷贝：整份拷 86400 条会把解算线程饿死（见 copySampled 注释）
                         copySampled(task->leoTraj, v.leoTraj);
                         copySampled(task->leoRefTraj, v.leoRefTraj);
                         v.gnssVis = task->gnssVis;
@@ -509,13 +494,12 @@ namespace Solvers::SolverPanel {
                     }
                 }
 
-                // 右侧面板「解状态」块（固定/浮点 + ratio）：PPP/LEO/RTK 显示，SPP 不显示。
-                // 原 RTK 状态行里的 " | RTK:固定/浮点 ratio=..." 已移至此，状态行统一只显示"共 N 个历元"。
                 if (epochCount > 0 && selectedIdx >= 0 && v.solved) {
                     std::lock_guard lk(task->mutex);
-                    const SolverUi &ui = solverUi(task->mode);
-                    std::string line; ImVec4 col;
-                    ui.solveStatusLine(line, col, task->epochs[selectedIdx]);
+                    const auto &[solveStatusLine] = solverUi(task->mode);
+                    std::string line;
+                    ImVec4 col;
+                    solveStatusLine(line, col, task->epochs[selectedIdx]);
                     if (!line.empty()) {
                         v.showSolveStatus = true;
                         v.solveStatusText = std::string(modeLabel(task->mode)) + ": " + line;
@@ -528,6 +512,30 @@ namespace Solvers::SolverPanel {
                     ExportCsv(task);
                 };
 
+                if (!task->isRealtime && task->done.load() && !task->userRefProvided &&
+                    !task->refAutoConfirmed && task->mode != GnssTask::SolverMode::Rtk &&
+                    task->mode != GnssTask::SolverMode::Leo) {
+                    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+                    int cnt = 0;
+                    {
+                        std::lock_guard lk(task->mutex);
+                        for (const auto &ep : task->epochs)
+                            if (ep.solved) { sum += ep.sppResult.xyz; ++cnt; }
+                    }
+                    if (cnt > 0) {
+                        const Eigen::Vector3d mean = sum / static_cast<double>(cnt);
+                        {
+                            std::lock_guard lk(task->mutex);
+                            std::lock_guard plk(task->plotMutex);
+                            task->refECEF = mean;
+                            task->plotData.refreshENU(task->epochs, task->refECEF);
+                        }
+                        task->refAutoConfirmed = true;
+                        LOG_INFO << "[REF] 解算均值确认参考点 (n=" << cnt << "): "
+                                 << mean.x() << ", " << mean.y() << ", " << mean.z();
+                    }
+                }
+
                 try {
                     Solvers::Charts::RenderPositioningTab(v);
                 } catch (const std::exception &e) {
@@ -535,7 +543,6 @@ namespace Solvers::SolverPanel {
                 } catch (...) {
                     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "渲染发生未知异常");
                 }
-                // 把局部选中的历元写回共享状态（锁内），保证下一帧 readEpochView 读取的是一致值。
                 if (selectedEpochLocal != selectedIdx) {
                     std::lock_guard lk(task->mutex);
                     if (selectedEpochLocal >= 0 && selectedEpochLocal < static_cast<int>(task->epochs.size()))
@@ -553,7 +560,6 @@ namespace Solvers::SolverPanel {
                 }
                 ImGui::EndTabItem();
             }
-            // 附加质量分析页（RTK：基准站 QC）。每个附加页自带 qcInput/qcReport，复用同一套渲染。
             for (auto &[qcLabel, qcSub]: task->extraQcTabs) {
                 if (!qcSub) continue;
                 if (ImGui::BeginTabItem(qcLabel.c_str())) {
@@ -572,16 +578,15 @@ namespace Solvers::SolverPanel {
     }
 
     void ExportCsv(const std::shared_ptr<GnssTask::SolveTask> &task) {
-        std::string dn = Solvers::Helpers::baseName(task->fileName);
+        std::string dn = Helpers::baseName(task->fileName);
         if (const auto dp = dn.rfind('.'); dp != std::string::npos) dn = dn.substr(0, dp);
         dn += "_" + std::string(modeLabel(task->mode)) + "_result.csv";
         if (dn.size() >= MAX_PATH) dn = std::string(modeLabel(task->mode)) + "_result.csv";
         std::wstring path;
-        if (!Solvers::Helpers::saveCSVDialog(dn, path)) return;
+        if (!Helpers::saveCSVDialog(dn, path)) return;
         LOG_INFO << "[导出] CSV (" << modeLabel(task->mode) << ") → "
-                 << std::filesystem::path(path).string();
+                << std::filesystem::path(path).string();
 
-        // 在锁内组装（读取 epochs / refECEF），写出文件放到锁外。GNSS 列布局由 SolveTask 负责。
         std::string csvText;
         {
             std::lock_guard lk(task->mutex);
@@ -598,4 +603,4 @@ namespace Solvers::SolverPanel {
         if (!out)
             LOG_WARN << "[导出] 写入失败: " << std::filesystem::path(path).string();
     }
-} // namespace Solvers::SolverPanel
+}

@@ -1,28 +1,45 @@
 #pragma once
-/**
- * QualityControl — 质量分析界面 (UI 层)
- * --------------------------------------------------------------------------
- * 本文件只负责 ImGui 渲染，所有质量评估算法已下沉到 lib/qc/QCProcessor.h
- * (QC::compute)。UI 把解算结果 (GnssTask::EpochData) 转换为
- * QC::QCObsEpoch 后调用 QC::compute() 得到 QC::QualityReport，再绘制。
- *
- * QC::SatQC / QC::QualityReport 重新暴露到全局，保持已有引用不变。
- */
-#include <memory>
-#include "QCProcessor.h"   // namespace QC
 
-// 兼容别名：原 QualityControl.h 中定义的全局 SatQC / QualityReport 现位于 namespace QC
+#include <memory>
+#include "imgui.h"
+#include "QCProcessor.h"
+
+
 using QC::SatQC;
 using QC::QualityReport;
 
-// 前向声明，避免在头文件引入 GUI 依赖
-namespace GnssTask { struct SolveTask; struct EpochData; }
-namespace Solvers::PppProcessor { struct PppTask; }
+
+namespace GnssTask {
+    struct SolveTask;
+    struct EpochData;
+}
+
+namespace Solvers::PppProcessor {
+    struct PppTask;
+}
 
 namespace QualityControl {
-    /// 在主程序中渲染质量分析界面 (需在 ImGui 上下文内调用)。
-    /// 模板化以便 SPP 与 PPP 共用同一套质量分析渲染（二者均暴露 qcReport / qcMutex /
-    /// qcReady / qcComputing / fileName / isRealtime / readDone 等成员）。
+    struct QcUiState {
+        std::map<std::string, ImVec4> curRect;
+        std::map<std::string, float> contentY;
+        std::vector<std::string> lastIds;
+        std::vector<std::string> exportQueue;
+        std::string exportDir;
+        bool exporting = false;
+
+        int sysSel = 0;   // 系统筛选：0=全部 1=GPS 2=GLO 3=GAL 4=BDS
+        int comboSel = 0; // 逐卫星下拉选择：0=全部
+        std::map<std::string, std::pair<std::string, std::function<void()> > > plotDefs;
+
+        // 逐图缓冲（每帧重填；按 plot id 索引，列数按最多的 noise_combined 取 5）
+        struct PlotBuf {
+            std::vector<double> col[5];
+            std::vector<std::string> labs;
+            std::vector<const char *> labp;
+        };
+        std::map<std::string, PlotBuf> bufs;
+        PlotBuf &buf(const std::string &id) { return bufs[id]; }
+    };
     template<typename TaskT>
     void render(const std::shared_ptr<TaskT> &task);
 }

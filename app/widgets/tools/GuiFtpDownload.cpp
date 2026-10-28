@@ -7,11 +7,9 @@
 
 #include "Log.h"
 #include <algorithm>
-#include <atomic>
-#include <ctime>
+
 #include <filesystem>
-#include <map>
-#include <mutex>
+
 #include <set>
 #include <string>
 #include <thread>
@@ -20,66 +18,12 @@
 namespace Tools::FtpDownload {
     bool s_open = false;
 
-    // ---------- 静态状态 ----------
-    static const char *TYPE_LABELS[8] = {
-        "广播星历", "精密轨道", "精密钟差", "地球自转",
-        "电离层", "对流层", "码偏差", "天线文件"
-    };
 
-    static bool s_typeOn[8] = {true, true, true, true, true, true, true, true};
-    static std::vector<uint8_t> s_dcOn; // 与 ProductMeta::knownDatacenters() 同序；全 0 = 不过滤
-    static int s_year = 0, s_month = 0, s_day = 0; // 0 = 未初始化，首次 Render 取今天
-
-    // 目录扫描缓存：URL → 该目录解析出的条目。热刷新的关键——改选项只重过滤，不重新联网。
-    struct DirCache {
-        bool loaded = false;   // 成功列出（可能为空）
-        bool missing = false;  // 目录不存在 / 无法访问——已明确探测过，作负缓存
-        std::string err;
-        std::vector<ProductMeta> items;
-    };
-
-    static std::map<std::string, DirCache> s_dirs;
-
-    static std::mutex s_mtx;
-    static std::atomic s_scanning{false};
-    static std::atomic s_downloading{false};
-    static std::atomic<int> s_done{0}, s_total{0};
-    static std::string s_status;
-
-    // 正在下载的文件：远程 URL → 进度。下载中该文件的芯片就地画成进度条，且不可点击
-    // ⇒ 这张表就是"哪些芯片要画成进度条"的唯一真源。frac < 0 = 还没拿到总长度（curl 未报 dltotal）。
-    struct DlState {
-        float frac = -1.0f;
-    };
-
-    static std::map<std::string, DlState> s_dlActive;
-
-    // 扫描 / 下载线程句柄。二者都是单飞（s_scanning / s_downloading 保证同时至多一个），
-    // 故用普通 std::thread 成员即可，不需要容器。
-    // 保留句柄是为了退出前能 join：detach() 会让线程在静态对象析构后仍在跑，
-    // 而 runScan/runDownload 内部会写 s_dirs/s_status 等全局状态 → 不安全。
-    static std::thread s_scanThread;
-    static std::thread s_dlThread;
-
-    // 立刻标记为"下载中"：在起线程之前调用，芯片本帧就变进度条，不等后台线程调度。
     static void markDownloading(const std::string &remote) {
         std::lock_guard lk(s_mtx);
         s_dlActive[remote] = DlState{};
     }
 
-    // 点击文件名后的确认弹窗（下载 / 删除）
-    struct Pending {
-        std::string remoteName;
-        std::string dirUrl;
-        ProductType type = ProductType::Unknown;
-        int year = 0, doy = 0, spanDays = 1;
-        std::string localPath; // 非空 = 本地已有
-    };
-
-    static Pending s_pending;
-    static bool s_pendingOpen = false;
-
-    // ---------- 小工具 ----------
 
     static bool leapYear(const int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
 
@@ -128,15 +72,11 @@ namespace Tools::FtpDownload {
         return clicked;
     }
 
-    // Button 的自动宽度 = 文本宽 + 2×FramePadding.x（imgui 内部就是这个算法），
-    // 用它做平铺换行的预算，避免把最后一个标签顶出面板右边。
     static float chipWidth(const char *label) {
         return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
     }
 
-    // ---------- 后台：扫目录（把目录里所有能解析的产品都缓存下来）----------
     static void runScan(std::vector<std::string> urls) {
-        FtpClient cli;
         try {
             for (size_t i = 0; i < urls.size(); ++i) {
                 const std::string &u = urls[i];
@@ -146,24 +86,21 @@ namespace Tools::FtpDownload {
                 }
                 std::string err;
                 DirCache dc;
-                if (std::vector<std::string> raw; cli.listDir(u, raw, err)) {
+                if (std::vector<std::string> raw; FtpClient::listDir(u, raw, err)) {
                     for (const auto &n: raw) {
                         if (auto m = ProductMeta::parse(n); m && m->type != ProductType::Unknown)
                             dc.items.push_back(*m);
                     }
                     dc.loaded = true;
-                    //LOG_INFO << "[下载] 列目录 " << u << " → " << raw.size() << " 项";
                 } else {
                     dc.err = err;
-                    dc.missing = true; // 明确探测过：目录不存在 / 无法访问 → 负缓存
-                    // LOG_WARN << "[下载] 列目录失败 " << u << " — " << err;
+                    dc.missing = true;
                 }
                 std::lock_guard lk(s_mtx);
                 s_dirs[u] = std::move(dc);
                 s_done = static_cast<int>(i) + 1;
             }
         } catch (const std::exception &e) {
-            // 任何异常都不能让 s_scanning 卡在 true，否则 UI 永久显示"扫描中"
             std::lock_guard lk(s_mtx);
             s_status = std::string("扫描异常中断: ") + e.what();
             s_scanning = false;
@@ -179,11 +116,9 @@ namespace Tools::FtpDownload {
             s_status = "就绪";
             s_scanning = false;
         }
-        //LOG_INFO << "[下载] 目录扫描结束（" << urls.size() << " 个目录）";
     }
 
     static void runDownload(const std::string &dirUrl, const ProductMeta &m) {
-        FtpClient cli;
         const std::string remote = dirUrl + m.filename;
         const std::string local = DownloadStore::localPath(m.type, m.year, m.doy, m.filename);
         std::error_code ec;
@@ -202,7 +137,7 @@ namespace Tools::FtpDownload {
         };
 
         std::string log;
-        const bool ok = cli.downloadFile(remote, local, onProgress,
+        const bool ok = FtpClient::downloadFile(remote, local, onProgress,
                                          [&](const std::string &s) { log = s; }, 3);
         if (ok) {
             const std::string finalPath = DownloadStore::decompressIfNeeded(local);
@@ -246,7 +181,7 @@ namespace Tools::FtpDownload {
         m.spanDays = p.spanDays;
         m.filename = p.remoteName;
         markDownloading(p.dirUrl + p.remoteName);
-        if (s_dlThread.joinable()) s_dlThread.join();   // 反复再起可先收尾上一次
+        if (s_dlThread.joinable()) s_dlThread.join(); // 反复再起可先收尾上一次
         s_dlThread = std::thread(runDownload, p.dirUrl, m);
     }
 
@@ -368,7 +303,7 @@ namespace Tools::FtpDownload {
             ImGui::SameLine();
             ImGui::BeginDisabled(s_scanning.load());
             if (ImGui::SmallButton("刷新目录")) {
-                std::lock_guard<std::mutex> lk(s_mtx);
+                std::lock_guard lk(s_mtx);
                 s_dirs.clear();
             }
             ImGui::EndDisabled();
@@ -384,13 +319,10 @@ namespace Tools::FtpDownload {
         const int doy = ProductMeta::dateToDoy(s_year, s_month, s_day);
         std::vector<std::string> dirs = ProductMeta::scanDirs(types, s_year, doy);
         {
-            std::lock_guard<std::mutex> lk(s_mtx);
+            std::lock_guard lk(s_mtx);
             std::vector<std::string> missing;
             for (const auto &d: dirs)
                 if (!s_dirs.count(d)) missing.push_back(d);
-            // 已成功列出(loaded)或已确知不存在(missing)的目录都不再自动重扫：
-            // missing 是负缓存（如今天/近几日产品尚未上架），避免每次打开都去探测一遍。
-            // 需要强制重新探测时由用户点"刷新目录"（会清空 s_dirs）。
             if (!missing.empty() && !s_scanning) {
                 s_scanning = true;
                 s_done = 0;
@@ -404,25 +336,22 @@ namespace Tools::FtpDownload {
         int nMissing = 0; // 已确认不存在 / 未发布的目录数（负缓存，避免误以为卡死）
         std::vector<std::string> missingUrls;
         {
-            std::lock_guard<std::mutex> lk(s_mtx);
+            std::lock_guard lk(s_mtx);
             matches = filterMatches(dirs, types, s_year, doy);
             for (const auto &d: dirs) {
-                auto it = s_dirs.find(d);
-                if (it != s_dirs.end() && it->second.missing) {
+                if (auto it = s_dirs.find(d); it != s_dirs.end() && it->second.missing) {
                     ++nMissing;
                     missingUrls.push_back(d);
                 }
             }
         }
 
-        // ---- 匹配文件：按类型分组，名字平铺 ----
         ImGui::BeginChild("##files", ImVec2(0, -30), ImGuiChildFlags_Borders);
         if (types.empty()) {
             ImGui::TextDisabled("先勾选上面的产品类型。");
         } else if (dirs.empty()) {
             ImGui::TextDisabled("所选类型在该镜像上没有对应的产品目录。");
         } else if (matches.empty()) {
-            // 区分"目录未发布"与"目录存在但无匹配文件"，避免把前者误读成卡死
             if (nMissing > 0) {
                 ImGui::TextDisabled("所选日期的部分目录尚未发布（当天/近几日的产品可能还没上架）：");
                 for (const auto &u: missingUrls)
@@ -435,13 +364,9 @@ namespace Tools::FtpDownload {
             const float avail = ImGui::GetContentRegionAvail().x;
             const float gap = ImGui::GetStyle().ItemSpacing.x;
 
-            // 先按类型归类再渲染。matches 是按文件名排序的，同一类型可能被别的类型隔断
-            // （ERP 在 products/<周> 与 products/mgex/<周> 各有一份，中间夹着 CLK）
-            // ⇒ 用"相邻段判型"会把一个类型拆成两个标题。
             std::vector<std::vector<const Match *> > byType(8);
             for (const auto &mt: matches) {
-                const int t = static_cast<int>(mt.m.type);
-                if (t >= 0 && t < 8) byType[t].push_back(&mt);
+                if (const int t = static_cast<int>(mt.m.type); t >= 0 && t < 8) byType[t].push_back(&mt);
             }
 
             bool firstGroup = true;
@@ -453,18 +378,16 @@ namespace Tools::FtpDownload {
 
                 float x = 0.0f;
                 for (const Match *pmt: byType[t]) {
-                    const Match &mt = *pmt;
+                    const auto &[m, dirUrl] = *pmt;
                     const std::string local =
-                            DownloadStore::findLocalFile(mt.m.type, mt.m.year, mt.m.doy, mt.m.filename);
-                    const std::string label = mt.m.filename;
+                            DownloadStore::findLocalFile(m.type, m.year, m.doy, m.filename);
+                    const std::string label = m.filename;
 
-                    // 下载中：该芯片由 Button 换成同样式、同位置的 ProgressBar（不可点击）
-                    float frac = -1.0f;
+                    float frac;
                     bool downloading = false;
                     {
-                        std::lock_guard<std::mutex> lk(s_mtx);
-                        auto it = s_dlActive.find(mt.dirUrl + mt.m.filename);
-                        if (it != s_dlActive.end()) {
+                        std::lock_guard lk(s_mtx);
+                        if (auto it = s_dlActive.find(dirUrl + m.filename); it != s_dlActive.end()) {
                             downloading = true;
                             frac = it->second.frac;
                         }
@@ -499,9 +422,9 @@ namespace Tools::FtpDownload {
                         if (dl) ImGui::PopStyleColor();
                         if (ImGui::IsItemHovered()) {
                             const std::string tip =
-                                    label + "\n覆盖 " + std::to_string(mt.m.spanDays) + " 天（起始 " +
-                                    ProductMeta::doyToDateStr(mt.m.year, mt.m.doy) + "）  采样 " +
-                                    (mt.m.interval.empty() ? "-" : mt.m.interval) +
+                                    label + "\n覆盖 " + std::to_string(m.spanDays) + " 天（起始 " +
+                                    ProductMeta::doyToDateStr(m.year, m.doy) + "）  采样 " +
+                                    (m.interval.empty() ? "-" : m.interval) +
                                     (dl
                                          ? "\n本地：" + local + "\n（点击可重新下载 / 删除）"
                                          : "\n本地：无（点击下载）");
@@ -509,8 +432,8 @@ namespace Tools::FtpDownload {
                         }
                         if (pressed) {
                             s_pending = Pending{
-                                mt.m.filename, mt.dirUrl, mt.m.type, mt.m.year, mt.m.doy,
-                                mt.m.spanDays, local
+                                m.filename, dirUrl, m.type, m.year, m.doy,
+                                m.spanDays, local
                             };
                             s_pendingOpen = true;
                         }
@@ -524,12 +447,12 @@ namespace Tools::FtpDownload {
 
         // ---- 状态 / 进度 ----
         {
-            std::lock_guard<std::mutex> lk(s_mtx);
+            std::lock_guard lk(s_mtx);
             if (s_scanning)
                 ImGui::Text("扫描中 %d/%d  %s", s_done.load(), s_total.load(), s_status.c_str());
             else {
                 const std::string suffix = nMissing > 0
-                                               ? ("（" + std::to_string(nMissing) + " 个目录未发布）")
+                                               ? "（" + std::to_string(nMissing) + " 个目录未发布）"
                                                : "";
                 ImGui::Text("共 %zu 个匹配文件%s   %s",
                             matches.size(), suffix.c_str(), s_status.c_str());
@@ -557,13 +480,11 @@ namespace Tools::FtpDownload {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("删除本地")) {
-                    const bool gone = DownloadStore::removeFile(s_pending.localPath);
                     {
-                        std::lock_guard<std::mutex> lk(s_mtx);
+                        const bool gone = DownloadStore::removeFile(s_pending.localPath);
+                        std::lock_guard lk(s_mtx);
                         s_status = gone ? "已删除本地文件" : "删除失败（文件可能被占用）";
                     }
-                    // CloseCurrentPopup 必须在锁外：ImGui 不是线程安全的，
-                    // 持锁进 ImGui 一旦日后有别的线程读 s_status 就会踩到。
                     ImGui::CloseCurrentPopup();
                 }
             }
@@ -575,34 +496,29 @@ namespace Tools::FtpDownload {
         ImGui::End();
     }
 
-    void RequestAutoDownload(ProductType type, int year, int doy, const std::string &datacenter) {
+    void RequestAutoDownload(ProductType type, const int year, const int doy, const std::string &datacenter) {
         s_open = true;
         LOG_INFO << "[下载] 面板自动定位: " << ProductMeta::typeDir(type) << " "
                 << ProductMeta::doyToDateStr(year, doy) << "  数据中心="
                 << (datacenter.empty() ? std::string("不限") : datacenter);
 
-        // 只保留目标类型 + 落到具体日期（面板会自动算出该扫哪些目录）
-        for (int i = 0; i < 8; ++i) s_typeOn[i] = (static_cast<int>(type) == i);
+        for (int i = 0; i < 8; ++i) s_typeOn[i] = static_cast<int>(type) == i;
 
-        int y = year, m = 0, d = 0;
-        if (ProductMeta::doyToYmd(year, doy, y, m, d)) {
+
+        if (int y = year, m = 0, d = 0;ProductMeta::doyToYmd(year, doy, y, m, d)) {
             s_year = y;
             s_month = m;
             s_day = d;
         }
 
-        // 数据中心：勾上指定的那个（找不到就保持"不限"）
         s_dcOn.assign(ProductMeta::knownDatacenters().size(), 0);
         const auto &dcs = ProductMeta::knownDatacenters();
         for (size_t i = 0; i < dcs.size(); ++i)
             if (dcs[i] == datacenter) s_dcOn[i] = 1;
     }
-    // 退出前收尾：等待两个后台线程结束。下载/扫描都是单飞且收尾时都会复位
-    // s_downloading / s_scanning（异常路径也复位，见 runScan/runDownload 的 catch），
-    // 故这里最多等一轮，不会与主线程互相等锁。
+
     void Shutdown() {
         if (s_scanThread.joinable()) s_scanThread.join();
         if (s_dlThread.joinable()) s_dlThread.join();
     }
-
-} // namespace Tools::FtpDownload
+}

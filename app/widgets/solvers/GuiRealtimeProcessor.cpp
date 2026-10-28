@@ -16,8 +16,6 @@
 #include "Log.h"
 
 namespace Solvers::RealtimeProcessor {
-    // 实时质量分析滑动窗口上限（与 RTK 实时流一致，约 2 小时@1Hz）：
-    // 避免 QC::compute 随历元数无限增长，做增量式质量分析。
     static constexpr size_t kRealtimeQcWindow = 7200;
 
     void SolveRealtimeThread(const std::shared_ptr<GnssTask::SolveTask> &task, const ConnectionConfig &config) {
@@ -27,6 +25,9 @@ namespace Solvers::RealtimeProcessor {
 
         std::chrono::steady_clock::time_point lastQcTime; // QC 节流计时
         bool loggedConnectFail = false;   // 连接失败每 2s 重试一次：只记首次，避免刷屏
+        // 重启实时解算：复位参考点锁存（refECEF 否则残留上一轮值，ENU/导出全部锚错）
+        task->initializedRefECEF = false;
+        task->refAutoConfirmed = false;
 
         while (!task->stop) {
             try {
@@ -57,11 +58,8 @@ namespace Solvers::RealtimeProcessor {
                             auto eph = reader.ephSnapshot(); // OEM7 内嵌星历统一经 ephTable 传入
                             spp.ephTable = *eph;
                             spp.preprocess(obs);
-
-                            // 实时质量分析：把预处理后的原始观测并入 qcInput（与文件/OEM7 模式一致）。
-                            // 之前这一环漏了，导致 QC 每次算的都是空输入 → 一直显示"无有效双频观测"。
                             {
-                                std::lock_guard<std::mutex> lk(task->qcInputMutex);
+                                std::lock_guard lk(task->qcInputMutex);
                                 task->qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
                                 if (task->qcInput.size() > kRealtimeQcWindow)
                                     task->qcInput.erase(
@@ -85,18 +83,14 @@ namespace Solvers::RealtimeProcessor {
                             } catch (...) {
                                 data.solved = false;
                             }
-                            // 统一提交入口：与 RTK（commitRtkEpoch → CommitEpoch）同形，
-                            // 取代原先手写 push_back + plotData.insert + selectedEpoch 维护（且旧逻辑 index 计算有 off-by-one）。
-                            GnssTask::CommitEpoch(task, std::move(data));
+                 GnssTask::CommitEpoch(task, std::move(data));
 
-                            const auto nowQc = std::chrono::steady_clock::now();
-                            if (nowQc - lastQcTime > std::chrono::milliseconds(500)) {
+                            if (const auto nowQc = std::chrono::steady_clock::now(); nowQc - lastQcTime > std::chrono::milliseconds(500)) {
                                 lastQcTime = nowQc;
-                                Solvers::SolverPanel::LaunchQC(task);
+                                SolverPanel::LaunchQC(task);
                             }
                         } else {
-                            // 检查连接是否依然有效
-                            if (!reader.isConnected()) {
+                        if (!reader.isConnected() || reader.isStale(std::chrono::milliseconds(5000))) {
                                 break; // 跳出内层循环进行重连
                             }
                             std::this_thread::sleep_for(std::chrono::milliseconds(50));

@@ -28,12 +28,8 @@ namespace Solvers::PppProcessor {
         void renderConfigPanel() override;
 
         bool initSolver(void *solver) override;
-        bool afterSolveEpoch(void *solver, GnssTask::EpochData *data, GnssTask::ObsItem *item, int index) override;
-        // OEM7 模式星历注入（RINEX 模式不实现：星历来自 initSolver 的 SP3/BRDC）
-        void beforeSolveEpoch(void *solver, GnssTask::ObsItem *item) override;
-
-        // OEM7 内嵌星历的上一帧非空快照（toe 不变时各历元共享同一 shared_ptr）
-        std::shared_ptr<EphemerisTable> lastGoodEph;
+        // afterSolveEpoch 不 override：走基类默认实现（首历元参考点初始化）
+        // beforeSolveEpoch 不 override：走基类默认实现（OEM7 星历快照回退注入）
 
         // 回填上次选择：PathMemory 此前只写(开始解算/浏览时 set)不读，重启后面板全空。
         PppTask() {
