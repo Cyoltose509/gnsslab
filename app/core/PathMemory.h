@@ -20,6 +20,8 @@ namespace AppConfig {
 
         void setNum(const std::string &key, double v) const; //NOLINT
 
+        void setInt(const std::string &key, int v) const; //NOLINT
+
         void addRecent(const std::string &group, const std::string &entry, int max = 12) const; //NOLINT
 
         [[nodiscard]] const std::string &path() const { return filePath; }

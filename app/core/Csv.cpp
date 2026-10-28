@@ -42,6 +42,13 @@ Writer &Writer::cell(const FixedNum n) {
     return cellRaw(os.str());
 }
 
+// 与 printf "%.<dec>e" 逐字节一致（含指数至少两位），供需要固定小数位的科学计数列用。
+Writer &Writer::cell(const SciNum n) {
+    std::ostringstream os;
+    os << std::scientific << std::setprecision(n.dec) << n.v;
+    return cellRaw(os.str());
+}
+
 Writer &Writer::endRow() {
     buf += '\n';
     lastCols = curCols;
@@ -54,16 +61,18 @@ Writer &Writer::endRow() {
 
 [[nodiscard]] const std::string &Writer::str() const { return buf; }
 
-[[nodiscard]] bool Writer::save(const std::string &path) const {
+[[nodiscard]] bool Writer::save(const std::string &path, const bool withBom) const {
     std::ofstream out(std::filesystem::path(path), std::ios::out | std::ios::binary);
     if (!out) return false;
-    out << buf; // UTF-8，无 BOM
+    if (withBom) out.write("\xEF\xBB\xBF", 3);
+    out << buf; // UTF-8
     return static_cast<bool>(out);
 }
 
-[[nodiscard]] bool Writer::save(const std::wstring &path) const {
+[[nodiscard]] bool Writer::save(const std::wstring &path, const bool withBom) const {
     std::ofstream out(std::filesystem::path(path), std::ios::out | std::ios::binary);
     if (!out) return false;
+    if (withBom) out.write("\xEF\xBB\xBF", 3);
     out << buf;
     return static_cast<bool>(out);
 }

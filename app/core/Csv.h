@@ -16,10 +16,15 @@ namespace Csv {
     struct FixedNum {
         double v;
         int dec;
-    }; // 定点小数位数
+    }; // 定点小数位数（= printf "%.<dec>f"）
+    struct SciNum {
+        double v;
+        int dec;
+    }; // 科学计数小数位数（= printf "%.<dec>e"）
 
     inline SigNum f(const double v, const int sig = 6) { return {v, sig}; }
     inline FixedNum fx(const double v, const int dec) { return {v, dec}; }
+    inline SciNum sci(const double v, const int dec) { return {v, dec}; }
 
     // ---------------- 写出 ----------------
     class Writer {
@@ -37,6 +42,7 @@ namespace Csv {
         Writer &cell(const double v, const int sig = 6);
         Writer &cell(const SigNum n);
         Writer &cell(const FixedNum n);
+        Writer &cell(const SciNum n);
 
         // 结束当前行并开始新行。返回 *this 以支持流式链式调用。
         Writer &endRow();
@@ -54,8 +60,11 @@ namespace Csv {
         // ---- 输出 ----
         [[nodiscard]] const std::string &str() const;
 
-        [[nodiscard]] bool save(const std::string &path) const;
-        [[nodiscard]] bool save(const std::wstring &path) const;
+        // 落盘。withBom=true 时写 UTF-8 BOM —— Excel 打开无 BOM 的中文表头会按 ANSI
+        // 解码成乱码，GUI 导出的 CSV 要给人看，故公开这个开关（默认 false，不影响
+        // 解算器产物：那些是给程序读的，多 3 字节会破坏按列解析）。
+        [[nodiscard]] bool save(const std::string &path, bool withBom = false) const;
+        [[nodiscard]] bool save(const std::wstring &path, bool withBom = false) const;
 
     private:
         Writer &cellRaw(const std::string &s);

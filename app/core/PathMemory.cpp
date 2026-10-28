@@ -77,6 +77,10 @@ namespace AppConfig {
         set(key, b);
     }
 
+    void PathMemory::setInt(const std::string &key, const int v) const {
+        set(key, std::to_string(v));
+    }
+
     std::vector<std::string> PathMemory::getRecent(const std::string &group) const {
         std::vector<std::string> v;
         IniFile f;

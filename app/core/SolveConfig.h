@@ -71,6 +71,8 @@ struct SolveConfig {
     std::string csvPath; // 输出 CSV（为空则按 exe 名取默认）
     double refX = 0, refY = 0, refZ = 0; // 可选 ENU 参考点(ECEF)；全 0 表示用首历元解作参考
     bool hasRef = false;
+    // RTK 实时显式基站坐标（与 GUI「手动指定基站坐标」等价；norm>1e3 才生效）
+    double baseCoordX = 0, baseCoordY = 0, baseCoordZ = 0;
 };
 
 SolveConfig loadConfig(const AppConfig::IniFile &ini);

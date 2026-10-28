@@ -89,6 +89,9 @@ SolveConfig loadConfig(const AppConfig::IniFile &ini) {
     c.refY = ini.getD("output", "ref_y", 0.0);
     c.refZ = ini.getD("output", "ref_z", 0.0);
     c.hasRef = (c.refX != 0.0 || c.refY != 0.0 || c.refZ != 0.0);
+    c.baseCoordX = ini.getD("input", "base_coord_x", 0.0);
+    c.baseCoordY = ini.getD("input", "base_coord_y", 0.0);
+    c.baseCoordZ = ini.getD("input", "base_coord_z", 0.0);
 
     return c;
 }
