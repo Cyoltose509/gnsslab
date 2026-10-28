@@ -39,6 +39,8 @@ add_executable(GnssLab WIN32
         widgets/tools/GuiCoordConverter.cpp
         widgets/tools/GuiLsqSolver.cpp
         widgets/tools/GuiInsPanel.cpp
+        widgets/tools/GuiInsCalib.cpp
+        widgets/tools/GuiInsAlign.cpp
         widgets/solvers/GuiSolverPanel.cpp
         widgets/solvers/GuiSppProcessor.cpp
         widgets/solvers/SolverTask.cpp
@@ -111,6 +113,12 @@ set(CLI_INCLUDES
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CLI_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/widgets/solvers
+    # CLI 头文件链会经 widgets/solvers 摸到 QualityControl.h（含 imgui.h），
+    # 只需 include 路径可解析头文件即可；模板不实例化则不引入任何 imgui 符号。
+    ${PROJECT_SOURCE_DIR}/thirdparty/imgui
+    ${PROJECT_SOURCE_DIR}/thirdparty/imgui/backends
+    ${PROJECT_SOURCE_DIR}/thirdparty/implot
+    ${PROJECT_SOURCE_DIR}/thirdparty/implot3d
 )
 
 set(CLI_INIS spp ppp rtk leo)
