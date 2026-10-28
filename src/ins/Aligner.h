@@ -18,41 +18,35 @@ class Aligner {
 public:
     // 对整段（或指定区间）求均值做一次静态对准
     static Attitude solve(const ImuLog &log,
-                          const Eigen::Vector3d &gyroBiasCounts,
                           size_t begin, size_t end,
                           const SiteParams &sp);
 
     static AttQuat solveQuat(const ImuLog &log,
-                             const Eigen::Vector3d &gyroBiasCounts,
                              size_t begin, size_t end,
                              const SiteParams &sp);
 
     // 对准质量诊断
     static AlignQuality diagnose(const ImuLog &log,
-                                 const Eigen::Vector3d &gyroBiasCounts,
                                  size_t begin, size_t end,
                                  const SiteParams &sp);
 
     static AlignQuality diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen::Vector3d &gyrMean,
-                                      const Eigen::Vector3d &gyroBiasCounts,
                                       const SiteParams &sp,
                                       double gyroScaleCountsPerRadS = 0.0);
 
     // 滑动窗口序列
     static std::vector<AttitudeSample> alignSeries(const ImuLog &log, int win,
-                                                   const Eigen::Vector3d &gyroBiasCounts,
                                                    const SiteParams &sp);
 
     // 流式滑窗粗对准
     struct AlignStream {
         int win = 200;
         SiteParams sp{};
-        Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero();
         Eigen::Vector3d acc = Eigen::Vector3d::Zero();
         Eigen::Vector3d gyr = Eigen::Vector3d::Zero();
         size_t count = 0;
 
-        void init(int window, const SiteParams &site, const Eigen::Vector3d &gyroBiasCounts);
+        void init(int window, const SiteParams &site);
 
         void step(const ImuSample &s, AttitudeSample &out);
     };

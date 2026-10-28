@@ -3,7 +3,7 @@
 #include "core/CoordConvert.h"
 
 namespace {
-    Eigen::Matrix3d alignMeanDCM(const ImuLog &log, const Eigen::Vector3d &gyroBiasCounts,
+    Eigen::Matrix3d alignMeanDCM(const ImuLog &log,
                                  const size_t begin, const size_t end, const SiteParams &sp,
                                  Eigen::Vector3d &accMean, Eigen::Vector3d &gyrMean) {
         accMean = Eigen::Vector3d::Zero();
@@ -16,12 +16,11 @@ namespace {
         const auto n = static_cast<double>(end - begin);
         accMean /= n;
         gyrMean /= n;
-        return alignDCM(-accMean, gyrMean - gyroBiasCounts, sp);
+        return alignDCM(-accMean, gyrMean, sp);
     }
 }
 
 Attitude Aligner::solve(const ImuLog &log,
-                        const Eigen::Vector3d &gyroBiasCounts,
                         const size_t begin, size_t end,
                         const SiteParams &sp) {
     if (end == 0 || end > log.size()) end = log.size();
@@ -29,24 +28,22 @@ Attitude Aligner::solve(const ImuLog &log,
     if (end <= begin) return a;
 
     Eigen::Vector3d acc, gyr;
-    const Eigen::Matrix3d C = alignMeanDCM(log, gyroBiasCounts, begin, end, sp, acc, gyr);
+    const Eigen::Matrix3d C = alignMeanDCM(log, begin, end, sp, acc, gyr);
     DCMToEuler(C, a.roll, a.pitch, a.yaw);
     return a;
 }
 
 AttQuat Aligner::solveQuat(const ImuLog &log,
-                           const Eigen::Vector3d &gyroBiasCounts,
                            const size_t begin, size_t end,
                            const SiteParams &sp) {
     if (end == 0 || end > log.size()) end = log.size();
     if (end <= begin) return AttQuat::identity();
 
     Eigen::Vector3d acc, gyr;
-    return AttQuat::fromDCM(alignMeanDCM(log, gyroBiasCounts, begin, end, sp, acc, gyr));
+    return AttQuat::fromDCM(alignMeanDCM(log, begin, end, sp, acc, gyr));
 }
 
 AlignQuality Aligner::diagnose(const ImuLog &log,
-                               const Eigen::Vector3d &gyroBiasCounts,
                                const size_t begin, size_t end,
                                const SiteParams &sp) {
     AlignQuality q;
@@ -54,16 +51,15 @@ AlignQuality Aligner::diagnose(const ImuLog &log,
     if (end <= begin) return q;
 
     Eigen::Vector3d acc, gyr;
-    alignMeanDCM(log, gyroBiasCounts, begin, end, sp, acc, gyr);
-    return diagnoseMeans(acc, gyr, gyroBiasCounts, sp);
+    alignMeanDCM(log, begin, end, sp, acc, gyr);
+    return diagnoseMeans(acc, gyr, sp);
 }
 
 AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen::Vector3d &gyrMean,
-                                    const Eigen::Vector3d &gyroBiasCounts,
                                     const SiteParams &sp,
                                     const double gyroScaleCountsPerRadS) {
     AlignQuality q;
-    const Eigen::Vector3d wB = gyrMean - gyroBiasCounts;
+    const Eigen::Vector3d wB = gyrMean;
     const Eigen::Matrix3d C = alignDCM(-accMean, wB, sp);
     const AttQuat qAtt = AttQuat::fromDCM(C);
 
@@ -93,7 +89,6 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
 }
 
 std::vector<AttitudeSample> Aligner::alignSeries(const ImuLog &log, const int win,
-                                                 const Eigen::Vector3d &gyroBiasCounts,
                                                  const SiteParams &sp) {
     std::vector<AttitudeSample> out;
     if (log.empty() || win <= 0) return out;
@@ -106,7 +101,7 @@ std::vector<AttitudeSample> Aligner::alignSeries(const ImuLog &log, const int wi
         acc += (Eigen::Vector3d(log[i].ax, log[i].ay, log[i].az) - acc) / n;
         gyr += (Eigen::Vector3d(log[i].gx, log[i].gy, log[i].gz) - gyr) / n;
 
-        const Eigen::Matrix3d C = alignDCM(-acc, gyr - gyroBiasCounts, sp);
+        const Eigen::Matrix3d C = alignDCM(-acc, gyr, sp);
         AttitudeSample s;
         s.tow = log[i].tow;
         DCMToEuler(C, s.roll, s.pitch, s.yaw);
@@ -115,10 +110,9 @@ std::vector<AttitudeSample> Aligner::alignSeries(const ImuLog &log, const int wi
     return out;
 }
 
-void Aligner::AlignStream::init(const int window, const SiteParams &site, const Eigen::Vector3d &gyroBiasCounts) {
+void Aligner::AlignStream::init(const int window, const SiteParams &site) {
     win = window;
     sp = site;
-    gyroBias = gyroBiasCounts;
     acc.setZero();
     gyr.setZero();
     count = 0;
@@ -129,7 +123,7 @@ void Aligner::AlignStream::step(const ImuSample &s, AttitudeSample &out) {
     const auto n = static_cast<double>(count - lo + 1);
     acc += (Eigen::Vector3d(s.ax, s.ay, s.az) - acc) / n;
     gyr += (Eigen::Vector3d(s.gx, s.gy, s.gz) - gyr) / n;
-    const Eigen::Matrix3d C = alignDCM(-acc, gyr - gyroBias, sp);
+    const Eigen::Matrix3d C = alignDCM(-acc, gyr, sp);
     DCMToEuler(C, out.roll, out.pitch, out.yaw);
     out.tow = s.tow;
     ++count;

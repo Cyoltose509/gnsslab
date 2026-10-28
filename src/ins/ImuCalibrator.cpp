@@ -107,7 +107,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
 }
 
 
-// 完整标定（可变段数）。覆盖度不足时 ok=false 并填 errorMsg，不解出奇异矩阵。
+// 完整标定
 CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle, double g) {
     CalibReport r;
     r.ok = false;
@@ -129,7 +129,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
         return r;
     }
 
-    // ---- 加表：堆叠所有静置段做最小二乘，行权重 = 段样本数 ----
+    // ---- 加速度计：堆叠所有静置段做最小二乘，行权重 = 段样本数 ----
     std::vector<Eigen::Vector3d> raw, f;
     std::vector<double> w;
     raw.reserve(seg.pos.size());
@@ -143,9 +143,22 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
         w.push_back(static_cast<double>(samples.size()));
         r.nPos[static_cast<int>(fst)] += static_cast<int>(samples.size());
     }
+
+    if (!seg.pos.empty()) r.dt = medianDt(seg.pos.front().second);
+    else if (!seg.rot.empty()) r.dt = medianDt(seg.rot.front().second);
+
     solveLinear(raw, f, w, r.calib.accelM, r.calib.accelB, r.accelRms, &r.accelScaleSigma);
     r.accelScaleCounts = r.calib.accelM.diagonal();
     r.accelScaleG = r.accelScaleCounts * g;
+
+    // N 的归一化基准最终取标称 K_nom（见 applyNominal）；此处先用三轴均值兜底，
+    // 保证未调用 applyNominal 时 N 也有值，之后被覆写为同一基准。
+    const double knorm = r.accelScaleCounts.mean();
+    if (knorm != 0.0) {
+        r.accelCross = r.calib.accelM / knorm;
+        r.accelCross.diagonal().setZero(); // 对角已归入 δs，交轴耦合只取非对角
+    }
+    r.accelBiasPhys = r.calib.accelM.inverse() * r.calib.accelB; // 等效输入比力误差 (m/s²)
 
     //陀螺零偏
     Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero();
@@ -183,24 +196,34 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     }
     r.calib.gyroBias = gyroBias;
 
-    r.gyroKmean = r.gyroKeff.mean();
-    if (r.gyroKmean != 0.0) r.gyroDeltaS = r.gyroKeff / r.gyroKmean - Eigen::Vector3d::Ones();
     r.calib.gyroScale = r.gyroKeff * r.dt;
 
-    // dt：优先取首个静置段，否则取首个旋转段
-    if (!seg.pos.empty()) r.dt = medianDt(seg.pos.front().second);
-    else if (!seg.rot.empty()) r.dt = medianDt(seg.rot.front().second);
+    // 陀螺零偏换算到物理单位：LSB/历元 -> rad/s
+    for (int ax = 0; ax < 3; ++ax)
+        r.gyroBiasPhys(ax) = r.calib.gyroScale(ax) != 0.0 ? gyroBias(ax) / r.calib.gyroScale(ax) : 0.0;
 
     r.ok = true;
     return r;
 }
 
-std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log, const DetectParams &p) {
+void ImuCalibrator::applyNominal(CalibReport &r, const double kAccel, const double kGyroRad) {
+    const double kA = r.dt / kAccel;
+    const double kG = 1.0 / kGyroRad;
+    r.nominalAccelK = kA;
+    r.nominalKeff = kG;
+    r.accelDeltaS = r.accelScaleCounts / kA - Eigen::Vector3d::Ones();
+    r.gyroDeltaS = r.gyroKeff / kG - Eigen::Vector3d::Ones();
+    // N 与 δs 用同一基准，保证 M = K_nom (I + S + N) 自洽
+    r.accelCross = r.calib.accelM / kA;
+    r.accelCross.diagonal().setZero();
+}
+
+std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log) {
+    constexpr DetectParams p{};
     std::vector<CalibSegment> segs;
     if (log.empty()) return segs;
     const size_t N = log.size();
 
-    // 1) 每样本陀螺主轴模长 + 加速度主轴模长（加速度量级≈g，作为稳定的旋转阈值参考）
     std::vector<double> m(N), am(N);
     for (size_t i = 0; i < N; ++i) {
         const auto &s = log[i];
