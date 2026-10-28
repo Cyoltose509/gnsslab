@@ -15,6 +15,9 @@ public:
 
     bool isConnected() const { return socketClient.isConnected(); }
 
+    // 半开连接检测：超过 ms 未收到任何数据即视为对端已失联，应触发重连
+    bool isStale(std::chrono::milliseconds ms) const { return socketClient.idleTooLong(ms); }
+
     bool setReceiveTimeout(int timeoutMs) { return socketClient.setReceiveTimeout(timeoutMs); }
 
     bool getNextMessage(std::vector<uint8_t> &message) override;

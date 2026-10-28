@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <mutex>
+#include <chrono>
 
 // ============================================================================
 // 平台适配层
@@ -74,7 +75,15 @@ public:
 
     [[nodiscard]] bool isConnected() const;
 
+    // 半开连接检测：TCP 对端可能悄无声息地消失（无 FIN/RST，云服务器常见），
+    // 此时 recv 仅超时返回、isConnected() 仍为真，上层会永远轮询却收不到数也不会重连。
+    // 因此以"距上次真正收到数据的时间"判定连接是否仍有效。
+    [[nodiscard]] bool idleTooLong(std::chrono::milliseconds ms) const {
+        return std::chrono::steady_clock::now() - lastRecvTime > ms;
+    }
+
 private:
     SocketType sock = SOCKET_INVALID;
     bool connected = false;
+    std::chrono::steady_clock::time_point lastRecvTime = std::chrono::steady_clock::now();
 };

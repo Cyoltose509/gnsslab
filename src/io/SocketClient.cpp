@@ -90,6 +90,7 @@ bool SocketClient::connect(const std::string& ip, const unsigned short port) {
 
     setReceiveTimeout(200);
     connected = true;
+    lastRecvTime = std::chrono::steady_clock::now();
     return true;
 }
 
@@ -132,6 +133,8 @@ int SocketClient::receive(unsigned char* buffer, const int maxLen) {
             connected = false;
         }
 #endif
+    } else {
+        lastRecvTime = std::chrono::steady_clock::now();
     }
     return ret;
 }
