@@ -836,7 +836,7 @@ void PPPStatic::initFilter(ObsData &obsData, VariableDataMap &csData) {
             ekf.ztdInitVar = mConfig.ztdInitVar;
             ekf.ambInitVar = mConfig.ambInitVar; // 模糊度初方差(RTKLIB 用 3600，我们默认 100)
             ekf.ztdProcNoise = mConfig.ztdProcNoise;
-            double fpvH = mConfig.firstEpochPosVar;
+            const double fpvH = mConfig.firstEpochPosVar;
             ekf.posVarFloorVec = Eigen::Vector3d(mConfig.posVarFloor, mConfig.posVarFloor, mConfig.posVarFloor);
             ekf.ztdInitValue = mConfig.ztdInitValue;
             ekf.codeBiasProcNoise = mConfig.codeBiasProcNoise;
@@ -1100,10 +1100,8 @@ bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
 PPPStatic::~PPPStatic() = default;
 
 void PPPStatic::applyOptions(const SolverOptions &o) {
-    // 基础段（SPP 级）：截止角 / 系统 / ISB
     SPP::applyOptions(o);
-    // PPP 专有段：逐字还原 ppp_cli 的 init lambda，保证 CLI 与 GUI 行为一致。
-    // 注意：不碰 ekf.clockInitVar（由 ctor 设定，CLI 也不改）。
+    // PPP 专有段
     mApplySolidTide = o.solidTide != 0;
     setMeasNoise(o.sigIFCode, o.sigPhase);
     setFirstEpochPosVar(o.firstEpochPosVar);
@@ -1125,4 +1123,5 @@ void PPPStatic::applyOptions(const SolverOptions &o) {
     setGloIfcbProcNoise(o.gloIfcbProcNoise, o.gloIfcbInitVar);
     setIsbProcNoise(o.isbProcNoise, o.isbInitVar);
     setKeepAmbMaxGap(o.keepAmbMaxGap);
+    if (o.sampleInterval > 0.0) mNominalInterval = o.sampleInterval;
 }

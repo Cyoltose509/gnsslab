@@ -24,6 +24,7 @@ struct SolverOptions {
     // —— 解算器参数（applyOptions 注入） ——
     double cutoffDeg = 15.0;
     std::set<char> systems{'G', 'C'};
+    double sampleInterval = 0.0;
     double sigIFCode = 1.273, sigPhase = 0.01273;
     int useAR = 1, useCycleSlip = 1, useGfCycleSlip = 1, fullCovariance = 1;
     int solidTide = 1;

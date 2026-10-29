@@ -32,12 +32,13 @@ namespace Solvers::RtkProcessor {
         std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
 
         RTK::Config rtkCfg{};
-        double cutoffDeg = rtkCfg.cutoffElevRad * RAD_TO_DEG; // 面板按度编辑，初值取自 solver 默认
+        double cutoffDeg = rtkCfg.cutoffElevRad * RAD_TO_DEG;
+        double sampleInterval = 0.0;
 
         std::shared_ptr<GnssTask::SolveTask> core; // 渲染/存储基础设施
         std::shared_ptr<GnssTask::SolveTask> solveResult() override { return core; }
 
-        void renderConfigPanel() override; // 定义见 .cpp
+        void renderConfigPanel() override;
 
         RTK rtk{};
 
@@ -64,6 +65,7 @@ namespace Solvers::RtkProcessor {
             navPathBuf = pm.get("rtk_nav");
             if (const std::string sysStr = pm.get("rtk_systems"); !sysStr.empty()) enabledSystems = stringToSysSet(sysStr);
             cutoffDeg = pm.getNum("rtk_cutoff", cutoffDeg, 0.0, 90.0);
+            sampleInterval = pm.getNum("rtk_interval", sampleInterval, 0.0, 3600.0);
             core->rtEndpoints.resize(2);
             core->rtEndpoints[0].ip = pm.get("rtk_rt_base_ip", "8.148.22.229");
             core->rtEndpoints[0].port = pm.get("rtk_rt_base_port", "2002");

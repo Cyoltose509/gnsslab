@@ -117,7 +117,7 @@ namespace {
                                             }
                                             epochs.push_back(std::move(data));
                                             return true;
-                                        });
+                                        }, cfg.sampleInterval);
 
         if (cfg.hasRef) {
             ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);

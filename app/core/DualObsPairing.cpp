@@ -11,6 +11,7 @@ namespace SolveDriver {
     void DualObsPairing::IntervalEstimator::reset() {
         mHave = false;
         mLast = 0.0;
+        mForced = 0.0;
         mDeltas.clear();
     }
 
@@ -28,6 +29,7 @@ namespace SolveDriver {
     }
 
     [[nodiscard]] double DualObsPairing::IntervalEstimator::interval() const {
+        if (mForced > 0.0) return mForced; // 用户声明优先：免窗口学习期，容差从首历元即正确
         if (static_cast<int>(mDeltas.size()) < kMinSamples) return 0.0;
         std::map<long long, int> cnt;
         for (const double d: mDeltas) ++cnt[llround(d * 1000.0)];

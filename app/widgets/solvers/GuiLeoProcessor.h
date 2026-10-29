@@ -55,6 +55,7 @@ namespace Solvers::LeoProcessor {
                 try { refPrn = std::stoi(prnStr); } catch (...) {}
             }
             core->cutoffDeg = cfg.getNum("leo_cutoff", core->cutoffDeg, 0.0, 90.0);
+            core->sampleInterval = cfg.getNum("leo_interval", core->sampleInterval, 0.0, 3600.0);
             if (const std::string sysStr = cfg.get("leo_systems"); !sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
             refSat = SatID('L', refPrn);   // 兜底初值，initSolver 里按 SP3 实际内容改写
         }

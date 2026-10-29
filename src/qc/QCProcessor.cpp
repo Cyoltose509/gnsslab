@@ -250,14 +250,16 @@ namespace QC {
         double lam1 = 0, lam2 = 0;
     };
 
-    QualityReport compute(const std::vector<QCObsEpoch> &epochs) {
+    QualityReport compute(const std::vector<QCObsEpoch> &epochs, const double nominalInterval) {
         QualityReport rep;
         rep.totalEpochs = static_cast<int>(epochs.size());
         rep.totalInputEpochs = rep.totalEpochs;
         if (rep.totalEpochs < 2) return rep;
 
-        // 历元间隔 (取中位历元差)
-        {
+        if (nominalInterval > 0.0) {
+            rep.interval = nominalInterval; // 用户声明优先
+        } else {
+            // 历元间隔 (取中位历元差)
             std::vector<double> diffs;
             for (int i = 1; i < static_cast<int>(epochs.size()); i++)
                 if (double d = epochs[i].sow - epochs[i - 1].sow; d > 0 && d < 1e4) diffs.push_back(d);

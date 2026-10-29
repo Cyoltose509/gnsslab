@@ -20,6 +20,9 @@ namespace SolveDriver {
 
             void observe(double epochSec);
 
+            // 预置标称间隔(s)：>0 时 interval() 直接返回，不再从滑动窗口估计
+            void force(const double intervalSec) { if (intervalSec > 0.0) mForced = intervalSec; }
+
             [[nodiscard]] double interval() const;
 
             [[nodiscard]] bool ready() const;
@@ -29,6 +32,7 @@ namespace SolveDriver {
         private:
             bool mHave = false;
             double mLast = 0.0;
+            double mForced = 0.0; // 用户声明的标称间隔(s)，0=按观测自适应估计
             std::vector<double> mDeltas;
         };
 
@@ -49,6 +53,12 @@ namespace SolveDriver {
         void observeBase(double epochSec);
 
         void observeRover(double epochSec);
+
+        // 用户声明标称采样间隔(s)：同时作用于基准/流动两路估计器，配对容差立即就绪
+        void setInterval(const double intervalSec) {
+            mBaseIv.force(intervalSec);
+            mRoverIv.force(intervalSec);
+        }
 
         [[nodiscard]] double pairWindow() const;
 

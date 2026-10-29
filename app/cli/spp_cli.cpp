@@ -46,7 +46,7 @@ namespace {
                 Cli::dumpEmpty(GnssTask::SolverMode::Spp, cfg);
                 return;
             }
-            epochs = SolveDriver::solveAll(src, spp);
+            epochs = SolveDriver::solveAll(src, spp, cfg.sampleInterval);
         } else if (fmt == GnssTask::ObsFormat::Rinex) {
             SolveDriver::RinexFileSource src;
             if (!src.open(cfg.obsPath)) {
@@ -54,7 +54,7 @@ namespace {
                 Cli::dumpEmpty(GnssTask::SolverMode::Spp, cfg);
                 return;
             }
-            epochs = SolveDriver::solveAll(src, spp);
+            epochs = SolveDriver::solveAll(src, spp, cfg.sampleInterval);
         } else {
             std::cerr << "SPP 无法识别观测文件格式: "
                       << cfg.obsPath << "\n";
@@ -106,6 +106,7 @@ namespace {
                 reader.setReceiveTimeout(200);
 
                 ObsData obs;
+                SolveDriver::EpochDecimator dec(cfg.sampleInterval); // 解算抽取：只解算网格历元
                 while (!stop) {
                     bool got = false;
                     try { got = reader.getNextEpoch(obs); } catch (...) { got = false; }
@@ -114,6 +115,7 @@ namespace {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
+                    if (!dec.accept(obs.weekSecond.sow)) continue; // 抽取：非网格历元不解算
                     if (auto eph = reader.ephSnapshot()) spp.ephTable = *eph;
                     try { spp.preprocess(obs); } catch (...) {
                     }

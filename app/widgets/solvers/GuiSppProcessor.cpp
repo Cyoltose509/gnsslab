@@ -24,7 +24,7 @@ namespace Solvers::SppProcessor {
                 Helpers::fileRow("广播星历 BRDC", &core->brdcPathBuf, "spp_brdc", Helpers::fRnx, 2, {}, "spp_obs");
                 ImGui::Separator();
 
-                Helpers::renderCutoffAndSystems(&core->cutoffDeg, &core->enabledSystems);
+                Helpers::renderCutoffAndSystems(&core->cutoffDeg, &core->enabledSystems, &core->sampleInterval);
 
                 ImGui::Separator();
 
@@ -34,6 +34,7 @@ namespace Solvers::SppProcessor {
                         AppConfig::PathMemory::instance().set("spp_obs", path);
                         AppConfig::PathMemory::instance().set("spp_brdc", core->brdcPathBuf);
                         AppConfig::PathMemory::instance().setNum("spp_cutoff", core->cutoffDeg);
+                        AppConfig::PathMemory::instance().setNum("spp_interval", core->sampleInterval);
                         AppConfig::PathMemory::instance().set("spp_systems", GnssTask::sysSetToString(core->enabledSystems));
                         LOG_INFO << "[SPP] 开始解算: 观测=" << path;
                         this->worker = std::thread(SolveThread, std::static_pointer_cast<SppTask>(shared_from_this()));
@@ -48,7 +49,7 @@ namespace Solvers::SppProcessor {
                 const auto &pm = AppConfig::PathMemory::instance();
                 Helpers::renderRealtimeConfig(
                     this, &core->rtEndpoints, {"流动站"},
-                    &core->cutoffDeg, &core->enabledSystems,
+                    &core->cutoffDeg, &core->enabledSystems, &core->sampleInterval,
                     [&] {
                         const std::string &ip = core->rtEndpoints[0].ip;
                         const std::string &port = core->rtEndpoints[0].port;
@@ -59,6 +60,7 @@ namespace Solvers::SppProcessor {
                         pm.set("rt_ip", ip);
                         pm.set("rt_port", port);
                         pm.setNum("spp_cutoff", core->cutoffDeg);
+                        pm.setNum("spp_interval", core->sampleInterval);
                         pm.set("spp_systems", GnssTask::sysSetToString(core->enabledSystems));
                         state = State::Running;
                         loading = true;

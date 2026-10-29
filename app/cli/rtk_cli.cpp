@@ -90,8 +90,11 @@ namespace {
         }
 
         SolveDriver::DualObsPairing p(nextBase, nextRover);
+        p.setInterval(cfg.sampleInterval); // 声明的标称采样间隔：配对容差免窗口学习期
+        SolveDriver::EpochDecimator dec(cfg.sampleInterval); // 解算抽取：只解算网格历元
         SolveDriver::DualObsPairing::Pair pr;
         while (p.next(pr)) {
+            if (!dec.accept(pr.rover.weekSecond.sow)) continue;
             EphemerisTable *eph = pr.baseEph
                                       ? pr.baseEph.get()
                                       : pr.roverEph
@@ -139,6 +142,8 @@ namespace {
         };
 
         SolveDriver::DualObsPairing pairing;
+        pairing.setInterval(cfg.sampleInterval);
+        SolveDriver::EpochDecimator dec(cfg.sampleInterval); // 解算抽取：只解算网格历元
         long long nProc = 0, nOk = 0, nAligned = 0;
         long long nBaseEp = 0, nRoverEp = 0, nIdle = 0;
         auto elapsedSec = [&] {
@@ -189,6 +194,7 @@ namespace {
                 return true;
             },
             [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
+                if (!dec.accept(r.weekSecond.sow)) return true; // 抽取：非网格历元不解算
                 ++nProc;
                 bool ok = false;
                 try { ok = rtk.processEpoch(b, r, *eph); } catch (const std::exception &e) {

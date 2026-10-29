@@ -28,6 +28,7 @@ namespace Solvers::SppProcessor {
             core->rtEndpoints[0].ip = pm.get("rt_ip", "47.114.134.129");
             core->rtEndpoints[0].port = pm.get("rt_port", "7190");
             core->cutoffDeg = pm.getNum("spp_cutoff", core->cutoffDeg, 0.0, 90.0);
+            core->sampleInterval = pm.getNum("spp_interval", core->sampleInterval, 0.0, 3600.0);
             if (const std::string sysStr = pm.get("spp_systems"); !sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
         }
     };

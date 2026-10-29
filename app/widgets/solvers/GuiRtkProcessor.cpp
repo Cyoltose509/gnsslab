@@ -100,6 +100,7 @@ namespace Solvers::RtkProcessor {
             baseQc->mode = SolverMode::Rtk;
             baseQc->filePath = task->baseObsPathBuf;
             baseQc->fileName = Helpers::baseName(task->baseObsPathBuf);
+            baseQc->sampleInterval = task->sampleInterval; // 基准站 QC 用同一标称间隔
             baseQc->qcLazy = true;
 
             if (anyRinex) {
@@ -127,15 +128,19 @@ namespace Solvers::RtkProcessor {
 
             int ok = 0;
             SolveDriver::DualObsPairing p(nextBase, nextRover);
+            p.setInterval(task->sampleInterval); // 声明的标称采样间隔：配对容差免窗口学习期
+            SolveDriver::EpochDecimator dec(task->sampleInterval); // 解算抽取：只解算网格历元
             SolveDriver::DualObsPairing::Pair pr;
             while (true) {
                 if (task->stop) break;
                 if (!p.next(pr)) break;
-                {
-                    std::lock_guard lk(task->pairMtx);
-                    task->pairQueue.push({pr.base, pr.rover, pr.baseEph ? pr.baseEph : pr.roverEph});
+                if (dec.accept(pr.rover.weekSecond.sow)) {
+                    {
+                        std::lock_guard lk(task->pairMtx);
+                        task->pairQueue.push({pr.base, pr.rover, pr.baseEph ? pr.baseEph : pr.roverEph});
+                    }
+                    task->pairCv.notify_one();
                 }
-                task->pairCv.notify_one();
                 {
                     std::lock_guard lk(task->core->qcInputMutex);
                     task->core->qcInput.push_back(QC::makeQCObsEpoch(pr.rover, pr.rover.weekSecond.sow));
@@ -216,6 +221,7 @@ namespace Solvers::RtkProcessor {
         SolverOptions opts;
         opts.cutoffDeg = task->cutoffDeg;
         opts.systems = task->enabledSystems;
+        opts.sampleInterval = task->sampleInterval;
         task->rtk.applyOptions(opts);
         task->rtk.mBaseXyzUser = task->useBaseCoord ? task->baseXyz : Eigen::Vector3d::Zero();
 
@@ -249,7 +255,7 @@ namespace Solvers::RtkProcessor {
                                  {}, nullptr, &this->navPathBuf);
                 Helpers::fileRow("广播星历 BRDC", &this->navPathBuf, "rtk_nav", Helpers::fRnx, 2, {}, "rtk_base");
                 ImGui::Separator();
-                Helpers::renderCutoffAndSystems(&this->cutoffDeg, &this->enabledSystems);
+                Helpers::renderCutoffAndSystems(&this->cutoffDeg, &this->enabledSystems, &this->sampleInterval);
 
                 ImGui::Separator();
                 renderBaseCoordInput(this);
@@ -260,10 +266,12 @@ namespace Solvers::RtkProcessor {
                     cfg.set("rtk_rover", this->roverObsPathBuf);
                     cfg.set("rtk_nav", this->navPathBuf);
                     cfg.setNum("rtk_cutoff", this->cutoffDeg);
+                    cfg.setNum("rtk_interval", this->sampleInterval);
                     cfg.set("rtk_systems", sysSetToString(this->enabledSystems));
                     persistBaseCoord(this);
                     this->core->enabledSystems = this->enabledSystems;
                     this->core->cutoffDeg = this->cutoffDeg;
+                    this->core->sampleInterval = this->sampleInterval;
 
                     // 输入校验与 ReaderThread / rtk_cli 共用同一份判定
                     if (const std::string inputErr = SolveDriver::rtkFileInputError(
@@ -297,7 +305,7 @@ namespace Solvers::RtkProcessor {
                 const auto &cfg = AppConfig::PathMemory::instance();
                 Helpers::renderRealtimeConfig(
                     this, &this->core->rtEndpoints, {"基准站", "流动站"},
-                    &this->cutoffDeg, &this->enabledSystems,
+                    &this->cutoffDeg, &this->enabledSystems, &this->sampleInterval,
                     [&] {
                         const std::string &bip = this->core->rtEndpoints[0].ip;
                         const std::string &bport = this->core->rtEndpoints[0].port;
@@ -308,10 +316,12 @@ namespace Solvers::RtkProcessor {
                         cfg.set("rtk_rt_rover_ip", rip);
                         cfg.set("rtk_rt_rover_port", rport);
                         cfg.setNum("rtk_cutoff", this->cutoffDeg);
+                        cfg.setNum("rtk_interval", this->sampleInterval);
                         cfg.set("rtk_systems", sysSetToString(this->enabledSystems));
                         persistBaseCoord(this);
                         this->core->enabledSystems = this->enabledSystems;
                         this->core->cutoffDeg = this->cutoffDeg;
+                        this->core->sampleInterval = this->sampleInterval;
 
                         this->isRealtime = true;
                         this->core->isRealtime = true;

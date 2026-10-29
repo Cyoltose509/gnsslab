@@ -46,7 +46,7 @@ namespace Solvers::SolverPanel {
             std::lock_guard lk(task.qcInputMutex);
             qcEpochs = task.qcInput;
         }
-        QualityReport rep = QC::compute(qcEpochs);
+        QualityReport rep = QC::compute(qcEpochs, task.sampleInterval);
         rep.totalInputEpochs = static_cast<int>(qcEpochs.size());
         return rep;
     }

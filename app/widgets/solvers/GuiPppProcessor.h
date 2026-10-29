@@ -45,6 +45,7 @@ namespace Solvers::PppProcessor {
             ionexPathBuf = pm.get("ppp_ionex");
             kinematic = pm.get("ppp_kinematic") == "1";
             core->cutoffDeg = pm.getNum("ppp_cutoff", core->cutoffDeg, 0.0, 90.0);
+            core->sampleInterval = pm.getNum("ppp_interval", core->sampleInterval, 0.0, 3600.0);
             if (const std::string sysStr = pm.get("ppp_systems"); !sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
         }
     };

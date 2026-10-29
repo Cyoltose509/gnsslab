@@ -20,7 +20,6 @@
 #include <vector>
 #include <future>
 #include "GuiSolverPanel.h"
-#include "ObsFormat.h"
 
 namespace Solvers::LeoProcessor {
     using GnssTask::EpochData;
@@ -29,10 +28,9 @@ namespace Solvers::LeoProcessor {
 
     bool LeoTask::initSolver(void *solver) {
         LEO &leo = *static_cast<LEO *>(solver);
-        hasRefOrbit = false;         // 参考轨道为可选，加载失败不致命
+        hasRefOrbit = false;
         bool loadOk = true;
 
-        // 精密产品并行加载（与 PPP 共用 GuiHelpers::launchProductLoad：大 SP3/CLK 串行读取时首屏卡顿明显）
         {
             std::vector<std::future<bool>> jobs;
             Helpers::launchProductLoad(jobs, "LEO", "精密轨道 SP3", gnssSp3PathBuf, leo, &LEO::loadSp3);
@@ -67,14 +65,14 @@ namespace Solvers::LeoProcessor {
         } else {
             LOG_INFO << "LEO: 未提供参考轨道 SP3，跳过 RTN 评估与参考轨迹（解算仍依赖精密星历/钟差）";
         }
-        core->hasRefOrbit = hasRefOrbit; // 供导出 CSV 判断是否输出 REF/RTN 列
+        core->hasRefOrbit = hasRefOrbit;
 
         if (!auxFiles.empty()) {
             for (const auto &f: auxFiles) leo.loadAuxFile(f); // 多 HDR：后者覆盖 mLeoAntOffset
         } else {
             LOG_INFO << "LEO: 未加载辅助文件(.HDR 杠杆臂)，CoG→ARP 偏移为 0";
         }
-        // 卫星位置来源：SP3（精密）或 BRDC（广播回退）至少其一。两者皆空则全程无解。
+
         if (gnssSp3PathBuf.empty() && gnssBrdcPathBuf.empty()) {
             LOG_ERROR << "LEO 既未填精密轨道 SP3 也未填广播星历 BRDC：无法获取 GNSS 卫星位置，全历元无解";
             loadOk = false;
@@ -190,7 +188,7 @@ namespace Solvers::LeoProcessor {
             ImGui::EndPopup();
         }
         ImGui::Separator();
-        Helpers::renderCutoffAndSystems(&this->core->cutoffDeg, &this->core->enabledSystems);
+        Helpers::renderCutoffAndSystems(&this->core->cutoffDeg, &this->core->enabledSystems, &this->core->sampleInterval);
         ImGui::Separator();
         if (ImGui::Button("开始解算", ImVec2(200, 40))) {
             // 校验/停旧任务/填 core/置运行态走公共 helper（与 SPP/PPP 同一份）；
@@ -207,6 +205,7 @@ namespace Solvers::LeoProcessor {
                 cfg.set("leo_ref_sp3", this->refSp3PathBuf);
                 cfg.set("leo_ref_prn", std::to_string(this->refPrn));
                 cfg.setNum("leo_cutoff", this->core->cutoffDeg);
+                cfg.setNum("leo_interval", this->core->sampleInterval);
                 cfg.set("leo_systems", GnssTask::sysSetToString(this->core->enabledSystems));
 
                 {

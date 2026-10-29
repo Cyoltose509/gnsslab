@@ -39,6 +39,7 @@ namespace Solvers::Helpers {
                  std::string *autoNavBuf = nullptr);
 
     void renderCutoffAndSystems(double *cutoffDeg, std::set<char> *sysMask,
+                                double *sampleInterval = nullptr,
                                 const std::function<void()> &extraSameLine = {});
 
     inline constexpr GuiFileFilter fAll = {L"所有文件 (*.*)", L"*.*"};
@@ -163,6 +164,7 @@ namespace Solvers::Helpers {
                               std::vector<GnssTask::RealtimeEndpoint> *endpoints,
                               const std::vector<std::string> &labels,
                               double *cutoffDeg, std::set<char> *systems,
+                              double *sampleInterval,
                               const std::function<void()> &onStart,
                               const std::function<void()> &extraContent = {});
 

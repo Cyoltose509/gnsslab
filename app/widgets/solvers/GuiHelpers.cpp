@@ -20,6 +20,7 @@ void Solvers::Helpers::renderRealtimeConfig(GnssTask::SolverTaskBase *task,
                                             std::vector<GnssTask::RealtimeEndpoint> *endpoints,
                                             const std::vector<std::string> &labels,
                                             double *cutoffDeg, std::set<char> *systems,
+                                            double *sampleInterval,
                                             const std::function<void()> &onStart,
                                             const std::function<void()> &extraContent) {
     const size_t n = endpoints ? endpoints->size() : 0;
@@ -33,7 +34,7 @@ void Solvers::Helpers::renderRealtimeConfig(GnssTask::SolverTaskBase *task,
     ImGui::PopItemWidth();
     ImGui::Separator();
 
-    renderCutoffAndSystems(cutoffDeg, systems);
+    renderCutoffAndSystems(cutoffDeg, systems, sampleInterval);
 
     if (extraContent) {
         ImGui::Separator();
@@ -194,9 +195,15 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
 }
 
 void Solvers::Helpers::renderCutoffAndSystems(double *cutoffDeg, std::set<char> *sysMask,
+                                        double *sampleInterval,
                                         const std::function<void()> &extraSameLine) {
     ImGui::PushItemWidth(120);
     ImGui::InputDouble("截止高度角(°)", cutoffDeg);
+    if (sampleInterval) {
+        ImGui::SameLine();
+        if (*sampleInterval < 0.0) *sampleInterval = 0.0;
+        ImGui::InputDouble("采样间隔(s)", sampleInterval);
+    }
     ImGui::PopItemWidth();
     ImGui::SameLine();
     ImGui::Text("选择星座:");

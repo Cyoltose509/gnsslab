@@ -438,6 +438,7 @@ namespace GnssTask {
 
         std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
         double cutoffDeg = 15.0;
+        double sampleInterval = 0.0; // 标称采样间隔(s)，0=按文件自动（QC/PPP 间隙判据共用）
         std::string brdcPathBuf; // 广播星历（SPP 单文件版，与 PPP/LEO/RTK 字段对齐）
 
         std::atomic<float> readProgress{0.0f};

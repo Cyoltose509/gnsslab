@@ -129,6 +129,7 @@ namespace Solvers::Realtime {
 
     bool SppSession::Pump() {
         ObsData obs;
+        SolveDriver::EpochDecimator dec(task->core->sampleInterval); // 解算抽取：只解算网格历元
         while (!Stopped()) {
             try {
                 if (reader->getNextEpoch(obs, false)) {
@@ -140,6 +141,7 @@ namespace Solvers::Realtime {
                         std::lock_guard lk(task->core->qcInputMutex);
                         pushQcWindow(task->core->qcInput, obs, obs.weekSecond.sow);
                     }
+                    if (!dec.accept(obs.weekSecond.sow)) continue; // 抽取：非网格历元不解算
 
                     GnssTask::EpochData data;
                     data.getFromObs(obs);
@@ -196,6 +198,7 @@ namespace Solvers::Realtime {
         baseQc->isRealtime = true;
         baseQc->filePath = this->task->core->rtEndpoints[0].ip;
         baseQc->fileName = Helpers::baseName(this->task->core->rtEndpoints[0].ip);
+        baseQc->sampleInterval = this->task->sampleInterval; // 基准站 QC 用同一标称间隔
         {
             std::lock_guard lk(this->task->core->mutex);
             this->task->core->extraQcTabs.clear();
@@ -263,6 +266,8 @@ namespace Solvers::Realtime {
 
     bool RtkSession::Pump() {
         SolveDriver::DualObsPairing pairing;
+        pairing.setInterval(task->sampleInterval); // 声明的标称采样间隔：实时容差免窗口学习期
+        SolveDriver::EpochDecimator dec(task->sampleInterval); // 解算抽取：只解算网格历元
         std::chrono::steady_clock::time_point lastQcTime;
 
         std::chrono::steady_clock::time_point lastCommit = std::chrono::steady_clock::now();
@@ -305,6 +310,22 @@ namespace Solvers::Realtime {
                                                  return true;
                                              },
                                              [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
+                                                 // QC 保持全采样率喂入（不受解算抽取影响）
+                                                 {
+                                                     std::lock_guard lk(task->core->qcInputMutex);
+                                                     pushQcWindow(task->core->qcInput, r, r.weekSecond.sow);
+                                                 }
+                                                 {
+                                                     std::lock_guard lk(baseQc->qcInputMutex);
+                                                     pushQcWindow(baseQc->qcInput, b, b.weekSecond.sow);
+                                                 }
+                                                 if (const auto now = std::chrono::steady_clock::now();
+                                                     now - lastQcTime > std::chrono::milliseconds(500)) {
+                                                     lastQcTime = now;
+                                                     SolverPanel::LaunchQC(task->core);
+                                                     SolverPanel::LaunchQC(baseQc);
+                                                 }
+                                                 if (!dec.accept(r.weekSecond.sow)) return true; // 抽取：非网格历元不解算
                                                  bool ok = false;
                                                  try {
                                                      ok = task->rtk.processEpoch(b, r, *eph);
@@ -324,22 +345,6 @@ namespace Solvers::Realtime {
                                                              stallWarned = false;
                                                              LOG_INFO << "[RTK实时] 恢复产出新解，最后提交历元 SOW " << lastCommitSow;
                                                              task->core->clearError();
-                                                         }
-
-                                                         {
-                                                             std::lock_guard lk(task->core->qcInputMutex);
-                                                             pushQcWindow(task->core->qcInput, r, r.weekSecond.sow);
-                                                         }
-                                                         {
-                                                             std::lock_guard lk(baseQc->qcInputMutex);
-                                                             pushQcWindow(baseQc->qcInput, b, b.weekSecond.sow);
-                                                         }
-
-                                                         if (const auto now = std::chrono::steady_clock::now();
-                                                             now - lastQcTime > std::chrono::milliseconds(500)) {
-                                                             lastQcTime = now;
-                                                             SolverPanel::LaunchQC(task->core);
-                                                             SolverPanel::LaunchQC(baseQc);
                                                          }
                                                      }
                                                  }

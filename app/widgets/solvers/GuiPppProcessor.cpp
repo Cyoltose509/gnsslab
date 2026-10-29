@@ -74,7 +74,7 @@ namespace Solvers::PppProcessor {
         Helpers::fileRow("对流层 TRO", &this->troPathBuf, "ppp_tro", Helpers::fTro, 2, {}, "ppp_obs");
         Helpers::fileRow("电离层 IONEX", &this->ionexPathBuf, "ppp_ionex", Helpers::fIonex, 2, {}, "ppp_obs");
         ImGui::Separator();
-        Helpers::renderCutoffAndSystems(&this->core->cutoffDeg, &this->core->enabledSystems);
+        Helpers::renderCutoffAndSystems(&this->core->cutoffDeg, &this->core->enabledSystems, &this->core->sampleInterval);
         ImGui::Separator();
         ImGui::Checkbox("动态解算 (Kinematic)", &this->kinematic);
         ImGui::Separator();
@@ -97,6 +97,7 @@ namespace Solvers::PppProcessor {
                 cfg.set("ppp_ionex", this->ionexPathBuf);
                 cfg.set("ppp_kinematic", this->kinematic ? "1" : "0");
                 cfg.setNum("ppp_cutoff", this->core->cutoffDeg);
+                cfg.setNum("ppp_interval", this->core->sampleInterval);
                 cfg.set("ppp_systems", GnssTask::sysSetToString(this->core->enabledSystems));
                 LOG_INFO << "[PPP] 开始解算: 观测=" << path
                          << ", 格式=" << (this->core->isRinex ? "RINEX" : "OEM7")

@@ -51,6 +51,7 @@ SolverOptions loadConfig(const AppConfig::IniFile &ini) {
 
     c.cutoffDeg = ini.getD("solver", "cutoff_deg", c.cutoffDeg);
     c.systems = parseSystems(ini.get("solver", "systems", "GC"));
+    c.sampleInterval = ini.getD("solver", "sample_interval", c.sampleInterval); // 0=按文件自动
     c.sigIFCode = ini.getD("solver", "sig_if_code", c.sigIFCode);
     c.sigPhase = ini.getD("solver", "sig_phase", c.sigPhase);
     c.useAR = ini.getInt("solver", "use_ar", c.useAR);

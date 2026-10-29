@@ -67,11 +67,11 @@ namespace {
         if (cfg.kinematic) {
             PPPKinematic k;
             init(k);
-            epochs = SolveDriver::solveAll(*src, k);
+            epochs = SolveDriver::solveAll(*src, k, cfg.sampleInterval);
         } else {
             PPPStatic s;
             init(s);
-            epochs = SolveDriver::solveAll(*src, s);
+            epochs = SolveDriver::solveAll(*src, s, cfg.sampleInterval);
         }
 
         if (cfg.hasRef) ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);

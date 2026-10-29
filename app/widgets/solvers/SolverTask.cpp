@@ -2,7 +2,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include "SolverTask.h"
-#include "SolverOptions.h"   // 统一参数对象：RunSingleStationSolve 构造 opts 注入解算器
+#include "SolverOptions.h"
 
 #include "RinexObsReader.h"
 #include "OEM7Reader.h"
@@ -12,8 +12,8 @@
 #include "QualityControl.h"
 #include "Log.h"
 #include "SolveDriver.h"
-#include "GuiSolverPanel.h"   // SolverPanel::LaunchQC：读取线程收尾触发质量分析
-#include "GuiSppProcessor.h"  // RunSingleStationReader/RunDualThreadJob 显式实例化
+#include "GuiSolverPanel.h"
+#include "GuiSppProcessor.h"
 #include "GuiPppProcessor.h"
 #include "GuiLeoProcessor.h"
 
@@ -149,14 +149,14 @@ namespace GnssTask {
             std::string sys;
             for (const char c: core->enabledSystems) sys += c;
             LOG_INFO << "[解算] 开始: 截止高度角 " << core->cutoffDeg << "°, 系统="
-                    << (sys.empty() ? std::string("全部") : sys);
-
-            // 统一参数注入：GUI 仅暴露 截止角/星座 两个旋钮（其余取 SolverOptions 默认 =
-            // RTKLIB 常量，与 CLI 一致），并透传 kinematic 开关（仅 PPP 用到）。
-            // 顺带修复了此前 GUI PPP 路径不灌解算参数、与 CLI 结果不一致的 bug。
+                    << (sys.empty() ? std::string("全部") : sys)
+                    << (core->sampleInterval > 0.0
+                            ? ", 采样间隔 " + std::to_string(core->sampleInterval) + "s"
+                            : ", 采样间隔按文件");
             SolverOptions opts;
             opts.cutoffDeg = core->cutoffDeg;
             opts.systems = core->enabledSystems;
+            opts.sampleInterval = core->sampleInterval;
             opts.kinematic = job->wantsKinematic();
             solver.applyOptions(opts);
             if (!job->initSolver(&solver)) {
@@ -187,7 +187,8 @@ namespace GnssTask {
                                      },
                                      [job](Solver &s, ObsItem &item) {
                                          job->beforeSolveEpoch(&s, &item);
-                                     });
+                                     },
+                                     core->sampleInterval);
         } catch (const std::exception &e) {
             LOG_ERROR << "[解算] 解算线程异常: " << e.what();
             core->setError(e.what());
@@ -216,7 +217,7 @@ namespace GnssTask {
     template void RunSingleStationSolve<LEO>(
         const std::shared_ptr<SolveTask> &, LEO &, const std::shared_ptr<SolverTaskBase> &);
 
-    template <class Task>
+    template<class Task>
     void RunSingleStationReader(const std::shared_ptr<Task> &task, const char *tag) {
         const auto core = task->solveResult();
         try {
@@ -236,7 +237,7 @@ namespace GnssTask {
         core->loading = false;
     }
 
-    template <class Task>
+    template<class Task>
     void RunDualThreadJob(const std::shared_ptr<Task> &task, const char *tag,
                           void (*solveFn)(const std::shared_ptr<Task> &)) {
         std::thread thRead(RunSingleStationReader<Task>, task, tag);
@@ -252,17 +253,21 @@ namespace GnssTask {
     // 三个单站解算器各实例化一份，函数体留在 .cpp（理由同 RunSingleStationSolve）。
     template void RunSingleStationReader<Solvers::SppProcessor::SppTask>(
         const std::shared_ptr<Solvers::SppProcessor::SppTask> &, const char *);
+
     template void RunSingleStationReader<Solvers::PppProcessor::PppTask>(
         const std::shared_ptr<Solvers::PppProcessor::PppTask> &, const char *);
+
     template void RunSingleStationReader<Solvers::LeoProcessor::LeoTask>(
         const std::shared_ptr<Solvers::LeoProcessor::LeoTask> &, const char *);
 
     template void RunDualThreadJob<Solvers::SppProcessor::SppTask>(
         const std::shared_ptr<Solvers::SppProcessor::SppTask> &, const char *,
         void (*)(const std::shared_ptr<Solvers::SppProcessor::SppTask> &));
+
     template void RunDualThreadJob<Solvers::PppProcessor::PppTask>(
         const std::shared_ptr<Solvers::PppProcessor::PppTask> &, const char *,
         void (*)(const std::shared_ptr<Solvers::PppProcessor::PppTask> &));
+
     template void RunDualThreadJob<Solvers::LeoProcessor::LeoTask>(
         const std::shared_ptr<Solvers::LeoProcessor::LeoTask> &, const char *,
         void (*)(const std::shared_ptr<Solvers::LeoProcessor::LeoTask> &));
@@ -477,7 +482,6 @@ namespace GnssTask {
         int ok = 0;
         while (oem7.getNextEpoch(obs)) {
             if (stopFlag) break;
-            // 与 RTK 流式路径统一：复用写时复制星历快照（toe 不变时各历元共享同一 shared_ptr，避免逐历元深拷贝整张表）
             auto eph = oem7.ephSnapshot();
             {
                 std::lock_guard lk(core->qcInputMutex);

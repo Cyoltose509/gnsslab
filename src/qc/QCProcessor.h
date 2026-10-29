@@ -118,5 +118,6 @@ namespace QC {
         ComprehensiveEval comprehensive;
     };
 
-    QualityReport compute(const std::vector<QCObsEpoch> &epochs);
+    /// @param nominalInterval 标称采样间隔(s)，>0 时替代从历元差自动推断（用户在面板声明的采样率）
+    QualityReport compute(const std::vector<QCObsEpoch> &epochs, double nominalInterval = 0.0);
 } // namespace QC

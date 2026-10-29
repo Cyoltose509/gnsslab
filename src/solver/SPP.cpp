@@ -8,7 +8,6 @@
 #include <set>
 
 #include "Log.h"
-#include "MathUtils.h"
 #include "CoordStruct.h"
 #include "Troposphere.h"
 #include "Weight.h"
@@ -37,10 +36,8 @@ bool SPP::loadBrdc(const std::string &path) {
 void SPP::solve(ObsData &obsData) {
     result.reset();
     lastWStats.clear();
-    bool isbAnyOn = (mConfig.isbInitVar > 0.0); // 常数/随机游走 ISB：上一历元终值钟差作为本历元暖启动
+    const bool isbAnyOn = mConfig.isbInitVar > 0.0;
     if (isbAnyOn) {
-        // 常数/随机游走 ISB：上一历元终值钟差作为本历元暖启动（跨历元载体），
-        // linearize 里对非参考系统施加"增量≈0"伪观测 → 等价于 EKF 的常数 ISB。
         rClockBias = mPrevClockBias;
     } else {
         rClockBias.clear();
@@ -365,7 +362,7 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
 
     // GLONASS 频率随通道号变化（FDMA），必须用逐星频率；其余系统用 (sys, band) 固定频率。
     const double f = sat.system == 'R' ? getGlonassFreq('1', sat.chan) : getFreq(sat.system, "L1");
-    if (f <= 0.0) return; // 频率缺失（理论上不会发生），跳过速度方程避免 NaN
+    if (f <= 0.0) return;
     const double lambda = C_MPS / f;
     const double rho_dot_obs = -lambda * dopplerVal;
 
@@ -403,7 +400,7 @@ void SPP::computeSatPos(ObsData &obsData) {
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
-        satPVTTransTime[sat] = eph->getPVT(std::move(t_emit));
+        satPVTTransTime[sat] = eph->getPVT(t_emit);
     }
 }
 
@@ -466,7 +463,6 @@ void SPP::computeElevAzim() {
 }
 
 void SPP::applyOptions(const SolverOptions &o) {
-    // SPP 级参数：截止角 / 系统 / ISB（与 CLI spp_cli 手写一致）
     setCutoffElevDeg(o.cutoffDeg);
     setEnabledSystems(o.systems);
     setIsbProcNoise(o.isbProcNoise, o.isbInitVar);

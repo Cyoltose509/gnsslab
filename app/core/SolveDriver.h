@@ -24,6 +24,19 @@ namespace SolveDriver {
         virtual bool next(GnssTask::ObsItem &out) = 0;
     };
 
+    struct EpochDecimator {
+        explicit EpochDecimator(const double iv) : interval(iv > 0.0 ? iv : 0.0) {}
+
+        bool accept(const double sow) const {
+            if (interval <= 0.0) return true;
+            return std::fmod(sow + kDttol, interval) <= kDttol * 2.0;
+        }
+
+    private:
+        static constexpr double kDttol = 0.025; // RTKLIB rtklib.h DTTOL
+        double interval;
+    };
+
     inline void feedRtk(GnssTask::EpochData &data, const RTK &rtk) {
         const Result &r = rtk.result;
         if (r.numSats <= 0) {
@@ -57,8 +70,6 @@ namespace SolveDriver {
         }
     }
 
-    /// 把一个已解算的 RTK 历元提交到结果表；首历元顺带锁存基准站坐标为参考点。
-    /// 文件模式（ReaderThread/SolverThread）与实时模式（RTK 双流会话）共用。
     inline void commitRtk(const std::shared_ptr<GnssTask::SolveTask> &core, const RTK &rtk,
                           const ObsData &rover) {
         GnssTask::EpochData data;
@@ -74,9 +85,12 @@ namespace SolveDriver {
     }
 
     template<typename Solver, typename OnEpoch, typename BeforeSolve>
-    void solveStream(ObsSource &src, Solver &solver, OnEpoch onEpoch, BeforeSolve beforeSolve) {
+    void solveStream(ObsSource &src, Solver &solver, OnEpoch onEpoch, BeforeSolve beforeSolve,
+                     const double sampleInterval = 0.0) {
         GnssTask::ObsItem item;
+        const EpochDecimator dec(sampleInterval);
         while (src.next(item)) {
+            if (!dec.accept(item.obs.weekSecond.sow)) continue;
             GnssTask::EpochData data;
             data.getFromObs(item.obs);
             beforeSolve(solver, item);
@@ -95,17 +109,20 @@ namespace SolveDriver {
     }
 
     template<typename Solver, typename OnEpoch>
-    void solveStationStream(ObsSource &src, Solver &solver, OnEpoch onEpoch) {
+    void solveStationStream(ObsSource &src, Solver &solver, OnEpoch onEpoch,
+                            const double sampleInterval = 0.0) {
         solveStream(src, solver, std::move(onEpoch),
-                    [](Solver &s, GnssTask::ObsItem &item) { injectEmbeddedEph(s, item); });
+                    [](Solver &s, GnssTask::ObsItem &item) { injectEmbeddedEph(s, item); },
+                    sampleInterval);
     }
 
-    inline std::vector<GnssTask::EpochData> solveAll(ObsSource &src, SPP &solver) {
+    inline std::vector<GnssTask::EpochData> solveAll(ObsSource &src, SPP &solver,
+                                                     const double sampleInterval = 0.0) {
         std::vector<GnssTask::EpochData> epochs;
         solveStationStream(src, solver, [&](SPP &, GnssTask::ObsItem &, GnssTask::EpochData &data) {
             epochs.push_back(std::move(data));
             return true;
-        });
+        }, sampleInterval);
         return epochs;
     }
     inline bool firstSolvedRef(const std::vector<GnssTask::EpochData> &epochs, Eigen::Vector3d &ref) {

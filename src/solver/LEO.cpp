@@ -120,11 +120,12 @@ bool LEO::processEpoch(ObsData &obs) {
 }
 
 void LEO::applyOptions(const SolverOptions &o) {
-    SPP::applyOptions(o);
+    SPP::applyOptions(o); //不要改成PPPStatic NOLINT
     mApplySolidTide = o.solidTide != 0;
     setMeasNoise(o.sigIFCode, o.sigPhase);
     setPosProcNoise(o.posNoise);
     setKeepAmbMaxGap(o.keepAmbMaxGap);
     mMotionThresh = o.motionThresh;
     mSppVsPredThresh = o.sppVsPredThresh;
+    if (o.sampleInterval > 0.0) mNominalInterval = o.sampleInterval;
 }
