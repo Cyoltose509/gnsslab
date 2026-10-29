@@ -119,7 +119,9 @@ namespace Solvers::LeoProcessor {
                 data->rtnN = rtn(2);
                 core->leoRef3d = refPos;
                 core->leoRefTraj.push_back({index, refPos});
-                core->rtnTimes.push_back(item->obs.epoch.m_sod);
+                // 横轴 = 历元序号（与 ENU/RMS/DOP 等图及 selectedEpoch 游标同一坐标系），
+                // 单调递增，跨天数据自然继续往后；缺口由 buildBrokenAxis 按前向大间隔断线
+                core->rtnTimes.push_back(index);
                 core->rtnR.push_back(rtn(0));
                 core->rtnT.push_back(rtn(1));
                 core->rtnN.push_back(rtn(2));

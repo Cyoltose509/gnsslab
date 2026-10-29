@@ -461,8 +461,6 @@ namespace GnssTask {
         bool hasRefOrbit = false;
 
         bool isKinematic = false;
-        bool userRefProvided = false;
-        bool refAutoConfirmed = false;
 
         bool hasLeo = false;
         Eigen::Vector3d leoPos3d{0, 0, 0};

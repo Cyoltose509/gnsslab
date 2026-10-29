@@ -46,8 +46,6 @@ namespace QC {
             if (!ct.empty() && !lt.empty()) cand.emplace_back(b, ct);
         }
         if (cand.size() < 2) return {};
-        // 多频时采用“频率相差较大”的两个频点
-        // 等价于在所有可用频点中选择频率差最大的一对
         BandsInfo r;
         double bestDiff = -1.0;
         for (size_t i = 0; i < cand.size(); ++i) {
@@ -279,10 +277,12 @@ namespace QC {
                 const SatID &sat = ep.satIds[j];
                 const TypeValueMap &m = ep.allObs[j];
                 BandsInfo b;
-                if (auto it = bands.find(sat); it == bands.end()) {
+                if (auto it = bands.find(sat); it != bands.end() && it->second.hi != 0) {
+                    b = it->second;
+                } else {
                     b = pickBands(sat.system, m);
-                    bands[sat] = b;
-                } else b = it->second;
+                    if (b.hi != 0) bands[sat] = b;
+                }
                 if (b.hi == 0) continue;
                 const double c1 = getVal(m, 'C', b.hi), l1 = getVal(m, 'L', b.hi);
                 const double c2 = getVal(m, 'C', b.lo), l2 = getVal(m, 'L', b.lo);

@@ -281,7 +281,6 @@ namespace Solvers::RtkProcessor {
                         this->stop = false;
                         this->core->stop = false;
                         this->core->initializedRefECEF = false;
-                        this->core->refAutoConfirmed = false;
 
                         this->state = State::Running;
                         this->loading = true;
@@ -329,7 +328,6 @@ namespace Solvers::RtkProcessor {
                         this->stop = false;
                         this->core->stop = false;
                         this->core->initializedRefECEF = false;
-                        this->core->refAutoConfirmed = false;
                         this->worker = std::thread(Realtime::RunRtk,
                                                    std::static_pointer_cast<RtkTask>(shared_from_this()),
                                                    this->core->rtEndpoints[0], this->core->rtEndpoints[1]);

@@ -48,6 +48,7 @@ namespace Solvers::Charts {
         const double thr = 2.5 * step;
         for (int i = 0; i < n; ++i) {
             if (!std::isfinite(times[i])) continue;
+            // 前向大间隔断线（数据缺口/丢历元）；横轴各图统一用历元序号，单调递增无回绕
             if (!keptIdx.empty() && times[i] - tt.back() > thr) {
                 tt.push_back(tt.back());
                 keptIdx.push_back(-1);
@@ -315,8 +316,6 @@ namespace Solvers::Charts {
                 for (auto &[sat, vals]: Vs) {
                     auto it = Ts.find(sat);
                     if (it == Ts.end() || vals.empty()) continue;
-                    // 不许静默丢整颗星：times/vals 理论上逐历元同步 push，长度应相等；
-                    // 万一失同步（历史数据、外部注入），按重叠前缀画，尾部缺失只丢点不丢星。
                     const auto n = static_cast<int>(std::min(it->second.size(), vals.size()));
                     if (n <= 0) continue;
                     const double *t = it->second.data();
@@ -354,8 +353,6 @@ namespace Solvers::Charts {
     void RenderSkyplot(const std::map<SatID, std::vector<GnssTask::SkyPoint> > &tracks,
                        const std::vector<std::pair<SatID, GnssTask::SkyPoint> > &curPts,
                        const float sizePx) {
-        // 天顶图是正方形：宽、高都要受容器约束。只按宽度取尺寸时，若容器高度不足，
-        // 正方形会撑出父 Child → 天顶图所在面板出现上下滑条（此前即如此）。
         const float availW = ImGui::GetContentRegionAvail().x;
         const float availH = ImGui::GetContentRegionAvail().y;
         float sizeW = std::min(availW, sizePx);
@@ -511,7 +508,6 @@ namespace Solvers::Charts {
             }
         }
 
-        // 可见性兜底：LEO 走 renderToggles，SPP/PPP 走 PosTabView 的静态开关
         bool vis(const bool *flag, const bool fallback) {
             return flag ? *flag : fallback;
         }
@@ -555,9 +551,6 @@ namespace Solvers::Charts {
             }
         }
 
-        // 参考真值 ECEF 输入（含剪贴板坐标解析）
-        // 注意：用户一旦手动修改，即视为「提供了参考真值」(userRefProvided=true)，
-        // 后续解算完成时的「均值确认」不再覆盖（见 GuiSolverPanel 的 maybeConfirmRef）。
         void renderRefECEFInput(const PosTabView &v) {
             if (v.refECEF && v.showRefEnu && v.showRefInput) {
                 ImGui::Text("参考真值:");
@@ -587,8 +580,22 @@ namespace Solvers::Charts {
                         changed = (cnt >= 1);
                     }
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("取均值")) {
+                    double me = 0.0, mn = 0.0, mu = 0.0;
+                    int m = 0;
+                    const int n = static_cast<int>(v.enu_e.size());
+                    for (int i = 0; i < n; ++i) {
+                        if (v.enu_solved[i] < 0.5) continue;
+                        if (!std::isfinite(v.enu_e[i]) || !std::isfinite(v.enu_n[i]) || !std::isfinite(v.enu_u[i])) continue;
+                        me += v.enu_e[i]; mn += v.enu_n[i]; mu += v.enu_u[i]; ++m;
+                    }
+                    if (m > 0) {
+                        *v.refECEF = ENUToXYZ(Eigen::Vector3d(me / m, mn / m, mu / m), *v.refECEF);
+                        if (v.onRefChanged) v.onRefChanged();
+                    }
+                }
                 if (changed) {
-                    if (v.userRefProvided) *v.userRefProvided = true;
                     if (v.onRefChanged) v.onRefChanged();
                 }
             }
@@ -840,14 +847,17 @@ namespace Solvers::Charts {
         }
 
 
-        // E-N 平面图：尺寸完全由所在单元格决定（可拉伸），中心标记可拖动以搬移参考点。
-        // fixedH > 0 用于竖向堆叠场景（此时没有表格行高可借用）；0 = 用尽父级剩余空间。
         void renderENPlanView(const PosTabView &v, const float fixedH = 0.0f) {
             const auto &enu_e = v.enu_e;
             const auto &enu_n = v.enu_n;
             const auto &enu_solved = v.enu_solved;
             if (enu_e.empty() || enu_n.empty() || enu_solved.empty()) return;
-            if (!ImGui::BeginChild("##enplan", ImVec2(0, fixedH), ImGuiChildFlags_FrameStyle)) {
+            const ImGuiStyle &style = ImGui::GetStyle();
+            const ImVec2 enAvail = ImGui::GetContentRegionAvail();
+            float enW = std::max(160.0f, enAvail.x);
+            float enH = fixedH > 0.0f ? fixedH : std::max(220.0f, enAvail.y - style.ItemSpacing.y);
+            enH = std::min(enH, 900.0f);
+            if (!ImGui::BeginChild("##enplan", ImVec2(enW, enH), ImGuiChildFlags_FrameStyle)) {
                 ImGui::EndChild();
                 return;
             }
@@ -907,8 +917,6 @@ namespace Solvers::Charts {
                         // 水平位移（E,N）→ ECEF 增量：老参考点的 ENU 基做反变换，三个分量都会变。
                         const Eigen::Vector3d oldRef = *v.refECEF;
                         *v.refECEF = ENUToXYZ(Eigen::Vector3d(cx, cy, 0.0), oldRef);
-                        // 与手输参考坐标同语义：用户已指定参考真值，解算结束的"均值确认"不得覆盖
-                        if (v.userRefProvided) *v.userRefProvided = true;
                         if (v.onRefChanged) v.onRefChanged(); // 重算 ENU 序列
                     }
                     cx = 0.0; // 未拖动 / 已提交：标记回到原点
@@ -950,7 +958,8 @@ namespace Solvers::Charts {
                                       *v.selectedEpoch, newed, v.fixedY,
                                       v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount, rowH);
                         ImGui::TableSetColumnIndex(1);
-                        renderENPlanView(v);
+                        // 显式传入行高：表格单元格内 GetContentRegionAvail() 取值不可靠，直接给 rowH 才能撑满
+                        renderENPlanView(v, rowH);
                         ImGui::EndTable();
                     }
                 } else {
@@ -979,8 +988,7 @@ namespace Solvers::Charts {
                 bool *d3Tg = v.renderToggles ? &v.renderToggles->plot3d : nullptr;
                 bool *resTg = v.renderToggles ? &v.renderToggles->residual : nullptr;
                 const bool left = vis(d3Tg, true);
-                const bool right = vis(resTg, v.showResidual) && v.hasResidualData;
-                if (left || right) {
+                if (const bool right = vis(resTg, v.showResidual) && v.hasResidualData; left || right) {
                     const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
                     if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
                         ImGui::TableSetupColumn("Sky", ImGuiTableColumnFlags_WidthStretch, 0.33f);

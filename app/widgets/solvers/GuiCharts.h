@@ -175,7 +175,6 @@ namespace Solvers::Charts {
         bool newed = false;
         bool showEnPlan = true;
         std::string refCenterLabel;
-        bool *userRefProvided = nullptr;
         bool showRatio = false;
         std::vector<double> ratioVals;
         bool hasFloatSeries = false;

@@ -144,7 +144,6 @@ namespace Solvers::Helpers {
         auto core = task->solveResult();
         core->stop = false;
         core->initializedRefECEF = false;
-        core->refAutoConfirmed = false;
         core->filePath = obsPath;
         core->fileName = baseName(obsPath);
         core->obsPathBuf = obsPath;

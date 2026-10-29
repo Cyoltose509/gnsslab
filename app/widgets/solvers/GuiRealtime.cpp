@@ -36,6 +36,7 @@ namespace Solvers::Realtime {
                 dst.erase(dst.begin(), dst.begin() + static_cast<std::ptrdiff_t>(dst.size() - kQcWindow));
         }
     }
+
     void Session::Run() {
         while (!Stopped()) {
             try {
@@ -57,7 +58,7 @@ namespace Solvers::Realtime {
 
                 const bool stopped = Pump();
                 Close();
-                if (stopped) break;   // Pump 说"该收工了"：Run 到此为止，绝不回头再 Connect（否则重连空转）
+                if (stopped) break; // Pump 说"该收工了"：Run 到此为止，绝不回头再 Connect（否则重连空转）
 
                 if (!Stopped()) {
                     if (StreamBreakBackoffMs() > 0)
@@ -83,7 +84,6 @@ namespace Solvers::Realtime {
     SppSession::SppSession(std::shared_ptr<SppProcessor::SppTask> task, GnssTask::RealtimeEndpoint endpoint)
         : task(std::move(task)), endpoint(std::move(endpoint)) {
         this->task->core->initializedRefECEF = false;
-        this->task->core->refAutoConfirmed = false;
     }
 
     SppSession::~SppSession() = default;
@@ -131,7 +131,8 @@ namespace Solvers::Realtime {
         ObsData obs;
         while (!Stopped()) {
             try {
-                if (reader->getNextEpoch(obs, false)) {   // 非阻塞：单流实时轮询
+                if (reader->getNextEpoch(obs, false)) {
+                    // 非阻塞：单流实时轮询
                     auto eph = reader->ephSnapshot(); // OEM7 内嵌星历统一经 ephTable 传入
                     spp.ephTable = *eph;
                     spp.preprocess(obs);
@@ -214,7 +215,7 @@ namespace Solvers::Realtime {
 
     void RtkSession::SetConnectError() {
         task->core->setError("正在尝试连接 base " + baseEp.ip + ":" + baseEp.port
-                              + " / rover " + roverEp.ip + ":" + roverEp.port + " ...");
+                             + " / rover " + roverEp.ip + ":" + roverEp.port + " ...");
     }
 
     void RtkSession::SetStreamBroken() {
@@ -275,74 +276,75 @@ namespace Solvers::Realtime {
         };
         auto getBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
             if (stallExceeded()) return -1;
-            if (!baseRdr->getNextEpoch(o, false)) return baseRdr->isConnected() ? 0 : -1;   // 非阻塞：与 rover 并发轮询
+            if (!baseRdr->getNextEpoch(o, false)) return baseRdr->isConnected() ? 0 : -1; // 非阻塞：与 rover 并发轮询
             e = baseRdr->ephSnapshot();
             return 1;
         };
         auto getRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
             if (stallExceeded()) return -1;
-            if (!roverRdr->getNextEpoch(o, false)) return roverRdr->isConnected() ? 0 : -1;   // 非阻塞：与 base 并发轮询
+            if (!roverRdr->getNextEpoch(o, false)) return roverRdr->isConnected() ? 0 : -1; // 非阻塞：与 base 并发轮询
             e = roverRdr->ephSnapshot();
             return 1;
         };
 
         return SolveDriver::pumpRealtimePair(pairing, getBase, getRover,
-            [&] { return task->stop.load() || task->core->stop.load(); },
-            [&] {
-                if (task->stop.load() || task->core->stop.load()) return false;
-                const auto now = std::chrono::steady_clock::now();
-                if (const auto idle = now - lastCommit; idle > kStallWarn && now - lastStallWarn > std::chrono::seconds(10)) {
-                    lastStallWarn = now;
-                    stallWarned = true;
-                    const auto sec = std::chrono::duration_cast<std::chrono::seconds>(idle).count();
-                    const std::string msg = "已 " + std::to_string(sec) + " s 无新解（最后提交历元 SOW "
-                                            + std::to_string(lastCommitSow) + "），数据在流但未产出解算结果";
-                    LOG_WARN << "[RTK实时] " << msg;
-                    task->core->setError("实时流" + msg);
-                }
-                return true;
-            },
-            [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
-                bool ok = false;
-                try {
-                    ok = task->rtk.processEpoch(b, r, *eph);
-                } catch (const std::exception &e) {
-                    LOG_ERROR << "[RTK实时] processEpoch 异常: " << e.what();
-                    ok = false;
-                } catch (...) {
-                    ok = false;
-                }
+                                             [&] { return task->stop.load() || task->core->stop.load(); },
+                                             [&] {
+                                                 if (task->stop.load() || task->core->stop.load()) return false;
+                                                 const auto now = std::chrono::steady_clock::now();
+                                                 if (const auto idle = now - lastCommit;
+                                                     idle > kStallWarn && now - lastStallWarn > std::chrono::seconds(10)) {
+                                                     lastStallWarn = now;
+                                                     stallWarned = true;
+                                                     const auto sec = std::chrono::duration_cast<std::chrono::seconds>(idle).count();
+                                                     const std::string msg = "已 " + std::to_string(sec) + " s 无新解（最后提交历元 SOW "
+                                                                             + std::to_string(lastCommitSow) + "），数据在流但未产出解算结果";
+                                                     LOG_WARN << "[RTK实时] " << msg;
+                                                     task->core->setError("实时流" + msg);
+                                                 }
+                                                 return true;
+                                             },
+                                             [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
+                                                 bool ok = false;
+                                                 try {
+                                                     ok = task->rtk.processEpoch(b, r, *eph);
+                                                 } catch (const std::exception &e) {
+                                                     LOG_ERROR << "[RTK实时] processEpoch 异常: " << e.what();
+                                                     ok = false;
+                                                 } catch (...) {
+                                                     ok = false;
+                                                 }
 
-                if (ok) {
-                    if (const Result &res = task->rtk.result; res.numSats > 0) {
-                        SolveDriver::commitRtk(task->core, task->rtk, r);
-                        lastCommit = std::chrono::steady_clock::now();
-                        lastCommitSow = static_cast<long long>(r.weekSecond.sow);
-                        if (stallWarned) {
-                            stallWarned = false;
-                            LOG_INFO << "[RTK实时] 恢复产出新解，最后提交历元 SOW " << lastCommitSow;
-                            task->core->clearError();
-                        }
+                                                 if (ok) {
+                                                     if (const Result &res = task->rtk.result; res.numSats > 0) {
+                                                         SolveDriver::commitRtk(task->core, task->rtk, r);
+                                                         lastCommit = std::chrono::steady_clock::now();
+                                                         lastCommitSow = static_cast<long long>(r.weekSecond.sow);
+                                                         if (stallWarned) {
+                                                             stallWarned = false;
+                                                             LOG_INFO << "[RTK实时] 恢复产出新解，最后提交历元 SOW " << lastCommitSow;
+                                                             task->core->clearError();
+                                                         }
 
-                        {
-                            std::lock_guard lk(task->core->qcInputMutex);
-                            pushQcWindow(task->core->qcInput, r, r.weekSecond.sow);
-                        }
-                        {
-                            std::lock_guard lk(baseQc->qcInputMutex);
-                            pushQcWindow(baseQc->qcInput, b, b.weekSecond.sow);
-                        }
+                                                         {
+                                                             std::lock_guard lk(task->core->qcInputMutex);
+                                                             pushQcWindow(task->core->qcInput, r, r.weekSecond.sow);
+                                                         }
+                                                         {
+                                                             std::lock_guard lk(baseQc->qcInputMutex);
+                                                             pushQcWindow(baseQc->qcInput, b, b.weekSecond.sow);
+                                                         }
 
-                        if (const auto now = std::chrono::steady_clock::now();
-                            now - lastQcTime > std::chrono::milliseconds(500)) {
-                            lastQcTime = now;
-                            SolverPanel::LaunchQC(task->core);
-                            SolverPanel::LaunchQC(baseQc);
-                        }
-                    }
-                }
-                return true;
-            });
+                                                         if (const auto now = std::chrono::steady_clock::now();
+                                                             now - lastQcTime > std::chrono::milliseconds(500)) {
+                                                             lastQcTime = now;
+                                                             SolverPanel::LaunchQC(task->core);
+                                                             SolverPanel::LaunchQC(baseQc);
+                                                         }
+                                                     }
+                                                 }
+                                                 return true;
+                                             });
     }
 
     void RunSpp(const std::shared_ptr<SppProcessor::SppTask> &task,

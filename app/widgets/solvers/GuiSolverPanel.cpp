@@ -210,7 +210,6 @@ namespace Solvers::SolverPanel {
                     task->plotData.refreshENU(task->epochs, task->refECEF);
                 };
                 v.showEnPlan = task->mode != GnssTask::SolverMode::Leo;
-                v.userRefProvided = &task->userRefProvided;
 
                 if (hasError) {
                     v.statusText = std::string("状态: ") + task->errorMessage();
@@ -509,29 +508,6 @@ namespace Solvers::SolverPanel {
                     ExportCsv(task);
                 };
 
-                if (!task->isRealtime && task->done.load() && !task->userRefProvided &&
-                    !task->refAutoConfirmed && task->mode != GnssTask::SolverMode::Rtk &&
-                    task->mode != GnssTask::SolverMode::Leo) {
-                    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
-                    int cnt = 0;
-                    {
-                        std::lock_guard lk(task->mutex);
-                        for (const auto &ep : task->epochs)
-                            if (ep.solved) { sum += ep.sppResult.xyz; ++cnt; }
-                    }
-                    if (cnt > 0) {
-                        const Eigen::Vector3d mean = sum / static_cast<double>(cnt);
-                        {
-                            std::lock_guard lk(task->mutex);
-                            std::lock_guard plk(task->plotMutex);
-                            task->refECEF = mean;
-                            task->plotData.refreshENU(task->epochs, task->refECEF);
-                        }
-                        task->refAutoConfirmed = true;
-                        LOG_INFO << "[REF] 解算均值确认参考点 (n=" << cnt << "): "
-                                 << mean.x() << ", " << mean.y() << ", " << mean.z();
-                    }
-                }
 
                 try {
                     Solvers::Charts::RenderPositioningTab(v);
