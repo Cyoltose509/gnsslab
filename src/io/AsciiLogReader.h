@@ -2,7 +2,6 @@
 #include <string>
 #include <vector>
 #include "GnssStruct.h"
-#include "Ephemeris.h"
 #include "core/InsStruct.h"
 
 class AsciiLogReader {
@@ -15,10 +14,15 @@ public:
 
     const ImuLog &getImuLog() const { return mImuLog; }
 
+    [[nodiscard]] int detectedImuType() const { return mImuType; }
+
+    [[nodiscard]] const ImuModel *detectedImuModel() const { return findImuModel(mImuType); }
+
 private:
-    static bool parseLine(const std::string &line, ImuSample &s);
+    static bool parseLine(const std::string &line, ImuSample &s, int &imuType);
 
     std::vector<std::string> mLines;
     size_t mLineIdx = 0;
     ImuLog mImuLog;
+    int mImuType = -1;
 };

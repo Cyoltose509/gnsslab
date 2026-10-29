@@ -177,8 +177,6 @@ namespace Solvers::Realtime {
     RtkSession::RtkSession(std::shared_ptr<RtkProcessor::RtkTask> task,
                            GnssTask::RealtimeEndpoint base, GnssTask::RealtimeEndpoint rover)
         : task(std::move(task)), baseEp(std::move(base)), roverEp(std::move(rover)) {
-        // ⚠️ 构造体内必须走 this->task：形参 task 与成员同名且已被 move 成空指针，
-        // 直接写 task-> 会解引用 nullptr（实测 0xC0000005）。
         SolverOptions opts;
         opts.cutoffDeg = this->task->cutoffDeg;
         opts.systems = this->task->enabledSystems;

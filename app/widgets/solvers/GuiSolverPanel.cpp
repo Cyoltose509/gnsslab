@@ -23,8 +23,6 @@
 #include "widgets/tools/GuiInsPanel.h"
 
 namespace Solvers::SolverPanel {
-    // ⚠️ 仅用于 LEO 的 3D 轨迹 / RTN 序列（轨迹是几何量、可达 86400 点，必须压缩）。
-    // 时序类图（ENU/σ/DOP/Ratio/伪距与相位残差/星空轨迹）一律全量，禁止走这里。
     template<typename T>
     static void copySampled(const std::vector<T> &src, std::vector<T> &dst,
                             const size_t maxPts = 3000) {
@@ -54,15 +52,6 @@ namespace Solvers::SolverPanel {
     }
 
     void LaunchQC(const std::shared_ptr<GnssTask::SolveTask> &task) {
-        // ⚠️ 绝不能 join 仍在运行的上一轮 QC：本函数在实时解算线程里被调用
-        // （SppSession / RtkSession 每 500 ms 触发一次），而 QC 是全窗口（7200 历元）全量重算，
-        // Debug 构建（/Od）下单轮可达秒级。一旦在此阻塞，实时消费速率被压到 0.4 Hz 量级，
-        // socket 持续积压 → 数据时间越跑越落后墙钟、缓冲溢出丢历元，
-        // 表现为「界面几秒才加一个历元」「跑两小时 CSV 只到一小时前」。
-        // QC 是纯展示量，跳过一轮无副作用；qcComputing 为 false 时线程已结束，join 立即返回。
-        // 另：本函数可能被 UI 线程（tab 懒加载）与解算线程同时调用，
-        // 并发 join / 赋值同一个 std::thread 属未定义行为，故用文件内静态锁串行化启动动作
-        // （只保护"启动"这一瞬间，两个 task 的 QC 计算本身仍并行）。
         static std::mutex launchMutex;
         std::lock_guard lk(launchMutex);
         if (task->qcComputing.load()) return;
@@ -381,9 +370,6 @@ namespace Solvers::SolverPanel {
                     {
                         std::lock_guard plk(task->plotMutex);
                         auto &pp = task->plotData; //NOLINT
-                        // ⚠️ 时序类序列一律全量快照，禁止抽稀（用户 10-13 明确要求「抽稀全删」）。
-                        // 曾在此用 copySampled(...,3000)/copySampledMap(...,1500) 把 ENU/σ/DOP/Ratio/
-                        // 伪距残差改成抽样，属重构回归：残差图会缺历元、看起来像"点被吃掉"。
                         v.times = pp.times;
                         v.enu_e = pp.enu_e;
                         v.enu_n = pp.enu_n;
@@ -397,10 +383,6 @@ namespace Solvers::SolverPanel {
                         v.newed = pp.newed;
                         pp.newed = false;
                         v.fixedY = true;
-                        // 残差两份都可能是几十 MB（24h@1Hz 全量、不抽稀）。视图每帧重建，
-                        // 所以只深拷当前显示的那一份；切模式后下一帧自然补上，不会缺数据。
-                        // 因此"有没有残差"不能用 resV/resPhaseV 判断（另一模式的那一份必空），
-                        // 由下面这个与模式无关的标记提供给图表层。
                         v.hasResidualData = !pp.satResVals.empty() || !pp.satResPhaseVals.empty();
                         if (task->resMode == 1) {
                             v.resPhaseT = pp.satResPhaseTimes;

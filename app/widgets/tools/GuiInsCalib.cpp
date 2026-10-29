@@ -4,8 +4,6 @@
 #include "GuiHelpers.h"
 #include "SolverTask.h"
 #include "core/PathMemory.h"
-#include "io/AsciiLogReader.h"
-#include "io/OEM7Reader.h"
 #include "ins/ImuCalibrator.h"
 #include "core/InsMath.h"
 #include "Const.h"
@@ -19,28 +17,21 @@
 #include <mutex>
 #include <set>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
 namespace Tools::InsPanel {
-    using namespace insui;
 
     SixPosCalibTask::SixPosCalibTask() {
         mode = GnssTask::SolverMode::Ins;
         fileName = "六位置法标定";
     }
 
-
     void SixPosCalibTask::startCalib() {
         {
             const auto &cfg = AppConfig::PathMemory::instance();
             cfg.setNum("ins_g", g);
-            cfg.setNum("ins_lat", latDeg);
-            cfg.setNum("ins_we", earthRate);
             cfg.setNum("ins_turn", turnAngleDeg);
-            cfg.setNum("ins_k_acc", kAccelLsb);
-            cfg.setNum("ins_k_gyro", kGyroLsb);
             std::string joined;
             for (size_t i = 0; i < filePaths.size(); ++i) {
                 if (i) joined += '|';
@@ -49,50 +40,49 @@ namespace Tools::InsPanel {
             cfg.set("ins_cal_files", joined);
         }
         if (filePaths.empty()) {
-            setError("请先添加至少一个 IMU 日志文件");
+            setError("请先添加至少一个 IMU 日志文件。");
             return;
         }
         if (g <= 0.0 || turnAngleDeg <= 0.0) {
-            setError("重力加速度 g 与转台转角 α 必须为正数");
+            setError("重力加速度 g 与转台转角 α 必须为正数。");
             return;
         }
-        if (!(kAccelLsb > 0.0) || !(kGyroLsb > 0.0)) {
-            setError("解码当量 k_a、k_g 必须为正数");
-            return;
+        {
+            std::string sig = std::to_string(g);
+            for (const auto &p: filePaths) {
+                sig += '\n';
+                sig += p;
+            }
+            keepManualScaleFor(scaleSf, sig);
         }
-        state = State::Running;
-        loading = true;
-        if (worker.joinable()) worker.join();
-        stop = false;
-        hasResult.store(false);
+        beginRun(*this);
         accelReady.store(false);
-        sampleCount.store(0);
         segStatic.store(0);
         segRot.store(0);
         dupSkipped.store(0);
         detectDone.store(false);
-        chartDirty.store(false);
         {
             std::lock_guard lk(resultMutex);
             currentFile.clear();
-            detectLines.clear();
             detectSeq.clear();
-            fileCharts.clear();
             accelMp.setIdentity();
             accelBp.setZero();
             accelScaleGp.setZero();
             accelRmsp = 0.0;
             report = CalibReport();
+            scaleNotice = ScaleNotice{};
+            // 上一轮的分段也一并作废：留着会让人以为「分段有了 = 标定有结果」
+            compSegs.pos.clear();
+            compSegs.rot.clear();
+            compSel = 0;
         }
-        std::shared_ptr<SolverTaskBase> self = shared_from_this();
-        worker = std::thread([self] { dynamic_cast<SixPosCalibTask *>(self.get())->calibWorker(); });
+        launchWorker(*this, [this] { calibWorker(); });
     }
 
     void SixPosCalibTask::calibWorker() {
-        const double kAccel = kAccelLsb;
-        const double kGyroRad = kGyroLsb * DEG_TO_RAD;
+        // 当量识别走共用流水线（GuiInsCommon.h::ScaleIdentifier），与对准是同一个对象、同一时机。
+        ScaleIdentifier sen(scaleSf);
         ImuCalibrator::CalibSegments segs;
-        std::vector<std::string> detLines;
         std::vector<std::pair<std::string, std::string> > detSeqLines;
         int dups = 0;
 
@@ -100,45 +90,18 @@ namespace Tools::InsPanel {
             out.clear();
             auto onSample = [&](const ImuSample &s) { out.push_back(s); };
             auto onBatch = [&](const long long n) { sampleCount.store(n); };
-            if (endsWithIC(path, ".asc")) {
-                AsciiLogReader r;
-                if (!r.open(path)) return false;
-                pumpImuReader(r, stop, onSample, onBatch);
-            } else {
-                OEM7Reader r;
-                if (!r.open(path)) return false;
-                pumpImuReader(r, stop, onSample, onBatch);
-            }
+            auto onReader = [&](auto &r) -> bool {
+                return sen.observe(r, [&](const std::string &, const ScaleNotice &n) {
+                    std::lock_guard lk(resultMutex);
+                    scaleNotice = n; // 型号读到就先亮横幅，与对准同一时机
+                });
+            };
+            if (!pumpImuFile(path, stop, onReader, onSample, onBatch)) return false;
             return !out.empty();
         };
 
         std::set<std::string> seenHash;
         int nStatic = 0, nRot = 0;
-        std::vector<PerFileChart> fcs;
-
-        auto buildRaw = [&](const ImuLog &L, PerFileChart &fc) {
-            if (L.empty()) return;
-            const size_t stride = std::max<size_t>(1, (L.size() + 3999) / 4000);
-            const double t0 = L[0].tow;
-            const size_t cap = (L.size() + stride - 1) / stride;
-            fc.t.reserve(cap);
-            fc.ax.reserve(cap);
-            fc.ay.reserve(cap);
-            fc.az.reserve(cap);
-            fc.gx.reserve(cap);
-            fc.gy.reserve(cap);
-            fc.gz.reserve(cap);
-            for (size_t k = 0; k < L.size(); k += stride) {
-                const auto &s = L[k];
-                fc.t.push_back(s.tow - t0);
-                fc.ax.push_back(s.ax);
-                fc.ay.push_back(s.ay);
-                fc.az.push_back(s.az);
-                fc.gx.push_back(s.gx);
-                fc.gy.push_back(s.gy);
-                fc.gz.push_back(s.gz);
-            }
-        };
 
         for (const auto &path: filePaths) {
             if (stop) break;
@@ -149,69 +112,41 @@ namespace Tools::InsPanel {
             }
             ImuLog log;
             if (!parseOne(path, log) || log.empty()) {
-                if (!stop) {
-                    detLines.push_back(name + " : 无法解析或为空");
-                    detSeqLines.emplace_back(name, "空/解析失败");
+                if (sen.mixedModel()) {
+                    // 一批里混了两台设备：当量没法统一，直接停
+                    abortRun(*this, sen.openFailure(path));
+                    return;
                 }
+                if (!stop) detSeqLines.emplace_back(name, "解析失败（内容为空或格式不符）");
                 continue;
             }
-            PerFileChart fc;
-            fc.name = name;
-            buildRaw(log, fc);
-
             const std::string hash = fileContentHash(path);
             if (seenHash.count(hash)) {
                 ++dups;
-                fc.dup = true;
-                fc.det = "重复文件，已跳过（仅展示波形）";
-                detLines.push_back(name + " : " + fc.det);
-                detSeqLines.emplace_back(name, "重复文件(内容相同)已跳过");
-                fcs.push_back(std::move(fc));
+                detSeqLines.emplace_back(name, "重复文件，已跳过");
                 continue;
             }
             seenHash.insert(hash);
 
 
             auto segsFile = ImuCalibrator::detect(log);
-            int cPos[6] = {0, 0, 0, 0, 0, 0}, cRot[6] = {0, 0, 0, 0, 0, 0};
-            std::string seq;
+            std::string seq; // 该文件的段序列（导出分段摘要 CSV 用）
             for (const auto &[isStatic, pos, rot, i0, i1]: segsFile) {
                 if (i1 <= i0) continue;
                 ImuLog sub(log.begin() + i0, log.begin() + i1);
                 if (isStatic) {
-                    cPos[static_cast<int>(pos)]++;
                     ++nStatic;
+                    sen.offerStatic(sub); // 静置段才配当反推当量的候选；读到过型号时这条会被跳过
                     segs.pos.emplace_back(pos, std::move(sub));
                     seq += std::string(seq.empty() ? "" : " ") + ImuCalibrator::posLabel(pos);
                 } else {
-                    cRot[static_cast<int>(rot)]++;
                     ++nRot;
                     segs.rot.emplace_back(rot, std::move(sub));
                     seq += std::string(seq.empty() ? "" : " ") + ImuCalibrator::rotLabel(rot);
                 }
             }
-            if (seq.empty()) seq = "未识别到有效段";
-
-            std::string line;
-            bool any = false;
-            for (int p = 0; p < 6; ++p)
-                if (cPos[p]) {
-                    if (any) line += " ";
-                    line += std::string(ImuCalibrator::posLabel(static_cast<ImuCalibrator::Pos>(p))) + "×" + std::to_string(cPos[p]);
-                    any = true;
-                }
-            for (int r = 0; r < 6; ++r)
-                if (cRot[r]) {
-                    if (any) line += " ";
-                    line += std::string(ImuCalibrator::rotLabel(static_cast<ImuCalibrator::Rot>(r))) + "×" + std::to_string(cRot[r]);
-                    any = true;
-                }
-            if (!any) line = "未识别到静置/旋转段";
-            fc.det = line;
-            detLines.push_back(name + " : " + line);
+            if (seq.empty()) seq = "未识别到静置段或旋转段";
             detSeqLines.emplace_back(name, seq);
-
-            fcs.push_back(std::move(fc));
         }
 
         segStatic.store(nStatic);
@@ -219,31 +154,31 @@ namespace Tools::InsPanel {
         dupSkipped.store(dups);
         {
             std::lock_guard lk(resultMutex);
-            detectLines = detLines;
             detectSeq = detSeqLines;
             detectDone.store(true);
         }
 
-        if (stop) {
-            loading = false;
-            state = State::Done;
-            return;
-        }
+        if (stoppedAndEnd(*this)) return;
 
         if (segs.pos.empty() && segs.rot.empty()) {
-            setError("未检测到任何静置/旋转段，请检查文件内容");
-            loading = false;
-            state = State::Done;
+            abortRun(*this, "未识别到任何静置段或旋转段。请确认所选文件是 IMU 原始日志，且包含完整的六位置静置与旋转过程。");
+            return;
+        }
+        if (!sen.resolve(g)) {
+            // 当量定不下来：反推到的 k_a / 采样率已预填进手填框，等用户补 k_g 后重算
+            abortRun(*this, sen.failText());
             return;
         }
         CalibReport rep = ImuCalibrator::calibrate(segs, turnAngleDeg * DEG_TO_RAD, g);
         if (!rep.ok) {
-            setError(rep.errorMsg);
-            loading = false;
-            state = State::Done;
+            abortRun(*this, rep.errorMsg);
             return;
         }
-        ImuCalibrator::applyNominal(rep, kAccel, kGyroRad);
+        ImuCalibrator::applyNominal(rep, sen.scale());
+        if (!rep.ok) {
+            abortRun(*this, rep.errorMsg);
+            return;
+        }
 
         {
             std::lock_guard lk(resultMutex);
@@ -258,165 +193,114 @@ namespace Tools::InsPanel {
 
         {
             std::lock_guard lk(resultMutex);
-            fileCharts = std::move(fcs);
             accelMp = rep.calib.accelM;
             accelBp = rep.calib.accelB;
             accelScaleGp = rep.accelScaleG;
             accelRmsp = rep.accelRms;
-            chartDirty.store(true);
         }
         accelReady.store(true);
 
         {
+            // 结果摘要进日志：面板只看得到一屏，事后要能对上这次标定到底用了什么当量
+            char ka[96];
+            std::snprintf(ka, sizeof ka, "[%.2f %.2f %.2f] LSB/g",
+                          rep.accelScaleG(0), rep.accelScaleG(1), rep.accelScaleG(2));
+            LOG_INFO << "[六位置法标定] 完成：静置段 " << segStatic.load() << " 个 / 旋转段 "
+                     << segRot.load() << " 个，当量 " << sen.label() << "，K_a=" << ka
+                     << "，拟合残差 RMS=" << rep.accelRms << " LSB";
+        }
+        {
             std::lock_guard lk(resultMutex);
             report = std::move(rep);
+            scaleNotice = sen.notice(true); // 当量从哪来 → 结果区顶部横幅（与对准同一份文案）
         }
-        hasResult.store(true);
-        loading = false;
-        state = State::Done;
+        finishRun(*this);
     }
 
     void SixPosCalibTask::renderConfigPanel() {
-        Solvers::Helpers::beginConfigBody("六位置法标定配置###cfg_", *this);
+        renderInsConfig("六位置法标定配置###cfg_", *this, "开始标定",
+                        [&] {
+                            ImGui::Text("添加任意数量的 IMU 日志文件，程序自动识别每个文件里的静置段与旋转段。");
+                            ImGui::Spacing();
 
-        if (ImGui::BeginTabBar("##cfg_tabs")) {
-            if (ImGui::BeginTabItem("文件")) {
-                ImGui::Spacing();
-                ImGui::Text("添加任意数量的 IMU 日志文件，程序自动检测每个文件包含静置段与旋转段");
-                ImGui::Spacing();
+                            if (ImGui::Button("添加文件…", ImVec2(140, 0))) {
+                                if (std::vector<std::wstring> wpaths; ShowOpenFilesDialog(
+                                    wpaths, Solvers::Helpers::fIns, std::size(Solvers::Helpers::fIns))) {
+                                    for (auto &wp: wpaths) {
+                                        std::string p = wideToAcp(wp);
+                                        if (!p.empty() &&
+                                            std::find(filePaths.begin(), filePaths.end(), p) == filePaths.end())
+                                            filePaths.push_back(p);
+                                        AppConfig::PathMemory::instance().addRecent("ins_cal_files", p);
+                                    }
+                                }
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("从记录添加", ImVec2(120, 0)))
+                                ImGui::OpenPopup("##cal_hist_pop");
+                            ImGui::SameLine();
+                            if (ImGui::Button("清空", ImVec2(80, 0)) && !filePaths.empty())
+                                filePaths.clear();
 
-                if (ImGui::Button("添加文件...", ImVec2(140, 0))) {
-                    if (std::vector<std::wstring> wpaths; ShowOpenFilesDialog(wpaths, Solvers::Helpers::fIns,
-                                                                              std::size(Solvers::Helpers::fIns))) {
-                        for (auto &wp: wpaths) {
-                            std::string p = wideToAcp(wp);
-                            if (!p.empty() &&
-                                std::find(filePaths.begin(), filePaths.end(), p) == filePaths.end())
-                                filePaths.push_back(p);
-                            AppConfig::PathMemory::instance().addRecent("ins_cal_files", p);
-                        }
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("从记录添加", ImVec2(120, 0)))
-                    ImGui::OpenPopup("##cal_hist_pop");
-                ImGui::SameLine();
-                if (ImGui::Button("清空", ImVec2(80, 0)) && !filePaths.empty())
-                    filePaths.clear();
+                            if (ImGui::BeginPopup("##cal_hist_pop")) {
+                                const auto recent =
+                                        AppConfig::PathMemory::instance().getRecent("ins_cal_files");
+                                if (recent.empty()) ImGui::TextDisabled("（暂无记录）");
+                                for (auto &r: recent) {
+                                    if (ImGui::Selectable(Solvers::Helpers::baseName(r).c_str())) {
+                                        if (std::find(filePaths.begin(), filePaths.end(), r) == filePaths.end())
+                                            filePaths.push_back(r);
+                                    }
+                                }
+                                ImGui::EndPopup();
+                            }
 
-                if (ImGui::BeginPopup("##cal_hist_pop")) {
-                    const auto recent =
-                            AppConfig::PathMemory::instance().getRecent("ins_cal_files");
-                    if (recent.empty()) ImGui::TextDisabled("(暂无记录)");
-                    for (auto &r: recent) {
-                        if (ImGui::Selectable(Solvers::Helpers::baseName(r).c_str())) {
-                            if (std::find(filePaths.begin(), filePaths.end(), r) == filePaths.end())
-                                filePaths.push_back(r);
-                        }
-                    }
-                    ImGui::EndPopup();
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                if (filePaths.empty()) {
-                    ImGui::TextDisabled("尚未添加任何文件。点击「添加文件...」选择标定日志。");
-                } else {
-                    ImGui::Text("已选 %d 个文件：", static_cast<int>(filePaths.size()));
-                    for (size_t i = 0; i < filePaths.size(); ++i) {
-                        ImGui::Bullet();
-                        ImGui::Text("%s", Solvers::Helpers::baseName(filePaths[i]).c_str());
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton(("x##cal" + std::to_string(i)).c_str())) {
-                            filePaths.erase(filePaths.begin() + i);
-                            --i;
-                        }
-                    }
-                }
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("参数")) {
-                ImGui::Text("站点 / 仪器参数：");
-                ImGui::PushItemWidth(260);
-                ImGui::InputDouble("当地重力加速度 g (m/s²)", &g, 0.0, 0.0, "%.6f");
-                ImGui::InputDouble("当地纬度 φ (°N)", &latDeg, 0.0, 0.0, "%.6f");
-                ImGui::InputDouble("地球自转率 ωe (rad/s)", &earthRate, 0.0, 0.0, "%.12f");
-                ImGui::InputDouble("转台精确转角 α (°)", &turnAngleDeg, 0.0, 0.0, "%.3f");
-                ImGui::PopItemWidth();
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Text("解码当量：");
-                ImGui::PushItemWidth(260);
-                ImGui::InputDouble("加速度计当量 k_a ((m/s)/LSB)", &kAccelLsb, 0.0, 0.0, "%.12f");
-                ImGui::InputDouble("陀螺当量 k_g (°/LSB)", &kGyroLsb, 0.0, 0.0, "%.12f");
-                ImGui::PopItemWidth();
-                if (kGyroLsb > 0.0 && kGyroLsb < 1e-8)
-                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
-                                       "本栏单位是 °/LSB，别填 rad/LSB 的值");
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-
-        ImGui::Spacing();
-        if (ImGui::Button("开始标定", ImVec2(200, 40))) startCalib();
-        ImGui::SameLine();
-        Solvers::Helpers::renderCancelButton(this);
-        if (errorFlag() && !hasResult)
-            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", errorMessage().c_str());
-
-        Solvers::Helpers::endConfigBody();
-    }
-
-    namespace {
-        enum ResultUnitRow {
-            UR_ACC_SCALE = 0, // 加速度计比例因子
-            UR_ACC_BIAS, // 加速度计零偏
-            UR_ACC_DS, // 加速度计比例因子误差
-            UR_GYRO_KEFF, // 陀螺有效比例因子
-            UR_GYRO_SCALE, // 陀螺比例因子
-            UR_GYRO_BIAS, // 陀螺零偏
-            UR_GYRO_DS, // 陀螺比例因子误差
-            UR_COUNT
-        };
-
-        int gResultUnit[UR_COUNT] = {0, 0, 1, 0, 0, 0, 1};
-
-        int pmDecimals(const double s) {
-            if (!(s > 0.0) || !std::isfinite(s)) return 3;
-            const int e = static_cast<int>(std::floor(std::log10(s)));
-            return std::clamp(1 - e, 0, 6);
-        }
+                            ImGui::Spacing();
+                            ImGui::Separator();
+                            if (filePaths.empty()) {
+                                ImGui::TextDisabled("尚未添加任何文件。点击「添加文件…」选择标定日志。");
+                            } else {
+                                ImGui::Text("已选 %d 个文件：", static_cast<int>(filePaths.size()));
+                                for (size_t i = 0; i < filePaths.size(); ++i) {
+                                    ImGui::Bullet();
+                                    ImGui::Text("%s", Solvers::Helpers::baseName(filePaths[i]).c_str());
+                                    ImGui::SameLine();
+                                    if (ImGui::SmallButton(("x##cal" + std::to_string(i)).c_str())) {
+                                        filePaths.erase(filePaths.begin() + i);
+                                        --i;
+                                    }
+                                }
+                            }
+                        },
+                        [&] {
+                            ImGui::Text("站点与仪器参数");
+                            ImGui::InputDouble("当地重力加速度 g (m/s²)", &g, 0.0, 0.0, "%.6f");
+                            ImGui::InputDouble("转台精确转角 α (°)", &turnAngleDeg, 0.0, 0.0, "%.3f");
+                        },
+                        [this] { startCalib(); });
     }
 
     void SixPosCalibTask::renderResult() {
         const bool running = state == State::Running;
-        if (errorFlag()) {
-            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "错误: %s", errorMessage().c_str());
-        }
+        const bool done = hasResult.load();
+        const char *kPending = running ? "计算中" : "—";
+        const bool blocked = renderResultPrologue(*this, false, [this] { startCalib(); });
         const bool detReady = detectDone.load();
-        {
-            std::lock_guard lk(resultMutex);
-            if (detReady) {
-                ImGui::Spacing();
-                //ImGui::Text("检测到的内容：");
-                // for (const auto &l: detectLines) ImGui::Text("  %s", l.c_str());
-                ImGui::Text("已识别 静置段 %d / 旋转段 %d，跳过重复 %d，已处理历元 %lld",
-                            segStatic.load(), segRot.load(), dupSkipped.load(),
-                            static_cast<long long>(sampleCount.load()));
-            }
+        if (detReady) {
+            ImGui::Spacing();
+            ImGui::Text("已识别静置段 %d 个、旋转段 %d 个，跳过重复文件 %d 个，共处理 %lld 个历元",
+                        segStatic.load(), segRot.load(), dupSkipped.load(),
+                        static_cast<long long>(sampleCount.load()));
         }
         if (detReady && ImGui::Button("导出分段摘要 CSV", ImVec2(200, 0))) exportDetectCsv();
-        if (errorFlag()) return; // 错误时只展示错误 + 检测摘要
+        if (blocked) return;
         if (running) {
             std::string label;
             {
                 std::lock_guard lk(resultMutex);
                 label = currentFile;
             }
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f),
-                               "正在解析 [%s]：静置段 %d / 旋转段 %d / 重复 %d / %lld 历元",
+            ImGui::TextColored(kColInfo, "正在解析 %s：静置段 %d 个、旋转段 %d 个、重复 %d 个、%lld 个历元",
                                label.empty() ? "—" : label.c_str(),
                                segStatic.load(), segRot.load(), dupSkipped.load(),
                                static_cast<long long>(sampleCount.load()));
@@ -448,13 +332,14 @@ namespace Tools::InsPanel {
             ImGui::TableSetupColumn("单位", ImGuiTableColumnFlags_WidthStretch, 1.7f);
             ImGui::TableHeadersRow();
 
-            auto unitCombo = [](const int row, const char *const *units, const int nu) {
-                ImGui::PushID(row);
+            auto unitCombo = [](const int q) {
+                const CalibQty &def = kCalibQty[q];
+                ImGui::PushID(q);
                 ImGui::SetNextItemWidth(-FLT_MIN);
-                if (ImGui::BeginCombo("##unit", units[gResultUnit[row]])) {
-                    for (int i = 0; i < nu; ++i) {
+                if (ImGui::BeginCombo("##unit", def.units[gCalibQtyUnit[q]].ui)) {
+                    for (int i = 0; i < def.nUnits; ++i) {
                         ImGui::PushID(i);
-                        if (ImGui::Selectable(units[i], i == gResultUnit[row])) gResultUnit[row] = i;
+                        if (ImGui::Selectable(def.units[i].ui, i == gCalibQtyUnit[q])) gCalibQtyUnit[q] = i;
                         ImGui::PopID();
                     }
                     ImGui::EndCombo();
@@ -462,108 +347,46 @@ namespace Tools::InsPanel {
                 ImGui::PopID();
             };
 
-            auto unitFixed = [](const char *u) { ImGui::TextDisabled("%s", u); };
-            auto rowUnit = [&](const char *label, const int row, const Eigen::Vector3d &v, const char *fmt,
-                               const char *const *units, const int nu, const bool ready) {
+            auto qtyRow = [&](const int q, const bool ready) {
+                const CalibQty &def = kCalibQty[q];
+                const CalibUnit &u = def.units[gCalibQtyUnit[q]];
+                const Eigen::Vector3d v = calibQtyValue(def, u, rep, g);
+                const bool withSigma = def.sigmaQty >= 0;
+                Eigen::Vector3d sg = Eigen::Vector3d::Zero();
+                int d = 0;
+                if (withSigma) {
+                    sg = calibQtyValue(kCalibQty[def.sigmaQty], u, rep, g);
+                    for (int c = 0; c < 3; ++c) d = std::max(d, pmDecimals(sg(c)));
+                }
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(label);
+                ImGui::TextUnformatted(def.ui);
                 for (int c = 0; c < 3; ++c) {
                     ImGui::TableSetColumnIndex(1 + c);
-                    if (ready) {
-                        char b[48];
-                        std::snprintf(b, sizeof(b), fmt, v(c));
-                        ImGui::TextUnformatted(b);
-                    } else {
-                        ImGui::TextDisabled("计算中");
+                    if (!ready) {
+                        ImGui::TextDisabled("%s", kPending);
+                        continue;
                     }
+                    char b[64];
+                    if (withSigma) std::snprintf(b, sizeof b, "%.*f ± %.*f", d, v(c), d, sg(c));
+                    else std::snprintf(b, sizeof b, u.uiFmt, v(c));
+                    ImGui::TextUnformatted(b);
                 }
                 ImGui::TableSetColumnIndex(4);
-                if (nu > 1) unitCombo(row, units, nu);
-                else unitFixed(units[0]);
+                if (def.nUnits > 1) unitCombo(q);
+                else ImGui::TextDisabled("%s", def.units[0].ui);
             };
 
-            static const char *kAccScaleU[3] = {"LSB/g", "LSB/(m/s²)", "LSB/Gal"};
-            static const char *kAccBiasU[5] = {"LSB", "m/s²", "mg", "mGal", "Gal"};
-            static const char *kDsU[3] = {"无量纲", "ppm", "%"};
-            static const char *kGyroKeffU[2] = {"LSB/rad", "LSB/°"};
-            static const char *kGyroScaleU[2] = {"LSB/(rad/s)", "LSB/(°/h)"};
-            static const char *kGyroBiasU[3] = {"LSB/历元", "rad/s", "°/h"};
-
-            static const char *kDsFmt[3] = {"%.6f", "%.2f", "%.4f"}; // 无量纲 / ppm / %
-            static constexpr double kDsMul[3] = {1.0, 1e6, 100.0};
-
-
-            {
-                const int ua = gResultUnit[UR_ACC_SCALE];
-                // LSB/g -> LSB/(m/s²): ÷g；LSB/Gal: 1 Gal = 0.01 m/s²，即 ×0.01/g
-                const double f = ua == 0 ? 1.0 : ua == 1 ? 1.0 / g : 0.01 / g;
-                const Eigen::Vector3d v = accS * f;
-                const Eigen::Vector3d sg = rep.accelScaleSigma * g * f;
-                int d = 0;
-                for (int c = 0; c < 3; ++c) d = std::max(d, pmDecimals(sg(c)));
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("加速度计比例因子 K_a");
-                for (int c = 0; c < 3; ++c) {
-                    ImGui::TableSetColumnIndex(1 + c);
-                    if (aReady) {
-                        char b[48];
-                        std::snprintf(b, sizeof(b), "%.*f ± %.*f", d, v(c), d, sg(c));
-                        ImGui::TextUnformatted(b);
-                    } else {
-                        ImGui::TextDisabled("计算中");
-                    }
-                }
-                ImGui::TableSetColumnIndex(4);
-                unitCombo(UR_ACC_SCALE, kAccScaleU, 3);
-            }
-            {
-                const int u = gResultUnit[UR_ACC_BIAS];
-                static const char *fmtU[5] = {"%.2f", "%.6f", "%.4f", "%.2f", "%.4f"};
-                Eigen::Vector3d v = rep.calib.accelB;
-                if (u == 1) v = rep.accelBiasPhys;
-                else if (u == 2) v = rep.accelBiasPhys / (g * 1e-3);
-                else if (u == 3) v = rep.accelBiasPhys / 1e-5; // 1 mGal = 1e-5 m/s²
-                else if (u == 4) v = rep.accelBiasPhys / 1e-2; // 1 Gal  = 1e-2 m/s²
-                rowUnit("加速度计零偏 b_a", UR_ACC_BIAS, v, fmtU[u], kAccBiasU, 5, aReady);
-            }
-            {
-                const int u = gResultUnit[UR_ACC_DS];
-                rowUnit("加速度计比例因子误差 δs_a", UR_ACC_DS, rep.accelDeltaS * kDsMul[u], kDsFmt[u], kDsU, 3,
-                        aReady);
-            }
-            {
-                const bool deg = gResultUnit[UR_GYRO_KEFF] == 1;
-                const Eigen::Vector3d v = deg ? rep.gyroKeff * DEG_TO_RAD : rep.gyroKeff;
-                rowUnit("陀螺有效比例因子 K_eff,g", UR_GYRO_KEFF, v, "%.1f", kGyroKeffU, 2, hResult);
-            }
-            {
-                const bool degH = gResultUnit[UR_GYRO_SCALE] == 1;
-                const Eigen::Vector3d v = degH ? rep.calib.gyroScale * DEG_TO_RAD / 3600.0
-                                               : rep.calib.gyroScale;
-                rowUnit("陀螺比例因子 S_g", UR_GYRO_SCALE, v, degH ? "%.4f" : "%.1f", kGyroScaleU, 2, hResult);
-            }
-            {
-                const int u = gResultUnit[UR_GYRO_BIAS];
-                static const char *fmtU[3] = {"%.3f", "%.9f", "%.3f"};
-                const Eigen::Vector3d bgDegHour = rep.gyroBiasPhys * RAD_TO_DEG * 3600.0;
-                Eigen::Vector3d v = rep.calib.gyroBias;
-                if (u == 1) v = rep.gyroBiasPhys;
-                else if (u == 2) v = bgDegHour;
-                rowUnit("陀螺零偏 b_g", UR_GYRO_BIAS, v, fmtU[u], kGyroBiasU, 3, hResult);
-            }
-            {
-                const int u = gResultUnit[UR_GYRO_DS];
-                rowUnit("陀螺比例因子误差 δs_g", UR_GYRO_DS, rep.gyroDeltaS * kDsMul[u], kDsFmt[u], kDsU, 3,
-                        hResult);
+            for (const int q: kCalibUiRows) {
+                const bool accelSide = q == Q_ACC_SCALE || q == Q_ACC_BIAS || q == Q_ACC_DS;
+                qtyRow(q, accelSide ? aReady : hResult);
             }
             ImGui::EndTable();
         }
         ImGui::Spacing();
         if (aReady) {
             ImGui::Spacing();
-            ImGui::Text("加速度计交轴耦合矩阵 Na");
+            ImGui::SeparatorText("加速度计交轴耦合矩阵 Na");
             if (ImGui::BeginTable("##cross_tbl", 4,
                                   ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
@@ -589,7 +412,7 @@ namespace Tools::InsPanel {
         }
         if (hResult) {
             ImGui::Spacing();
-            ImGui::Text("陀螺交轴耦合矩阵 Ng");
+            ImGui::SeparatorText("陀螺交轴耦合矩阵 Ng");
             if (ImGui::BeginTable("##gcross_tbl", 4,
                                   ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
@@ -619,16 +442,16 @@ namespace Tools::InsPanel {
             const double spreadG = accS.maxCoeff() - accS.minCoeff();
             const double maxds = rep.gyroDeltaS.cwiseAbs().maxCoeff();
             ImGui::Spacing();
-            ImGui::Text("质量判读");
+            ImGui::SeparatorText("质量判读");
             if (ImGui::BeginTable("##qc_tbl", 4,
                                   ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("检查项", ImGuiTableColumnFlags_WidthStretch, 1.9f);
                 ImGui::TableSetupColumn("判据", ImGuiTableColumnFlags_WidthStretch, 1.6f);
                 ImGui::TableSetupColumn("实测", ImGuiTableColumnFlags_WidthStretch, 2.6f);
-                ImGui::TableSetupColumn("结论", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+                ImGui::TableSetupColumn("结论", ImGuiTableColumnFlags_WidthStretch, 0.8f);
                 ImGui::TableHeadersRow();
-                auto qcRow = [](const char *item, const char *cond, const bool ready, const char *val, const bool ok) {
+                auto qcRow = [kPending](const char *item, const char *cond, const bool ready, const char *val, const bool ok) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::TextUnformatted(item);
@@ -636,10 +459,10 @@ namespace Tools::InsPanel {
                     ImGui::TextDisabled("%s", cond);
                     ImGui::TableSetColumnIndex(2);
                     if (ready) ImGui::TextUnformatted(val);
-                    else ImGui::TextDisabled("计算中");
+                    else ImGui::TextDisabled("%s", kPending);
                     ImGui::TableSetColumnIndex(3);
                     if (!ready) ImGui::TextDisabled("—");
-                    else ImGui::TextColored(ok ? kColPass : kColFail, "%s", ok ? "PASS" : "FAIL");
+                    else ImGui::TextColored(ok ? kColPass : kColFail, "%s", ok ? "合格" : "超限");
                 };
                 char v[128];
                 const bool okG = aReady && meanG > 1.0 && spreadG / meanG < 0.05;
@@ -663,7 +486,7 @@ namespace Tools::InsPanel {
         }
 
         ImGui::Spacing();
-        ImGui::Text("比例因子一致性");
+        ImGui::SeparatorText("比例因子一致性");
         const double scA[3] = {accS(0), accS(1), accS(2)};
         const double scG[3] = {rep.gyroKeff(0), rep.gyroKeff(1), rep.gyroKeff(2)};
         twoCol([&] { drawScaleBars("加速度计三轴比例因子 (LSB/g)", aReady, scA, kColZ, "%.1f"); },
@@ -671,16 +494,22 @@ namespace Tools::InsPanel {
 
 
         ImGui::Spacing();
-        if (ImGui::Button("导出标定结果 CSV", ImVec2(180, 0))) exportCalibCsv();
+        {
+            // 没结果就把按钮禁掉：点得下去再弹「尚无结果」纯属自找，还容易把错误状态留在面板上
+            ImGui::BeginDisabled(!done);
+            const bool clicked = ImGui::Button("导出标定结果 CSV", ImVec2(180, 0));
+            const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            ImGui::EndDisabled();
+            if (!done && hovered) ImGui::SetTooltip("完成一次标定后才能导出。");
+            if (clicked) exportCalibCsv();
+        }
 
-        ImGui::SameLine();
-        ImGui::TextDisabled("|  补偿序列");
+        ImGui::SeparatorText("补偿序列");
+        // 段标签每帧只取一次（compSegLabels 内部要加锁）
         if (const auto segLabels = compSegLabels(); segLabels.empty()) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("标定完成后可选择段导出");
+            ImGui::TextDisabled("标定完成后可按段导出、按段查看补偿结果。");
         } else {
             compSel = std::clamp(compSel, 0, static_cast<int>(segLabels.size()) - 1);
-            ImGui::SameLine();
             ImGui::SetNextItemWidth(190.0f);
             if (ImGui::BeginCombo("##comp_seg", segLabels[compSel].c_str())) {
                 for (int i = 0; i < static_cast<int>(segLabels.size()); ++i) {
@@ -694,131 +523,108 @@ namespace Tools::InsPanel {
             }
             ImGui::SameLine();
             if (ImGui::Button("导出该段补偿序列", ImVec2(210, 0))) exportCompCsv();
-        }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        if (const auto segLabels = compSegLabels(); segLabels.empty()) {
-            ImGui::TextDisabled("标定完成后可选择段查看补偿结果");
-        } else {
-            ImGui::Text("补偿结果显示（所选段：%s）", segLabels[compSel].c_str());
-            if (CalibReport r; !snapshotReport(r)) {
-                ImGui::TextDisabled("（尚无标定结果）");
-            } else {
+            // 渲染路径只读快照：这里 setError 会让面板每帧重新报错并永久停在错误页
+            if (CalibReport r; peekReport(r)) {
                 ImuLog seg;
                 {
+                    // 锁内直接抽稀再拷：整段可能是几万条，为了看一眼形状每帧搬一遍不值得
                     std::lock_guard lk(resultMutex);
                     const int np = static_cast<int>(compSegs.pos.size());
                     const int nr = static_cast<int>(compSegs.rot.size());
                     const int k = std::clamp(compSel, 0, np + nr - 1);
-                    seg = k < np ? compSegs.pos[k].second : compSegs.rot[k - np].second;
+                    decimateImu(k < np ? compSegs.pos[k].second : compSegs.rot[k - np].second, seg);
                 }
                 if (seg.empty()) {
-                    ImGui::TextDisabled("（该段无样本，请重新标定）");
+                    ImGui::TextDisabled("该段没有样本，请重新标定后再看。");
                 } else {
                     const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r);
                     std::vector<double> t, fx, fy, fz, gx, gy, gz;
                     t.reserve(seg.size());
-                    fx.reserve(seg.size()); fy.reserve(seg.size()); fz.reserve(seg.size());
-                    gx.reserve(seg.size()); gy.reserve(seg.size()); gz.reserve(seg.size());
-                    for (const auto &s: seg) {
-                        t.push_back(s.tow);
+                    fx.reserve(seg.size());
+                    fy.reserve(seg.size());
+                    fz.reserve(seg.size());
+                    gx.reserve(seg.size());
+                    gy.reserve(seg.size());
+                    gz.reserve(seg.size());
+                    for (const auto &smp: seg) {
+                        t.push_back(smp.tow);
                         Eigen::Vector3d _f, _g;
-                        ImuCalibrator::compensate(cm, r, s, _f, _g);
-                        fx.push_back(_f(0)); fy.push_back(_f(1)); fz.push_back(_f(2));
-                        gx.push_back(_g(0)); gy.push_back(_g(1)); gz.push_back(_g(2));
+                        ImuCalibrator::compensate(cm, r, smp, _f, _g);
+                        fx.push_back(_f(0));
+                        fy.push_back(_f(1));
+                        fz.push_back(_f(2));
+                        gx.push_back(_g(0));
+                        gy.push_back(_g(1));
+                        gz.push_back(_g(2));
                     }
-                    std::vector<double> tel; toElapsed(t, tel);
+                    std::vector<double> tel;
+                    toElapsed(t, tel);
                     twoCol(
                         [&] { drawCompChart("补偿后比力 f (m/s²)", tel, fx, fy, fz, chartNew); },
-                        [&] { drawCompChart("补偿后角速率 ω (LSB, 零偏+交轴已扣)", tel, gx, gy, gz, chartNew); });
+                        [&] { drawCompChart("补偿后角速率 ω (LSB，零偏与交轴已扣)", tel, gx, gy, gz, chartNew); });
                 }
             }
         }
     }
 
-    // 导出前统一快照标定结果：无结果只报一次错，三个导出共用同一句提示。
-    bool SixPosCalibTask::snapshotReport(CalibReport &r) {
-        if (!hasResult.load()) {
-            setError("尚无标定结果，请先点「开始标定」");
-            return false;
-        }
+    bool SixPosCalibTask::peekReport(CalibReport &r) {
+        if (!hasResult.load()) return false;
         std::lock_guard lk(resultMutex);
         r = report;
         return true;
+    }
+
+    bool SixPosCalibTask::snapshotReport(CalibReport &r) {
+        if (peekReport(r)) return true;
+        setError("尚无标定结果，无法导出。请先完成一次标定。");
+        return false;
     }
 
     void SixPosCalibTask::exportCalibCsv() {
         CalibReport r;
         if (!snapshotReport(r)) return;
         exportCsvDialog(*this, "calib_result.csv", "calib_result.csv", [&](Csv::Writer &w) {
-            static const char *kAccScaleU[3] = {"LSB/g", "LSB/(m/s^2)", "LSB/Gal"};
-            static const char *kAccBiasU[5] = {"LSB", "m/s^2", "mg", "mGal", "Gal"};
-            static const char *kDsU[3] = {"无量纲", "ppm", "%"};
-            static const char *kGyroKeffU[2] = {"LSB/rad", "LSB/deg"};
-            static const char *kGyroScaleU[2] = {"LSB/(rad/s)", "LSB/(deg/h)"};
-            static const char *kGyroBiasU[3] = {"LSB/历元", "rad/s", "deg/h"};
-            static constexpr double kDsMul[3] = {1.0, 1e6, 100.0}; // 无量纲 / ppm / %
             w.row("量", "X", "Y", "Z");
 
-            const int ua = gResultUnit[UR_ACC_SCALE];
-            const int ub = gResultUnit[UR_ACC_BIAS];
-            const int uda = gResultUnit[UR_ACC_DS];
-            const int uk = gResultUnit[UR_GYRO_KEFF];
-            const int us = gResultUnit[UR_GYRO_SCALE];
-            const int ug = gResultUnit[UR_GYRO_BIAS];
-            const int udg = gResultUnit[UR_GYRO_DS];
+            auto qtyRow = [&](const int q) {
+                const CalibQty &def = kCalibQty[q];
+                const CalibUnit &u = def.units[gCalibQtyUnit[q]];
+                const Eigen::Vector3d v = calibQtyValue(def, u, r, g);
+                const std::string name = std::string(def.csv) + "(" + u.csv + ")";
+                const int d = def.csvDigits;
+                if (def.scalar) {
+                    if (def.csvSci) w.row(name, Csv::sci(v(0), d), "", "");
+                    else w.row(name, Csv::fx(v(0), d), "", "");
+                } else if (def.csvSci) {
+                    w.row(name, Csv::sci(v(0), d), Csv::sci(v(1), d), Csv::sci(v(2), d));
+                } else {
+                    w.row(name, Csv::fx(v(0), d), Csv::fx(v(1), d), Csv::fx(v(2), d));
+                }
+            };
 
-            // 加速度计比例因子（LSB/g 基准）：LSB/(m/s^2) ÷g；LSB/Gal ×0.01/g（1 Gal = 0.01 m/s²）
-            const double af = ua == 0 ? 1.0 : ua == 1 ? 1.0 / g : 0.01 / g;
-            const Eigen::Vector3d ka = r.accelScaleG * af;
-            const Eigen::Vector3d ksg = r.accelScaleSigma * g * af;
-            w.row("加速度计比例因子(" + std::string(kAccScaleU[ua]) + ")", Csv::fx(ka(0), 4),
-                  Csv::fx(ka(1), 4), Csv::fx(ka(2), 4));
-            w.row("加速度计比例因子1σ(" + std::string(kAccScaleU[ua]) + ")", Csv::fx(ksg(0), 4),
-                  Csv::fx(ksg(1), 4), Csv::fx(ksg(2), 4));
-
-            Eigen::Vector3d ba = r.calib.accelB;
-            if (ub == 1) ba = r.accelBiasPhys;
-            else if (ub == 2) ba = r.accelBiasPhys / (g * 1e-3);
-            else if (ub == 3) ba = r.accelBiasPhys / 1e-5; // 1 mGal = 1e-5 m/s²
-            else if (ub == 4) ba = r.accelBiasPhys / 1e-2; // 1 Gal  = 1e-2 m/s²
-            w.row("加速度计零偏(" + std::string(kAccBiasU[ub]) + ")", Csv::fx(ba(0), 4),
-                  Csv::fx(ba(1), 4), Csv::fx(ba(2), 4));
+            qtyRow(Q_ACC_SCALE);
+            qtyRow(Q_ACC_SCALE_SIGMA);
+            qtyRow(Q_ACC_BIAS);
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "M" + std::to_string(k) + "0, M" + std::to_string(k) + "1, M" +
                                        std::to_string(k) + "2";
                 w.row(rn, Csv::fx(r.calib.accelM(k, 0), 6), Csv::fx(r.calib.accelM(k, 1), 6),
                       Csv::fx(r.calib.accelM(k, 2), 6));
             }
-            // K_nom 跟随比例因子单位：LSB/g ×g；LSB/Gal ×0.01
-            const double kn = ua == 0 ? r.nominalAccelK * g : ua == 1 ? r.nominalAccelK : r.nominalAccelK * 0.01;
-            w.row("标称比例因子K_nom(" + std::string(kAccScaleU[ua]) + ")", Csv::fx(kn, 6), "", "");
-            w.row("加速度计比例因子误差delta_s(" + std::string(kDsU[uda]) + ")",
-                  Csv::sci(r.accelDeltaS(0) * kDsMul[uda], 9), Csv::sci(r.accelDeltaS(1) * kDsMul[uda], 9),
-                  Csv::sci(r.accelDeltaS(2) * kDsMul[uda], 9));
+            qtyRow(Q_ACC_KNOM);
+            qtyRow(Q_ACC_DS);
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "N" + std::to_string(k) + "0, N" + std::to_string(k) + "1, N" +
                                        std::to_string(k) + "2";
                 w.row(rn, Csv::sci(r.accelCross(k, 0), 9), Csv::sci(r.accelCross(k, 1), 9),
                       Csv::sci(r.accelCross(k, 2), 9));
             }
-            Eigen::Vector3d bg = r.calib.gyroBias;
-            if (ug == 1) bg = r.gyroBiasPhys;
-            else if (ug == 2) bg = r.gyroBiasPhys * (180.0 / PI) * 3600.0;
-            w.row("陀螺零偏(" + std::string(kGyroBiasU[ug]) + ")", Csv::fx(bg(0), 4),
-                  Csv::fx(bg(1), 4), Csv::fx(bg(2), 4));
-            const Eigen::Vector3d kv = uk == 1 ? r.gyroKeff * DEG_TO_RAD : r.gyroKeff;
-            w.row("陀螺有效比例因子K_eff,g(" + std::string(kGyroKeffU[uk]) + ")", Csv::sci(kv(0), 6),
-                  Csv::sci(kv(1), 6), Csv::sci(kv(2), 6));
-            const double ken = uk == 1 ? r.nominalKeff * DEG_TO_RAD : r.nominalKeff;
-            w.row("标称有效比例因子K_eff,nom(" + std::string(kGyroKeffU[uk]) + ")", Csv::sci(ken, 6), "", "");
-            const Eigen::Vector3d sv = us == 1 ? r.calib.gyroScale * DEG_TO_RAD / 3600.0 : r.calib.gyroScale;
-            w.row("陀螺比例因子S_g(" + std::string(kGyroScaleU[us]) + ")", Csv::sci(sv(0), 6),
-                  Csv::sci(sv(1), 6), Csv::sci(sv(2), 6));
-            w.row("陀螺比例因子误差delta_s(" + std::string(kDsU[udg]) + ")",
-                  Csv::sci(r.gyroDeltaS(0) * kDsMul[udg], 6), Csv::sci(r.gyroDeltaS(1) * kDsMul[udg], 6),
-                  Csv::sci(r.gyroDeltaS(2) * kDsMul[udg], 6));
+            qtyRow(Q_GYRO_BIAS);
+            qtyRow(Q_GYRO_KEFF);
+            qtyRow(Q_GYRO_KEFF_NOM);
+            qtyRow(Q_GYRO_SCALE);
+            qtyRow(Q_GYRO_DS);
             // 陀螺交轴耦合矩阵 N_g（无量纲，对角置 0，选做项）
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "Ng" + std::to_string(k) + "0, Ng" + std::to_string(k) + "1, Ng" +
@@ -840,7 +646,7 @@ namespace Tools::InsPanel {
             seq = detectSeq;
         }
         if (seq.empty()) {
-            setError("尚无分段结果，请先点「开始标定」");
+            setError("尚无分段结果，无法导出。");
             return;
         }
         exportCsvDialog(*this, "detect_summary.csv", "detect_summary.csv", [&](Csv::Writer &w) {
@@ -848,7 +654,7 @@ namespace Tools::InsPanel {
             for (const auto &[fst, snd]: seq) w.row(fst, snd);
         });
     }
-    
+
     std::vector<std::string> SixPosCalibTask::compSegLabels() {
         std::lock_guard lk(resultMutex);
         std::vector<std::string> v;
@@ -897,16 +703,15 @@ namespace Tools::InsPanel {
             }
         }
         if (seg.empty()) {
-            setError("缺少该段样本，无法导出补偿序列（请重新标定）");
+            setError("该段没有样本，无法导出补偿序列。请重新标定后再试。");
             return;
         }
         if (const auto segLabels = compSegLabels();
             selIdx >= 0 && selIdx < static_cast<int>(segLabels.size()))
             label = segLabels[selIdx];
 
-        const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r); // 完整模型：f=M_a⁻¹(a−b_a)，ω=(I+N_g)⁻¹(ω−b_g)
+        const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r);
         exportCsvDialog(*this, defName, defName + "（" + label + "）", [&](Csv::Writer &w) {
-            // 静置段与旋转段统一：加计补偿后比力 + 陀螺原始/完整模型补偿计数，同一文件导出
             w.row("tow", "comp_fx(m/s2)", "comp_fy(m/s2)", "comp_fz(m/s2)",
                   "raw_gx", "raw_gy", "raw_gz", "comp_gx", "comp_gy", "comp_gz");
             for (const auto &s: seg) {

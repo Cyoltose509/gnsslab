@@ -39,6 +39,7 @@ add_executable(GnssLab WIN32
         widgets/tools/GuiCoordConverter.cpp
         widgets/tools/GuiLsqSolver.cpp
         widgets/tools/GuiInsPanel.cpp
+        widgets/tools/GuiInsCommon.cpp
         widgets/tools/GuiInsCalib.cpp
         widgets/tools/GuiInsAlign.cpp
         widgets/solvers/GuiSolverPanel.cpp

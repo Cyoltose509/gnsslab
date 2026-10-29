@@ -2,6 +2,7 @@
 #include <vector>
 #include <iomanip>
 #include <algorithm>
+#include <iterator>
 
 
 #include "TimeConvert.h"
@@ -27,8 +28,10 @@
 #define ID_GLOEPHEM     723
 #define ID_GALEPHEM     1122
 #define ID_BESTPOS      42
-#define ID_RAWIMUXA     1461
-#define ID_RAWIMUSA     325
+#define ID_RAWIMU       268  // RAWIMU   长头 28B，无 IMU Type
+#define ID_RAWIMUS      325  // RAWIMUS  短头 12B，无 IMU Type
+#define ID_RAWIMUXA     1461 // RAWIMUX  长头 28B，payload 第 2 字节 = IMU Type
+#define ID_RAWIMUSX     1462 // RAWIMUSX 短头 12B，payload 第 2 字节 = IMU Type
 #define ID_RAWIMU_COMPACT 0x1313
 #define POLYCRC32 0xEDB88320u
 
@@ -42,13 +45,22 @@ bool OEM7Reader::open(const std::string &filename) {
 
     buffer.clear();
     bufferIndex = 0;
-    mImuLog.clear(); // 新文件清空 IMU 累积，使流式 getNextEpoch 也能正确累积本文件 IMU（getImuLog 取之）
+    mImuLog.clear();
+    mInsLayout = InsRecordLayout();
+    mImuType = -1;
+    mInsDiag.clear();
+    mInsDiagLogged.store(false);
     uint8_t tmp[4096];
     while (ifs.read(reinterpret_cast<char *>(tmp), sizeof(tmp)) || ifs.gcount() > 0) {
         buffer.insert(buffer.end(), tmp, tmp + ifs.gcount());
     }
     ifs.close();
-    mEphSnap = std::make_shared<EphemerisTable>(); // 流式/批量路径共用的写时复制快照
+    mEphSnap = std::make_shared<EphemerisTable>();
+
+
+    probeInsLayout();
+    if (mImuType < 0) probeImuTypeFromShortHeader();
+    if (mImuType >= 0) mInsDiag.clear();
     return !buffer.empty();
 }
 
@@ -56,11 +68,110 @@ void OEM7Reader::close() {
     buffer.clear();
     bufferIndex = 0;
     mEphSnap.reset();
+    mInsLayout = InsRecordLayout();
+}
+
+static constexpr OEM7Reader::InsRecordLayout kInsLayoutCandidates[] = {
+    // 带 IMU Info/Type 两字节
+    {true, 56, 14, 13, 8, 16, 24, 28, "RAWIMUSX 字段集（含 IMU Type）"},
+    // 省掉 Info/Type 两字节
+    {true, 56, 12, -1, 8, 16, 24, 28, "RAWIMUS 字段集（无 IMU Type）"},
+};
+
+bool OEM7Reader::acceptInsRecord(const size_t start, const InsRecordLayout &layout) const {
+    if (start + static_cast<size_t>(layout.recLen) > buffer.size()) return false;
+
+    const auto body = static_cast<size_t>(layout.recLen) - 4;
+    unsigned int calc = 0;
+    for (size_t i = 0; i < body; ++i) {
+        calc ^= buffer[start + i];
+        for (int j = 0; j < 8; ++j) {
+            if (calc & 1) calc = calc >> 1 ^ POLYCRC32;
+            else calc >>= 1;
+        }
+    }
+    if (calc != Math::U4(&buffer[start + body])) return false;
+
+    if (const int week = Math::U2(&buffer[start + layout.weekOffset]); week < 1000 || week > 3000) return false;
+
+    double sec = 0.0;
+    std::memcpy(&sec, &buffer[start + layout.secOffset], sizeof(double));
+    if (!(sec >= 0.0 && sec <= FULL_WEEK)) return false;
+    if (const double msSec = Math::U4(&buffer[start + layout.towMsOffset]) * 0.001; std::fabs(msSec - sec) > 2e-3) return false;
+
+    if (layout.imuTypeOffset >= 0 && buffer[start + layout.imuTypeOffset] == 0) return false;
+
+    return true;
+}
+
+bool OEM7Reader::probeInsLayout() {
+    constexpr size_t kMaxProbe = 2000;
+    constexpr int kCandidates = std::size(kInsLayoutCandidates);
+    size_t probes[kCandidates] = {};
+    int pass[kCandidates] = {};
+    int firstType = -1;
+
+    size_t i = 0;
+    size_t considered = 0;
+    while (i + 56 <= buffer.size() && considered < kMaxProbe) {
+        if (buffer[i] == 0xAA && buffer[i + 1] == 0x44 && buffer[i + 2] == 0x13 && buffer[i + 3] == 0x28) {
+            ++considered;
+            for (int c = 0; c < kCandidates; ++c) {
+                ++probes[c];
+                if (acceptInsRecord(i, kInsLayoutCandidates[c])) {
+                    ++pass[c];
+                    if (firstType < 0 && kInsLayoutCandidates[c].imuTypeOffset >= 0)
+                        firstType = buffer[i + kInsLayoutCandidates[c].imuTypeOffset];
+                }
+            }
+            i += 56;
+        } else {
+            ++i;
+        }
+    }
+
+    if (considered == 0) {
+        mInsDiag = "文件中没有 0xAA4413 紧凑 IMU 记录（可能只有标准 OEM7 日志）";
+        return false;
+    }
+
+    int best = -1;
+    for (int c = 0; c < kCandidates; ++c) {
+        if (probes[c] > 0 && pass[c] * 100 >= probes[c] * 95) {
+            if (best < 0 || pass[c] > pass[best]) best = c;
+        }
+    }
+
+    if (best < 0) {
+        mInsDiag = "发现 " + std::to_string(considered) +
+                   " 条 0xAA4413 候选记录，但没有一种已知布局能通过 CRC/时间一致性校验"
+                   "（已试 " + std::to_string(kCandidates) + " 种）";
+        return false;
+    }
+
+    mInsLayout = kInsLayoutCandidates[best];
+    mInsLayout.valid = true;
+    mImuType = firstType;
+    return true;
+}
+
+void OEM7Reader::probeImuTypeFromShortHeader() {
+    size_t scanned = 0;
+    for (size_t i = 0; i + 12 <= buffer.size() && scanned < 2000; ++i) {
+        if (!(buffer[i] == 0xAA && buffer[i + 1] == 0x44 && buffer[i + 2] == 0x12)) continue;
+        if (const int msgId = Math::U2(&buffer[i + 4]); msgId != ID_RAWIMUXA && msgId != ID_RAWIMUSX) continue;
+        const int hLen = buffer[i + 3] == 28 ? 28 : 12;
+        if (i + static_cast<size_t>(hLen) + 2 > buffer.size()) continue;
+        ++scanned;
+        if (const uint8_t type = buffer[i + hLen + 1]; type != 0) {
+            mImuType = type;
+            return;
+        }
+    }
 }
 
 bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message, [[maybe_unused]] const bool block) {
     while (buffer.size() - bufferIndex >= 3) {
-        // 统一扫描同步头：短头 0xAA 0x44 0x12（标准 OEM7 帧）与长头 0xAA 0x44 0x13（紧凑 IMU 记录）。
         size_t start = bufferIndex;
         bool found = false;
         uint8_t sync = 0;
@@ -79,33 +190,33 @@ bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message, [[maybe_unused]] 
             return false;
         }
 
-        // 跳过同步头之前的无效数据（移动指针替代 erase）
         bufferIndex = start;
 
-        if (constexpr size_t headerLen = 28; buffer.size() - bufferIndex < headerLen)
+        if (buffer.size() - bufferIndex < 12)
             return false;
 
         if (sync == 0x13) {
-            // 长头只认「紧凑 IMU 记录」：固定 56 字节、无标准 OEM7 帧长/CRC，靠 week/秒范围门确认。
-            if (isCompactImuRecord(buffer, bufferIndex)) {
+            if (mInsLayout.valid && acceptInsRecord(bufferIndex, mInsLayout)) {
                 message.assign(buffer.begin() + static_cast<long long>(bufferIndex),
-                               buffer.begin() + static_cast<long long>(bufferIndex) + 56);
+                               buffer.begin() + static_cast<long long>(bufferIndex) + mInsLayout.recLen);
                 message[4] = static_cast<uint8_t>(ID_RAWIMU_COMPACT & 0xFF);
                 message[5] = static_cast<uint8_t>(ID_RAWIMU_COMPACT >> 8 & 0xFF);
-                bufferIndex += 56;
+                bufferIndex += mInsLayout.recLen;
                 return true;
             }
-            bufferIndex += 3; // 非紧凑长头 → 跳过此同步头继续搜索
+            if (!mInsLayout.valid && !mInsDiagLogged.exchange(true) && !mInsDiag.empty())
+                LOG_ERROR << "OEM7Reader: " << mInsDiag;
+            bufferIndex += 3;
             continue;
         }
 
-        // 标准短头 OEM7 帧（对齐段等）：totalLen = hLen + msgLen + 4
-        const auto hlen = buffer[bufferIndex + 3];
-        const auto msgLen = Math::U2(&buffer[bufferIndex + 8]);
-        const auto totalLen = hlen + msgLen + 4;
+        const auto b3 = static_cast<int>(buffer[bufferIndex + 3]);
+        const bool longHeader = b3 == 28;
+        const int hlen = longHeader ? 28 : 12;
+        const int msgLen = longHeader ? static_cast<int>(Math::U2(&buffer[bufferIndex + 8])) : b3;
+        const int totalLen = hlen + msgLen + 4;
 
-        if (buffer.size() - bufferIndex < totalLen) {
-            // 同步头后数据不足 → 跳过此同步头继续搜索
+        if (buffer.size() - bufferIndex < static_cast<size_t>(totalLen) || totalLen < hlen + 4) {
             bufferIndex += 3;
             continue;
         }
@@ -116,14 +227,6 @@ bool OEM7Reader::getNextMessage(std::vector<uint8_t> &message, [[maybe_unused]] 
         return true;
     }
     return false;
-}
-
-bool OEM7Reader::isCompactImuRecord(const std::vector<uint8_t> &buf, const size_t start) {
-    if (start + 56 > buf.size()) return false;
-    const int week = buf[start + 12] | buf[start + 13] << 8;
-    double sec = 0.0;
-    std::memcpy(&sec, &buf[start + 16], sizeof(double));
-    return week >= 1000 && week <= 3000 && sec >= 0.0 && sec <= FULL_WEEK;
 }
 
 bool OEM7Reader::crcExam(const std::vector<uint8_t> &message) {
@@ -144,11 +247,12 @@ bool OEM7Reader::crcExam(const std::vector<uint8_t> &message) {
 bool OEM7Reader::parseGNSSMessage(const std::vector<uint8_t> &message) {
     if (!crcExam(message)) return false;
 
-    currentHeader.hLen = message[3];
+    const bool longHeader = message[3] == 28;
+    currentHeader.hLen = longHeader ? 28 : 12;
     currentHeader.type = Math::U2(&message[4]);
-    currentHeader.length = Math::U2(&message[8]);
-    currentHeader.week = Math::U2(&message[14]);
-    currentHeader.ms = Math::I4(&message[16]);
+    currentHeader.length = longHeader ? static_cast<int>(Math::U2(&message[8])) : message[3];
+    currentHeader.week = static_cast<int>(longHeader ? Math::U2(&message[14]) : Math::U2(&message[6]));
+    currentHeader.ms = longHeader ? Math::I4(&message[16]) : Math::I4(&message[8]);
 
     switch (currentHeader.type) {
         case ID_RANGE:
@@ -592,11 +696,11 @@ bool OEM7Reader::getNextEpoch(ObsData &obs, const bool block) {
         if (!getNextMessage(message, block)) {
             return false;
         }
-        parseImu(message); // 流式路径也累积 IMU，与 readAll 一致；避免对准 .DAT 中 GNSS/IMU 交错时静默丢 IMU 样本。非 IMU 帧返回 false 不累积。
+        parseImu(message);
         if (parseGNSSMessage(message)) {
             if (!currentObs.satTypeValueData.empty()) {
                 obs = std::move(currentObs);
-                currentObs.satTypeValueData.clear(); // 交付后清空，防止重复触发
+                currentObs.satTypeValueData.clear();
                 return true;
             }
         }
@@ -611,14 +715,22 @@ bool OEM7Reader::parseImu(const std::vector<uint8_t> &message) {
     double towSec = 0.0;
     int32_t zacc = 0, nyacc = 0, xacc = 0, zgyro = 0, nygyro = 0, xgyro = 0;
 
-    if (type == ID_RAWIMUXA || type == ID_RAWIMUSA) {
-        // 标准短头 OEM7 帧带 CRC32 尾
+    if (type == ID_RAWIMU || type == ID_RAWIMUS || type == ID_RAWIMUXA || type == ID_RAWIMUSX) {
         if (!crcExam(message)) return false;
-        if (message.size() < 3 + 28) return false;
-        const int off = message[3] + 16; // 6 个 IMU 计数从 hLen+16 起
-        if (off + 24 > static_cast<int>(message.size())) return false;
-        week = Math::U2(&message[14]);
-        towSec = Math::I4(&message[16]) * 0.001; // OEM7 头的 week/ms
+        if (message.size() < 12) return false;
+        const int hLen = message[3] == 28 ? 28 : 12;
+        const size_t off = static_cast<size_t>(hLen) + 16;
+        if (message.size() < off + 24) return false;
+        if (type == ID_RAWIMUXA || type == ID_RAWIMUSX) {
+            week = Math::U2(&message[hLen + 2]);
+            if (mImuType < 0) {
+                if (const int t = message[hLen + 1]; t > 0) mImuType = t;
+            }
+        } else {
+            week = static_cast<int>(Math::U4(&message[hLen + 0]));
+        }
+        std::memcpy(&towSec, &message[hLen + 4], sizeof(double));
+
         zacc = Math::I4(&message[off + 0]);
         nyacc = Math::I4(&message[off + 4]);
         xacc = Math::I4(&message[off + 8]);
@@ -626,16 +738,18 @@ bool OEM7Reader::parseImu(const std::vector<uint8_t> &message) {
         nygyro = Math::I4(&message[off + 16]);
         xgyro = Math::I4(&message[off + 20]);
     } else if (type == ID_RAWIMU_COMPACT) {
-        // 紧凑长头 56 字节记录无标准 OEM7 帧长/CRC
-        if (message.size() < 56) return false;
-        week = Math::U2(&message[12]);
-        std::memcpy(&towSec, &message[16], sizeof(double));
-        zacc = Math::I4(&message[28]);
-        nyacc = Math::I4(&message[32]);
-        xacc = Math::I4(&message[36]);
-        zgyro = Math::I4(&message[40]);
-        nygyro = Math::I4(&message[44]);
-        xgyro = Math::I4(&message[48]);
+        if (!mInsLayout.valid) return false;
+        if (message.size() < static_cast<size_t>(mInsLayout.recLen)) return false;
+        if (mImuType < 0 && mInsLayout.imuTypeOffset >= 0) mImuType = message[mInsLayout.imuTypeOffset];
+        week = Math::U2(&message[mInsLayout.weekOffset]);
+        std::memcpy(&towSec, &message[mInsLayout.secOffset], sizeof(double));
+        const int c = mInsLayout.countsOffset;
+        zacc = Math::I4(&message[c + 0]);
+        nyacc = Math::I4(&message[c + 4]);
+        xacc = Math::I4(&message[c + 8]);
+        zgyro = Math::I4(&message[c + 12]);
+        nygyro = Math::I4(&message[c + 16]);
+        xgyro = Math::I4(&message[c + 20]);
     } else {
         return false;
     }

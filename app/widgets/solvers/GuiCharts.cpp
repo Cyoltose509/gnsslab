@@ -292,23 +292,15 @@ namespace Solvers::Charts {
         const double *lo = phase ? phaseLo : codeLo;
         const double *hi = phase ? phaseHi : codeHi;
 
-        // SPP 不做载波相位，相位残差恒空：明说一句，避免误以为图坏了。
-        // ⚠️ 必须与切换按钮同行：曾写成独立的一行 TextDisabled，切到相位时整块内容纵向撑高、
-        // 容器的固定高度装不下 → 父 Child 长出上下滑条，绘图区被裁出可视范围（图"消失"）。
         if (phase && V.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("(无相位残差：该模式不使用载波相位)");
         }
 
-        // 高度一律取「容器剩余空间」，且不超过调用方给的上限（plotH）：
-        // 写死 plotH 会让 绘图区+单选行 的总高超过父 Child，父容器出滑条。
-        // 再减一个 ItemSpacing：ImPlot 之后的行距也会计入子窗口内容高度，不减会顶出 3~4px 滑条。
         float ph = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
         if (plotH > 0.0f && plotH < ph) ph = plotH;
         if (ph < 120.0f) ph = 120.0f;
 
-        // 标题由外层 SectionHeader 负责，故关掉 ImPlot 自带标题（省一行高度）；
-        // 同时标签固定为 "##residualSeries"，切模式不换 ID，避免切一次重建一次绘图状态。
         if (ImPlot::BeginPlot("##residualSeries", ImVec2(-1, ph), ImPlotFlags_NoTitle)) {
             ImPlot::SetupAxes("Epoch", phase ? "载波相位残差 (m)" : "码(伪距)残差 (m)");
             {
@@ -855,8 +847,6 @@ namespace Solvers::Charts {
             const auto &enu_n = v.enu_n;
             const auto &enu_solved = v.enu_solved;
             if (enu_e.empty() || enu_n.empty() || enu_solved.empty()) return;
-            // ⚠️ 尺寸 (0,0) = 用尽父容器剩余空间：宽随表格列宽、高随行高。
-            // 旧实现写死 sizePx×sizePx 正方形，拖宽列只会多出空白区域（右侧"空了"）。
             if (!ImGui::BeginChild("##enplan", ImVec2(0, fixedH), ImGuiChildFlags_FrameStyle)) {
                 ImGui::EndChild();
                 return;
@@ -988,15 +978,10 @@ namespace Solvers::Charts {
             {
                 bool *d3Tg = v.renderToggles ? &v.renderToggles->plot3d : nullptr;
                 bool *resTg = v.renderToggles ? &v.renderToggles->residual : nullptr;
-                // LEO: plot3d 开关控制左列；SPP/PPP 无开关，天顶图恒显示
                 const bool left = vis(d3Tg, true);
-                // ⚠️ 判「有没有残差可画」必须与码/相位模式无关：切到相位时伪距那两张表是空的
-                // （快照只深拷当前显示的那一份），曾用 !v.resT.empty() 判断 → 相位模式下
-                // 整块被当成「已隐藏」，图直接消失。
                 const bool right = vis(resTg, v.showResidual) && v.hasResidualData;
                 if (left || right) {
                     const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
-                    // LEO 模式恒开两列（保证隐藏图的开关仍可点）；SPP/PPP 按实际列数
                     if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
                         ImGui::TableSetupColumn("Sky", ImGuiTableColumnFlags_WidthStretch, 0.33f);
                         ImGui::TableSetupColumn("Res", ImGuiTableColumnFlags_WidthStretch, 0.67f);
@@ -1007,13 +992,12 @@ namespace Solvers::Charts {
                         if (ImGui::BeginChild("##leftpanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
                             SectionHeader(v.renderToggles ? "LEO 轨迹 (ECEF XYZ)" : "天顶图", d3Tg);
                             if (left) {
-                                // 高度取容器剩余空间：写死 rowH 会连标题行一起算进总高 → 溢出出滑条
                                 float fillH = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
                                 if (fillH < 120.0f) fillH = 120.0f;
                                 if (v.show3d)
                                     RenderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, fillH);
                                 else
-                                    RenderSkyplot(v.skyTracks, v.curSkyPts, 460.0f); // SPP/PPP 走天顶图
+                                    RenderSkyplot(v.skyTracks, v.curSkyPts, 460.0f);
                             } else {
                                 ImGui::TextDisabled("(已隐藏)");
                             }

@@ -2,6 +2,7 @@
 
 #include "CoordStruct.h"
 #include <Eigen/Eigen>
+#include "Exception.h"
 #include "MathUtils.h"
 #include "TimeConvert.h"
 #include <Eigen/Geometry>
@@ -157,9 +158,8 @@ inline BLH XYZToBLH(const XYZ &xyz, const FrameInfo &frame) {
         B0 = B1;
         iterationCount++;
 
-        if (constexpr int maxIterations = 100; iterationCount > maxIterations) {
-            throw std::runtime_error("Iteration did not converge.");
-        }
+        if (constexpr int maxIterations = 100; iterationCount > maxIterations)
+            throw GeometryException("ECEF→大地坐标：纬度迭代 100 次未收敛（输入 X/Y/Z 可能不是有限值或接近退化）");
     } while (true);
 
     // 计算大地经度 L

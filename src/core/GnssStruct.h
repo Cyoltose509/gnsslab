@@ -10,6 +10,7 @@
 #include <string>
 #include <sstream>
 
+#include "Exception.h"
 #include "TimeConvert.h"
 #include "CoordStruct.h"
 #include "CoordConvert.h"
@@ -32,9 +33,8 @@ struct SatID {
     }
 
     explicit SatID(const string &substr) {
-        if (substr.length() != 3) {
-            throw std::runtime_error("SatID substr length error");
-        }
+        if (substr.length() != 3)
+            throw StringException("SatID 由 3 个字符组成（系统 + 两位 PRN），收到 \"" + substr + "\"");
         system = substr[0];
         id = std::stoi(substr.substr(1, 2));
     }

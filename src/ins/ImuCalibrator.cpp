@@ -3,7 +3,9 @@
 
 #include <algorithm>
 
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 namespace {
     // 返回「轴(0/1/2) + 符号」合成的 0..5 键：正轴→2*ax，负轴→2*ax+1
@@ -47,15 +49,6 @@ void ImuCalibrator::rawMean(const ImuLog &log, Eigen::Vector3d &acc, Eigen::Vect
     const auto n = static_cast<double>(log.size());
     acc /= n;
     gyr /= n;
-}
-
-double ImuCalibrator::medianDt(const ImuLog &log, const double fallback) {
-    if (log.size() < 3) return fallback;
-    std::vector<double> d;
-    d.reserve(log.size() - 1);
-    for (size_t i = 1; i < log.size(); ++i) d.push_back(log[i].tow - log[i - 1].tow);
-    std::sort(d.begin(), d.end());
-    return d[d.size() / 2];
 }
 
 void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std::vector<Eigen::Vector3d> &f,
@@ -146,8 +139,8 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
         r.nPos[static_cast<int>(fst)] += static_cast<int>(samples.size());
     }
 
-    if (!seg.pos.empty()) r.dt = medianDt(seg.pos.front().second);
-    else if (!seg.rot.empty()) r.dt = medianDt(seg.rot.front().second);
+    if (!seg.pos.empty()) r.dt = imuMedianDt(seg.pos.front().second);
+    else if (!seg.rot.empty()) r.dt = imuMedianDt(seg.rot.front().second);
 
     solveLinear(raw, f, w, r.calib.accelM, r.calib.accelB, r.accelRms, &r.accelScaleSigma);
     r.accelScaleCounts = r.calib.accelM.diagonal();
@@ -224,9 +217,14 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     return r;
 }
 
-void ImuCalibrator::applyNominal(CalibReport &r, const double kAccel, const double kGyroRad) {
-    const double kA = r.dt / kAccel;
-    const double kG = 1.0 / kGyroRad;
+void ImuCalibrator::applyNominal(CalibReport &r, const ImuScale &scale) {
+    if (!scale.known()) {
+        r.ok = false;
+        r.errorMsg = "型号当量未知（IMU Type 未识别），无法确定标称比例因子";
+        return;
+    }
+    const double kA = r.dt / scale.accelMpsPerLsb; // LSB/(m/s²)
+    const double kG = 1.0 / scale.gyroRadPerLsb;  // LSB/rad
     r.nominalAccelK = kA;
     r.nominalKeff = kG;
     r.accelDeltaS = r.accelScaleCounts / kA - Eigen::Vector3d::Ones();

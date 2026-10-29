@@ -32,6 +32,7 @@ namespace {
 bool AsciiLogReader::open(const std::string &path) {
     mLines.clear();
     mImuLog.clear();
+    mImuType = -1;
     mLineIdx = 0;
     std::ifstream ifs(acpToWide(path), std::ios::in);
     if (!ifs) return false;
@@ -45,7 +46,7 @@ bool AsciiLogReader::open(const std::string &path) {
 
 bool AsciiLogReader::getNextImu(ImuSample &s) {
     while (mLineIdx < mLines.size()) {
-        if (const std::string &line = mLines[mLineIdx++]; parseLine(line, s)) {
+        if (const std::string &line = mLines[mLineIdx++]; parseLine(line, s, mImuType)) {
             mImuLog.push_back(s);
             return true;
         }
@@ -53,9 +54,11 @@ bool AsciiLogReader::getNextImu(ImuSample &s) {
     return false;
 }
 
-bool AsciiLogReader::parseLine(const std::string &line, ImuSample &s) {
-    const bool isXa = startsWith(line, "#RAWIMUXA");
-    if (const bool isUsa = startsWith(line, "%RAWIMUSA"); !isXa && !isUsa) return false;
+bool AsciiLogReader::parseLine(const std::string &line, ImuSample &s, int &imuType) {
+    const bool isX = startsWith(line, "#RAWIMUXA") || startsWith(line, "%RAWIMUSXA");
+    if (const bool isPlain = startsWith(line, "#RAWIMUA") || startsWith(line, "%RAWIMUSA");
+        !isX && !isPlain)
+        return false;
     const auto sc = line.find(';');
     if (sc == std::string::npos) return false;
     std::string body = line.substr(sc + 1);
@@ -67,8 +70,13 @@ bool AsciiLogReader::parseLine(const std::string &line, ImuSample &s) {
     while (std::getline(ss, tok, ',')) f.push_back(tok);
     if (f.empty()) return false;
 
-    const int base = isXa ? 5 : 3; // Zacc 在字段列表中的下标
+    const int base = isX ? 5 : 3;
     if (static_cast<int>(f.size()) < base + 6) return false;
+
+    if (isX && imuType < 0) {
+        if (const long t = std::strtol(f[1].c_str(), nullptr, 16); t > 0 && t < 256)
+            imuType = static_cast<int>(t);
+    }
 
     const int week = static_cast<int>(std::strtol(f[base - 3].c_str(), nullptr, 10));
     const double seconds = std::strtod(f[base - 2].c_str(), nullptr);

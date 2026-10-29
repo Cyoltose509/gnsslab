@@ -2,14 +2,26 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <atomic>
 #include <cmath>
 #include "GnssStruct.h"
 #include "EphemerisTable.h"
-#include "CoordConvert.h"
 #include "core/InsStruct.h"
 
 class OEM7Reader {
 public:
+    struct InsRecordLayout {
+        bool valid = false;     // 探测是否成功
+        int recLen = 56;        // 单条记录字节数
+        int weekOffset = 14;    // GPS 周（u16）
+        int imuTypeOffset = 13; // IMU Type（u8）
+        int towMsOffset = 8;    // 整毫秒（u32）
+        int secOffset = 16;     // 周内秒（double）
+        int statusOffset = 24;  // IMU status（u32，低 16 位状态、高 16 位温度）
+        int countsOffset = 28;  // 6 × int32 计数
+        const char *name = "未识别";
+    };
+
     OEM7Reader() = default;
 
     virtual ~OEM7Reader() { OEM7Reader::close(); }
@@ -20,9 +32,20 @@ public:
 
     bool getNextEpoch(ObsData &obs, bool block = true);
 
+    [[nodiscard]] const InsRecordLayout &insLayout() const { return mInsLayout; }
+
+    /// 记录里读到的 IMU Type 码；-1 表示该文件没提供
+    [[nodiscard]] int detectedImuType() const { return mImuType; }
+
+    /// 按型号查当量表；返回 nullptr = 型号未知
+    [[nodiscard]] const ImuModel *detectedImuModel() const { return findImuModel(mImuType); }
+
+    /// 布局/型号识别失败的诊断信息
+    [[nodiscard]] const std::string &insDiagnostic() const { return mInsDiag; }
+
     bool getNextImu(ImuSample &s) {
         std::vector<uint8_t> message;
-        while (getNextMessage(message)) {
+        while (getNextMessage(message, true)) { // 阻塞取：文件读到尾返回 false，socket 等下一帧
             if (const size_t before = mImuLog.size(); parseImu(message) && mImuLog.size() > before) {
                 s = mImuLog.back();
                 return true;
@@ -67,13 +90,24 @@ protected:
     } currentHeader = {};
 
     std::vector<unsigned char> buffer;
-    size_t bufferIndex = 0; // 当前读取位置，替代 buffer.erase 避免 O(N²) 搬迁
+    size_t bufferIndex = 0; // 当前读取位置
     size_t fileSize = 0; // 文件总字节数
     ObsData currentObs;
-    ImuLog mImuLog; // IMU 累积缓存（与 currentObs 同构：parseImu 写入、getImuLog 读出）
+    ImuLog mImuLog; // IMU 累积缓存
     Eigen::Vector3d antennaPosition{0, 0, 0}; // 默认值
 
-    virtual bool getNextMessage(std::vector<uint8_t> &message, bool block = true);
+    InsRecordLayout mInsLayout;
+    int mImuType = -1;
+    std::string mInsDiag;
+    std::atomic<bool> mInsDiagLogged{false};
+
+    bool probeInsLayout();
+
+    [[nodiscard]] bool acceptInsRecord(size_t start, const InsRecordLayout &layout) const;
+
+    void probeImuTypeFromShortHeader();
+
+    virtual bool getNextMessage(std::vector<uint8_t> &message, bool block);
 
     bool parseGNSSMessage(const std::vector<uint8_t> &message);
 
@@ -90,8 +124,6 @@ protected:
     bool parseGalEph(const std::vector<uint8_t> &message);
 
     bool parseBestPos(const std::vector<uint8_t> &message);
-
-    static bool isCompactImuRecord(const std::vector<uint8_t> &buf, size_t start);
 
     static bool crcExam(const std::vector<uint8_t> &message);
 };

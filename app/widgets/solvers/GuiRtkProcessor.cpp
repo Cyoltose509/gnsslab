@@ -118,11 +118,6 @@ namespace Solvers::RtkProcessor {
 
             SolveDriver::DualObsPairing::Puller nextBase, nextRover;
             std::string openErr;
-            // ⚠️ h 必须活到下面的配对循环结束：openDualObsSources 生成的 Puller 捕获的是 h 成员的引用
-            // （&oem、&cache、&cached、&cacheEph）。曾把它写成 if 初始化式
-            // （if (DualObsHandles h; !open(...))），if 语句一结束 h 就析构，
-            // 之后 p.next() 全在已释放的栈对象上取历元 —— 实测崩在 _Copy_nodes
-            // （`out = cache` 拷贝整张 SatTypeValueMap），偶发 0xC0000005。
             SolveDriver::DualObsHandles h;
             if (!SolveDriver::openDualObsSources(baseRinex, roverRinex, task->baseObsPathBuf,
                                                 task->roverObsPathBuf, h, nextBase, nextRover, openErr)) {

@@ -82,6 +82,16 @@ public:
     }
 
     // 正常重力（Somigliana 闭式 + 自由空气高度改正），m/s^2
+    //
+    // 精度边界（相对 g≈9.8 m/s²）：
+    //   公式本身        —— Somigliana 是椭球面上的定义式，不是拟合，误差 < 1e-7 m/s²（0 %）
+    //   忽略高程 h      —— 自由空气梯度 0.3086 mGal/m，即 3.1e-6 m/s² per m
+    //                      （位流实测：h=35.6 m → 11 mGal = 1.1e-4 m/s² = 0.0011 %）
+    //   忽略重力异常    —— 实测 g 与正常重力之差（EGM2008/武汉约 ±20 mGal）
+    //                      → ±2e-4 m/s² = ±0.002 %，与高程项同量级
+    // 结论：按纬度算可到 0.002 % 量级，足够对准质检（判据在 0.01 %）与机械编排
+    //      （1e-4 m/s² 持续 300 s → 位置 5 m，纯惯导自身发散远大于此）。
+    //      要高精度重力须换 EGM2008 球谐场，本式不承担该职责。
     static double normalGravity(const double latDeg, const FrameInfo &frame = Frame::WGS84, const double h = 0.0) {
         const double s = std::sin(latDeg * DEG_TO_RAD);
         const double s2 = s * s;
@@ -90,7 +100,7 @@ public:
     }
 
     // 地球自转角速度在 e 系的投影（rad/s）；n 系的 ω_ie^n 见
-    // InsMath.h::navEarthRate(latDeg, earthRate)。
+    // InsMath.h::navEarthRate(latDeg)（量值恒为 OMEGA_EARTH）。
     static Eigen::Vector3d earthRateInECEF(const double omega = OMEGA_EARTH) {
         return {0.0, 0.0, omega};
     }

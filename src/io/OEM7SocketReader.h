@@ -18,7 +18,7 @@ public:
 
     bool setReceiveTimeout(const int timeoutMs) { return socketClient.setReceiveTimeout(timeoutMs); }
 
-    bool getNextMessage(std::vector<uint8_t> &message, bool block = true) override;
+    bool getNextMessage(std::vector<uint8_t> &message, bool block) override;
 
 private:
     SocketClient socketClient;

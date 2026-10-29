@@ -80,8 +80,6 @@ public:
 
     static void rawMean(const ImuLog &log, Eigen::Vector3d &acc, Eigen::Vector3d &gyr);
 
-    static double medianDt(const ImuLog &log, double fallback = 0.005);
-
 
     static void solveLinear(const std::vector<Eigen::Vector3d> &raw, const std::vector<Eigen::Vector3d> &f,
                             const std::vector<double> &w,
@@ -94,7 +92,10 @@ public:
                                  double g);
 
 
-    static void applyNominal(CalibReport &r, double kAccel, double kGyroRad);
+    // 标称比例因子由型号当量导出（当量→K 的换算是标定的内务，GUI 不参与）：
+    //   K_a,nom = Δt / k_a [LSB/(m/s²)]、K_eff,nom = 1 / k_g [LSB/rad]。
+    // 当量未知（型号没识别出来）直接判失败，不拿默认值糊过去。
+    static void applyNominal(CalibReport &r, const ImuScale &scale);
 
     // ---- 误差补偿（完整模型）：GUI 显示 / CSV 导出与后续解算共用的唯一实现 ----
     // 加计 f = M_a⁻¹(a_raw − b_a)（比例因子与交轴耦合随 M_a⁻¹ 一并纠正，输出 m/s²）；

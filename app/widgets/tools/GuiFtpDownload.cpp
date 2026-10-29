@@ -343,12 +343,11 @@ namespace Tools::FtpDownload {
             ImGui::TextDisabled("所选类型在该镜像上没有对应的产品目录。");
         } else if (matches.empty()) {
             if (nMissing > 0) {
-                ImGui::TextDisabled("所选日期的部分目录尚未发布（当天/近几日的产品可能还没上架）：");
+                ImGui::TextDisabled("所选日期的部分目录尚未发布：");
                 for (const auto &u: missingUrls)
                     ImGui::TextDisabled("  • %s", u.c_str());
-                ImGui::TextDisabled("已发布的产品会在目录出现后自动显示；点“刷新目录”可重新探测。");
             } else {
-                ImGui::TextDisabled("该日期目录下没有匹配文件（数据中心标签可能把结果滤空了，或所选类型在该日无产品）。");
+                ImGui::TextDisabled("该日期目录下没有匹配文件。");
             }
         } else {
             const float avail = ImGui::GetContentRegionAvail().x;
