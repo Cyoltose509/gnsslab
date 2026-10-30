@@ -1,5 +1,6 @@
 #include "Aligner.h"
 
+#include "MathUtils.h"
 #include "core/CoordConvert.h"
 
 namespace {
@@ -96,8 +97,7 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
         const Eigen::Quaterniond qLevel =
                 Eigen::Quaterniond::FromTwoVectors(gB.normalized(), Eigen::Vector3d::UnitZ());
         const Eigen::Vector3d wLevel = qLevel * wB;
-        const double wH = std::hypot(wLevel.x(), wLevel.y());
-        if (wH > 0.0) {
+        if (const double wH = std::hypot(wLevel.x(), wLevel.y()); wH > 0.0) {
             q.latDerivedDeg = std::atan2(-wLevel.z(), wH) * RAD_TO_DEG;
             q.latDerivedValid = true;
         }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 #include <algorithm>
 #include "Exception.h"
@@ -155,43 +156,6 @@ namespace Math {
         return retVal;
     }
 
-    ///多项式最小二乘拟合
-    /// @param x 自变量
-    /// @param y 因变量
-    /// @param deg 多项式最高次幂
-    inline vector<double> polyFit(const vector<double> &x, const vector<double> &y, const int deg) {
-        const int n = static_cast<int>(x.size());
-        Eigen::MatrixXd A(n, deg + 1);
-        Eigen::VectorXd Y(n);
-        for (int i = 0; i < n; i++) {
-            double p = 1;
-            for (int j = 0; j <= deg; j++) {
-                A(i, j) = p;
-                p *= x[i];
-            }
-            Y(i) = y[i];
-        }
-        Eigen::VectorXd c = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(Y);
-        std::vector<double> r(deg + 1);
-        for (int j = 0; j <= deg; j++) r[j] = c(j);
-        return r;
-    }
-
-    ///多项式求值
-    /// @param c 多项式系数
-    /// @param x 自变量
-    /// @return 多项式值
-    inline double polyVal(const std::vector<double> &c, const double x) {
-        double r = 0, p = 1;
-        for (const double cc: c) {
-            r += cc * p;
-            p *= x;
-        }
-        return r;
-    }
-
-
-
     /// Perform the root sum square of aa, bb and cc
     template<class T>
     T RSS(T aa, T bb, T cc) {
@@ -220,108 +184,70 @@ namespace Math {
         return a * sqrt(1 + b / a * (b / a) + c / a * (c / a) + d / a * (d / a));
     }
 
+    ///多项式最小二乘拟合
+    /// @param x 自变量
+    /// @param y 因变量
+    /// @param deg 多项式最高次幂
+    vector<double> polyFit(const vector<double> &x, const vector<double> &y, int deg);
 
-    inline Eigen::MatrixXd rotationMatrix(const double angle, const int axis) {
-        if (axis < 1 || axis > 3) {
-            throw InvalidRequest("Invalid axis (must be 1,2, or 3)");
-        }
+    ///多项式求值
+    /// @param c 多项式系数
+    /// @param x 自变量
+    /// @return 多项式值
+    double polyVal(const std::vector<double> &c, double x);
 
-        Eigen::MatrixXd toReturn(3, 3);
-        toReturn.setZero();
+    Eigen::MatrixXd rotationMatrix(double angle, int axis);
+    Eigen::Matrix3d rotationX(double t);
+    Eigen::Matrix3d rotationY(double t);
+    Eigen::Matrix3d rotationZ(double t);
 
-        const int i1 = axis - 1;
-        const int i2 = (i1 + 1) % 3;
-        const int i3 = (i2 + 1) % 3;
+    double frobenius(const Eigen::MatrixXd &m);
 
-        toReturn(i1, i1) = 1.0;
-        toReturn(i2, i2) = toReturn(i3, i3) = ::cos(angle);
-        toReturn(i3, i2) = -(toReturn(i2, i3) = ::sin(angle));
-        return toReturn;
-    }
-
-    inline Eigen::Matrix3d rotationX(const double t) {
-        return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitX()).toRotationMatrix();
-    }
-    inline Eigen::Matrix3d rotationY(const double t) {
-        return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitY()).toRotationMatrix();
-    }
-    inline Eigen::Matrix3d rotationZ(const double t) {
-        return Eigen::AngleAxisd(-t, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    }
-
-    inline double frobenius(const Eigen::MatrixXd &m) {
-        double sum(0);
-        for (auto i = 0; i < m.rows(); i++)
-            for (auto j = 0; j < m.cols(); j++)
-                sum += m(i, j) * m(i, j);
-        return sqrt(sum);
-    }
-
-    /** returns the magnitude of the vector */
-    inline double magnitude(const Eigen::VectorXd &v) {
-        double mag(0);
-        if (v.size() == 0) return mag;
-        mag = abs(v(0));
-
-        for (auto i = 1; i < v.size(); i++) {
-            if (mag > abs(v(i)))
-                mag *= sqrt(1.0 + v(i) / mag * (v(i) / mag));
-            else if (abs(v(i)) > mag)
-                mag = abs(v(i)) * sqrt(1.0 + mag / v(i) * (mag / v(i)));
-            else
-                mag *= sqrt(2.0);
-        }
-        return mag;
-    }
+    /// returns the magnitude of the vector
+    double magnitude(const Eigen::VectorXd &v);
 
     /// 算术均值
-    inline double mean(const std::vector<double> &x) {
-        if (x.empty()) return 0.0;
-        double s = 0.0;
-        for (const double v : x) s += v;
-        return s / static_cast<double>(x.size());
-    }
+    double mean(const std::vector<double> &x);
 
     /// 均方根
-    inline double rms(const std::vector<double> &x) {
-        if (x.size() < 2) return 0.0;
-        const double m = mean(x);
-        double s = 0.0;
-        for (const double v : x) s += (v - m) * (v - m);
-        return std::sqrt(s / static_cast<double>(x.size() - 1));
-    }
+    double rms(const std::vector<double> &x);
 
     /// 中位数
-    inline double median(std::vector<double> v) {
-        if (v.empty()) return 0.0;
-        std::sort(v.begin(), v.end());
-        return v[v.size() / 2];
-    }
-    static uint16_t U2(const uint8_t *p) {
+    double median(std::vector<double> v);
+
+    /// 反对称（叉乘）矩阵：skewSymmetric(v)·w == v×w
+    Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
+
+    /// 两矢量夹角 (rad)。用 atan2(|a×b|, a·b) 而非 acos(a·b/(|a||b|))：
+    /// acos 在 0 附近导数无穷（dot 差 1e-16 就放大成 ~1e-8 rad 的角度误差），
+    /// atan2 全区间稳健。对准残差这类"接近 0 的角度"必须用这个。
+    double angleBetween(const Eigen::Vector3d &a, const Eigen::Vector3d &b);
+
+    inline uint16_t U2(const uint8_t *p) {
         uint16_t u;
         memcpy(&u, p, 2);
         return u;
     }
 
-    static uint32_t U4(const uint8_t *p) {
+    inline uint32_t U4(const uint8_t *p) {
         uint32_t u;
         memcpy(&u, p, 4);
         return u;
     }
 
-    static int32_t I4(const uint8_t *p) {
+    inline int32_t I4(const uint8_t *p) {
         int32_t i;
         memcpy(&i, p, 4);
         return i;
     }
 
-    static float R4(const uint8_t *p) {
+    inline float R4(const uint8_t *p) {
         float r;
         memcpy(&r, p, 4);
         return r;
     }
 
-    static double R8(const uint8_t *p) {
+    inline double R8(const uint8_t *p) {
         double r;
         memcpy(&r, p, 8);
         return r;
@@ -339,22 +265,6 @@ namespace Math {
         double x = std::fmod(a, 2.0 * PI);
         if (x < 0.0) x += 2.0 * PI;
         return x;
-    }
-
-    /// 反对称（叉乘）矩阵：skewSymmetric(v)·w == v×w
-    inline Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
-        Eigen::Matrix3d S;
-        S << 0.0,   -v.z(),  v.y(),
-             v.z(),  0.0,   -v.x(),
-            -v.y(),  v.x(),  0.0;
-        return S;
-    }
-
-    /// 两矢量夹角 (rad)。用 atan2(|a×b|, a·b) 而非 acos(a·b/(|a||b|))：
-    /// acos 在 0 附近导数无穷（dot 差 1e-16 就放大成 ~1e-8 rad 的角度误差），
-    /// atan2 全区间稳健。对准残差这类"接近 0 的角度"必须用这个。
-    inline double angleBetween(const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
-        return std::atan2(a.cross(b).norm(), a.dot(b));
     }
 }
 

@@ -42,11 +42,13 @@
   "buildPresets": [
     {
       "name": "ninja-x64-release",
-      "configurePreset": "ninja-x64-release"
+      "configurePreset": "ninja-x64-release",
+      "jobs": 6
     },
     {
       "name": "ninja-x64-debug",
-      "configurePreset": "ninja-x64-debug"
+      "configurePreset": "ninja-x64-debug",
+      "jobs": 6
     }
   ]
 }

@@ -12,6 +12,7 @@ set(LIB_SOURCES
         time/TimeConvert.cpp
         time/TimeStruct.h
         core/CoordConvert.h
+        core/CoordConvert.cpp
         io/OEM7Reader.h
         io/OEM7Reader.cpp
         io/AsciiLogReader.h
@@ -72,6 +73,7 @@ set(LIB_SOURCES
         util/StringUtils.h
         util/Exception.h
         util/MathUtils.h
+        util/MathUtils.cpp
         util/Log.h
         util/Log.cpp
 )
@@ -81,6 +83,8 @@ add_library(gnss STATIC ${LIB_SOURCES})
 set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 set_source_files_properties(core/CycleSlip.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 set_source_files_properties(solver/PPPStatic.cpp PROPERTIES COMPILE_FLAGS /bigobj)
+# BDCSVD 实例化后节数超 obj 上限（与上面几个同样原因），单独给 /bigobj
+set_source_files_properties(util/MathUtils.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 
 target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}

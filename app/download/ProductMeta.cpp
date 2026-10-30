@@ -189,7 +189,7 @@ std::optional<std::pair<int, int> > ProductMeta::parseObsDate(const std::string 
 
 
 const char *ProductMeta::mirrorRoot() {
-    return "ftp:
+    return "ftp://igs.gnsswhu.cn/pub/gps";
 }
 
 int ProductMeta::gpsWeek(const int year, const int doy) {
