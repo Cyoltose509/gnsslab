@@ -5,7 +5,7 @@
 #include <sstream>
 
 namespace {
-    // 解析 "2026:183:00000" (年:年积日:日秒) -> CommonTime
+
     bool parseEpoch(const std::string &s, CommonTime &out) {
         std::vector<std::string> parts;
         std::string tok;
@@ -19,7 +19,7 @@ namespace {
             const int year = std::stoi(parts[0]);
             const int doy = std::stoi(parts[1]);
             const double sod = std::stod(parts[2]);
-            // TRO 产品头部声明 TIME SYSTEM G(=GPS)，与观测历元时系统一致
+
             out = YDSTime2CommonTime(YDSTime(year, doy, sod, TimeSystem::GPS));
         } catch (...) {
             return false;
@@ -46,14 +46,14 @@ bool TroReader::read(const std::string &path) {
             continue;
         }
         if (!inSolution) continue;
-        if (line.empty() || line[0] == '*') continue; // 注释行
+        if (line.empty() || line[0] == '*') continue;
 
         std::istringstream iss(line);
         std::string station, epoch;
         if (!(iss >> station >> epoch)) continue;
         double trotot = 0.0, troStd = 0.0;
-        if (!(iss >> trotot >> troStd)) continue;            // 至少要有 TROTOT 与其 σ
-        // 水平梯度列（TGNTOT STDDEV TGETOT STDDEV）可选：老格式文件可能没有，缺失则留 0
+        if (!(iss >> trotot >> troStd)) continue;
+
         double gn = 0.0, gnStd = 0.0, ge = 0.0, geStd = 0.0;
         iss >> gn >> gnStd >> ge >> geStd;
 
@@ -65,7 +65,7 @@ bool TroReader::read(const std::string &path) {
         MJD m;
         CommonTime2MJD(t, m);
         r.mjd = static_cast<double>(m.mjd);
-        constexpr double MM = 1.0e-3; // 文件单位 mm -> m
+        constexpr double MM = 1.0e-3;
         r.ztd = trotot * MM;
         r.ztdStd = troStd * MM;
         r.gradN = gn * MM;
@@ -75,7 +75,7 @@ bool TroReader::read(const std::string &path) {
         data[station].push_back(r);
     }
 
-    // 丢弃空测站并按时间排序
+
     for (auto it = data.begin(); it != data.end();) {
         if (it->second.empty()) {
             it = data.erase(it);
@@ -95,7 +95,7 @@ bool TroReader::hasStation(const std::string &station) const {
 const std::vector<TroReader::Record> *TroReader::findStation(const std::string &station) const {
     const auto it = data.find(station);
     if (it != data.end()) return &it->second;
-    // 退化匹配：按 4 字符短名（HKWS00HKG ↔ HKWS）
+
     if (station.size() >= 4) {
         const std::string short4 = station.substr(0, 4);
         for (const auto &[name, recs]: data) {
@@ -122,7 +122,7 @@ bool TroReader::getZtd(const std::string &station, const CommonTime &t,
         return true;
     }
     if (it == recs->end()) {
-        // 超出表范围：按最近端点取常值（ZTD 缓变，外推 1h 误差远小于约束 σ）
+
         ztd = recs->back().ztd;
         sigma = recs->back().ztdStd;
         return true;
@@ -141,7 +141,7 @@ bool TroReader::getTropoGrad(const std::string &station, const CommonTime &t,
                              double &gradNStd, double &gradEStd) const {
     const std::vector<Record> *recs = findStation(station);
     if (recs == nullptr || recs->empty()) return false;
-    // 所有记录梯度均为 0 时视为无梯度数据（老格式文件）
+
     bool anyGrad = false;
     for (const auto &r : *recs)
         if (r.gradN != 0.0 || r.gradE != 0.0) { anyGrad = true; break; }

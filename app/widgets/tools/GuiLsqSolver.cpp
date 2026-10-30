@@ -8,9 +8,9 @@
 namespace Tools::LsqSolver {
     static int s_NumObs = 4;
     static int s_NumUnk = 3;
-    static std::vector<double> s_H; // m * n
-    static std::vector<double> s_L; // m
-    static std::vector<double> s_W; // m * m (Full weight matrix)
+    static std::vector<double> s_H;
+    static std::vector<double> s_L;
+    static std::vector<double> s_W;
 
     static Eigen::VectorXd s_X;
     static Eigen::MatrixXd s_Q;
@@ -24,20 +24,20 @@ namespace Tools::LsqSolver {
         if (newObs < 1) newObs = 1;
         if (newUnk < 1) newUnk = 1;
 
-        // Backup old data
+
         const std::vector<double> oldH = s_H;
         const std::vector<double> oldL = s_L;
         const std::vector<double> oldW = s_W;
         const int oldObs = s_NumObs;
         const int oldUnk = s_NumUnk;
 
-        // On first run, old vectors are empty. We should handle this.
+
         const bool hasOldData = !oldH.empty() && !oldL.empty() && !oldW.empty();
 
         s_NumObs = newObs;
         s_NumUnk = newUnk;
 
-        // Resize H (m x n)
+
         s_H.assign(s_NumObs * s_NumUnk, 0.0);
         if (hasOldData) {
             for (int i = 0; i < std::min(oldObs, s_NumObs); ++i) {
@@ -47,7 +47,7 @@ namespace Tools::LsqSolver {
             }
         }
 
-        // Resize L (m x 1)
+
         s_L.assign(s_NumObs, 0.0);
         if (hasOldData) {
             for (int i = 0; i < std::min(oldObs, s_NumObs); ++i) {
@@ -55,10 +55,10 @@ namespace Tools::LsqSolver {
             }
         }
 
-        // Resize W (m x m)
+
         s_W.assign(s_NumObs * s_NumObs, 0.0);
         if (!hasOldData) {
-            // Initial identity
+
             for (int i = 0; i < s_NumObs; ++i) s_W[i * s_NumObs + i] = 1.0;
         } else {
             for (int i = 0; i < std::min(oldObs, s_NumObs); ++i) {
@@ -66,7 +66,7 @@ namespace Tools::LsqSolver {
                     s_W[i * s_NumObs + j] = oldW[i * oldObs + j];
                 }
             }
-            // If expanded, set new diagonal to 1.0
+
             if (s_NumObs > oldObs) {
                 for (int i = oldObs; i < s_NumObs; ++i) s_W[i * s_NumObs + i] = 1.0;
             }
@@ -137,7 +137,7 @@ namespace Tools::LsqSolver {
             return;
         }
 
-        // --- Toolbar ---
+
         ImGui::BeginChild("Toolbar", ImVec2(0, 45), true);
         ImGui::AlignTextToFramePadding();
 
@@ -170,7 +170,7 @@ namespace Tools::LsqSolver {
 
         ImGui::Spacing();
 
-        // --- Layout: L = H * X ---
+
         bool changed = false;
         ImGui::SeparatorText("方程模型: Z = H * X + △");
 
@@ -181,7 +181,7 @@ namespace Tools::LsqSolver {
 
             ImGui::TableNextRow();
 
-            // L column
+
             ImGui::TableSetColumnIndex(0);
             ImGui::Text("L (%d x 1)", s_NumObs);
             if (ImGui::BeginTable("##L_table", 1, ImGuiTableFlags_Borders)) {
@@ -197,7 +197,7 @@ namespace Tools::LsqSolver {
             }
 
 
-            // H matrix
+
             ImGui::TableSetColumnIndex(1);
             ImGui::Text("H (%d x %d)", s_NumObs, s_NumUnk);
             if (ImGui::BeginTable("##H_table", s_NumUnk, ImGuiTableFlags_Borders)) {
@@ -254,8 +254,8 @@ namespace Tools::LsqSolver {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 if (ImGui::BeginTable("##X_res", 2, ImGuiTableFlags_Borders)) {
-                    //ImGui::TableSetupColumn("参数", ImGuiTableColumnFlags_WidthFixed, 80);
-                    //ImGui::TableSetupColumn("估值");
+
+
                     ImGui::TableNextRow();
                     for (int j = 0; j < s_NumUnk; ++j) {
                         ImGui::TableNextRow();

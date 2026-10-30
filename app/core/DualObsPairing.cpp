@@ -29,7 +29,7 @@ namespace SolveDriver {
     }
 
     [[nodiscard]] double DualObsPairing::IntervalEstimator::interval() const {
-        if (mForced > 0.0) return mForced; // 用户声明优先：免窗口学习期，容差从首历元即正确
+        if (mForced > 0.0) return mForced;
         if (static_cast<int>(mDeltas.size()) < kMinSamples) return 0.0;
         std::map<long long, int> cnt;
         for (const double d: mDeltas) ++cnt[llround(d * 1000.0)];
@@ -40,7 +40,7 @@ namespace SolveDriver {
                 return a.second < b.second;
             });
         if (best->second >= 2) return static_cast<double>(best->first) / 1000.0;
-        // 众数不可靠
+
         std::vector v(mDeltas);
         std::nth_element(v.begin(), v.begin() + static_cast<long>(v.size()) / 2, v.end());
         return v[v.size() / 2];

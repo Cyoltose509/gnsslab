@@ -2,7 +2,6 @@
 #define NOMINMAX
 #include <windows.h>
 #include "core/PathMemory.h"
-#include "core/IniFile.h"
 #include "Log.h"
 
 #include <algorithm>
@@ -29,19 +28,35 @@ namespace AppConfig {
         }
     }
 
+    IniFile &PathMemory::file() const {
+        if (!loaded) {
+            cache.load(filePath);
+            loaded = true;
+        }
+        return cache;
+    }
+
+    void PathMemory::flush() const {
+        if (!dirty) return;
+        if (cache.save(filePath)) dirty = false;
+    }
+
     std::string PathMemory::get(const std::string &key, const std::string &def) const {
-        IniFile f;
-        if (!f.load(filePath)) return def;
-        const std::string v = f.get("paths", key, def);
+        const std::string v = file().get("paths", key, def);
         return isBlank(v) ? def : v;
     }
 
     void PathMemory::set(const std::string &key, const std::string &val) const {
-        IniFile f;
-        f.load(filePath);
-        if (val.empty() || isBlank(val)) f.erase("paths", key);
-        else f.set("paths", key, val);
-        f.save(filePath);
+        IniFile &f = file();
+        const std::string cur = f.get("paths", key);
+        if (val.empty() || isBlank(val)) {
+            if (cur.empty()) return;
+            f.erase("paths", key);
+        } else {
+            if (cur == val) return;
+            f.set("paths", key, val);
+        }
+        dirty = true;
     }
 
     double PathMemory::getNum(const std::string &key, const double def, const double lo, const double hi) const {
@@ -82,8 +97,7 @@ namespace AppConfig {
 
     std::vector<std::string> PathMemory::getRecent(const std::string &group) const {
         std::vector<std::string> v;
-        IniFile f;
-        if (!f.load(filePath)) return v;
+        const IniFile &f = file();
         const std::string sec = "recent_" + group;
         for (int i = 0;; ++i) {
             const std::string e = f.get(sec, std::to_string(i));
@@ -95,15 +109,16 @@ namespace AppConfig {
 
     void PathMemory::addRecent(const std::string &group, const std::string &entry, const int max) const {
         if (entry.empty()) return;
-        std::vector<std::string> v = getRecent(group);
+        const std::vector<std::string> old = getRecent(group);
+        std::vector<std::string> v = old;
         v.erase(std::remove_if(v.begin(), v.end(),
                                [&](const std::string &s) { return s == entry; }),
                 v.end());
         v.insert(v.begin(), entry);
         if (static_cast<int>(v.size()) > max) v.resize(max);
+        if (v == old) return;
 
-        IniFile f;
-        f.load(filePath);
+        IniFile &f = file();
         const std::string sec = "recent_" + group;
         for (int i = 0; i < static_cast<int>(v.size()); ++i)
             f.set(sec, std::to_string(i), v[i]);
@@ -112,6 +127,6 @@ namespace AppConfig {
             if (f.get(sec, k).empty()) break;
             f.erase(sec, k);
         }
-        f.save(filePath);
+        dirty = true;
     }
 }

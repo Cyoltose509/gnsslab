@@ -10,11 +10,11 @@ class TroReader {
 public:
     struct Record {
         CommonTime t;
-        double mjd = 0.0;    // 由 t 换算的修约儒略日
-        double ztd = 0.0;    // 天顶总延迟 TROTOT (m)
-        double ztdStd = 0.0; // TROTOT 形式误差 (m)
-        double gradN = 0.0;  // 北向水平梯度 TGNTOT (m)
-        double gradE = 0.0;  // 东向水平梯度 TGETOT (m)
+        double mjd = 0.0;
+        double ztd = 0.0;
+        double ztdStd = 0.0;
+        double gradN = 0.0;
+        double gradE = 0.0;
         double gradNStd = 0.0;
         double gradEStd = 0.0;
     };

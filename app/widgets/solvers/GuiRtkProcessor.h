@@ -12,7 +12,9 @@
 
 #include "GnssStruct.h"
 #include "SolverTask.h"
+#include "GuiHelpers.h"
 #include "EphemerisTable.h"
+#include "RtkConfig.h"
 #include "RTK.h"
 #include "core/PathMemory.h"
 
@@ -31,11 +33,11 @@ namespace Solvers::RtkProcessor {
 
         std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
 
-        RTK::Config rtkCfg{};
+        RtkConfig rtkCfg{};
         double cutoffDeg = rtkCfg.cutoffElevRad * RAD_TO_DEG;
         double sampleInterval = 0.0;
 
-        std::shared_ptr<GnssTask::SolveTask> core; // 渲染/存储基础设施
+        std::shared_ptr<GnssTask::SolveTask> core;
         std::shared_ptr<GnssTask::SolveTask> solveResult() override { return core; }
 
         void renderConfigPanel() override;
@@ -52,11 +54,11 @@ namespace Solvers::RtkProcessor {
         std::mutex pairMtx;
         std::condition_variable pairCv;
         std::atomic<bool> readDone{false};
-        std::atomic<bool> solvingDone{false}; // 全部历元已解算完成（命名对齐 SPP/PPP/LEO）
+        std::atomic<bool> solvingDone{false};
         std::atomic<int> totalEpochs{0};
-        EphemerisTable navTable; // 全量广播星历（RINEX 路径，逐历元共享传给 processEpoch）
+        EphemerisTable navTable;
 
-        // 回填上次选择（此前只写不读，重启后三个路径框全空）
+
         RtkTask() {
             core = std::make_shared<GnssTask::SolveTask>();
             const auto &pm = AppConfig::PathMemory::instance();
@@ -80,6 +82,7 @@ namespace Solvers::RtkProcessor {
                 while (n < 3 && std::getline(ss, tok, ',') && std::sscanf(tok.c_str(), "%lf", &v[n]) == 1) ++n;
                 if (n == 3) baseXyz = Eigen::Vector3d(v[0], v[1], v[2]);
             }
+            Helpers::loadSolverParams(GnssTask::SolverMode::Rtk, core->opts);
         }
 
         ~RtkTask() override {

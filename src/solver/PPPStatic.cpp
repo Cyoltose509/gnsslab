@@ -447,7 +447,8 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     if (!mEpochFirstIter) return;
     CycleSlip &det = mSlipDetectors[sat];
     det.configure(def);
-    det.setGfThreshold(0.0);
+    det.setGfThreshold(0.0); // PPP 默认仅用 MW（GF 关闭）
+    det.setGfSlipMult(mGfSlipMult); // 若开启 GF，使用可调阈值倍数
     double osbP1 = 0.0, osbP2 = 0.0, osbL1 = 0.0, osbL2 = 0.0;
     mOsb.biases(def, sat, osbP1, osbP2, osbL1, osbL2);
     osbP1 = -osbP1;
@@ -479,14 +480,11 @@ void PPPStatic::processSatellite(const SatID &sat, const TypeValueMap &tv) {
     }
 
     double mW = 0.0;
-    double mH = 0.0;
-    if (mTropoMap == "nmf")
-        mH = Troposphere::tropoNMF(elev, mEpochTropo.latDeg, mEpochTropo.hgt, mEpochTropo.doy, &mW);
-    else {
-        const double latR = mEpochTropo.latDeg * DEG_TO_RAD;
-        const double lonR = mEpochTropo.lonDeg * DEG_TO_RAD;
-        Troposphere::tropoGMF(latR, lonR, mEpochTropo.hgt, mEpochTropo.mjd, elev, &mH, &mW);
-    }
+    const double mH = Troposphere::tropoMapping(mConfig.tropoMap, elev,
+                                                mEpochTropo.latDeg * DEG_TO_RAD,
+                                                mEpochTropo.lonDeg * DEG_TO_RAD,
+                                                mEpochTropo.hgt, mEpochTropo.doy,
+                                                mEpochTropo.mjd, &mW);
     const double map = mW;
     double tropoFixed = mHasTropo ? mH * mEpochTropo.zhd : 0.0;
     if (mHasTropo && mUseTroGrad && (mEpochTropo.gradN != 0.0 || mEpochTropo.gradE != 0.0)) {
@@ -520,7 +518,7 @@ void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Var
     csData.clear();
 
     if (!mWeightInit) {
-        const double minSin = std::sin(mConfig.cutoffElevRad);
+        const double minSin = mConfig.sinElevFloor(); // 0 = 跟随截止角
         mWeightCode = Weight(mConfig.sigIFCode / std::sqrt(2.0), mConfig.sigIFCode / std::sqrt(2.0), minSin);
         mWeightPhase = Weight(mConfig.sigmaPhase / std::sqrt(2.0), mConfig.sigmaPhase / std::sqrt(2.0), minSin);
         mWeightInit = true;
@@ -1101,27 +1099,33 @@ PPPStatic::~PPPStatic() = default;
 
 void PPPStatic::applyOptions(const SolverOptions &o) {
     SPP::applyOptions(o);
+    const SppConfig &c = o.spp;
     // PPP 专有段
-    mApplySolidTide = o.solidTide != 0;
-    setMeasNoise(o.sigIFCode, o.sigPhase);
-    setFirstEpochPosVar(o.firstEpochPosVar);
-    setTropo(true, o.ztdInitValue, o.ztdInitVar, o.ztdQ);
-    setAmbInitVar(o.ambInitVar);
-    setZtdProcNoise(o.ztdQ);
-    setZtdPriorSigma(o.ztdPrior);
+    mApplySolidTide = c.applySolidTide;
+    setMeasNoise(c.sigIFCode, c.sigmaPhase);
+    setFirstEpochPosVar(c.firstEpochPosVar);
+    setTropo(true, c.ztdInitValue, c.ztdInitVar, c.ztdProcNoise);
+    setAmbInitVar(c.ambInitVar);
+    setZtdProcNoise(c.ztdProcNoise);
+    setZtdPriorSigma(c.ztdPriorSigma);
     if (o.kinematic) setPosProcNoise(o.posNoise);
-    else             setPosProcNoise(o.staticPosNoise);
-    setPosVarFloor(o.posVarFloor);
-    setAmbProcNoise(o.ambQ);
-    setTroZtdSigma(o.troZtdSigma);
-    mUseAR = o.useAR != 0;
-    mUseCycleSlip = o.useCycleSlip != 0;
-    mUseTroGrad = o.useTroGrad != 0;
-    mTropoMap = o.tropoMap;
-    mApplyWindup = o.applyWindup != 0;
-    setCodeBiasProcNoise(o.codeBiasProcNoise, o.codeBiasInitVar);
-    setGloIfcbProcNoise(o.gloIfcbProcNoise, o.gloIfcbInitVar);
-    setIsbProcNoise(o.isbProcNoise, o.isbInitVar);
-    setKeepAmbMaxGap(o.keepAmbMaxGap);
+    else setPosProcNoise(o.staticPosNoise);
+    setPosVarFloor(c.posVarFloor);
+    setAmbProcNoise(c.ambNoise);
+    setTroZtdSigma(c.troZtdSigma);
+    mUseAR = c.useAR;
+    mUseCycleSlip = c.useCycleSlip;
+    mGfSlipMult = c.gfSlipMult;
+    mUseTroGrad = c.useTroGrad;
+    mApplyWindup = c.applyWindup;
+    setCodeBiasProcNoise(c.codeBiasProcNoise, c.codeBiasInitVar);
+    setGloIfcbProcNoise(c.gloIfcbProcNoise, c.gloIfcbInitVar);
+    setKeepAmbMaxGap(c.keepAmbMaxGap);
+    mConfig.arRatioThreshold = c.arRatioThreshold;
+    mConfig.arSigGate = c.arSigGate;
+    mConfig.clockNoise = c.clockNoise;
+    mConfig.minSatsForUpdate = c.minSatsForUpdate;
+    mConfig.maxReanchorIter = c.maxReanchorIter;
+    mWeightInit = false;
     if (o.sampleInterval > 0.0) mNominalInterval = o.sampleInterval;
 }

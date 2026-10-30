@@ -6,34 +6,34 @@
 
 #include "core/InsMath.h"
 
-// 误差标定
+
 struct CalibReport {
     ImuCalibration calib;
     Eigen::Vector3d accelScaleCounts = Eigen::Vector3d::Zero();
     Eigen::Vector3d accelScaleG = Eigen::Vector3d::Zero();
-    Eigen::Vector3d accelScaleSigma = Eigen::Vector3d::Zero(); // 比例因子 1σ（LSB/(m/s²)，同 accelScaleCounts 单位）
-    double accelRms = 0.0; // 六位置拟合残差 RMS（LSB）
-    double dt = 0.005; // 采样间隔 (s)
-    Eigen::Vector3d gyroKeff = Eigen::Vector3d::Zero(); // LSB/rad（各轴，= gyroM 对角）
-    Eigen::Vector3d gyroBiasPhys = Eigen::Vector3d::Zero(); // 陀螺零偏（rad/s）
-    // 陀螺标定矩阵 M_g 与交轴耦合（选做项）：角位置法正反转相减，
-    // 每个旋转轴 ax 同时累加三轴输出，正反转差即 M_g 第 ax 列。
-    Eigen::Matrix3d gyroM = Eigen::Matrix3d::Zero(); // LSB/rad，行=输出轴，列=输入轴
-    Eigen::Matrix3d gyroCross = Eigen::Matrix3d::Zero(); // 交轴耦合（无量纲，对角置 0）
+    Eigen::Vector3d accelScaleSigma = Eigen::Vector3d::Zero();
+    double accelRms = 0.0;
+    double dt = 0.005;
+    Eigen::Vector3d gyroKeff = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gyroBiasPhys = Eigen::Vector3d::Zero();
 
-    // M = K (I + S + N)：δs 与 N 同用标称 K_nom（解码当量导出），见 applyNominal()
-    Eigen::Matrix3d accelCross = Eigen::Matrix3d::Zero(); // 交轴耦合误差（无量纲，对角置 0）
-    Eigen::Vector3d accelBiasPhys = Eigen::Vector3d::Zero(); // 加速度计零偏（m/s²）
 
-    double nominalAccelK = 0.0; // K_nom = Δt/k_a，LSB/(m/s²)
-    double nominalKeff = 0.0; // K_eff,nom = 1/k_g，LSB/rad
-    Eigen::Vector3d accelDeltaS = Eigen::Vector3d::Zero(); // δs_i = K_i/K_nom − 1
-    Eigen::Vector3d gyroDeltaS = Eigen::Vector3d::Zero(); // δs_i = K_eff,i/K_eff,nom − 1
+    Eigen::Matrix3d gyroM = Eigen::Matrix3d::Zero();
+    Eigen::Matrix3d gyroCross = Eigen::Matrix3d::Zero();
+
+
+    Eigen::Matrix3d accelCross = Eigen::Matrix3d::Zero();
+    Eigen::Vector3d accelBiasPhys = Eigen::Vector3d::Zero();
+
+    double nominalAccelK = 0.0;
+    double nominalKeff = 0.0;
+    Eigen::Vector3d accelDeltaS = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gyroDeltaS = Eigen::Vector3d::Zero();
 
     int nPos[6] = {0, 0, 0, 0, 0, 0};
     int nRot[6] = {0, 0, 0, 0, 0, 0};
-    bool ok = false; // 标定是否成功
-    std::string errorMsg; // ok=false 时的原因
+    bool ok = false;
+    std::string errorMsg;
 };
 
 class ImuCalibrator {
@@ -42,24 +42,24 @@ public:
     enum Rot { XFWD, XREV, YFWD, YREV, ZFWD, ZREV };
 
     struct CalibSegments {
-        std::vector<std::pair<Pos, ImuLog> > pos; // 静置段
-        std::vector<std::pair<Rot, ImuLog> > rot; // 旋转段
+        std::vector<std::pair<Pos, ImuLog> > pos;
+        std::vector<std::pair<Rot, ImuLog> > rot;
     };
 
     struct DetectParams {
-        int winSamples = 50; // 滑窗长度（样本）—— 当前算法未使用，保留以免外部脚本断链
-        double minSegSeconds = 0.15; // 段最短时长(s)
-        int minSegSamples = 30; // 兜底最少样本数
-        double rotThrCounts = 30.0; // 旋转判定绝对下限（counts）
-        double rotFrac = 0.4; // 相对中位加速度幅值的比例阈值
+        int winSamples = 50;
+        double minSegSeconds = 0.15;
+        int minSegSamples = 30;
+        double rotThrCounts = 30.0;
+        double rotFrac = 0.4;
     };
 
 
     struct CalibSegment {
-        bool isStatic = false; // true=静置, false=旋转
-        Pos pos = XUP; // 仅 isStatic 有效
-        Rot rot = XFWD; // 仅 !isStatic 有效
-        size_t i0 = 0, i1 = 0; // [i0, i1) 样本区间
+        bool isStatic = false;
+        Pos pos = XUP;
+        Rot rot = XFWD;
+        size_t i0 = 0, i1 = 0;
     };
 
     static const char *posLabel(const Pos p) {
@@ -72,10 +72,10 @@ public:
         return s[static_cast<int>(r)];
     }
 
-    // 对单个已解析日志做分段检测。
+
     static std::vector<CalibSegment> detect(const ImuLog &log);
 
-    // 六位置对应的机体比力方向（m/s^2）：X上 → +X。
+
     static Eigen::Vector3d posForce(Pos p, double g);
 
     static void rawMean(const ImuLog &log, Eigen::Vector3d &acc, Eigen::Vector3d &gyr);
@@ -92,17 +92,17 @@ public:
                                  double g);
 
 
-    // 标称比例因子由型号当量导出（当量→K 的换算是标定的内务，GUI 不参与）：
-    //   K_a,nom = Δt / k_a [LSB/(m/s²)]、K_eff,nom = 1 / k_g [LSB/rad]。
-    // 当量未知（型号没识别出来）直接判失败，不拿默认值糊过去。
+
+
+
     static void applyNominal(CalibReport &r, const ImuScale &scale);
 
-    // ---- 误差补偿（完整模型）：GUI 显示 / CSV 导出与后续解算共用的唯一实现 ----
-    // 加计 f = M_a⁻¹(a_raw − b_a)（比例因子与交轴耦合随 M_a⁻¹ 一并纠正，输出 m/s²）；
-    // 陀螺 ω = (I+N_g)⁻¹(g_raw − b_g)（含交轴耦合；LSB 域，转物理单位再除 S_g）。
+
+
+
     struct CompMat {
-        Eigen::Matrix3d accelMinv; // M_a⁻¹
-        Eigen::Matrix3d gyroIgN;   // (I+N_g)⁻¹
+        Eigen::Matrix3d accelMinv;
+        Eigen::Matrix3d gyroIgN;
     };
     static CompMat compMatrices(const CalibReport &r);
     static void compensate(const CompMat &m, const CalibReport &r, const ImuSample &s,

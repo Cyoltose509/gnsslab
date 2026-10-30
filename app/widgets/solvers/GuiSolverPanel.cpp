@@ -31,13 +31,13 @@ namespace Solvers::SolverPanel {
             return;
         }
         size_t step = 1;
-        while (step * maxPts < src.size()) step <<= 1; // ≥ ceil(size/maxPts) 的最小 2 的幂
+        while (step * maxPts < src.size()) step <<= 1;
         dst.clear();
         dst.reserve(src.size() / step + 2);
         for (size_t i = 0; i < src.size(); i += step)
             dst.push_back(src[i]);
         if ((src.size() - 1) % step != 0)
-            dst.push_back(src.back()); // 保留末点，保证画到最新历元
+            dst.push_back(src.back());
     }
 
     static QualityReport buildReport(GnssTask::SolveTask &task) {
@@ -98,10 +98,10 @@ namespace Solvers::SolverPanel {
         color = solveStatColor(cur.rtkStat);
     }
 
-    // PPP/LEO：统一用 sppResult.stat/ratio（无 AR 时 stat 未置位，按浮点显示）
+
     static void statusAmbig(std::string &text, ImVec4 &color, const GnssTask::EpochData &cur) {
         unsigned char st = cur.sppResult.stat;
-        if (st == 0) st = 2; // 未置位（PPP/LEO 无 AR）→ 浮点
+        if (st == 0) st = 2;
         char buf[200];
         snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
                  solveStatLabel(st), cur.sppResult.ratio, cur.numSatsResult);
@@ -110,7 +110,7 @@ namespace Solvers::SolverPanel {
     }
 
     static const SolverUi &solverUi(const GnssTask::SolverMode m) {
-        static constexpr SolverUi generic{&statusNone}; // SPP
+        static constexpr SolverUi generic{&statusNone};
         static constexpr SolverUi ppp{&statusAmbig};
         static constexpr SolverUi leo{&statusAmbig};
         static constexpr SolverUi rtk{&statusRtk};
@@ -164,7 +164,7 @@ namespace Solvers::SolverPanel {
             job->renderConfigPanel();
             return;
         }
-        // 惯导标定/对准任务有独立的结果面板（不画 GNSS 定位/质量分析页）
+
         if (Tools::InsPanel::RenderInsResult(job)) return;
         const auto core = job->solveResult();
         RenderTaskImpl(core);
@@ -172,7 +172,7 @@ namespace Solvers::SolverPanel {
 
     void RenderTaskImpl(const std::shared_ptr<GnssTask::SolveTask> &task) {
         const bool isRealtime = task->isRealtime;
-        // 实时流没有「取消」按钮，改由这里提供「停止连接」；批量解算的取消按钮在配置面板里。
+
         if (isRealtime) {
             if (!task->done) {
                 if (ImGui::Button("停止连接")) task->stop = true;
@@ -226,12 +226,12 @@ namespace Solvers::SolverPanel {
                 }
                 v.busy = busy;
 
-                // 天顶图轨迹增量构建（独立于下方锁，内部自行持锁）
+
                 if (epochCount > 0) EnsureSkyTracksBuilt(task);
 
                 if (epochCount > 0 && selectedIdx >= 0) {
                     std::lock_guard lk(task->mutex);
-                    auto &cur = task->epochs[selectedIdx]; //NOLINT
+                    auto &cur = task->epochs[selectedIdx];
 
                     std::vector<int> visIdx;
                     visIdx.reserve(static_cast<int>(cur.satIds.size()));
@@ -265,7 +265,7 @@ namespace Solvers::SolverPanel {
                                                                       "伪距残差(m)", itC != pr.end()
                                                                                        ? fmt4(itC->second)
                                                                                        : std::string("-"));
-                                                                  // SPP 不做载波相位 → postResPhase 恒空，显示 "-"
+
                                                                   sr.extra.emplace_back(
                                                                       "相位残差(m)", itP != pp.end()
                                                                                          ? fmt4(itP->second)
@@ -313,7 +313,7 @@ namespace Solvers::SolverPanel {
                             xyzFloat = cur.rtkFloatXyz;
                             xyzFixed = cur.rtkStat == 1 ? r.xyz : cur.rtkFloatXyz;
                         }
-                        if (xyzFloat.squaredNorm() < 1.0) xyzFloat = r.xyz; // 兜底：无浮点解时用当前解
+                        if (xyzFloat.squaredNorm() < 1.0) xyzFloat = r.xyz;
                         v.xyzFloatDisp = xyzFloat;
                         v.xyzFixedDisp = xyzFixed;
                         v.sigmaFloatDisp = r.sigmaPFloat > 0 ? r.sigmaPFloat : r.sigmaP;
@@ -328,7 +328,7 @@ namespace Solvers::SolverPanel {
                                                       : r.xyz - task->refECEF;
                         }
 
-                        // 速度
+
                         if (r.vel.squaredNorm() > 1e-4) {
                             v.hasVelDisp = true;
                             v.velDisp = r.vel;
@@ -350,7 +350,7 @@ namespace Solvers::SolverPanel {
                             v.enuFixed3d = v.enuFixedDisp.norm();
                         }
 
-                        // 解状态 / ratio（用于 DOP 表追加列与解状态文本块）
+
                         v.solStatShort = isFixed ? "固定(Fixed)" : "浮点(Float)";
                         v.solRatio = isRtkMode ? cur.rtkRatio : r.ratio;
                         v.showSolveStatus = canFixed;
@@ -363,12 +363,12 @@ namespace Solvers::SolverPanel {
                     v.epochInfo = buf;
                 }
 
-                // 图表数据：在各自锁内快照为值，避免渲染期与解算线程竞争
+
                 if (epochCount > 0 && selectedIdx >= 0) {
                     bool sigmaVNonZero = false;
                     {
                         std::lock_guard plk(task->plotMutex);
-                        auto &pp = task->plotData; //NOLINT
+                        auto &pp = task->plotData;
                         v.times = pp.times;
                         v.enu_e = pp.enu_e;
                         v.enu_n = pp.enu_n;
@@ -396,7 +396,7 @@ namespace Solvers::SolverPanel {
                             pp.resYhi = hi;
                             pp.resRangeReady = true;
                         }
-                        // 相位残差量级 ~cm：半宽下限给 0.01 m，否则会被码残差的 1 m 下限压成直线
+
                         if (isDone && !pp.resPhaseRangeReady) {
                             auto [lo, hi] = Helpers::computeRobustResRange(pp.satResPhaseVals, 0.01);
                             pp.resPhaseYlo = lo;
@@ -433,7 +433,7 @@ namespace Solvers::SolverPanel {
                     }
                     {
                         std::lock_guard lk(task->mutex);
-                        v.skyTracks = task->skyTracks; // 全量（同样不抽稀）
+                        v.skyTracks = task->skyTracks;
                         int solvedCnt = 0, velCnt = 0;
                         for (const auto &ep: task->epochs) {
                             if (!ep.solved) continue;
@@ -443,7 +443,7 @@ namespace Solvers::SolverPanel {
                         v.showSigmaV = solvedCnt > 0 && static_cast<double>(velCnt) / solvedCnt > 0.05
                                        && sigmaVNonZero;
                     }
-                    v.curSkyPts = BuildCurrentSkyPoints(task, selectedIdx); // 内部自行持锁
+                    v.curSkyPts = BuildCurrentSkyPoints(task, selectedIdx);
                     v.showSigmaDop = true;
 
                     if (v.showRatio && epochCount > 0) {
@@ -472,21 +472,21 @@ namespace Solvers::SolverPanel {
                     std::lock_guard lk(task->mutex);
                     if (task->hasLeo) {
                         v.show3d = true;
-                        v.showRtn = !task->leoRefTraj.empty(); // 无参考轨道则不画 RTN 序列
-                        v.hasRef = !task->leoRefTraj.empty(); // 无参考轨道则不显示 RTN 面板
-                        v.showRefEnu = false; // LEO 不编辑/显示参考真值
+                        v.showRtn = !task->leoRefTraj.empty();
+                        v.hasRef = !task->leoRefTraj.empty();
+                        v.showRefEnu = false;
                         v.leoPos3d = task->leoPos3d;
                         v.leoRef3d = task->leoRef3d;
                         copySampled(task->leoTraj, v.leoTraj);
                         copySampled(task->leoRefTraj, v.leoRefTraj);
                         v.gnssVis = task->gnssVis;
                         for (const auto &[sat, traj]: task->gnssTraj)
-                            copySampled(traj, v.gnssTraj[sat], 800); // 卫星轨迹更粗即可
+                            copySampled(traj, v.gnssTraj[sat], 800);
                         copySampled(task->rtnR, v.rtnR);
                         copySampled(task->rtnT, v.rtnT);
                         copySampled(task->rtnN, v.rtnN);
                         copySampled(task->rtnD3, v.rtnD3);
-                        copySampled(task->rtnTimes, v.rtnTimes); // 必须与 RTN 数组同采样，否则索引错位
+                        copySampled(task->rtnTimes, v.rtnTimes);
                     }
                 }
 

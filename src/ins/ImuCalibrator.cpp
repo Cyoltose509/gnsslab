@@ -8,7 +8,7 @@
 #include <cstdio>
 
 namespace {
-    // 返回「轴(0/1/2) + 符号」合成的 0..5 键：正轴→2*ax，负轴→2*ax+1
+
     int axisKey(const double a, const double b, const double c) {
         int ax = 0;
         double m = std::fabs(a);
@@ -17,7 +17,7 @@ namespace {
             ax = 1;
         }
         if (std::fabs(c) > m) {
-            m = std::fabs(c); //NOLINT
+            m = std::fabs(c);
             ax = 2;
         }
         const double v = ax == 0 ? a : ax == 1 ? b : c;
@@ -76,14 +76,14 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
             d.prefit = raw[i](k);
             d.weight = w[i];
             d.varCoeffData = {{vSx, f[i](0)}, {vSy, f[i](1)}, {vSz, f[i](2)}, {vB, 1.0}};
-            equ.obsEquData[EquID(SatID('P', static_cast<int>(i)), "acc")] = d; // 'P'+段序号仅作 EquSys 内键
+            equ.obsEquData[EquID(SatID('P', static_cast<int>(i)), "acc")] = d;
         }
         lsq.solve(equ);
         M(k, 0) = lsq.getSolution(Parameter::dX);
         M(k, 1) = lsq.getSolution(Parameter::dY);
         M(k, 2) = lsq.getSolution(Parameter::dZ);
         b(k) = lsq.getSolution(Parameter::cdt);
-        // 比例因子 1σ
+
         if (scaleSigma && lsq.covMatrix.rows() == 4) {
             (*scaleSigma)(k) = std::sqrt(std::max(0.0, lsq.covMatrix(0, 0))) * lsq.sigma0;
         }
@@ -102,7 +102,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
 }
 
 
-// 完整标定
+
 CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle, double g) {
     CalibReport r;
     r.ok = false;
@@ -124,7 +124,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
         return r;
     }
 
-    // ---- 加速度计：堆叠所有静置段做最小二乘，行权重 = 段样本数 ----
+
     std::vector<Eigen::Vector3d> raw, f;
     std::vector<double> w;
     raw.reserve(seg.pos.size());
@@ -152,7 +152,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     }
     r.accelBiasPhys = r.calib.accelM.inverse() * r.calib.accelB;
 
-    //陀螺零偏
+
     Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero();
     for (int ax = 0; ax < 3; ++ax) {
         double sumUp = 0.0, sumDn = 0.0, wUp = 0.0, wDn = 0.0;
@@ -175,7 +175,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
             gyroBias(ax) = 0.5 * (sumUp / wUp + sumDn / wDn);
     }
 
-    // 陀螺比例因子 + 交轴耦合
+
     Eigen::Matrix3d gyroM = Eigen::Matrix3d::Zero();
     for (int ax = 0; ax < 3; ++ax) {
         double s1[3] = {0.0, 0.0, 0.0}, s2[3] = {0.0, 0.0, 0.0};
@@ -197,9 +197,9 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
             gyroM(i, ax) = nSeg > 0 ? (s1[i] - s2[i]) / (turnAngle * nSeg) : 0.0;
     }
     r.gyroM = gyroM;
-    r.gyroKeff = gyroM.diagonal(); // 对角 = 各轴有效比例因子
+    r.gyroKeff = gyroM.diagonal();
     {
-        // 交轴耦合归一化兜底（applyNominal 会用标称 K_eff,nom 覆写）
+
         if (const double gnorm = r.gyroKeff.mean(); gnorm != 0.0) {
             r.gyroCross = gyroM / gnorm;
             r.gyroCross.diagonal().setZero();
@@ -209,7 +209,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
 
     r.calib.gyroScale = r.gyroKeff * r.dt;
 
-    // 陀螺零偏换算到物理单位：LSB/历元 -> rad/s
+
     for (int ax = 0; ax < 3; ++ax)
         r.gyroBiasPhys(ax) = r.calib.gyroScale(ax) != 0.0 ? gyroBias(ax) / r.calib.gyroScale(ax) : 0.0;
 
@@ -223,8 +223,8 @@ void ImuCalibrator::applyNominal(CalibReport &r, const ImuScale &scale) {
         r.errorMsg = "型号当量未知（IMU Type 未识别），无法确定标称比例因子";
         return;
     }
-    const double kA = r.dt / scale.accelMpsPerLsb; // LSB/(m/s²)
-    const double kG = 1.0 / scale.gyroRadPerLsb;  // LSB/rad
+    const double kA = r.dt / scale.accelMpsPerLsb;
+    const double kG = 1.0 / scale.gyroRadPerLsb;
     r.nominalAccelK = kA;
     r.nominalKeff = kG;
     r.accelDeltaS = r.accelScaleCounts / kA - Eigen::Vector3d::Ones();
@@ -255,7 +255,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
             std::fabs(static_cast<double>(s.az))
         });
     }
-    // 百分位（排序副本）
+
     auto pctOf = [](const std::vector<double> &v, const double q) {
         std::vector<double> c = v;
         std::sort(c.begin(), c.end());
@@ -264,20 +264,20 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
     };
     const double aMed = pctOf(am, 0.50);
 
-    // 2) 旋转阈值
+
     const double thr = std::max(p.rotThrCounts, aMed * p.rotFrac);
 
-    // 3) 每样本「段键」
+
     std::vector<int> key(N);
     for (size_t i = 0; i < N; ++i) {
         const auto &s = log[i];
         if (m[i] > thr)
-            key[i] = 6 + axisKey(s.gx, s.gy, s.gz); // 6..11=旋转
+            key[i] = 6 + axisKey(s.gx, s.gy, s.gz);
         else
-            key[i] = axisKey(s.ax, s.ay, s.az); // 0..5 =静置
+            key[i] = axisKey(s.ax, s.ay, s.az);
     }
 
-    // 4) 初分段（连续同键）
+
     struct Run {
         size_t i0, i1;
         int key;
@@ -292,7 +292,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
         i = j;
     }
 
-    // 4.5) 估计采样间隔
+
     auto estimateDt = [](const ImuLog &_log) -> double {
         if (_log.size() < 8) return 0.0;
         std::vector<double> d;
@@ -310,7 +310,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
                               ? std::max<size_t>(1, static_cast<size_t>(std::llround(p.minSegSeconds / dtEst)))
                               : static_cast<size_t>(p.minSegSamples);
 
-    // 5) 合并过短段
+
     bool changed = true;
     while (changed) {
         changed = false;
@@ -322,7 +322,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
             const size_t lenL = hasL ? runs[k - 1].i1 - runs[k - 1].i0 : 0;
             const size_t lenR = hasR ? runs[k + 1].i1 - runs[k + 1].i0 : 0;
             const bool toLeft = !hasR || (hasL && lenL >= lenR);
-            const size_t seg = toLeft ? k - 1 : k + 1; // 较长的邻段
+            const size_t seg = toLeft ? k - 1 : k + 1;
             runs[seg] = {std::min(runs[k].i0, runs[seg].i0), std::max(runs[k].i1, runs[seg].i1), runs[seg].key};
             runs.erase(runs.begin() + static_cast<long>(k));
             changed = true;
@@ -330,7 +330,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
         }
     }
 
-    // 6) 逐段用段落均值重分类
+
     for (const auto &[i0, i1, _key]: runs) {
         const size_t n = i1 - i0;
         if (n == 0) continue;
@@ -349,11 +349,11 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
         seg.i0 = i0;
         seg.i1 = i1;
         if (_key >= 6) {
-            // 旋转
+
             seg.isStatic = false;
             seg.rot = static_cast<Rot>(axisKey(gx * inv, gy * inv, gz * inv));
         } else {
-            // 静置
+
             seg.isStatic = true;
             seg.pos = static_cast<Pos>(axisKey(ax * inv, ay * inv, az * inv));
         }

@@ -28,10 +28,10 @@
 #define ID_GLOEPHEM     723
 #define ID_GALEPHEM     1122
 #define ID_BESTPOS      42
-#define ID_RAWIMU       268  // RAWIMU   长头 28B，无 IMU Type
-#define ID_RAWIMUS      325  // RAWIMUS  短头 12B，无 IMU Type
-#define ID_RAWIMUXA     1461 // RAWIMUX  长头 28B，payload 第 2 字节 = IMU Type
-#define ID_RAWIMUSX     1462 // RAWIMUSX 短头 12B，payload 第 2 字节 = IMU Type
+#define ID_RAWIMU       268
+#define ID_RAWIMUS      325
+#define ID_RAWIMUXA     1461
+#define ID_RAWIMUSX     1462
 #define ID_RAWIMU_COMPACT 0x1313
 #define POLYCRC32 0xEDB88320u
 
@@ -39,7 +39,7 @@ bool OEM7Reader::open(const std::string &filename) {
     std::ifstream ifs(acpToWide(filename), std::ios::binary | std::ios::ate);
     if (!ifs) return false;
 
-    // 记录文件总大小用于进度显示
+
     fileSize = static_cast<size_t>(ifs.tellg());
     ifs.seekg(0, std::ios::beg);
 
@@ -72,9 +72,9 @@ void OEM7Reader::close() {
 }
 
 static constexpr OEM7Reader::InsRecordLayout kInsLayoutCandidates[] = {
-    // 带 IMU Info/Type 两字节
+
     {true, 56, 14, 13, 8, 16, 24, 28, "RAWIMUSX 字段集（含 IMU Type）"},
-    // 省掉 Info/Type 两字节
+
     {true, 56, 12, -1, 8, 16, 24, 28, "RAWIMUS 字段集（无 IMU Type）"},
 };
 
@@ -287,7 +287,7 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
     for (uint32_t i = 0; i < numObs; ++i) {
         if (off + 44 > message.size()) break;
         const auto prnRaw = Math::U2(&message[off + 0]);
-        const auto gfrq = Math::U2(&message[off + 2]); // GLONASS FCN+8（FDMA 频率通道）
+        const auto gfrq = Math::U2(&message[off + 2]);
         const auto psr = Math::R8(&message[off + 4]);
         const auto adr = Math::R8(&message[off + 16]);
         const auto doppler = Math::R4(&message[off + 28]);
@@ -304,62 +304,62 @@ bool OEM7Reader::parseRange(const std::vector<uint8_t> &message) {
         int prn = prnRaw;
 
         switch (sysInt) {
-            case 0: // GPS
+            case 0:
                 sys = 'G';
                 switch (sigType) {
                     case 0: freqIdx = 1;
-                        break; // L1 C/A
+                        break;
                     case 9: freqIdx = 2;
-                        break; // L2 P(Y)
+                        break;
                     default: freqIdx = -1;
                         break;
                 }
                 break;
-            case 1: // GLONASS
+            case 1:
                 sys = 'R';
-                prn = prnRaw - 37; // 37+slot → slot(1..24)
-                chan = gfrq - 8; // FCN+8 → 频率通道号 k
+                prn = prnRaw - 37;
+                chan = gfrq - 8;
                 switch (sigType) {
                     case 0: freqIdx = 1;
-                        break; // G1 C/A
-                    case 1: // G2 C/A
+                        break;
+                    case 1:
                     case 5: freqIdx = 2;
-                        break; // G2 P
+                        break;
                     case 6: freqIdx = 3;
-                        break; // G3 (CDMA)
+                        break;
                     default: freqIdx = -1;
                         break;
                 }
                 break;
-            case 3: // Galileo
+            case 3:
                 sys = 'E';
                 switch (sigType) {
                     case 2: freqIdx = 1;
-                        break; // E1 C
-                    case 6: // E6 B
+                        break;
+                    case 6:
                     case 7: freqIdx = 6;
-                        break; // E6 C
+                        break;
                     case 12: freqIdx = 5;
-                        break; // E5a Q
+                        break;
                     case 17: freqIdx = 7;
-                        break; // E5b Q
+                        break;
                     case 20: freqIdx = 8;
-                        break; // AltBOC
+                        break;
                     default: freqIdx = -1;
                         break;
                 }
                 break;
-            case 4: // BDS
+            case 4:
                 sys = 'C';
                 switch (sigType) {
-                    case 0: // B1I D1
-                    case 4: // B1I D2
+                    case 0:
+                    case 4:
                         freqIdx = 2;
-                        break; // B1
-                    case 2: // B3I D1
-                    case 6: // B3I D2
+                        break;
+                    case 2:
+                    case 6:
                         freqIdx = 6;
-                        break; // B3
+                        break;
                     default: freqIdx = -1;
                         break;
                 }
@@ -396,13 +396,13 @@ bool OEM7Reader::parseGpsEphem(const std::vector<uint8_t> &message) {
     int off = currentHeader.hLen;
     eph.prn = static_cast<int>(Math::U4(&message[off])) & 0xFF;
     off += 4;
-    off += 8; // tow skip
+    off += 8;
     eph.health = Math::U4(&message[off]);
     off += 4;
-    off += 8; // iode skip
+    off += 8;
     eph.week = Math::U4(&message[off]);
     off += 4;
-    off += 4; // zWeek skip
+    off += 4;
     eph.toe = Math::R8(&message[off]);
     off += 8;
     const double A = Math::R8(&message[off]);
@@ -445,7 +445,7 @@ bool OEM7Reader::parseGpsEphem(const std::vector<uint8_t> &message) {
     eph.a1 = Math::R8(&message[off]);
     off += 8;
     eph.a2 = Math::R8(&message[off]);
-    off += 8; //NOLINT
+    off += 8;
 
     storeEph(&EphemerisTable::gps, eph.prn, std::move(eph));
     return true;

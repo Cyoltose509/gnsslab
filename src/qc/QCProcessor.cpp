@@ -2,7 +2,7 @@
 #include "FreqCombo.h"
 #include "Const.h"
 #include "MathUtils.h"
-#include "CycleSlip.h"   // 周跳/粗差探测（独立类 CycleSlip）：detectMW/detectGF 复用同一套逻辑
+#include "CycleSlip.h"
 #include <algorithm>
 #include <tuple>
 #include <Eigen/Dense>
@@ -18,7 +18,7 @@ namespace QC {
         return 0.0;
     }
 
-    // 取某频点的载噪比 C/N0；RINEX 中用 Sxx 表示（如 S1I, S2P, S6I），单位 dB-Hz
+
     static double getCnr(const TypeValueMap &m, const char b) {
         for (auto &[k, v]: m) {
             if (k.size() >= 2 && k[0] == 'S' && k[1] == b && v > 0.0) return v;
@@ -26,7 +26,7 @@ namespace QC {
         return 0.0;
     }
 
-    // 取某观测类型(码/相)的实际信号码（含属性字符，如 "C1I"/"C2X"）
+
     static std::string findObsType(const TypeValueMap &m, const char t, const char b) {
         for (auto &[k, v]: m)
             if (k.size() >= 2 && k[0] == t && k[1] == b && v != 0.0) return k;
@@ -39,10 +39,10 @@ namespace QC {
     };
 
     BandsInfo pickBands(const char sys, const TypeValueMap &m) {
-        std::vector<std::pair<char, std::string> > cand; // (band, 实际信号码)
+        std::vector<std::pair<char, std::string> > cand;
         for (char b: {'1', '2', '5', '6', '7', '8'}) {
             std::string ct = findObsType(m, 'C', b);
-            std::string lt = findObsType(m, 'L', b); //NOLINT
+            std::string lt = findObsType(m, 'L', b);
             if (!ct.empty() && !lt.empty()) cand.emplace_back(b, ct);
         }
         if (cand.size() < 2) return {};
@@ -75,7 +75,7 @@ namespace QC {
 
 
 
-    // ---------- 观测值噪声：分弧段三次差标准差 ----------
+
     static double tripleStd(const std::vector<double> &x, const std::vector<double> &t,
                             const double interval, const std::vector<char> &ok) {
         const auto n = static_cast<int>(x.size());
@@ -95,25 +95,25 @@ namespace QC {
             s += d3 * d3;
             cnt++;
         }
-        if (cnt < 2) return 0; // 需要 N-1 >= 1
+        if (cnt < 2) return 0;
         return std::sqrt(s / (8.0 * (cnt - 1.0)));
     }
 
 
-    // ---------- 多路径误差：滑动窗口去均值 RMS，Nsw=50 ----------
+
     static double slidingWindowMp(const std::vector<double> &mp, const std::vector<char> &ok, const int n) {
         double sum = 0;
         int cnt = 0;
         for (int i = 0; i < n; i++) {
             constexpr int Nsw = 50;
             if (!ok[i]) continue;
-            // 收集以 i 结尾、同弧段内连续有效的最多 Nsw 个历元
+
             int a = i, len = 1;
             while (a - 1 >= 0 && ok[a - 1] && len < Nsw) {
                 a--;
                 len++;
             }
-            if (len < 2) continue; // 至少 2 点才能计算窗口均值和 N-1 分母
+            if (len < 2) continue;
             double mean = 0.0;
             for (int t = 0; t < len; t++) mean += mp[a + t];
             mean /= static_cast<double>(len);
@@ -122,13 +122,13 @@ namespace QC {
                 const double r = mp[a + t] - mean;
                 s += r * r;
             }
-            sum += std::sqrt(s / static_cast<double>(len - 1)); // 分母 Nsw-1
+            sum += std::sqrt(s / static_cast<double>(len - 1));
             cnt++;
         }
         return cnt ? sum / cnt : 0.0;
     }
 
-    // 滑动窗口去均值：返回每个有效点的多路径误差残差
+
     static std::vector<double> mpDetrended(const std::vector<double> &mp, const std::vector<char> &ok, const int n) {
         std::vector r(n, 0.0);
         for (int i = 0; i < n; i++) {
@@ -148,7 +148,7 @@ namespace QC {
         return r;
     }
 
-    // ---------- 综合评估：同趋势化 + 无量纲化 + 熵权 + TOPSIS ----------
+
     static void computeComprehensive(QualityReport &rep) {
         ComprehensiveEval ce;
         ce.indicators = {"完整率", "周跳比", "多路径", "电离层变化率", "伪距噪声", "载波噪声", "载噪比"};
@@ -157,7 +157,7 @@ namespace QC {
         const int J = static_cast<int>(sats.size());
         constexpr int I = 7;
 
-        // 构造指标矩阵 y[l][m] (l=指标, m=卫星)，并做同趋势化(全转为极大型)
+
         std::vector y(I, std::vector<double>(J));
         for (int m = 0; m < J; m++) {
             const SatID &sat = sats[m];
@@ -165,16 +165,16 @@ namespace QC {
             const double mp = 0.5 * (q.mp1Rms + q.mp2Rms);
             const double rho = 0.5 * (q.sigRho1 + q.sigRho2);
             const double ph = 0.5 * (q.sigPh1 + q.sigPh2);
-            y[0][m] = q.completeness; // 完整率：越大越好
-            y[1][m] = q.slipRatio; // 周跳比：越大越好
-            y[2][m] = 1.0 / (mp + 1e-6); // 多路径：取倒数(极小型→极大型)
-            y[3][m] = 1.0 / (q.ionoRateStd + 1e-6); // 电离层变化率：取倒数
-            y[4][m] = 1.0 / (rho + 1e-6); // 伪距噪声：取倒数
-            y[5][m] = 1.0 / (ph + 1e-6); // 载波噪声：取倒数
-            y[6][m] = q.cnrMean; // 载噪比：越大越好
+            y[0][m] = q.completeness;
+            y[1][m] = q.slipRatio;
+            y[2][m] = 1.0 / (mp + 1e-6);
+            y[3][m] = 1.0 / (q.ionoRateStd + 1e-6);
+            y[4][m] = 1.0 / (rho + 1e-6);
+            y[5][m] = 1.0 / (ph + 1e-6);
+            y[6][m] = q.cnrMean;
         }
 
-        // 无量纲化
+
         std::vector z(I, std::vector<double>(J));
         for (int l = 0; l < I; l++) {
             double mn = 1e300, mx = -1e300;
@@ -193,7 +193,7 @@ namespace QC {
             }
         }
 
-        // 熵权
+
         ce.weights.assign(I, 1.0 / I);
         if (J > 1) {
             std::vector w(I, 0.0);
@@ -227,7 +227,7 @@ namespace QC {
         }
         ce.overallE = sumE / J;
 
-        // 各系统 E：系统内卫星 E 的平均
+
         std::map<char, std::vector<double> > sysEs;
         for (const SatID &sat: sats) {
             sysEs[sat.system].push_back(ce.E[sat]);
@@ -241,7 +241,7 @@ namespace QC {
         rep.comprehensive = std::move(ce);
     }
 
-    // 单星工作缓存
+
     struct Work {
         int n = 0;
         std::vector<double> tt, c1s, c2s, l1m, l2m, l1cyc, l2cyc, MW, LGF, PGF, mp1s, mp2s, ionos, ionos2, cnrs, cnrs2;
@@ -257,9 +257,9 @@ namespace QC {
         if (rep.totalEpochs < 2) return rep;
 
         if (nominalInterval > 0.0) {
-            rep.interval = nominalInterval; // 用户声明优先
+            rep.interval = nominalInterval;
         } else {
-            // 历元间隔 (取中位历元差)
+
             std::vector<double> diffs;
             for (int i = 1; i < static_cast<int>(epochs.size()); i++)
                 if (double d = epochs[i].sow - epochs[i - 1].sow; d > 0 && d < 1e4) diffs.push_back(d);
@@ -269,7 +269,7 @@ namespace QC {
             } else rep.interval = 1.0;
         }
 
-        std::map<SatID, std::vector<std::tuple<int, double, double, double, double, double> > > recs; // (k,sow,c1,l1,c2,l2)
+        std::map<SatID, std::vector<std::tuple<int, double, double, double, double, double> > > recs;
         std::map<SatID, BandsInfo> bands;
         std::map<SatID, int> freq1Valid, freq2Valid;
 
@@ -288,7 +288,7 @@ namespace QC {
                 if (b.hi == 0) continue;
                 const double c1 = getVal(m, 'C', b.hi), l1 = getVal(m, 'L', b.hi);
                 const double c2 = getVal(m, 'C', b.lo), l2 = getVal(m, 'L', b.lo);
-                // 频点级有效计数 (DI_f)
+
                 if (c1 != 0.0 && l1 != 0.0) freq1Valid[sat]++;
                 if (c2 != 0.0 && l2 != 0.0) freq2Valid[sat]++;
                 if (c1 == 0 || l1 == 0 || c2 == 0 || l2 == 0) continue;
@@ -296,20 +296,20 @@ namespace QC {
             }
         }
 
-        // 构造工作缓存 + MW/GF 周跳与粗差探测
+
         std::map<SatID, Work> works;
         for (auto &[sat, R]: recs) {
             if (R.size() < 2) continue;
-            const BandsInfo &band = bands[sat]; //NOLINT
+            const BandsInfo &band = bands[sat];
             const double f1 = band.f1, f2 = band.f2;
             if (f1 <= 0 || f2 <= 0) continue;
             const double lam1 = C_MPS / f1, lam2 = C_MPS / f2;
             const FreqCombo fc = FreqCombo::fromFreq(band.f1, band.f2);
             const double alpha = f1 / f2 * (f1 / f2);
-            const double a = (alpha + 1.0) / (alpha - 1.0); // MP1 中 L1 系数
-            const double b = 2.0 / (alpha - 1.0); // MP1 中 L2 系数
-            const double c = 2.0 * alpha / (alpha - 1.0); // MP2 中 L1 系数
-            const double d = (alpha + 1.0) / (alpha - 1.0); // MP2 中 L2 系数
+            const double a = (alpha + 1.0) / (alpha - 1.0);
+            const double b = 2.0 / (alpha - 1.0);
+            const double c = 2.0 * alpha / (alpha - 1.0);
+            const double d = (alpha + 1.0) / (alpha - 1.0);
 
             Work w;
             w.n = static_cast<int>(R.size());
@@ -341,20 +341,20 @@ namespace QC {
                 w.l2m[i] = l2;
                 w.l1cyc[i] = l1 / lam1;
                 w.l2cyc[i] = l2 / lam2;
-                w.MW[i] = fc.MW_meter(c1, c2, l1, l2); // MW (米) = Melbourne-Wübbena 宽巷，与 PPP 同源
-                w.LGF[i] = FreqCombo::GF_phase(l1, l2); // GF 相位组合 (L2-L1, 米)
-                w.PGF[i] = FreqCombo::GF_code(c1, c2);  // GF 伪距组合 (P2-P1, 米)
-                w.mp1s[i] = c1 - a * l1 + b * l2; // Estey-Meertens MP1
-                w.mp2s[i] = c2 - c * l1 + d * l2; // Estey-Meertens MP2
-                w.ionos[i] = f2 * f2 / (f1 * f1 - f2 * f2) * (l1 - l2); //  I_k1
-                w.ionos2[i] = f1 * f1 / (f1 * f1 - f2 * f2) * (l1 - l2); //  I_k2
+                w.MW[i] = fc.MW_meter(c1, c2, l1, l2);
+                w.LGF[i] = FreqCombo::GF_phase(l1, l2);
+                w.PGF[i] = FreqCombo::GF_code(c1, c2);
+                w.mp1s[i] = c1 - a * l1 + b * l2;
+                w.mp2s[i] = c2 - c * l1 + d * l2;
+                w.ionos[i] = f2 * f2 / (f1 * f1 - f2 * f2) * (l1 - l2);
+                w.ionos2[i] = f1 * f1 / (f1 * f1 - f2 * f2) * (l1 - l2);
                 w.epIdx[i] = kk;
             }
-            // 断档标记
+
             for (int i = 1; i < w.n; i++)
                 if (std::fabs(w.tt[i] - w.tt[i - 1] - rep.interval) > 0.5 * rep.interval) w.gapOk[i] = 0;
 
-            //周跳/粗差探测
+
             SatQC q;
             q.sat = sat;
             q.band1 = band.hi;
@@ -364,7 +364,7 @@ namespace QC {
             CycleSlip::detectMW(w.MW, w.gapOk, q.slipFlag, q.outlierFlag);
             std::vector<char> qcArtifact(w.n, 0);
             CycleSlip::detectGF(w.LGF, w.PGF, w.gapOk, lam1, lam2, q.slipFlag, qcArtifact);
-            q.clockJumpFlag.assign(w.n, 0); // 钟跳标记，初始化为 0
+            q.clockJumpFlag.assign(w.n, 0);
             q.slips = static_cast<int>(std::count(q.slipFlag.begin(), q.slipFlag.end(), 1));
             q.outliers = static_cast<int>(std::count(q.outlierFlag.begin(), q.outlierFlag.end(), 1));
             q.slipRatio = q.slips > 0
@@ -379,19 +379,19 @@ namespace QC {
             rep.sats[sat] = std::move(q);
         }
 
-        // 接收机钟跳探测 (全局跨星)
+
         {
             constexpr double c = C_MPS;
-            constexpr double xi = 4.0; // 经验观测噪声
-            constexpr double msLo = 1e-7 * c - 3.0 * xi, msHi = 1e-5 * c + 3.0 * xi; // 毫秒级
-            constexpr double usThr = 1e-3 * c - 3.0 * xi; // 微秒级
-            // 建立 卫星→全局历元 索引表
+            constexpr double xi = 4.0;
+            constexpr double msLo = 1e-7 * c - 3.0 * xi, msHi = 1e-5 * c + 3.0 * xi;
+            constexpr double usThr = 1e-3 * c - 3.0 * xi;
+
             std::map<SatID, std::vector<int> > locAt;
             for (auto &[sat, w]: works) {
                 locAt[sat].assign(rep.totalEpochs, -1);
                 for (int i = 0; i < w.n; i++) locAt[sat][w.epIdx[i]] = i;
             }
-            // 已发现周跳的卫星不参与后续钟跳探测
+
             std::map<SatID, bool> hasSlip;
             for (auto &[sat, w]: works) {
                 const SatQC &q = rep.sats.at(sat);
@@ -401,7 +401,7 @@ namespace QC {
             for (int gi = 0; gi + 1 < rep.totalEpochs; gi++) {
                 int nms = 0, nus = 0, totalValid = 0;
                 for (auto &[sat, w]: works) {
-                    if (hasSlip[sat]) continue; // 周跳卫星不参与钟跳探测
+                    if (hasSlip[sat]) continue;
                     const int li = locAt[sat][gi], lj = locAt[sat][gi + 1];
                     if (li < 0 || lj < 0) continue;
                     if (const double dL = std::fabs(w.c1s[lj] - w.c1s[li] - (w.l1m[lj] - w.l1m[li])); dL > msLo && dL < msHi) nms++;
@@ -412,7 +412,7 @@ namespace QC {
                     for (auto &[sat, w]: works) {
                         const int lj = locAt[sat][gi + 1];
                         if (lj < 0) continue;
-                        rep.sats[sat].slipFlag[lj] = 0; // 钟跳导致的误报周跳反消
+                        rep.sats[sat].slipFlag[lj] = 0;
                         rep.sats[sat].outlierFlag[lj] = 0;
                         rep.sats[sat].clockJumpFlag[lj] = 1;
                         rep.sats[sat].clockJumps++;
@@ -422,35 +422,35 @@ namespace QC {
             }
         }
 
-        // 第二遍：最终弧段 + 各指标计算
+
         for (auto &[sat, w]: works) {
             SatQC &q = rep.sats[sat];
             const int n = w.n;
-            // 断档 / 周跳 / 钟跳 处断开
+
             std::vector<char> ok(n, 1);
             for (int i = 0; i < n; i++)
                 if (!w.gapOk[i] || q.slipFlag[i] || q.clockJumpFlag[i]) ok[i] = 0;
 
-            // 观测值噪声 (三次差)
+
             q.sigRho1 = tripleStd(w.c1s, w.tt, rep.interval, ok);
             q.sigRho2 = tripleStd(w.c2s, w.tt, rep.interval, ok);
             q.sigPh1 = tripleStd(w.l1cyc, w.tt, rep.interval, ok);
             q.sigPh2 = tripleStd(w.l2cyc, w.tt, rep.interval, ok);
 
-            // 多路径 (滑动窗口 RMS)
+
             q.mp1Rms = slidingWindowMp(w.mp1s, ok, n);
             q.mp2Rms = slidingWindowMp(w.mp2s, ok, n);
             q.mp1Mean = Math::mean(w.mp1s);
             q.mp2Mean = Math::mean(w.mp2s);
 
-            // 电离层延迟变化率 IOD：两个频点分别计算
+
             std::vector ionoRate(n, 0.0), ionoRate2(n, 0.0);
             for (int i = 1; i < n; i++) {
                 if (!ok[i] || !ok[i - 1]) continue;
                 const double dt = w.tt[i] - w.tt[i - 1];
                 if (dt <= 0 || std::fabs(dt - rep.interval) > 0.5 * rep.interval) continue;
-                ionoRate[i] = (w.ionos[i] - w.ionos[i - 1]) / dt;     // IOD_k1
-                ionoRate2[i] = (w.ionos2[i] - w.ionos2[i - 1]) / dt; // IOD_k2
+                ionoRate[i] = (w.ionos[i] - w.ionos[i - 1]) / dt;
+                ionoRate2[i] = (w.ionos2[i] - w.ionos2[i - 1]) / dt;
             }
             double sr = 0, sr2 = 0;
             int nc = 0, nc2 = 0, ionoJumps1 = 0, ionoJumps2 = 0;
@@ -475,7 +475,7 @@ namespace QC {
             q.ionoJumps2 = ionoJumps2;
             q.ionoJumps = ionoJumps1 + ionoJumps2;
 
-            // 载噪比 (逐星均值，按频点分别统计)
+
             std::vector<double> cnr1v, cnr2v;
             for (int i = 0; i < n; i++) {
                 const auto &ep = epochs[w.epIdx[i]];

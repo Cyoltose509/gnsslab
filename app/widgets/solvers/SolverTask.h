@@ -21,6 +21,7 @@
 #include "EphemerisTable.h"
 #include "Csv.h"
 #include "Const.h"
+#include "SolverOptions.h"
 
 namespace GnssTask {
     struct SkyPoint {
@@ -98,7 +99,7 @@ namespace GnssTask {
 
         virtual void beforeSolveEpoch(void *solver, ObsItem *item);
 
-        /// 解算器参数注入时是否走运动学分支（仅 PPP 用到）。默认 false。
+
         virtual bool wantsKinematic() const { return false; }
 
         std::shared_ptr<EphemerisTable> lastGoodEph;
@@ -141,7 +142,7 @@ namespace GnssTask {
         Eigen::Vector3d rtkFixedBaseline{0, 0, 0};
         Eigen::Vector3d rtkFloatXyz = Eigen::Vector3d::Zero();
         double rtkRatio = 0.0;
-        int rtkStat = 0; // 0=无效, 1=Fixed, 2=Float
+        int rtkStat = 0;
 
         void getFromObs(const ObsData &obs) {
             week = obs.weekSecond.week;
@@ -192,22 +193,22 @@ namespace GnssTask {
     struct PlotData {
         std::vector<double> times;
         std::vector<double> sigmaPs;
-        std::vector<double> sigmaPFloatVals; // 浮点解 σP 时序
-        std::vector<double> sigmaPFixedVals; // 固定解 σP 时序
+        std::vector<double> sigmaPFloatVals;
+        std::vector<double> sigmaPFixedVals;
         std::vector<double> sigmaVs;
         std::vector<double> pdops;
-        std::vector<double> gdops, hdops, vdops, tdops; // 完整 DOP 时序（P·G·H·V·T）
+        std::vector<double> gdops, hdops, vdops, tdops;
         std::vector<double> enu_e;
         std::vector<double> enu_n;
         std::vector<double> enu_u;
         bool newed = false;
 
-        std::vector<double> ratioVals; // RTK:rtkRatio / PPP·LEO:sppResult.ratio
-        std::vector<double> float_e, float_n, float_u; // 浮点解 ENU（与固定解对比）
+        std::vector<double> ratioVals;
+        std::vector<double> float_e, float_n, float_u;
 
         bool resRangeReady = false;
         double resYlo = -8.0, resYhi = 8.0;
-        // 相位残差量级只有 cm，Y 轴范围必须独立算（码残差的 ±m 范围会把相位压成直线）
+
         bool resPhaseRangeReady = false;
         double resPhaseYlo = -0.5, resPhaseYhi = 0.5;
 
@@ -255,6 +256,27 @@ namespace GnssTask {
             case SolverMode::Ins: return "INS";
         }
         return "SPP";
+    }
+
+
+    inline SolverOptions defaultSolverOptions(const SolverMode mode) {
+        SolverOptions o;
+        switch (mode) {
+            case SolverMode::Spp:
+                o.spp.tropoMap = TropoMap::Hopfield;
+                break;
+            case SolverMode::Leo:
+                o.spp.sigmaPhase = 0.003;
+                o.spp.firstEpochPosVar = 1.0;
+                o.spp.ambNoise = 1.0E-7;
+                o.spp.minSatsForUpdate = 4;
+                o.spp.useCycleSlip = false;
+                o.spp.applySolidTide = false;
+                o.motionThresh = 100.0;
+                break;
+            default: break;
+        }
+        return o;
     }
 
     inline void exportCsvSpp(ostream &out, const vector<EpochData> &epochs,
@@ -403,7 +425,7 @@ namespace GnssTask {
             const Eigen::Vector3d floatE = r.rtkFloatXyz.squaredNorm() > 1.0
                                                ? r.rtkFloatXyz
                                                : base + r.rtkBaseFloat;
-            const Eigen::Vector3d fixE = fixed ? res.xyz : Eigen::Vector3d::Zero(); // 固定绝对坐标 = 解算输出（未固定留空）
+            const Eigen::Vector3d fixE = fixed ? res.xyz : Eigen::Vector3d::Zero();
             w.cell(r.week).cell(Csv::fx(r.sow, 3)).cell(statStr);
             csvWriteSolBlock(w, floatE, ref, res.sigmaPFloat, false);
             csvWriteSolBlock(w, fixE, ref, res.sigmaPFixed, !fixed);
@@ -426,7 +448,7 @@ namespace GnssTask {
             case SolverMode::Rtk: exportCsvRtk(out, epochs, ref);
                 break;
             default: exportCsvSpp(out, epochs, ref);
-                break; // SPP
+                break;
         }
     }
 
@@ -438,8 +460,14 @@ namespace GnssTask {
 
         std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
         double cutoffDeg = 15.0;
-        double sampleInterval = 0.0; // 标称采样间隔(s)，0=按文件自动（QC/PPP 间隙判据共用）
-        std::string brdcPathBuf; // 广播星历（SPP 单文件版，与 PPP/LEO/RTK 字段对齐）
+        double sampleInterval = 0.0;
+
+
+
+
+        SolverOptions opts;
+
+        std::string brdcPathBuf;
 
         std::atomic<float> readProgress{0.0f};
         std::atomic<int> solvingProgress{0};
@@ -453,7 +481,7 @@ namespace GnssTask {
         std::atomic<bool> readDone{false};
         std::atomic<bool> solvingDone{false};
 
-        // ---- 解算结果----
+
         std::vector<EpochData> epochs;
         PlotData plotData;
         std::mutex plotMutex;
@@ -475,9 +503,8 @@ namespace GnssTask {
         std::mutex qcInputMutex;
         std::vector<QC::QCObsEpoch> qcInput;
 
-        // 天顶图轨迹增量缓存
-        using SkyTrackPt = SkyPoint;
-        std::map<SatID, std::vector<SkyTrackPt> > skyTracks;
+
+        std::map<SatID, std::vector<SkyPoint> > skyTracks;
         int skyTracksBuilt = 0;
 
         int selectedEpoch = -1;
@@ -510,10 +537,10 @@ namespace GnssTask {
             }
         }
 
-        // 结果即自己：SPP / 实时流没有外层容器，solveResult() 就是自身。
+
         std::shared_ptr<SolveTask> solveResult() override { return std::static_pointer_cast<SolveTask>(shared_from_this()); }
 
-        // 把本任务结果导出为 CSV（委托给上面共享的 GnssTask::exportCsv）。
+
         void exportCsv(ostream &out) const {
             GnssTask::exportCsv(out, epochs, mode, refECEF, hasRefOrbit);
         }

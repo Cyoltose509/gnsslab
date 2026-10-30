@@ -1,6 +1,14 @@
 #pragma once
 
 #include "Const.h"
+#include <string>
+
+
+enum class TropoMap {
+    Hopfield,
+    Nmf,
+    Gmf
+};
 
 class Troposphere {
 public:
@@ -243,5 +251,36 @@ public:
         const double GMFW = topcon / (SINE + gamma);
         if (mh) *mh = GMFH;
         if (mw) *mw = GMFW;
+    }
+
+    static const char *tropoMapName(const TropoMap m) {
+        switch (m) {
+            case TropoMap::Nmf: return "nmf";
+            case TropoMap::Gmf: return "gmf";
+            case TropoMap::Hopfield: break;
+        }
+        return "hopfield";
+    }
+
+    static TropoMap tropoMapFromName(const std::string &s) {
+        if (s == "nmf") return TropoMap::Nmf;
+        if (s == "gmf") return TropoMap::Gmf;
+        return TropoMap::Hopfield; // "hopfield"/"simple"/未识别一律回落简单映射
+    }
+
+    /// 干/湿映射函数统一入口：返回干映射，湿映射经 mapfw 输出。
+    /// 三个解算器都只经这里取映射，避免「PPP 用 GMF、运动学重锚定却写死 NMF」这类分叉。
+    static double tropoMapping(const TropoMap m, const double elevRad, const double latRad,
+                               const double lonRad, const double hgtM, const double doy,
+                               const double mjd, double *mapfw = nullptr) {
+        if (m == TropoMap::Nmf) return tropoNMF(elevRad, latRad * RAD_TO_DEG, hgtM, doy, mapfw);
+        if (m == TropoMap::Gmf) {
+            double mh = 0.0, mw = 0.0;
+            tropoGMF(latRad, lonRad, hgtM, mjd, elevRad, &mh, &mw);
+            if (mapfw) *mapfw = mw;
+            return mh;
+        }
+        if (mapfw) *mapfw = tropoMapWet(elevRad);
+        return tropoMapDry(elevRad);
     }
 };

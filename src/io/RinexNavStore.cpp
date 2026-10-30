@@ -7,7 +7,7 @@
 using namespace std;
 
 namespace {
-    /// 从 RINEX epoch 行解析 CommonTime
+
     CommonTime parseEpoch(const string &line, const TimeSystem &ts = TimeSystem::GPS) {
         const int yr = safeStoi(line.substr(4, 4));
         const int mo = safeStoi(line.substr(9, 2));
@@ -32,18 +32,18 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line) const {
     SatID sat(line.substr(0, 3));
     eph.prn = sat.id;
 
-    // Epoch line = time of clock (toc)
+
     CommonTime ctToc = parseEpoch(line, TimeSystem::GPS);
     WeekSecond ws;
     CommonTime2WeekSecond(ctToc, ws);
-    eph.toc = ws.sow; // 时间钟参数 (TOC)
-    eph.week = ws.week; // 从 TOC 时间推算
+    eph.toc = ws.sow;
+    eph.week = ws.week;
 
     eph.a0 = safeStod(line.substr(23, 19));
     eph.a1 = safeStod(line.substr(42, 19));
     eph.a2 = safeStod(line.substr(61, 19));
 
-    // 读 7 行轨道参数（每行 4 个字段，各 19 列宽，起始列 4）
+
     double IODE, Crs, Delta_n, M0;
     double Cuc, ecc, Cus, sqrt_A;
     double Toe, Cic, OMEGA_0, Cis;
@@ -98,9 +98,9 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line) const {
         stripTrailing(l);
         fortranExponent(l);
         IDOT = safeStod(l.substr(4, 19));
-        //L2Codes = safeStod(l.substr(23, 19));
-        //GPSWeek = safeStod(l.substr(42, 19));
-        //L2Pflag = safeStod(l.substr(61, 19));
+
+
+
     }
     {
         string l;
@@ -118,11 +118,11 @@ void RinexNavStore::loadGPSEph(GPSEphem &eph, string &line) const {
         stripTrailing(l);
         fortranExponent(l);
         HOWtime = safeStod(l.substr(4, 19));
-        //fitInterval = safeStod(l.substr(23, 19));
+
     }
 
-    // ---- 填入 GPSEphem 字段 ----
-    // eph.week / eph.toc already set from ws above
+
+
     eph.toe = Toe;
     eph.m0 = M0;
     eph.e = ecc;
@@ -168,7 +168,7 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line) const {
     eph.a1 = safeStod(line.substr(42, 19));
     eph.a2 = safeStod(line.substr(61, 19));
 
-    // 行 1-4：轨道参数（与 GPS 完全相同的字段布局）
+
     double IODE, Crs, Delta_n, M0;
     double Cuc, ecc, Cus, sqrt_A;
     double Toe, Cic, OMEGA_0, Cis;
@@ -215,15 +215,15 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line) const {
         OMEGA_DOT = safeStod(l.substr(61, 19));
     }
 
-    // 行 5：IDOT, (blank), BDSWeek, (blank)
+
     string l5;
     if (!nextLine(l5)) throw EndOfFile("nav data truncated");
     stripTrailing(l5);
     fortranExponent(l5);
     double IDOT = safeStod(l5.substr(4, 19));
-    //double BDSWeek = safeStod(l5.substr(42, 19));
 
-    // 行 6：SatH1, TGD1, TGD2, TransTime (BDS 秒)
+
+
     string l6;
     if (!nextLine(l6)) throw EndOfFile("nav data truncated");
     stripTrailing(l6);
@@ -231,10 +231,10 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line) const {
     double SatH1 = safeStod(l6.substr(4, 19));
     double TGD1 = safeStod(l6.substr(23, 19));
     double TGD2 = safeStod(l6.substr(42, 19));
-    double TGD3 = safeStod(l6.substr(61, 19)); // 第 4 字段
+    double TGD3 = safeStod(l6.substr(61, 19));
     bool shifted = fabs(TGD1) < 1e-12 && (fabs(TGD2) > 1e-12 || fabs(TGD3) > 1e-12);
-    double tgdB1 = shifted ? TGD2 : TGD1; // B1/B3 群时延
-    double tgdB2 = shifted ? TGD3 : TGD2; // B2/B3 群时延
+    double tgdB1 = shifted ? TGD2 : TGD1;
+    double tgdB2 = shifted ? TGD3 : TGD2;
 
     string _discard;
     nextLine(_discard);
@@ -258,7 +258,7 @@ void RinexNavStore::loadBDSEph(BDSEphem &eph, string &line) const {
     eph.health = static_cast<unsigned int>(SatH1);
     eph.ura = 2.0;
     eph.AODE = static_cast<unsigned int>(IODE);
-    eph.AODC = static_cast<unsigned int>(IODE); // 近似等同 AODE
+    eph.AODC = static_cast<unsigned int>(IODE);
     eph.tgd1 = tgdB1;
     eph.tgd2 = tgdB2;
 }
@@ -267,18 +267,18 @@ void RinexNavStore::loadGalEph(GalileoEphem &eph, string &line) const {
     SatID sat(line.substr(0, 3));
     eph.prn = sat.id;
 
-    // Epoch line = time of clock (toc)
+
     CommonTime ctToc = parseEpoch(line, TimeSystem::GAL);
     WeekSecond ws;
     CommonTime2WeekSecond(ctToc, ws);
-    eph.toc = ws.sow; // 时间钟参数 (TOC)
-    eph.week = ws.week; // 从 TOC 时间推算
+    eph.toc = ws.sow;
+    eph.week = ws.week;
 
     eph.a0 = safeStod(line.substr(23, 19));
     eph.a1 = safeStod(line.substr(42, 19));
     eph.a2 = safeStod(line.substr(61, 19));
 
-    // 读 7 行轨道参数（每行 4 个字段，各 19 列宽，起始列 4）
+
     double IODE, Crs, Delta_n, M0;
     double Cuc, ecc, Cus, sqrt_A;
     double Toe, Cic, OMEGA_0, Cis;
@@ -352,7 +352,7 @@ void RinexNavStore::loadGalEph(GalileoEphem &eph, string &line) const {
         HOWtime = safeStod(l.substr(4, 19));
     }
 
-    // ---- 填入 GalEph 字段 ----
+
     eph.toe = Toe;
     eph.m0 = M0;
     eph.e = ecc;
@@ -421,7 +421,7 @@ void RinexNavStore::loadGloEph(GlonassEphem &eph, const string &line) const {
         eph.Z = safeStod(l.substr(4, 19));
         eph.vZ = safeStod(l.substr(23, 19));
         eph.aZ = safeStod(l.substr(42, 19));
-        // 第 4 字段 = 龄期 / operator info，此处忽略
+
     }
 }
 
@@ -436,10 +436,10 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         throw FileMissingException("can't open nav file: " + file);
     }
 
-    // ---- 读 header ----
+
     while (true) {
         string line;
-        // 文件为空/截断(无 END OF HEADER 即遇 EOF)：安全退出，避免空行 continue 死循环。
+
         if (!nextLine(line)) break;
         stripTrailing(line);
 
@@ -451,7 +451,7 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         if (const string label = getLabel(line); label == "RINEX VERSION / TYPE") {
             version = safeStod(line.substr(0, 20));
             fileType = strip(line.substr(20, 20));
-            // 导航文件类型字符：N=GPS, G=GLONASS, E=Galileo, M=混合, C=钟差…
+
             if (const char c = fileType.empty() ? ' ' : fileType[0];
                 c != 'N' && c != 'n' && c != 'G' && c != 'g' &&
                 c != 'E' && c != 'e' && c != 'M' && c != 'm') {
@@ -489,12 +489,12 @@ void RinexNavStore::loadFile(const string &file, EphemerisTable &ephTable) {
         }
     }
 
-    // ---- 读星历数据 ----
+
     string line;
     while (nextLine(line)) {
         fortranExponent(line);
 
-        if (line.empty() || line[0] == ' ') continue; // 空白行跳过
+        if (line.empty() || line[0] == ' ') continue;
 
         if (line[0] == 'G') {
             auto eph = std::make_shared<GPSEphem>();

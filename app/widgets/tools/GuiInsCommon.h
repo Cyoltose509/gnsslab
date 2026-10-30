@@ -86,7 +86,7 @@ namespace Tools::InsPanel {
     template<class Task>
     void abortRun(Task &task, const std::string &msg) {
         LOG_ERROR << "[" << task.fileName << "] " << msg;
-        task.runFailed.store(true); // 运行级失败：结果区该收起
+        task.runFailed.store(true);
         task.setError(msg);
         endRun(task);
     }
@@ -161,6 +161,18 @@ namespace Tools::InsPanel {
         Solvers::Helpers::endConfigBody();
     }
 
+    void renderInsParams(CalibParams &par);
+
+    void renderInsParams(AlignParams &par);
+
+    void saveInsParams(const CalibParams &par);
+
+    void saveInsParams(const AlignParams &par);
+
+    void loadInsParams(CalibParams &par);
+
+    void loadInsParams(AlignParams &par);
+
     enum class ScaleSource { None, Record, Manual, Guess };
     enum class RecordScale { Model, UnknownType, NoType };
 
@@ -178,18 +190,18 @@ namespace Tools::InsPanel {
     }
 
     struct ScaleResolution {
-        const ImuModel *recordModel = nullptr; // 记录里读到的型号
-        int unknownType = -1;                  // 读到但内置表里没有的 Type
-        int noType = 0;                        // 没有型号自描述的文件数
-        std::string conflict;                  // 批量时混用型号
+        const ImuModel *recordModel = nullptr;
+        int unknownType = -1;
+        int noType = 0;
+        std::string conflict;
 
         ImuScale scale{};
         ScaleSource src = ScaleSource::None;
-        std::string modelName; // 结果来源的型号名
-        int modelType = -1;    // 型号码
-        std::string note;      // 反推失败原因，给手填框旁做解释
-        double guessAccel = 0.0; // 反推到的 (m/s)/LSB，手填框预填
-        double guessRate = 0.0; // 反推到的采样率 (Hz)，手填框预填
+        std::string modelName;
+        int modelType = -1;
+        std::string note;
+        double guessAccel = 0.0;
+        double guessRate = 0.0;
 
         [[nodiscard]] bool known() const { return scale.known(); }
         [[nodiscard]] bool hasRecord() const { return recordModel != nullptr; }

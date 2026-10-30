@@ -9,9 +9,9 @@
 
 
 struct ImuScale {
-    double accelMpsPerLsb = 0.0; // (m/s)/LSB
-    double gyroRadPerLsb = 0.0; // rad/LSB
-    double rateHz = 0.0; // 标称采样率 (Hz)
+    double accelMpsPerLsb = 0.0;
+    double gyroRadPerLsb = 0.0;
+    double rateHz = 0.0;
 
     [[nodiscard]] bool known() const {
         return accelMpsPerLsb > 0.0 && gyroRadPerLsb > 0.0 && rateHz > 0.0;
@@ -19,13 +19,13 @@ struct ImuScale {
 };
 
 struct ImuModel {
-    int type{}; // OEM7 IMU Type 码
-    const char *name{}; // 型号名
-    ImuScale scale; // 解码当量
+    int type{};
+    const char *name{};
+    ImuScale scale;
 };
 
 
-static constexpr double kFtToMps = 0.3048; // ft/s/LSB → m/s/LSB
+static constexpr double kFtToMps = 0.3048;
 static constexpr double kAccelHG1700 = 0x1p-27 * kFtToMps;
 
 
@@ -72,12 +72,12 @@ inline const ImuModel *findImuModel(const int type) {
     return nullptr;
 }
 
-// 单条 IMU 原始采样
+
 struct ImuSample {
     int gnssWeek = 0;
-    double tow = 0.0; // GPS 周内秒
-    int32_t gx = 0, gy = 0, gz = 0; // 陀螺 角增量原始计数
-    int32_t ax = 0, ay = 0, az = 0; // 加速度计速度增量原始计数
+    double tow = 0.0;
+    int32_t gx = 0, gy = 0, gz = 0;
+    int32_t ax = 0, ay = 0, az = 0;
 };
 
 using ImuLog = std::vector<ImuSample>;
@@ -91,7 +91,7 @@ struct ImuScaleGuess {
     std::string note;
 };
 
-/// 采样间隔中位数：由时间戳得到，比表里的标称采样率可信。
+
 inline double imuMedianDt(const ImuLog &log, const double fallback = 0.005) {
     if (log.size() < 3) return fallback;
     std::vector<double> d;
@@ -142,7 +142,7 @@ inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
     r.rateHz = 1.0 / dt;
     r.accelMpsPerLsb = g * dt / mean;
     const ImuModel *hit = nullptr;
-    bool allSame = true; // 候选们的当量是否完全一致（孪生型号）
+    bool allSame = true;
     for (const auto &m: kImuModels) {
         if (std::fabs(r.accelMpsPerLsb / m.scale.accelMpsPerLsb - 1.0) > 0.05) continue;
         if (std::fabs(r.rateHz / m.scale.rateHz - 1.0) > 0.10) continue;
@@ -157,7 +157,7 @@ inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
     }
     if (r.matches >= 1 && allSame) {
         r.model = hit;
-        if (r.matches > 1) r.note = "有 " + std::to_string(r.matches) + " 个型号当量相同，取 " + hit->name; //NOLINT
+        if (r.matches > 1) r.note = "有 " + std::to_string(r.matches) + " 个型号当量相同，取 " + hit->name;
         return r;
     }
     char buf[176];
@@ -173,14 +173,14 @@ inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
     return r;
 }
 
-// 单历元姿态（欧拉角，rad）
+
 struct Attitude {
     double roll = 0.0;
     double pitch = 0.0;
     double yaw = 0.0;
 };
 
-// 带时间戳的姿态采样
+
 struct AttitudeSample {
     double tow = 0.0;
     double roll = 0.0;

@@ -1,5 +1,6 @@
 #include "GuiInsPanel.h"
 
+#include "GuiInsCommon.h"
 #include "GuiHelpers.h"
 #include "SolverTask.h"
 #include "core/PathMemory.h"
@@ -21,17 +22,15 @@ namespace Tools::InsPanel {
                 pos = nxt + 1;
             }
         }
-        t->g = pm.getNum("ins_g", SETTING_G, 1.0, 12.0);
-        t->turnAngleDeg = pm.getNum("ins_turn", 360.0, 1.0, 3600.0);
+
+        loadInsParams(t->par);
         return t;
     }
 
     std::shared_ptr<GnssTask::SolverTaskBase> MakeStaticAlignTask() {
         auto t = std::make_shared<StaticAlignTask>();
         t->alignPath = AppConfig::PathMemory::instance().get("ins_align");
-        t->latDeg = AppConfig::PathMemory::instance().getNum("ins_lat", SETTING_LAT_DEG, -90.0, 90.0);
-        t->g = AppConfig::PathMemory::instance().getNum("ins_g", SETTING_G, 1.0, 12.0);
-        t->win = AppConfig::PathMemory::instance().getInt("ins_win", 400, 2, 20000);
+        loadInsParams(t->par);
         return t;
     }
 

@@ -33,9 +33,10 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
         for (const auto &[sys, v] : cdtVars) eq.varSet.insert(v);
 
         const auto blhEst = XYZToBLH(xc, Frame::WGS84);
-        const double latDeg = blhEst.B() * RAD_TO_DEG;
         const double hgt = blhEst.H();
         const double doy = CommonTime2YDSTime(epoch).doy;
+        MJD mjd{};
+        CommonTime2MJD(epoch, mjd);
         const double zhd = mHasTropo ? Troposphere::tropoSaastamoinenZHD(blhEst.B(), blhEst.H()) : 0.0;
         const double ztdMean = mEkfInit ? mZtdEstimate : 0.0;
         const Eigen::Vector3d recvTide = mApplySolidTide ? computeTideDisplacement(xc, epoch) : Eigen::Vector3d::Zero();
@@ -63,7 +64,9 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
             double weight = 1.0 / (mConfig.sigIFCode * mConfig.sigIFCode);
             if (elev < PI / 6) { const double s = std::sin(elev); weight *= s * s; }
             double mW = 0.0;
-            const double mH = Troposphere::tropoNMF(elev, latDeg, hgt, doy, &mW);
+            // 与正解走同一个映射函数选择：曾经这里写死 NMF，与 mConfig.tropoMap(GMF) 不一致
+            const double mH = Troposphere::tropoMapping(mConfig.tropoMap, elev, blhEst.B(), blhEst.L(),
+                                                        hgt, doy, mjd.mjd, &mW);
             const double tropoCorr = ztdMean * mW + mH * zhd;
             EquData ed;
             ed.prefit = obsMinusClk - tropoCorr - rho0;

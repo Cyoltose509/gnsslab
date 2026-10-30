@@ -7,7 +7,7 @@
 #include <cstring>
 
 namespace Tools::TimeConverter {
-    // ---------- Configuration ----------
+
     static constexpr int SYS_COUNT = 4;
 
     static const char *SYS_LABELS[SYS_COUNT] = {"UTC", "GPS", "BDT", "TAI"};
@@ -18,18 +18,18 @@ namespace Tools::TimeConverter {
 
 
     static constexpr ImVec4 SYS_COLORS[SYS_COUNT] = {
-        {1.0f, 1.0f, 1.0f, 1.0f}, // UTC  - white
-        {0.4f, 1.0f, 0.4f, 1.0f}, // GPS  - green
-        {1.0f, 0.45f, 0.45f, 1.0f}, // BDT  - red
-        {0.55f, 0.75f, 1.0f, 1.0f}, // TAI  - blue
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        {0.4f, 1.0f, 0.4f, 1.0f},
+        {1.0f, 0.45f, 0.45f, 1.0f},
+        {0.55f, 0.75f, 1.0f, 1.0f},
     };
 
-    // ---------- State ----------
-    static int s_Civil[SYS_COUNT][6] = {}; // [sys][Y, M, D, H, m, S]
+
+    static int s_Civil[SYS_COUNT][6] = {};
     static bool s_Syncing = false;
     static bool s_Initialized = false;
 
-    // ---------- Core Logic ----------
+
     static void SyncFrom(const int source) {
         if (s_Syncing) return;
         s_Syncing = true;
@@ -73,7 +73,7 @@ namespace Tools::TimeConverter {
         }
     }
 
-    // ---------- Render ----------
+
     void Render(bool *p_open) {
         if (!s_Initialized) {
             s_Initialized = true;
@@ -86,7 +86,7 @@ namespace Tools::TimeConverter {
             return;
         }
 
-        // --- Toolbar ---
+
         if (ImGui::Button("此刻"))
             SetToNow();
         ImGui::SameLine(0, 16);
@@ -96,7 +96,7 @@ namespace Tools::TimeConverter {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // --- Time System Table ---
+
         if (ImGui::BeginTable("##tsys", 7,
                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_SizingStretchSame)) {
@@ -115,18 +115,18 @@ namespace Tools::TimeConverter {
                 ImGui::PushID(i);
                 ImGui::TableNextRow();
 
-                // System label with color
+
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushStyleColor(ImGuiCol_Text, SYS_COLORS[i]);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(SYS_LABELS[i]);
                 ImGui::PopStyleColor();
 
-                // Snapshot before user interaction
+
                 int prev[6];
                 std::memcpy(prev, s_Civil[i], sizeof(prev));
 
-                // 6 InputInt fields
+
                 for (int j = 0; j < 6; j++) {
                     ImGui::TableSetColumnIndex(j + 1);
                     ImGui::PushItemWidth(-FLT_MIN);
@@ -134,7 +134,7 @@ namespace Tools::TimeConverter {
                     ImGui::PopItemWidth();
                 }
 
-                // Detect change and sync
+
                 if (std::memcmp(prev, s_Civil[i], sizeof(prev)) != 0)
                     SyncFrom(i);
 
@@ -144,7 +144,7 @@ namespace Tools::TimeConverter {
             ImGui::EndTable();
         }
 
-        // --- Info bar ---
+
         ImGui::Spacing();
         ImGui::Separator();
 

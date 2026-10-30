@@ -4,6 +4,7 @@
 #include <string>
 
 #include "SolverTask.h"
+#include "GuiHelpers.h"
 #include "core/PathMemory.h"
 
 namespace Solvers::SppProcessor {
@@ -15,7 +16,7 @@ namespace Solvers::SppProcessor {
         bool initSolver(void *solver) override;
 
         void beforeSolveEpoch(void *solver, GnssTask::ObsItem *item) override;
-        // afterSolveEpoch 不 override：走基类默认实现（首历元参考点初始化）
+
 
         std::shared_ptr<GnssTask::SolveTask> core;
 
@@ -30,6 +31,7 @@ namespace Solvers::SppProcessor {
             core->cutoffDeg = pm.getNum("spp_cutoff", core->cutoffDeg, 0.0, 90.0);
             core->sampleInterval = pm.getNum("spp_interval", core->sampleInterval, 0.0, 3600.0);
             if (const std::string sysStr = pm.get("spp_systems"); !sysStr.empty()) core->enabledSystems = GnssTask::stringToSysSet(sysStr);
+            Helpers::loadSolverParams(GnssTask::SolverMode::Spp, core->opts);
         }
     };
 

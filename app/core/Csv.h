@@ -10,15 +10,15 @@ namespace Csv {
     struct SigNum {
         double v;
         int sig;
-    }; // 有效数字位数
+    };
     struct FixedNum {
         double v;
         int dec;
-    }; // 定点小数位数（= printf "%.<dec>f"）
+    };
     struct SciNum {
         double v;
         int dec;
-    }; // 科学计数小数位数（= printf "%.<dec>e"）
+    };
 
     inline SigNum f(const double v, const int sig = 6) { return {v, sig}; }
     inline FixedNum fx(const double v, const int dec) { return {v, dec}; }
@@ -52,7 +52,7 @@ namespace Csv {
 
         [[nodiscard]] int colCount() const;
 
-        // ---- 输出 ----
+
         [[nodiscard]] const std::string &str() const;
 
         [[nodiscard]] bool save(const std::string &path, bool withBom = false) const;

@@ -7,13 +7,13 @@
 
 class FreqCombo {
 public:
-    std::string code1, code2;    // 伪距码
-    std::string phase1, phase2;  // 相位码
-    double f1 = 0, f2 = 0;       // Hz
-    double c1 = 0, c2 = 0;       // IF 系数
+    std::string code1, code2;
+    std::string phase1, phase2;
+    double f1 = 0, f2 = 0;
+    double c1 = 0, c2 = 0;
     double lambda1 = 0, lambda2 = 0;
-    double lambdaW = 0;          // 宽巷波长
-    double lambdaN = 0;          // 窄巷波长
+    double lambdaW = 0;
+    double lambdaN = 0;
 
     FreqCombo() = default;
 
@@ -24,10 +24,10 @@ public:
 
     static FreqCombo detect(char sys, const std::vector<std::string> &codes, bool requirePhase = true);
 
-    /// 带通道号的探测（GLONASS FDMA 每星频率不同，须逐星给定 channel=k）
+
     static FreqCombo detect(char sys, const std::vector<std::string> &codes, int channel, bool requirePhase);
 
-    /// 单颗卫星观测 → FreqCombo（逐星）
+
     static FreqCombo detect(char sys, const TypeValueMap &tv, int channel, bool requirePhase);
 
     static FreqCombo detect(char sys, const ObsData &obs, bool requirePhase = true);

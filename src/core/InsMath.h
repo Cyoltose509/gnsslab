@@ -43,10 +43,10 @@ inline Eigen::Matrix3d alignDCM(const Eigen::Vector3d &gB, const Eigen::Vector3d
 }
 
 struct ImuCalibration {
-    Eigen::Matrix3d accelM = Eigen::Matrix3d::Identity(); // counts per (m/s^2)
-    Eigen::Vector3d accelB = Eigen::Vector3d::Zero(); // counts
-    Eigen::Vector3d gyroScale = Eigen::Vector3d::Ones(); // counts per (rad/s)
-    Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero(); // counts / 历元
+    Eigen::Matrix3d accelM = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d accelB = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gyroScale = Eigen::Vector3d::Ones();
+    Eigen::Vector3d gyroBias = Eigen::Vector3d::Zero();
 
     [[nodiscard]] Eigen::Vector3d specificForce(const ImuSample &s) const {
         return accelM.inverse() * (Eigen::Vector3d(s.ax, s.ay, s.az) - accelB);

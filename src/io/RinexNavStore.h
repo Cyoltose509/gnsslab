@@ -17,10 +17,10 @@ public:
 
     ~RinexNavStore() override = default;
 
-    /// 读一个 RINEX nav 文件（.xxN / .xxG / .xxC），星历写入 ephTable
+
     void loadFile(const string &file, EphemerisTable &ephTable);
 
-    /// RINEX header 信息（ionosphere / time system / leap seconds — 质量分析用）
+
     struct TimeSysCorr {
         double A0, A1;
         int refSOW, refWeek;

@@ -14,7 +14,7 @@ bool ErpReader::read(const std::string &path) {
     std::string line;
     bool inData = false;
     while (std::getline(ifs, line)) {
-        // 列头行同时含 "MJD" 与 "Xpole"，其后才是数据行
+
         if (!inData) {
             if (line.find("MJD") != std::string::npos &&
                 line.find("Xpole") != std::string::npos) {
@@ -22,7 +22,7 @@ bool ErpReader::read(const std::string &path) {
             }
             continue;
         }
-        // NRT 产品末行可能只有 MJD+Xpole+Ypole+UT1-UTC+LOD 五列，故只取前 5 个
+
         std::istringstream iss(line);
         double mjd = 0.0, xp = 0.0, yp = 0.0, ut1 = 0.0, lod = 0.0;
         if (!(iss >> mjd >> xp >> yp >> ut1 >> lod)) continue;
@@ -30,9 +30,9 @@ bool ErpReader::read(const std::string &path) {
 
         Record r;
         r.mjd = mjd;
-        r.xp = xp * 1.0e-6 * ARCSEC_TO_RAD; // 10^-6 角秒 -> rad
+        r.xp = xp * 1.0e-6 * ARCSEC_TO_RAD;
         r.yp = yp * 1.0e-6 * ARCSEC_TO_RAD;
-        r.ut1Utc = ut1 * 1.0e-7;            // 0.1 微秒 -> s
+        r.ut1Utc = ut1 * 1.0e-7;
         r.lod = lod * 1.0e-7;
         data.push_back(r);
     }

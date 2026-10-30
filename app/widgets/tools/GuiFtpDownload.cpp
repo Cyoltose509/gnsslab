@@ -405,7 +405,7 @@ namespace Tools::FtpDownload {
                             ImGui::SetTooltip("%s\n下载中…（完成后自动变绿）", label.c_str());
                     } else {
                         const bool dl = !local.empty();
-                        if (dl) // 已下载：绿字
+                        if (dl)
                             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.90f, 0.50f, 1.0f));
                         const bool pressed = ImGui::Button(label.c_str());
                         if (dl) ImGui::PopStyleColor();
@@ -434,7 +434,7 @@ namespace Tools::FtpDownload {
         }
         ImGui::EndChild();
 
-        // ---- 状态 / 进度 ----
+
         {
             std::lock_guard lk(s_mtx);
             if (s_scanning)
@@ -448,7 +448,7 @@ namespace Tools::FtpDownload {
             }
         }
 
-        // ---- 下载 / 删除确认 ----
+
         if (s_pendingOpen) {
             ImGui::OpenPopup("##fileAction");
             s_pendingOpen = false;

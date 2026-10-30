@@ -1,12 +1,12 @@
 #include "AntxReader.h"
-#include "CoordConvert.h"  // ECEFToSVBodyDCM：GNSS 卫星天线系机体框架
+#include "CoordConvert.h"
 #include <sstream>
-#include <charconv>  // std::from_chars：数据行解析比 strtod 快（无 locale）
+#include <charconv>
 #include <string_view>
 #include <StringUtils.h>
 
 namespace {
-    // 卫星号：系统字符(G/C/R/E/J/S/I) + 1..3 位数字
+
     bool isSatId(const std::string &s) {
         if (s.empty() || s.size() > 4 || !std::isalpha(static_cast<unsigned char>(s[0])))
             return false;
@@ -15,14 +15,14 @@ namespace {
         return s.size() >= 2;
     }
 
-    // 系统 -> ATX 中该系统的 IF 双频点码（无频率信息时的兜底）
+
     std::pair<std::string, std::string> ifBandCodes(const char sys) {
         switch (sys) {
-            case 'G': return {"G01", "G02"}; // L1, L2
-            case 'C': return {"C01", "C02"}; // B1I, B2I
-            case 'R': return {"R01", "R02"}; // G1, G2
-            case 'E': return {"E01", "E07"}; // E1, E5b
-            case 'J': return {"J01", "J02"}; // L1, L2
+            case 'G': return {"G01", "G02"};
+            case 'C': return {"C01", "C02"};
+            case 'R': return {"R01", "R02"};
+            case 'E': return {"E01", "E07"};
+            case 'J': return {"J01", "J02"};
             default: return {"", ""};
         }
     }
@@ -60,14 +60,14 @@ double PcvGrid::value(const double zenDeg, const double azDeg) const {
 }
 
 bool AntxReader::read(const std::string &path) {
-    std::string line; // 只有约 8% 的标签行需要实体 std::string（喂 istringstream）
+    std::string line;
     SatID curSat;
     std::string curRcv;
     std::string curBand;
     bool curIsSat = false;
     Eigen::Vector3d curPCO(0, 0, 0);
     bool gotPCO = false;
-    // PCV 网格参数：天顶距/方位角网格定义按天线给出，网格内容按频点给出
+
     double curZen1 = 0.0, curZen2 = 90.0, curDzen = 5.0, curDazi = 0.0;
     PcvGrid curGrid;
 
@@ -83,19 +83,19 @@ bool AntxReader::read(const std::string &path) {
         gotPCO = false;
     };
 
-    std::vector<double> vals; // 复用：数据行有 34.7 万行，每行新建 vector 等于 34.7 万次堆分配
+    std::vector<double> vals;
     vals.reserve(64);
     const bool opened = forEachLine(path, [&](const std::string_view sv) {
         std::string_view lab;
         if (const size_t n = sv.size(); n > 60 && n <= 80) {
             if (const size_t a = sv.find_first_not_of(" \t", 60); a != std::string_view::npos) {
-                const size_t b = sv.find_last_not_of(" \t"); // CR/LF 已由 forEachLine 剥离
+                const size_t b = sv.find_last_not_of(" \t");
                 lab = sv.substr(a, b - a + 1);
             }
         }
 
         if (!lab.empty()) {
-            // ---- 标签行（约 8%）：按标签分派，find 只在这一小段上做 ----
+
             if (lab.find("TYPE / SERIAL NO") != std::string_view::npos ||
                 lab.find("TYPE/SERIAL") != std::string_view::npos) {
                 consumePCO();
@@ -168,7 +168,7 @@ bool AntxReader::read(const std::string &path) {
                     gotPCO = true;
                 }
             } else if (lab.find("END OF FREQUENCY") != std::string_view::npos) {
-                // 频点结束：先把当前频点 PCO / PCV 落库，再清空频点（避免最后一个频点丢失）
+
                 consumePCO();
                 if (curGrid.valid() && !curBand.empty()) {
                     if (curIsSat) satPCV[curSat][curBand] = std::move(curGrid);
@@ -188,7 +188,7 @@ bool AntxReader::read(const std::string &path) {
 
         if (curBand.empty()) return;
         {
-            const char *q = sv.data(); // forEachLine 保证行尾有 '\0'
+            const char *q = sv.data();
             const char *qe = q + sv.size();
             while (q < qe && (*q == ' ' || *q == '\t')) ++q;
             const bool noazi = qe - q >= 5 && std::memcmp(q, "NOAZI", 5) == 0;
@@ -197,9 +197,9 @@ bool AntxReader::read(const std::string &path) {
             } else {
                 double az = 0.0;
                 auto [ptr, ec] = std::from_chars(q, qe, az);
-                if (ec != std::errc()) return; // 非纯数值 → 不是方位角行
+                if (ec != std::errc()) return;
                 q = ptr;
-                if (q < qe && *q != ' ' && *q != '	') return; // 方位角后须为空白，否则非方位角行
+                if (q < qe && *q != ' ' && *q != '	') return;
             }
 
             vals.clear();
@@ -208,7 +208,7 @@ bool AntxReader::read(const std::string &path) {
                 if (q >= qe) break;
                 double x = 0.0;
                 auto [ptr, ec] = std::from_chars(q, qe, x);
-                if (ec != std::errc()) break; // 非数值开头（如误入的注释行）：整行跳过
+                if (ec != std::errc()) break;
                 vals.push_back(x * 1e-3);
                 q = ptr;
             }
@@ -255,7 +255,7 @@ void AntxReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const Commo
     const Eigen::Vector3d pco2 = getSatPCO(sat, b2);
     if (pco1.squaredNorm() < 1e-12 && pco2.squaredNorm() < 1e-12) return;
 
-    const Eigen::Vector3d pco = def.c1 * pco1 + def.c2 * pco2; // 机体 (X,Y,Z)，单位 m
+    const Eigen::Vector3d pco = def.c1 * pco1 + def.c2 * pco2;
     if (pco.squaredNorm() < 1e-12) return;
 
     double gmst;

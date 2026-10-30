@@ -1,5 +1,5 @@
 #include "ProductMeta.h"
-#include "TimeConvert.h"   // daysFromCivil / civilFromDays（通用日历算法，勿与 CommonTime 混用）
+#include "TimeConvert.h"
 
 #include <regex>
 #include <cstdio>
@@ -10,15 +10,15 @@ std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
     ProductMeta m;
     m.filename = filename;
 
-    // year + doy：IGS 长文件名里第一个 YYYYDDD 片段（如 COD0OPSFIN_20262150000_...）
+
     std::regex reDate(R"((\d{4})(\d{3}))");
     auto it = std::sregex_iterator(filename.begin(), filename.end(), reDate);
     if (it == std::sregex_iterator()) return std::nullopt;
     m.year = std::stoi((*it)[1].str());
     m.doy = std::stoi((*it)[2].str());
 
-    // 覆盖天数 + 采样段：日期段后依次是"覆盖天数段"(01D/02D/03D) 与"采样段"(05M/30S/01H)。
-    // 日期段本身是 YYYYDDDHHMM，故先跳到紧随其后的 '_' 再取。
+
+
     {
         const auto afterDate = static_cast<size_t>(it->position(0) + it->length(0));
         if (const auto u = filename.find('_', afterDate); u != std::string::npos && u + 3 < filename.size()) {
@@ -29,17 +29,17 @@ std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
                     if (const auto v = filename.find('_', u + 1); v != std::string::npos && v + 3 < filename.size())
                         m.interval = filename.substr(v + 1, 3);
                 } else {
-                    m.interval = tok; // 没带覆盖天数段的命名，这一格就是采样段
+                    m.interval = tok;
                 }
             }
         }
     }
 
-    // 数据中心：文件名开头的连续字母（COD / BRDC ...）
+
     std::regex reDc(R"(^([A-Za-z]+))");
     if (std::smatch dm; std::regex_search(filename, dm, reDc)) m.datacenter = dm[1].str();
 
-    // 类型 + 扩展名：先剥掉压缩后缀（.gz），再按最后一个 '_' 与 '.' 拆分
+
     std::string base = filename;
     {
         std::string l = base;
@@ -65,7 +65,7 @@ std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
              ext == "OSB" || ext == "BIA")
         m.type = ProductType::OSB;
     else if (ext == "ATX") m.type = ProductType::ATX;
-        // 广播星历：RINEX3 .rnx / .nav，或 RINEX2 brdcDDD0.YYn / 名字含 brdc
+
     else if (typeTok == "MN" || ext == "rnx" || ext == "NAV" ||
              low.find("brdc") != std::string::npos ||
              (ext.size() == 3 && std::isdigit(static_cast<unsigned char>(ext[0])) &&
@@ -148,12 +148,12 @@ std::optional<std::pair<int, int> > ProductMeta::parseObsDate(const std::string 
         if (l.size() > 3 && l.compare(l.size() - 3, 3, ".gz") == 0) f.erase(f.size() - 3);
     }
 
-    // RINEX3：_YYYYDDDHHMM_（文件名第二段）
+
     std::regex re3(R"(_(\d{4})(\d{3})\d{4}_)");
     if (std::smatch m; std::regex_search(f, m, re3))
         return std::make_pair(std::stoi(m[1].str()), std::stoi(m[2].str()));
 
-    // RINEX2：<站号><DDD><序号>.<YY><t>，站号 3 或 4 字符、序号可省。如 D05183F.26o → 183。
+
     if (const auto dot = f.find_last_of('.'); dot != std::string::npos && dot + 3 <= f.size()) {
         if (const std::string suf = f.substr(dot + 1); suf.size() >= 3 &&
                                                        std::isdigit(static_cast<unsigned char>(suf[0])) &&
@@ -163,7 +163,7 @@ std::optional<std::pair<int, int> > ProductMeta::parseObsDate(const std::string 
             const int year = yy < 80 ? 2000 + yy : 1900 + yy;
             const std::string base = f.substr(0, dot);
             for (const size_t back: {static_cast<size_t>(4), static_cast<size_t>(3)}) {
-                // 先按"带序号"再按"无序号"试
+
                 if (base.size() < back) continue;
                 if (const std::string d3 = base.substr(base.size() - back, 3); std::all_of(d3.begin(), d3.end(),
                                                                                            [](const unsigned char c) { return std::isdigit(c); })) {
@@ -173,7 +173,7 @@ std::optional<std::pair<int, int> > ProductMeta::parseObsDate(const std::string 
         }
     }
 
-    // 兜底：路径中带 YYYYMMDD 的日期目录（如 OEM7data/20240303/rover.obs 这类文件名不含日期的）
+
     std::regex reDate(R"((\d{8}))");
     for (auto it = std::sregex_iterator(obsPath.begin(), obsPath.end(), reDate);
          it != std::sregex_iterator(); ++it) {
@@ -186,16 +186,16 @@ std::optional<std::pair<int, int> > ProductMeta::parseObsDate(const std::string 
     return std::nullopt;
 }
 
-// ---- 远程镜像目录布局 ----
+
 
 const char *ProductMeta::mirrorRoot() {
-    return "ftp://igs.gnsswhu.cn/pub/gps";
+    return "ftp:
 }
 
 int ProductMeta::gpsWeek(const int year, const int doy) {
     if (doy < 1 || doy > 366) return 0;
-    // GPS 周起点 = 1980-01-06。用本地精确日历算天数，避开库里口径不一致的
-    // CommonTime2WeekSecond（见文件顶部说明）。
+
+
     const long days = daysFromCivil(year, 1, 1) + doy - 1 - daysFromCivil(1980, 1, 6);
     if (days < 0) return 0;
     return static_cast<int>(days / 7);
@@ -209,7 +209,7 @@ bool ProductMeta::covers(const int _year, const int _doy) const {
 }
 
 const std::vector<std::string> &ProductMeta::knownDatacenters() {
-    // 取自镜像实测（products/<周> + products/mgex/<周> + ionex 里出现过的首段 3 字母码）
+
     static const std::vector<std::string> v = {
         "IGS", "COD", "EMR", "ESA", "GFZ", "GRG", "JGX",
         "JPL", "NGS", "SHA", "SIO", "USN", "WHU", "WUM"
@@ -229,7 +229,7 @@ std::vector<std::string> ProductMeta::scanDirs(const std::set<ProductType> &type
             types.count(ProductType::ERP) || types.count(ProductType::OSB) ||
             types.count(ProductType::TRO);
     if (wantWeek) {
-        // 时段产品（02D/03D）可能起于上一周而覆盖本日 ⇒ 上周与本周都扫。
+
         const long prevOrd = daysFromCivil(year, 1, 1) + doy - 2;
         int py = 0;
         unsigned pm = 0, pd = 0;
@@ -241,7 +241,7 @@ std::vector<std::string> ProductMeta::scanDirs(const std::set<ProductType> &type
         for (const auto &[fst, snd]: days2) {
             std::snprintf(buf, sizeof(buf), "%s/products/%04d/", mirrorRoot(), gpsWeek(fst, snd));
             add(buf);
-            // MGEX 与 IGS 综合是两套目录，要含 BDS 就得同时扫
+
             std::snprintf(buf, sizeof(buf), "%s/products/mgex/%04d/", mirrorRoot(), gpsWeek(fst, snd));
             add(buf);
         }
@@ -256,6 +256,6 @@ std::vector<std::string> ProductMeta::scanDirs(const std::set<ProductType> &type
         std::snprintf(buf, sizeof(buf), "%s/products/ionex/%04d/%03d/", mirrorRoot(), year, doy);
         add(buf);
     }
-    // ATX 在镜像上没有来源，故意不产生目录
+
     return out;
 }

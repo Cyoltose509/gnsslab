@@ -19,8 +19,8 @@
 struct SatID {
     char system{};
     int id;
-    /// GLONASS FDMA 频率通道号 k（RINEX "GLONASS SLOT / FRQ #" 给出）；
-    /// 仅 GLONASS 使用，其它系统恒为 0。不参与 operator==/</toString 身份（卫星身份由 system+id 决定）。
+
+
     int chan{0};
 
     SatID() : id(-1) {
@@ -76,7 +76,7 @@ struct RinexHeader {
     XYZ antennaPosition;
     Eigen::Vector3d antDeltaENU{0, 0, 0};
     std::map<char, std::vector<string> > mapObsTypes;
-    // RINEX "SYS / PHASE SHIFT"：各相位观测的半周/整数周偏置
+
     std::map<std::string, double> phaseShift;
 
     RinexHeader() : version(0) {
@@ -116,25 +116,25 @@ inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satType
 }
 
 struct ObsData {
-    //接收机天线位置
+
     Eigen::Vector3d antennaPosition{0, 0, 0};
-    //接收机天线型号（RINEX "ANT # / TYPE"），用于 ATX 查 PCO/PCV
+
     string antType;
-    //接收站名
+
     string station;
-    //接收机接收信号的时刻
+
     CommonTime epoch;
-    //接收机接收信号的时刻的周数和秒数
+
     WeekSecond weekSecond;
     SatTypeValueMap satTypeValueData;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
-    os << "Epoch: " << CommonTime2CivilTime(data.epoch) << "\n"; // 使用 CommonTime 的输出函数
+    os << "Epoch: " << CommonTime2CivilTime(data.epoch) << "\n";
 
     if (!data.satTypeValueData.empty()) {
         os << "Satellite Data:\n";
-        os << data.satTypeValueData; // 使用 SatTypeValueMap 的输出函数
+        os << data.satTypeValueData;
     } else {
         os << "No satellite data available.\n";
     }
@@ -147,7 +147,7 @@ typedef std::map<SatID, std::map<CommonTime, double> > SatEpochValueMap;
 class Parameter {
 public:
     enum ParameterName {
-        // 显式指定底层类型为int
+
         Unknown = 0,
         dX,
         dY,
@@ -164,8 +164,8 @@ public:
         dVZ,
         cdtr_dot,
         ztd,
-        dOX, dOY, dOZ, // 接收机天线/参考点常值 ECEF 偏移
-        codeBias, // 每星伪距(IF code)系统偏置估计：吸收多路径/未建模硬件延迟，使紧码权不再污染位置
+        dOX, dOY, dOZ,
+        codeBias,
         count
     };
 
@@ -175,21 +175,21 @@ public:
     }
 
     [[nodiscard]] std::string toString() const {
-        // 直接返回对应的字符串，假设调用方保证传入的颜色有效
+
         return paraNameStrings[static_cast<int>(paraName)];
     }
 
-    // Overload the equality operator as a member function
+
     bool operator==(const Parameter &other) const {
         return this->paraName == other.paraName;
     }
 
-    // Overload the not-equal operator as a member function
+
     bool operator!=(const Parameter &other) const {
         return !(*this == other);
     }
 
-    // Overload the less-than operator as a member function
+
     bool operator<(const Parameter &other) const {
         return this->paraName < other.paraName;
     }
@@ -202,7 +202,7 @@ private:
     };
 };
 
-// 全局的 operator<< 函数
+
 inline std::ostream &operator<<(std::ostream &os, const Parameter &v) {
     os << v.toString();
     return os;
@@ -214,15 +214,15 @@ public:
     std::string satSys;
     std::string obsType;
 
-    // 默认构造函数
+
     ObsID() = default;
 
-    // 使用两个字符串参数的构造函数
+
     ObsID(std::string sys, std::string type)
         : satSys(std::move(sys)), obsType(std::move(type)) {
     }
 
-    // 重载相等运算符
+
     bool operator==(const ObsID &other) const {
         return this->satSys == other.satSys && this->obsType == other.obsType;
     }

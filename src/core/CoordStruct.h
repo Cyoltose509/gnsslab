@@ -1,18 +1,7 @@
 #pragma once
 
-// ============================================================================================
-// 坐标值类型层（CoordStruct.h）
-// 本文件只放"坐标数据"：XYZ/BLH/ENU/NED 值类型（Eigen::Vector3d 子类 + 命名访问器）
-// 与 FrameInfo 地球框架常量。它是"轻头"——只用到坐标类型的 TU（如 Ephemeris.h）
-// 可单独包含本文件，不必拖进 CoordConvert.h 的 Eigen/Geometry 与整套转换/姿态机械。
-// 坐标数学行为（转换函数族、DCM 构造族、姿态算子 AttQuat）一律在 CoordConvert.h。
-// 历史遗留：applyEarthRotation / isSaneECEF 是两个轻量行为助手（Sagnac 改正 /
-// 合理性判据），调用面窄且早于本分层存在，暂留本文件；如求彻底整齐可移至
-// CoordConvert.h（其调用方均已包含该头，搬迁零影响）。
-// ============================================================================================
-
 #include <Eigen/Eigen>
-#include "Const.h"   // OMEGA_EARTH, C_MPS（applyEarthRotation 需要）
+#include "Const.h"
 
 using namespace std;
 

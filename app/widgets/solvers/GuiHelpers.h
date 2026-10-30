@@ -23,6 +23,8 @@
 #include "GnssStruct.h"
 #include "StringUtils.h"
 #include "Log.h"
+#include "SolverOptions.h"
+#include "SolverTask.h"
 
 namespace GnssTask {
     struct SolverTaskBase;
@@ -167,6 +169,14 @@ namespace Solvers::Helpers {
                               double *sampleInterval,
                               const std::function<void()> &onStart,
                               const std::function<void()> &extraContent = {});
+
+
+
+    void renderAdvancedParams(SolverOptions &opts, GnssTask::SolverMode mode);
+
+
+    void saveSolverParams(GnssTask::SolverMode mode, const SolverOptions &opts);
+    void loadSolverParams(GnssTask::SolverMode mode, SolverOptions &opts);
 
     template<class Task>
     std::pair<int, int> readEpochView(const std::shared_ptr<Task> &task) {

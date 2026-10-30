@@ -12,14 +12,14 @@ bool Sp3OrbitReader::read(const std::string &path) {
     if (!in) return false;
 
     std::string line;
-    // 跳过头部直到第一个 '*' 历元行
+
     bool inEpoch = false;
     CommonTime curT;
     std::map<SatID, std::vector<Record> > tmp;
     while (std::getline(in, line)) {
         if (line.empty()) continue;
         if (line[0] == '*') {
-            // *  yyyy mm dd hh mm sss.ssssss
+
             std::istringstream ss(line);
             char star;
             int y, mo, d, h, mi;
@@ -40,16 +40,16 @@ bool Sp3OrbitReader::read(const std::string &path) {
             if (double x = 0.0, y = 0.0, z = 0.0;
                 getField(line, 0, x) && getField(line, 1, y) && getField(line, 2, z)
                 && isValid(x) && isValid(y) && isValid(z)) {
-                rec.pos = Eigen::Vector3d(x, y, z) * 1000.0; // km -> m
+                rec.pos = Eigen::Vector3d(x, y, z) * 1000.0;
             } else {
-                // 非标准列宽(与旧行为一致的后备)：按空白分隔读位置
+
                 std::istringstream ss(line);
                 double a = 0.0, b = 0.0, c = 0.0;
                 if (std::string tag; !(ss >> tag >> a >> b >> c) || tag.size() < 4) continue;
                 rec.pos = Eigen::Vector3d(a, b, c) * 1000.0;
             }
             if (double clk = 0.0; getField(line, 3, clk) &&isValid(clk)) {
-                rec.clock = clk * 1e-6; // us -> s
+                rec.clock = clk * 1e-6;
                 rec.hasClock = true;
                 if (rec.clock != 0.0) anyClock = true;
             }
@@ -61,7 +61,7 @@ bool Sp3OrbitReader::read(const std::string &path) {
                 if (double vx = 0.0, vy = 0.0, vz = 0.0;
                     getField(line, 0, vx) && getField(line, 1, vy) && getField(line, 2, vz) &&
                     isValid(vx) && isValid(vy) && isValid(vz)) {
-                    rec.vel = Eigen::Vector3d(vx, vy, vz) * 0.1; // dm/s -> m/s
+                    rec.vel = Eigen::Vector3d(vx, vy, vz) * 0.1;
                     rec.hasVel = true;
                 } else {
                     std::istringstream ss(line);
@@ -72,7 +72,7 @@ bool Sp3OrbitReader::read(const std::string &path) {
                     }
                 }
                 if (double vclk = 0.0; getField(line, 3, vclk) && isValid(vclk)) {
-                    rec.clockRate = vclk * 1e-6; // us/s -> s/s
+                    rec.clockRate = vclk * 1e-6;
                     rec.hasClockRate = true;
                 }
             }
@@ -95,7 +95,7 @@ bool Sp3OrbitReader::read(const std::string &path) {
     }
 
     data = std::move(tmp);
-    // 预计算每卫星相对首历元的秒数向量(查询时复用，避免每调用 O(n) 拷贝)
+
     relTimes.clear();
     for (const auto &[sat, recs]: data) {
         std::vector<double> &rt = relTimes[sat];
@@ -115,13 +115,13 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
     const auto &r = it->second;
     const int n = static_cast<int>(r.size());
 
-    // 记录按时间升序（SP3 历元有序）；二分定位最近的记录索引（复用 read() 时预计算的相对时间向量，O(log n)）
+
     const auto itT = relTimes.find(sat);
     const std::vector<double> &times = itT != relTimes.end() ? itT->second : std::vector<double>{};
-    const double tRel = t - r[0].t; // 查询点同基准秒数
-    const int lb = Math::lowerBoundIndex(times, tRel); // 满足 times[lb] <= tRel < times[lb+1]
+    const double tRel = t - r[0].t;
+    const int lb = Math::lowerBoundIndex(times, tRel);
     int idx = lb;
-    if (lb + 1 < n && t - r[lb].t > r[lb + 1].t - t) idx = lb + 1; // 取 lb 与 lb+1 中更近者
+    if (lb + 1 < n && t - r[lb].t > r[lb + 1].t - t) idx = lb + 1;
     const double dt = t - r[idx].t;
 
     const int half = std::min(5, n / 2);
@@ -160,7 +160,7 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
         }
         pvt.v = Math::simpleLagrangeInterpolation(tt, velVec, dt);
     } else {
-        constexpr double kVelDt = 1.0e-3; //与 RTKLIB peph2pos 的 tt 一致
+        constexpr double kVelDt = 1.0e-3;
         std::vector<Eigen::Vector3d> posVecAhead(m);
         for (int k = 0; k < m; ++k) {
             const Eigen::Vector3d &p = r[lo + k].pos;
@@ -182,7 +182,7 @@ PVT Sp3OrbitReader::getPVT(const SatID &sat, const CommonTime &t) const {
             pvt.clockDrift = 0.0;
         }
     } else {
-        pvt.clockBias = 0.0; // 无钟差列，钟差由调用方用 CLK 注入
+        pvt.clockBias = 0.0;
         pvt.clockDrift = 0.0;
     }
     pvt.relativityCorrection = satRelativityCorrection(pvt.p, pvt.v);

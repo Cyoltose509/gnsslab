@@ -11,7 +11,7 @@ bool OsbBias::read(const std::string &path) {
     std::string line;
     bool inSol = false;
     while (std::getline(in, line)) {
-        // 去掉前导空白（BIA 数据行是缩进的）
+
         if (size_t p = line.find_first_not_of(" \t"); p != std::string::npos) line = line.substr(p);
         if (line.rfind("+BIAS/SOLUTION", 0) == 0) {
             inSol = true;

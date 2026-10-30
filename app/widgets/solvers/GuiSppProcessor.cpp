@@ -16,7 +16,7 @@ namespace Solvers::SppProcessor {
     void SppTask::renderConfigPanel() {
         Helpers::beginConfigBody("处理配置###cfg_", *this);
 
-        if (ImGui::BeginTabBar("##cfg_tabs")) {
+        if (ImGui::BeginTabBar("##spp_cfg_tabs")) {
             if (ImGui::BeginTabItem("文件")) {
                 Helpers::fileRow("观测文件 (RINEX .??O / OEM7 .log)", &core->obsPathBuf, "spp_obs",
                                     Helpers::fObs, 3, {}, "spp_obs", &core->brdcPathBuf);
@@ -36,6 +36,7 @@ namespace Solvers::SppProcessor {
                         AppConfig::PathMemory::instance().setNum("spp_cutoff", core->cutoffDeg);
                         AppConfig::PathMemory::instance().setNum("spp_interval", core->sampleInterval);
                         AppConfig::PathMemory::instance().set("spp_systems", GnssTask::sysSetToString(core->enabledSystems));
+                        Helpers::saveSolverParams(GnssTask::SolverMode::Spp, core->opts);
                         LOG_INFO << "[SPP] 开始解算: 观测=" << path;
                         this->worker = std::thread(SolveThread, std::static_pointer_cast<SppTask>(shared_from_this()));
                     }
@@ -62,16 +63,23 @@ namespace Solvers::SppProcessor {
                         pm.setNum("spp_cutoff", core->cutoffDeg);
                         pm.setNum("spp_interval", core->sampleInterval);
                         pm.set("spp_systems", GnssTask::sysSetToString(core->enabledSystems));
+                        Helpers::saveSolverParams(GnssTask::SolverMode::Spp, core->opts);
                         state = State::Running;
                         loading = true;
                         core->loading = true;
                         if (worker.joinable()) worker.join();
-                        this->stop = false; // 与 RTK 实时一致：双停止标志都清
+                        this->stop = false;
                         core->stop = false;
                         this->worker = std::thread(Realtime::RunSpp,
                                                    std::static_pointer_cast<SppTask>(this->shared_from_this()),
                                                    core->rtEndpoints[0]);
                     });
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("参数")) {
+                ImGui::Spacing();
+                Helpers::renderAdvancedParams(core->opts, GnssTask::SolverMode::Spp);
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -93,7 +101,7 @@ namespace Solvers::SppProcessor {
         return true;
     }
 
-    // 星历必须在 processEpoch 之前注入，故用 beforeSolveEpoch 而非 afterSolveEpoch
+
     void SppTask::beforeSolveEpoch(void *solver, GnssTask::ObsItem *item) {
         SPP &spp = *static_cast<SPP *>(solver);
         const auto &[obs, eph] = *item;
@@ -101,7 +109,7 @@ namespace Solvers::SppProcessor {
             const EphemerisTable *tbl = eph.get();
             if (tbl->gps.empty() && tbl->bds.empty() && lastGoodEph) tbl = lastGoodEph.get();
             else if (!tbl->gps.empty() || !tbl->bds.empty()) lastGoodEph = eph;
-            spp.ephTable = *tbl; // shared_ptr 元素深拷贝廉价
+            spp.ephTable = *tbl;
         }
         if (!core->isRinex && eph) core->hasNav = true;
         if (core->isRinex && !core->hasNav) core->noEphSolve = true;

@@ -3,7 +3,6 @@
 
 #include "GuiHelpers.h"
 #include "SolverTask.h"
-#include "core/PathMemory.h"
 #include "io/AsciiLogReader.h"
 #include "io/OEM7Reader.h"
 #include "ins/Aligner.h"
@@ -31,26 +30,14 @@ namespace Tools::InsPanel {
     }
 
     void StaticAlignTask::startAlign() {
-        {
-            const auto &cfg = AppConfig::PathMemory::instance();
-            cfg.setNum("ins_lat", latDeg);
-            cfg.setNum("ins_g", g);
-            cfg.set("ins_win", std::to_string(win));
-        }
+        saveInsParams(par);
         if (alignPath.empty()) {
             setError("请先选择对准段日志文件（ASCII .ASC）。");
             return;
         }
-        if (!std::isfinite(latDeg) || std::fabs(latDeg) > 90.0) {
-            setError("当地纬度 φ 超出 [-90, 90] 的范围。");
-            return;
-        }
-        if (!std::isfinite(g) || g <= 0.0) {
-            setError("当地重力加速度 g 必须为正数。");
-            return;
-        }
-        // 手填当量只对同一份数据有效：换文件或换 g 就作废
-        keepManualScaleFor(scaleSf, alignPath + "\n" + std::to_string(g));
+
+
+        keepManualScaleFor(scaleSf, alignPath + "\n" + std::to_string(par.g));
         beginRun(*this);
         {
             std::lock_guard lk(resultMutex);
@@ -64,11 +51,11 @@ namespace Tools::InsPanel {
 
     void StaticAlignTask::alignWorker() {
         SiteParams sp;
-        sp.latDeg = latDeg;
-        sp.g = g;
-        ScaleIdentifier sen(scaleSf); // 当量识别整条流水线（GuiInsCommon.h），与标定同一个对象
+        sp.latDeg = par.latDeg;
+        sp.g = par.g;
+        ScaleIdentifier sen(scaleSf);
         Aligner::AlignStream st;
-        st.init(win, sp);
+        st.init(par.win, sp);
 
         Eigen::Vector3d sumAcc = Eigen::Vector3d::Zero(), sumGyr = Eigen::Vector3d::Zero();
         long long count = 0;
@@ -81,9 +68,9 @@ namespace Tools::InsPanel {
             st.step(s, a);
             sumAcc += Eigen::Vector3d(s.ax, s.ay, s.az);
             sumGyr += Eigen::Vector3d(s.gx, s.gy, s.gz);
-            sen.probeSample(s); // 型号缺失时靠它反推当量
+            sen.probeSample(s);
             ++count;
-            if (st.count < static_cast<size_t>(win)) return;
+            if (st.count < static_cast<size_t>(par.win)) return;
             seriesLocal.push_back(a);
             dec.push(a);
         };
@@ -102,7 +89,7 @@ namespace Tools::InsPanel {
             }
         };
 
-        // 记录自带的型号读到就能显示（不必等整份文件读完）；读不到要等末尾 resolve 才定得下来
+
         auto onReader = [&](auto &r) -> bool {
             return sen.observe(r, [&](const std::string &label, const ScaleNotice &n) {
                 std::lock_guard lk(resultMutex);
@@ -121,7 +108,7 @@ namespace Tools::InsPanel {
             return;
         }
         sen.offerProbe();
-        sen.resolve(g);
+        sen.resolve(par.g);
         {
             std::lock_guard lk(resultMutex);
             sensorModel = sen.label();
@@ -171,9 +158,7 @@ namespace Tools::InsPanel {
                                                       std::size(Solvers::Helpers::fIns), nullptr);
                         },
                         [&] {
-                            ImGui::InputDouble("当地纬度 φ (°N)", &latDeg, 0.0, 0.0, "%.6f");
-                            ImGui::InputDouble("当地重力加速度 g (m/s²)", &g, 0.0, 0.0, "%.6f");
-                            ImGui::InputInt("滑窗长度 (历元)", &win);
+                            renderInsParams(par);
                         },
                         [this] { startAlign(); });
     }
@@ -203,7 +188,7 @@ namespace Tools::InsPanel {
                 ImGui::TableSetupColumn("pitch");
                 ImGui::TableSetupColumn("roll");
                 ImGui::TableHeadersRow();
-                // 没跑过就该是「没有」，不是三个 0.0000 冒充姿态结果
+
                 auto pendingRow = [](const char *label, const char *pend) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
@@ -315,7 +300,7 @@ namespace Tools::InsPanel {
                         std::snprintf(n2, sizeof n2, "%+.3f %%", 100.0 * (aq.gyroNorm / aq.gyroRef - 1.0));
                         row("|ω| (rad/s)", m2, r2, n2, nullptr);
                     } else {
-                        // 当量还没定下来（流式阶段）与确实拿不到是两件事，别混成同一句「—」
+
                         const char *pend = done ? "不可用" : "待定";
                         row("|f| (m/s²)", pend, "g(φ)", "—", nullptr);
                         row("|ω| (rad/s)", pend, "Ω", "—", nullptr);
@@ -324,8 +309,8 @@ namespace Tools::InsPanel {
                     if (aq.latDerivedValid) {
                         char m3[64], r3[64], n3[64];
                         std::snprintf(m3, sizeof m3, "%.4f", aq.latDerivedDeg);
-                        std::snprintf(r3, sizeof r3, "φ = %.4f", latDeg);
-                        std::snprintf(n3, sizeof n3, "%+.4f °", aq.latDerivedDeg - latDeg);
+                        std::snprintf(r3, sizeof r3, "φ = %.4f", par.latDeg);
+                        std::snprintf(n3, sizeof n3, "%+.4f °", aq.latDerivedDeg - par.latDeg);
                         row("反解纬度 φ (°)", m3, r3, n3, nullptr);
                     } else {
                         row("反解纬度 φ (°)", "不可用", "φ", "重力矢量退化", nullptr);
@@ -336,7 +321,7 @@ namespace Tools::InsPanel {
         }
         ImGui::Spacing();
         {
-            // 三个导出都要整段序列，读完才有：跑的过程中按钮直接禁掉，而不是点了再报错
+
             ImGui::BeginDisabled(!done);
             const bool s1 = ImGui::Button("导出逐历元姿态 CSV", ImVec2(220, 0));
             ImGui::SameLine();
@@ -477,8 +462,8 @@ namespace Tools::InsPanel {
             }
             if (aq.latDerivedValid) {
                 char ref3[64], dev3[64];
-                std::snprintf(ref3, sizeof ref3, "φ = %.4f", latDeg);
-                std::snprintf(dev3, sizeof dev3, "%+.4f °", aq.latDerivedDeg - latDeg);
+                std::snprintf(ref3, sizeof ref3, "φ = %.4f", par.latDeg);
+                std::snprintf(dev3, sizeof dev3, "%+.4f °", aq.latDerivedDeg - par.latDeg);
                 w.row("反解纬度 φ̂ (deg)", Csv::fx(aq.latDerivedDeg, 4), ref3, dev3);
             } else {
                 w.row("反解纬度 φ̂ (deg)", "不可用", "φ", "重力矢量退化");

@@ -1,10 +1,73 @@
 #include "GuiInsCommon.h"
 
+#include "ui/ParamPage.h"
+
 #include <algorithm>
 
 namespace Tools::InsPanel {
     namespace {
-        /// 提示框前缀。只给 drawAlert 用，别处不必知道这份说法。
+        using Ui::ParamPage::between;
+        using Ui::ParamPage::field;
+        using Ui::ParamPage::Group;
+
+
+
+        constexpr const char *kInsPrefix = "ins_";
+
+
+
+        const std::vector<Group<CalibParams> > &calibSchema() {
+            static const std::vector<Group<CalibParams> > s = {
+                {"站点 / 转台", {
+                    field("当地重力加速度 g (m/s²)", "g", &CalibParams::g, between(1.0, 12.0)),
+                    field("转台精确转角 α (°)", "turnAngleDeg", &CalibParams::turnAngleDeg,
+                          between(1.0, 3600.0)),
+                }},
+            };
+            return s;
+        }
+
+
+        const std::vector<Group<AlignParams> > &alignSchema() {
+            static const std::vector<Group<AlignParams> > s = {
+                {"站点", {
+                    field("当地纬度 φ (°N)", "latDeg", &AlignParams::latDeg, between(-90.0, 90.0)),
+                    field("当地重力加速度 g (m/s²)", "g", &AlignParams::g, between(1.0, 12.0)),
+                }},
+                {"解算窗口", {
+                    field("滑窗长度 (历元)", "win", &AlignParams::win, between(2.0, 20000.0)),
+                }},
+            };
+            return s;
+        }
+    }
+
+    void renderInsParams(CalibParams &par) {
+        Ui::ParamPage::render(calibSchema(), par, CalibParams{});
+    }
+
+    void renderInsParams(AlignParams &par) {
+        Ui::ParamPage::render(alignSchema(), par, AlignParams{});
+    }
+
+    void saveInsParams(const CalibParams &par) {
+        Ui::ParamPage::save(calibSchema(), par, kInsPrefix);
+    }
+
+    void saveInsParams(const AlignParams &par) {
+        Ui::ParamPage::save(alignSchema(), par, kInsPrefix);
+    }
+
+    void loadInsParams(CalibParams &par) {
+        Ui::ParamPage::load(calibSchema(), par, CalibParams{}, kInsPrefix);
+    }
+
+    void loadInsParams(AlignParams &par) {
+        Ui::ParamPage::load(alignSchema(), par, AlignParams{}, kInsPrefix);
+    }
+
+    namespace {
+
         const char *alertTitle(const AlertLevel lv) {
             switch (lv) {
                 case AlertLevel::Error: return "错误";

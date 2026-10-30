@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS   // fopen/gzopen 走 C 运行库传统接口（与 src/io/ClkReader.cpp 同）
+#define _CRT_SECURE_NO_WARNINGS
 
 #include "DownloadStore.h"
 #include "ProductMeta.h"
@@ -68,7 +68,7 @@ bool DownloadStore::removeFile(const std::string &path) {
     std::error_code ec;
     fs::remove(path, ec);
 
-    // manifest 去掉该条（删除是低频操作，整表重写一次即可）
+
     auto all = readManifest();
     const auto before = all.size();
     all.erase(std::remove_if(all.begin(), all.end(),
@@ -82,7 +82,7 @@ bool DownloadStore::removeFile(const std::string &path) {
     return gone;
 }
 
-// ---- manifest：极简 JSONL（每行一个 {..."key":"val",...}）----
+
 static std::string manifestPath() {
     return DownloadStore::root() + "/manifest.json";
 }
@@ -100,7 +100,7 @@ static std::string escapeJson(const std::string &s) {
 }
 
 static std::string extractField(const std::string &line, const std::string &key) {
-    // 在行内查找 "key":"value"；value 不含引号/反斜杠（文件名安全）
+
     const std::string pat = "\"" + key + "\":\"";
     auto p = line.find(pat);
     if (p == std::string::npos) return "";
@@ -159,7 +159,7 @@ void DownloadStore::writeManifest(const std::vector<DownloadEntry> &all) {
 
 void DownloadStore::record(const DownloadEntry &e) {
     for (const auto &x: readManifest())
-        if (x.path == e.path) return; // 同路径不重复记录
+        if (x.path == e.path) return;
 
     std::error_code ec;
     fs::create_directories(root(), ec);
@@ -181,7 +181,7 @@ std::string DownloadStore::decompressIfNeeded(const std::string &localPath) {
     for (auto &c: l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (l.size() < 3 || l.compare(l.size() - 3, 3, ".gz") != 0) return localPath;
 
-    gzFile in = gzopen(localPath.c_str(), "rb"); //NOLINT
+    gzFile in = gzopen(localPath.c_str(), "rb");
     if (!in) return localPath;
 
     std::string out = localPath.substr(0, localPath.size() - 3);

@@ -50,7 +50,7 @@ namespace {
             return;
         }
 
-        // 参考轨道读取器（可选）
+
         Sp3OrbitReader refRdr;
         bool hasRefOrbit = false;
         SatID refSat('L', cfg.refPrn);
@@ -134,7 +134,7 @@ int main(const int argc, char **argv) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolverOptions cfg = loadConfig(f);
+    const SolverOptions cfg = loadConfig(f, GnssTask::SolverMode::Leo);
     Log::init("cli_gnsslab.log");
     std::cout << "[LEO] obs=" << cfg.obsPath
             << " 参考轨道=" << (cfg.refSp3.empty() ? "(无)" : cfg.refSp3) << "\n";

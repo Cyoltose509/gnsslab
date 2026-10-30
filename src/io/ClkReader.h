@@ -7,13 +7,13 @@
 #include <set>
 #include <string>
 
-/// 精密钟差 CLK (RINEX CLK) 读取器。继承 RinexFileBase 复用 CRLF 安全 nextLine。
+
 class ClkReader : public RinexFileBase {
 public:
     struct Record {
         CommonTime t;
-        double bias; // 钟差，秒
-        double drift; // 钟漂，秒/秒
+        double bias;
+        double drift;
     };
 
     bool read(const std::string &path);
@@ -33,11 +33,11 @@ public:
 
     [[nodiscard]] int satCount() const { return static_cast<int>(data.size()); }
 
-    /// 只读访问全部已解析钟差记录（指纹/调试用；不暴露写入口）。
+
     [[nodiscard]] const std::map<SatID, std::vector<Record>> &records() const { return data; }
 
 private:
     std::map<SatID, std::vector<Record> > data;
-    // 每卫星相对首历元的秒数向量(读入时一次性预计算)，避免 getClockBias 每次调用都 O(n) 拷贝全部钟差时间。
+
     std::map<SatID, std::vector<double> > relTimes;
 };

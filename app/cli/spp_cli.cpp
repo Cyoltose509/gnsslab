@@ -106,7 +106,7 @@ namespace {
                 reader.setReceiveTimeout(200);
 
                 ObsData obs;
-                SolveDriver::EpochDecimator dec(cfg.sampleInterval); // 解算抽取：只解算网格历元
+                SolveDriver::EpochDecimator dec(cfg.sampleInterval);
                 while (!stop) {
                     bool got = false;
                     try { got = reader.getNextEpoch(obs); } catch (...) { got = false; }
@@ -115,7 +115,7 @@ namespace {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
-                    if (!dec.accept(obs.weekSecond.sow)) continue; // 抽取：非网格历元不解算
+                    if (!dec.accept(obs.weekSecond.sow)) continue;
                     if (auto eph = reader.ephSnapshot()) spp.ephTable = *eph;
                     try { spp.preprocess(obs); } catch (...) {
                     }
@@ -152,7 +152,7 @@ int main(const int argc, char **argv) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolverOptions cfg = loadConfig(f);
+    const SolverOptions cfg = loadConfig(f, GnssTask::SolverMode::Spp);
     Log::init("cli_gnsslab.log");
     std::cout << "[SPP] 模式=" << cfg.source << " obs=" << cfg.obsPath
             << " nav=" << (cfg.navPath.empty() ? "(伴生自动扫描)" : cfg.navPath) << "\n";

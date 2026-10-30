@@ -8,19 +8,19 @@
 
 class Geodesy {
 public:
-    // 太阳/月球地心 ECEF 位置
+
     static void sunMoonECEF(const CommonTime &t, Eigen::Vector3d &rsunEcef, Eigen::Vector3d &rmoonEcef, double &gmstOut) {
         const JulianDate jd = CommonTime2JulianDate(t);
-        const double D = static_cast<double>(jd.jd) - 2451545.0; // 自 J2000 日数
-        const double T = D / 36525.0; // 儒略世纪
+        const double D = static_cast<double>(jd.jd) - 2451545.0;
+        const double T = D / 36525.0;
         double f[5];
         fundamentalArguments(T, f);
 
-        // 黄赤交角(日期)
+
         const double eps = (23.439291 - 0.0130042 * T) * DEG_TO_RAD;
         const double sine = std::sin(eps), cose = std::cos(eps);
 
-        // 太阳
+
         const double Ms = 357.5277233 + 35999.05034 * T;
         const double ls = 280.460 + 36000.770 * T
                           + 1.914666471 * std::sin(Ms * DEG_TO_RAD) + 0.019994643 * std::sin(2.0 * Ms * DEG_TO_RAD);
@@ -29,7 +29,7 @@ public:
         const double sl = std::sin(ls * DEG_TO_RAD), cl = std::cos(ls * DEG_TO_RAD);
         const Eigen::Vector3d sunEci(rs * cl, rs * cose * sl, rs * sine * sl);
 
-        // 月球
+
         const double lm = 218.32 + 481267.883 * T + 6.29 * std::sin(f[0]) - 1.27 * std::sin(f[0] - 2.0 * f[3])
                           + 0.66 * std::sin(2.0 * f[3]) + 0.21 * std::sin(2.0 * f[0]) - 0.19 * std::sin(f[1]) - 0.11 * std::sin(2.0 * f[2]);
         const double pm = 5.13 * std::sin(f[2]) + 0.28 * std::sin(f[0] + f[2]) - 0.28 * std::sin(f[2] - f[0]) - 0.17 * std::sin(
@@ -40,13 +40,13 @@ public:
         const double sp = std::sin(pm * DEG_TO_RAD), cp = std::cos(pm * DEG_TO_RAD);
         const Eigen::Vector3d moonEci(rm * cp * clm, rm * (cose * cp * slm - sine * sp), rm * (sine * cp * slm + cose * sp));
 
-        // ECI→ECEF
+
         const Eigen::Matrix3d U = ECIToECEFDCM(t, gmstOut);
         rsunEcef = U * sunEci;
         rmoonEcef = U * moonEci;
     }
 
-    // 固体潮位移(ECEF, 米)
+
     static Eigen::Vector3d solidTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t) {
         Eigen::Vector3d rsun, rmoon;
         double gmst;
@@ -58,7 +58,7 @@ public:
         double dr1[3], dr2[3];
         tidePotential(eu.data(), rsun.data(), SUN_GM, pos, dr1);
         tidePotential(eu.data(), rmoon.data(), MOON_GM, pos, dr2);
-        // 频率域 K1 径向项
+
         const double sin2l = std::sin(2.0 * pos[0]);
         const double du = -0.012 * sin2l * std::sin(gmst + pos[1]);
         double dr[3];
@@ -68,8 +68,8 @@ public:
         return {dr[0], dr[1], dr[2]};
     }
 
-    // ===================== 地球椭球 / 重力 / 自转（导航系计算用） =====================
-    // 子午卷曲率半径 M 与卮邕卷曲率半径 N（m）
+
+
     static double meridianRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
         const double s = std::sin(B);
         const double w2 = 1.0 - frame.e2 * s * s;
@@ -81,32 +81,18 @@ public:
         return frame.a / std::sqrt(1.0 - frame.e2 * s * s);
     }
 
-    // 正常重力（Somigliana 闭式 + 自由空气高度改正），m/s^2
-    //
-    // 精度边界（相对 g≈9.8 m/s²）：
-    //   公式本身        —— Somigliana 是椭球面上的定义式，不是拟合，误差 < 1e-7 m/s²（0 %）
-    //   忽略高程 h      —— 自由空气梯度 0.3086 mGal/m，即 3.1e-6 m/s² per m
-    //                      （位流实测：h=35.6 m → 11 mGal = 1.1e-4 m/s² = 0.0011 %）
-    //   忽略重力异常    —— 实测 g 与正常重力之差（EGM2008/武汉约 ±20 mGal）
-    //                      → ±2e-4 m/s² = ±0.002 %，与高程项同量级
-    // 结论：按纬度算可到 0.002 % 量级，足够对准质检（判据在 0.01 %）与机械编排
-    //      （1e-4 m/s² 持续 300 s → 位置 5 m，纯惯导自身发散远大于此）。
-    //      要高精度重力须换 EGM2008 球谐场，本式不承担该职责。
+
     static double normalGravity(const double latDeg, const FrameInfo &frame = Frame::WGS84, const double h = 0.0) {
         const double s = std::sin(latDeg * DEG_TO_RAD);
         const double s2 = s * s;
         const double g0 = 9.7803267715 * (1.0 + 0.00193185138639 * s2) / std::sqrt(1.0 - frame.e2 * s2);
-        return g0 - 3.0877e-6 * h;   // 自由空气改正 ≈ -0.3086 mgal/m
+        return g0 - 3.0877e-6 * h;
     }
 
-    // 地球自转角速度在 e 系的投影（rad/s）；n 系的 ω_ie^n 见
-    // InsMath.h::navEarthRate(latDeg)（量值恒为 OMEGA_EARTH）。
     static Eigen::Vector3d earthRateInECEF(const double omega = OMEGA_EARTH) {
         return {0.0, 0.0, omega};
     }
 
-    // 位移速率引起的导航系旋转 ω_en^n（n 系相对 e 系的角速度，rad/s）。
-    // 与 ω_ie^n（InsMath.h::navEarthRate）合起来即为 n 系相对 e 系的完整旋转速率。
     static Eigen::Vector3d transportRateInNav(const double latDeg, const double vNorth, const double vEast,
                                               const double height = 0.0,
                                               const FrameInfo &frame = Frame::WGS84) {
@@ -116,19 +102,17 @@ public:
         return {vEast / Rn, -vNorth / Rm, -vEast * std::tan(B) / Rn};
     }
 
-    // 相位缠绕改正的未 unwrap 原始量（单位 cycle）
     static double phaseWindupCorrection(const Eigen::Vector3d &pTx,
                                         const Eigen::Vector3d &recv, const CommonTime &epoch,
                                         const Eigen::Vector3d &exr, const Eigen::Vector3d &eyr) {
         Eigen::Vector3d rsun, rmoon;
         double gmst;
         sunMoonECEF(epoch, rsun, rmoon, gmst);
-        // 卫星星体 x/y(ECEF)：行 = 目标系轴在 ECEF 的方向余弦（轮子统一约定，见 CoordConvert.h）
         const Eigen::Matrix3d bodyM = ECEFToSVBodyDCM(pTx, rsun);
         const Eigen::Vector3d exs = bodyM.row(0).transpose();
         const Eigen::Vector3d eys = bodyM.row(1).transpose();
 
-        const Eigen::Vector3d ek = (recv - pTx).normalized(); // 卫星->接收机 单位向量
+        const Eigen::Vector3d ek = (recv - pTx).normalized();
         const Eigen::Vector3d eks = ek.cross(eys);
         const Eigen::Vector3d ekr = ek.cross(eyr);
         const Eigen::Vector3d ds = exs - ek * ek.dot(exs) - eks;
@@ -137,18 +121,17 @@ public:
         double cosp = ds.dot(dr) / (ds.norm() * dr.norm());
         if (cosp < -1.0) cosp = -1.0;
         else if (cosp > 1.0) cosp = 1.0;
-        double ph = std::acos(cosp) / (2.0 * PI); // cycle
+        double ph = std::acos(cosp) / (2.0 * PI);
         if (const Eigen::Vector3d drs = ds.cross(dr); ek.dot(drs) < 0.0) ph = -ph;
         return ph;
     }
 
-    // 地面站版：接收机天线基 = ENU(North, West)，法向朝天(Up)。
     static double phaseWindupCorrection(const Eigen::Vector3d &pTx,
                                         const Eigen::Vector3d &recv, const CommonTime &epoch) {
         auto blh = XYZToBLH(recv, Frame::WGS84);
-        Eigen::Matrix3d E = ECEFToENUDCM(blh[0], blh[1]); // 行 = East, North, Up
-        const Eigen::Vector3d exr = E.row(1).transpose(); // 接收机 x = North
-        const Eigen::Vector3d eyr = -E.row(0).transpose(); // 接收机 y = West
+        Eigen::Matrix3d E = ECEFToENUDCM(blh[0], blh[1]);
+        const Eigen::Vector3d exr = E.row(1).transpose();
+        const Eigen::Vector3d eyr = -E.row(0).transpose();
         return phaseWindupCorrection(pTx, recv, epoch, exr, eyr);
     }
 
@@ -156,27 +139,27 @@ public:
                                          const double xp, const double yp) {
         const auto blh = XYZToBLH(recvEcef, Frame::WGS84);
         const double phi = blh[0], lam = blh[1];
-        const double th = PI / 2.0 - phi; // 余纬 θ（式 7.28 的 R 矩阵以余纬定义）
+        const double th = PI / 2.0 - phi;
 
-        // 式(7.7) 平均极(角秒)：x̄ = 0.054 + 0.00083(t-2000)，ȳ = 0.357 + 0.00395(t-2000)
+
         const auto yds = CommonTime2YDSTime(t);
         const double year = static_cast<double>(yds.year) + static_cast<double>(yds.doy) / 365.25;
         const double xbar = 0.054 + 0.00083 * (year - 2000.0);
         const double ybar = 0.357 + 0.00395 * (year - 2000.0);
 
-        // 式(7.25)：m1/m2 单位**角秒**
+
         const double m1 = xp / ARCSEC_TO_RAD - xbar;
         const double m2 = -(yp / ARCSEC_TO_RAD - ybar);
 
-        // 式(7.26)：S_r(Up)、S_θ(South)、S_λ(East)，单位 mm
+
         const double A = m1 * std::cos(lam) + m2 * std::sin(lam);
         const double B = m1 * std::sin(lam) - m2 * std::cos(lam);
         constexpr double MM = 1.0e-3;
-        const double Sr = -33.0 * std::sin(2.0 * th) * A * MM; // Up
-        const double Sth = -9.0 * std::cos(2.0 * th) * A * MM; // South
-        const double Slam = 9.0 * std::cos(th) * B * MM; // East
+        const double Sr = -33.0 * std::sin(2.0 * th) * A * MM;
+        const double Sth = -9.0 * std::cos(2.0 * th) * A * MM;
+        const double Slam = 9.0 * std::cos(th) * B * MM;
 
-        // 式(7.27)(7.28)：[dX,dY,dZ] = R^T·[Sθ,Sλ,Sr]，R = [South; East; Up]
+
         const double st = std::sin(th), ct = std::cos(th);
         const double sl = std::sin(lam), cl = std::cos(lam);
         const Eigen::Vector3d south(ct * cl, ct * sl, -st);

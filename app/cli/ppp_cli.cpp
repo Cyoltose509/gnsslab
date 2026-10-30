@@ -28,7 +28,7 @@ namespace {
             if (!cfg.tro.empty()) ppp.loadTro(cfg.tro);
             if (!cfg.ionex.empty()) ppp.loadIonex(cfg.ionex);
 
-            // 统一参数注入：PPPStatic::applyOptions 逐字还原原先的 ~21 项手写设置。
+
             ppp.applyOptions(cfg);
             return true;
         };
@@ -87,7 +87,7 @@ int main(const int argc, char **argv) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolverOptions cfg = loadConfig(f);
+    const SolverOptions cfg = loadConfig(f, GnssTask::SolverMode::Ppp);
     Log::init("cli_gnsslab.log");
     std::cout << "[PPP] obs=" << cfg.obsPath
             << " 运动学=" << (cfg.kinematic ? "是" : "否") << "\n";

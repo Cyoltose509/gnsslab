@@ -4,15 +4,15 @@
 #include <string>
 #include <vector>
 
-/// 地球自转参数 ERP（IGS ERP v2 文本格式）读取器。
+
 class ErpReader {
 public:
     struct Record {
-        double mjd = 0.0;    // 修约儒略日（文件原值，UTC 基准）
-        double xp = 0.0;     // 极移 x（rad）
-        double yp = 0.0;     // 极移 y（rad）
-        double ut1Utc = 0.0; // UT1-UTC（s）
-        double lod = 0.0;    // 日长变化 LOD（s）
+        double mjd = 0.0;
+        double xp = 0.0;
+        double yp = 0.0;
+        double ut1Utc = 0.0;
+        double lod = 0.0;
     };
 
     bool read(const std::string &path);

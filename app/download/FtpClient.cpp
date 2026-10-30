@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS   // fopen 走 C 运行库传统接口（与 src/io/ClkReader.cpp 同）
+#define _CRT_SECURE_NO_WARNINGS
 
 #include "FtpClient.h"
 
@@ -11,7 +11,7 @@
 #include <string>
 
 namespace {
-    // libcurl 全局只需初始化一次；析构略过（GUI 退出时泄露无碍，且避免handle存活期间cleanup）。
+
     void ensureGlobalInit() {
         static bool ok = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
         (void) ok;
@@ -23,7 +23,7 @@ namespace {
         FtpClient::LogCb log;
     };
 
-    // 回调首参按 curl 文档写 char*（curl_easy_setopt 是变参，编译器不校验函数指针类型）
+
     size_t writeCb(const char *ptr, const size_t size, const size_t nmemb, void *userdata) {
         const auto *c = static_cast<DlCtx *>(userdata);
         if (!c->fp) return 0;
@@ -42,13 +42,13 @@ namespace {
         return size * nmemb;
     }
 
-    // FTP LIST 行 → 文件名（取末段空白分隔 token，跳过 . 和 ..）
+
     void parseList(const std::string &listing, std::vector<std::string> &out) {
         std::string line;
         for (const char c: listing) {
             if (c == '\n' || c == '\r') {
                 if (!line.empty()) {
-                    // 末段 token
+
                     if (const size_t p = line.find_last_not_of(" \t"); p != std::string::npos) line = line.substr(0, p + 1);
                     const size_t sp = line.find_last_of(" \t");
                     if (std::string name = sp != std::string::npos ? line.substr(sp + 1) : line;
@@ -62,7 +62,7 @@ namespace {
             }
         }
     }
-} // namespace
+}
 
 FtpClient::FtpClient() { ensureGlobalInit(); }
 
@@ -86,7 +86,7 @@ bool FtpClient::listDir(const std::string &url, std::vector<std::string> &outNam
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &listing);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
-    // 列目录超时短于下载：不存在/未发布的目录若服务器不立即拒绝，也不该拖到 60s
+
     curl_easy_setopt(c, CURLOPT_TIMEOUT, 45L);
 
     const CURLcode r = curl_easy_perform(c);
@@ -142,7 +142,7 @@ bool FtpClient::downloadFile(const std::string &url, const std::string &localPat
         LOG_WARN << "[下载] 尝试 " << attempt << "/" << retries << " 失败: " << url
                 << " — " << curl_easy_strerror(r);
         std::error_code ec;
-        std::filesystem::remove(localPath, ec); // 删掉不完整文件
+        std::filesystem::remove(localPath, ec);
         if (attempt == retries) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(300 * attempt));
     }

@@ -6,7 +6,9 @@
 #include "SolverOptions.h"
 #include "core/IniFile.h"
 
-SolverOptions loadConfig(const AppConfig::IniFile &ini);
+
+
+SolverOptions loadConfig(const AppConfig::IniFile &ini, GnssTask::SolverMode mode);
 
 namespace Cli {
     std::string defaultCsvName(GnssTask::SolverMode m);

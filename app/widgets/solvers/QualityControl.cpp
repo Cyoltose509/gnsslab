@@ -13,10 +13,10 @@
 #include <functional>
 #include <fstream>
 #include <iomanip>
-#include <cstdio>      // snprintf：概览表列取值器
+#include <cstdio>
 #include <StringUtils.h>
 #include "GuiSolverPanel.h"
-#include "GuiHelpers.h"   // Helpers::saveCSVDialog / saveFileDialog：统一保存对话框
+#include "GuiHelpers.h"
 
 
 namespace QualityControl {
@@ -25,9 +25,9 @@ namespace QualityControl {
 
 
     namespace {
-    // 按任务实例隔离 UI 状态：同一类型的两个任务（如 RTK 基准站/流动站）各自持有一份。
-    // weak_ptr 键 + 进入时清理过期条目：任务销毁后条目残留虽无害，但地址复用会让新任务
-    // 继承旧任务的 sysSel/comboSel/导出状态（RTK 双 tab 曾靠 owner 指针区分，是潜在串状态 bug）。
+
+
+
     static QcUiState &uiState(const std::shared_ptr<void> &owner) {
         static std::map<std::weak_ptr<void>, QcUiState, std::owner_less<>> pool;
         for (auto it = pool.begin(); it != pool.end();) {
@@ -48,14 +48,14 @@ namespace QualityControl {
     }
 
 
-    // 将质量分析报告导出为 CSV（含系统汇总、逐卫星统计两段）。
-    // 统一走 Csv::Writer（与 SolverTask 定位导出一致），不再手写 ofstream 拼接。
+
+
     static void exportCsv(const QualityReport &rep, const std::string &taskLabel) {
         std::wstring path;
-        // 统一走 Helpers 保存对话框（与结果页 CSV 导出、INS 标定导出同一入口）
-        if (!Solvers::Helpers::saveCSVDialog(stripExt(taskLabel) + "_qc.csv", path)) return; // 用户取消
 
-        // d3 = 3 位定点小数，逐字段对齐旧全局 fixed<<setprecision(3) 的输出宽度。
+        if (!Solvers::Helpers::saveCSVDialog(stripExt(taskLabel) + "_qc.csv", path)) return;
+
+
         Csv::Writer w;
         auto d3 = [](const double v) { return Csv::fx(v, 3); };
         auto num3 = [](const double v) {
@@ -63,7 +63,7 @@ namespace QualityControl {
             os << std::fixed << std::setprecision(3) << v;
             return os.str();
         };
-        // 频点按单字符输出（band1/band2 是 char；直接进 cell 会整型提升成 ASCII 码）。
+
         auto bandCh = [](const char c) { return std::string(1, c); };
 
         w.row("GNSS 观测数据质量分析报告", taskLabel);
@@ -151,11 +151,11 @@ namespace QualityControl {
         }
         w.endRow();
 
-        // withBom=true：中文表头无 BOM 会被 Excel 按 ANSI 解成乱码。
+
         (void) w.save(path, true);
     }
 
-    // 「导出此图 PNG」小按钮
+
     static void plotExportBtn(const char *uid, const ImVec2 p0, const float w, const float h, const std::string &base) {
         const std::string lbl = std::string("导出此图 PNG##") + uid;
         if (ImGui::SmallButton(lbl.c_str())) {
@@ -165,14 +165,14 @@ namespace QualityControl {
         }
     }
 
-        // 统一的“图框 + 导出此图 PNG 按钮”容器：登记导出回调并记录布局矩形
+
         static void drawPlot(QcUiState &qs, const std::string &baseName,
                              const char *id, const char *title, const float defH,
                              const std::function<void()> &body) {
             auto h = defH;
             if (h < 80.0f) h = 80.0f;
 
-            const float w = ImGui::GetContentRegionAvail().x; // 宽度始终占满
+            const float w = ImGui::GetContentRegionAvail().x;
 
             qs.contentY[id] = ImGui::GetCursorPosY();
             qs.lastIds.emplace_back(id);
@@ -187,28 +187,28 @@ namespace QualityControl {
             }
             ImGui::EndChild();
 
-            // 用 EndChild 后的精确屏幕矩形作为导出区域（含边框）
+
             const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
             qs.curRect[id] = ImVec4(rmin.x, rmin.y, rmax.x - rmin.x, rmax.y - rmin.y);
 
             plotExportBtn(id, rmin, rmax.x - rmin.x, rmax.y - rmin.y, baseName);
         }
 
-        // 系统汇总表列定义（13 列，与 CSV 导出同序）
+
         static const char *kSysColHdrs[] = {
             "系统", "完整率%", "周跳数", "周跳比", "粗差数", "钟跳数", "MP1(m)", "MP2(m)",
             "伪距噪声(m)", "载波噪声(cyc)", "CNR_f1(dB-Hz)", "CNR_f2(dB-Hz)", "综合评估 E"
         };
 
-        // 概览：顶部统计行 + 各系统完整率表（含“总体”汇总行）。
-        // 原逐格 4 行手写 TableSetColumnIndex/Text（13 列 × 2 行 ≈ 120 行），收敛为
-        // “列定义 + 行循环 + 列取值器”；显示格式逐列与原实现一致。
+
+
+
         void renderOverviewStats(const QualityReport &rep) {
             ImGui::SeparatorText("总体概览");
 
             ImGui::Text("总历元 %d | 间隔 %.2f s | 可用卫星 %d 接收机钟跳 %d 历元",
                         rep.totalEpochs, rep.interval, static_cast<int>(rep.sats.size()), rep.clockJumpEpochs);
-            // 总体行派生值：计数按系统累加，连续指标按所有卫星直接平均（与顶部 CNR 一致）
+
             int totalSlips = 0, totalOutliers = 0, totalClockJumps = 0;
             for (const auto &[s, c]: rep.sysSlips) totalSlips += c;
             for (const auto &[s, c]: rep.sysOutliers) totalOutliers += c;
@@ -222,7 +222,7 @@ namespace QualityControl {
                 sumSigPh += 0.5 * (q.sigPh1 + q.sigPh2);
                 cnt++;
             }
-            // 列取值器：col 同 kSysColHdrs 下标；s 为 G/R/E/C 或 'T'（总体行）
+
             auto cellText = [&](const int col, const char s) -> std::string {
                 const bool tot = s == 'T';
                 char b[64];
@@ -258,15 +258,15 @@ namespace QualityControl {
                     ImGui::TextUnformatted(cellText(c, s).c_str());
                 }
             };
-            // ScrollX 表必须给定 outer_size.y，否则会撑满父窗口全部高度（表现为超大空表）
+
             const float rowH = ImGui::GetTextLineHeightWithSpacing();
-            const int sysRows = static_cast<int>(rep.sysCompleteness.size()) + 1; // +1 总体行
+            const int sysRows = static_cast<int>(rep.sysCompleteness.size()) + 1;
             if (const ImVec2 sysTblSize(0.0f, rowH * static_cast<float>(sysRows + 1) + 8.0f); ImGui::BeginTable(
                 "##sys", 13, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
                              ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit, sysTblSize)) {
                 for (int c = 0; c < 13; c++) ImGui::TableSetupColumn(kSysColHdrs[c]);
                 ImGui::TableHeadersRow();
-                // 在"综合评估 E"列头显示熵权 tooltip
+
                 if (ImGui::TableGetColumnFlags(12) & ImGuiTableColumnFlags_IsHovered) {
                     if (ImGui::BeginTooltip()) {
                         const auto &ce = rep.comprehensive;
@@ -276,15 +276,15 @@ namespace QualityControl {
                         ImGui::EndTooltip();
                     }
                 }
-                // 逐系统行：固定顺序 GPS/GLO/GAL/BDS；仅统计实际出现的系统
+
                 for (const char s: {'G', 'R', 'E', 'C'})
                     if (rep.sysCompleteness.count(s)) writeRow(s);
-                if (!rep.sysCompleteness.empty()) writeRow('T'); // 总体行
+                if (!rep.sysCompleteness.empty()) writeRow('T');
                 ImGui::EndTable();
             }
         }
 
-        // 导出条：CSV 报告 / 一键导出全部 PNG / 导出状态提示
+
         void renderExportBar(QcUiState &qs, const QualityReport &rep,
                              const std::string &taskFileName) {
             if (ImGui::Button("导出 CSV (系统汇总/逐卫星)")) {
@@ -307,7 +307,7 @@ namespace QualityControl {
                 ImGui::TextDisabled("上次导出目录：%s", qs.exportDir.c_str());
         }
 
-        // 逐卫星统计：按系统筛选后的卫星列表 + 下拉选择；无可用卫星返回 false
+
         bool renderSatelliteSelector(const QualityReport &rep, QcUiState &qs, const int sysSel,
                                      std::vector<SatID> &list,
                                      std::vector<const SatQC *> &toPlot, bool &allView) {
@@ -339,7 +339,7 @@ namespace QualityControl {
             return true;
         }
 
-        // 全部卫星视图：MP1 / MP2 / IOD / CNR 四条时间序列
+
         void renderAllSatTimeSeries(QcUiState &qs, const std::string &baseName,
                                     const std::vector<const SatQC *> &toPlot) {
             drawPlot(qs, baseName, "mp1_all", "多路径误差 MP1", kPlotH, [&] {
@@ -368,9 +368,9 @@ namespace QualityControl {
             });
         }
 
-        // 柱状图标签缓冲：按卫星列表填 xs=i / ys=getter(q) / labs / labp。
-        // completeness 与 comprehensiveE 两款逐字同形，抽此共用（slipratio 有过滤、
-        // noise_combined 是双轴 5 列，结构不同，保留各自写法）。
+
+
+
         static void fillBarBuf(QcUiState::PlotBuf &buf, const std::vector<SatID> &list,
                                const QualityReport &rep, const std::function<double(const SatQC &)> &get) {
             const auto M = static_cast<int>(list.size());
@@ -389,11 +389,11 @@ namespace QualityControl {
             }
         }
 
-        // 逐卫星指标柱状图：观测完整率 / 周跳比 / 伪距-载波噪声
+
         void renderPerSatMetricBars(const QualityReport &rep, QcUiState &qs,
                                     const std::string &baseName,
                                     const std::vector<SatID> &list) {
-            // ===== 逐卫星指标柱状图 =====
+
             ImGui::SeparatorText("逐卫星指标");
             {
                 auto &buf = qs.buf("completeness");
@@ -407,7 +407,7 @@ namespace QualityControl {
                     ImPlot::PlotBars("观测完整率", col[1].data(), M, 0.7);
                 });
             }
-            // 周跳比
+
             {
                 const int M = static_cast<int>(list.size());
                 auto &[col, labs, labp] = qs.buf("slipratio");
@@ -465,11 +465,11 @@ namespace QualityControl {
             });
         }
 
-        // 综合评估 E 柱状图（熵权法，越小越好）
+
         void renderComprehensiveBars(const QualityReport &rep, QcUiState &qs,
                                      const std::string &baseName,
                                      const std::vector<SatID> &list) {
-            // ===== 综合评估 E 柱状图 (6.8, 越小越好) =====
+
             const auto &ce = rep.comprehensive;
             auto &buf = qs.buf("comprehensive");
             fillBarBuf(buf, list, rep, [&ce](const SatQC &q) { return ce.E.count(q.sat) ? ce.E.at(q.sat) : 0.0; });
@@ -483,7 +483,7 @@ namespace QualityControl {
             });
         }
 
-        // 单颗卫星：指标明细表（频点 / 完整率 / 周跳 / 噪声 / IOD / CNR / 综合 E）
+
         void renderSingleSatMetricTable(const QualityReport &rep, const SatQC &q) {
             if (ImGui::BeginTable("##satqc", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("指标");
@@ -554,7 +554,7 @@ namespace QualityControl {
             }
         }
 
-        // 单颗卫星视图：指标明细表 + MP / 周跳位置 / IOD / CNR 时间序列
+
         void renderSingleSatView(const QualityReport &rep, QcUiState &qs,
                                  const std::string &baseName,
                                  const std::vector<const SatQC *> &toPlot) {
@@ -596,7 +596,7 @@ namespace QualityControl {
             }
         }
 
-        // 批量导出：每帧在 overlay 中重放一张已登记的 plot body 并截图
+
         void renderExportOverlay(QcUiState &qs, const std::string &baseName) {
             auto &plotDefs = qs.plotDefs;
             if (qs.exporting && !qs.exportQueue.empty()) {
@@ -630,19 +630,19 @@ namespace QualityControl {
                 }
             }
         }
-    } // namespace (anonymous)
+    }
 
     template<typename TaskT>
     void render(const std::shared_ptr<TaskT> &task) {
-        // 文件模式：必须等所有历元读取完毕，质量分析才算（QC 不依赖定位解算，读取完即可）
+
         if (!task->isRealtime && !task->readDone) {
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "正在等待历元读取完全…");
             return;
         }
 
-        // 懒加载：仅当任务标记 qcLazy 且尚未计算时，在 tab 首次可见时触发一次 LaunchQC。
-        // RTK 双标签置 qcLazy=true（加快首屏）；SPP/PPP/LEO 保持 eager 触发（qcLazy=false），
-        // 此处不会抢先触发，避免双算 QC。
+
+
+
         if (task->qcLazy && !task->qcReady && !task->qcComputing) Solvers::SolverPanel::LaunchQC(task);
 
         std::shared_ptr<QualityReport> repPtr;

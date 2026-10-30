@@ -2,7 +2,7 @@
 #include "GuiCharts.h"
 
 #include "Const.h"
-#include "CoordConvert.h" // ENUToXYZ（E-N 中心点拖拽 → 参考坐标平移）
+#include "CoordConvert.h"
 #include <cmath>
 #include <algorithm>
 #include <cstdlib>
@@ -25,7 +25,7 @@ namespace Solvers::Charts {
         }
     }
 
-    // 断点感知时间轴：相邻点 x 间隔超过 ~2.5×典型间隔则插入一个 NaN 断点
+
     static void buildBrokenAxis(const std::vector<double> &times,
                                 std::vector<double> &tt,
                                 std::vector<int> &keptIdx) {
@@ -48,7 +48,7 @@ namespace Solvers::Charts {
         const double thr = 2.5 * step;
         for (int i = 0; i < n; ++i) {
             if (!std::isfinite(times[i])) continue;
-            // 前向大间隔断线（数据缺口/丢历元）；横轴各图统一用历元序号，单调递增无回绕
+
             if (!keptIdx.empty() && times[i] - tt.back() > thr) {
                 tt.push_back(tt.back());
                 keptIdx.push_back(-1);
@@ -134,7 +134,7 @@ namespace Solvers::Charts {
                     if (k < r.extra.size()) ImGui::Text("%s", r.extra[k].second.c_str());
                     else ImGui::TextDisabled("-");
                 }
-                ImGui::TableSetColumnIndex(c++); //NOLINT
+                ImGui::TableSetColumnIndex(c++);
                 if (r.used) ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "参与");
                 else ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "排除");
             }
@@ -142,7 +142,7 @@ namespace Solvers::Charts {
         }
     }
 
-    // ENU 收敛轨迹图
+
     void renderENUPlot(const std::vector<double> &times,
                        const std::vector<double> &enu_e,
                        const std::vector<double> &enu_n,
@@ -190,7 +190,7 @@ namespace Solvers::Charts {
                 ImPlot::PlotLine("N(浮点)", tt.data(), fn.data(), nf, fspec);
                 ImPlot::PlotLine("U(浮点)", tt.data(), fu.data(), nf, fspec);
             }
-            // 主曲线（固定解优先，否则浮点解）
+
             ImPlotSpec espec;
             espec.LineColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
             espec.LineWeight = 1.5f;
@@ -220,13 +220,13 @@ namespace Solvers::Charts {
             ImPlot::DragLineX(0, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
             int se = static_cast<int>(std::lround(sx));
             if (se < 0) se = 0;
-            if (se >= nEpoch) se = nEpoch - 1; // 钳制到完整历元数（X 轴为历元序号）
+            if (se >= nEpoch) se = nEpoch - 1;
             selectedEpoch = se;
         }
         ImPlot::EndPlot();
     }
 
-    // Ratio 时序图
+
     void renderRatioPlot(const std::vector<double> &times,
                          const std::vector<double> &ratioVals,
                          int &selectedEpoch, bool &newed, const int epochCount) {
@@ -243,7 +243,7 @@ namespace Solvers::Charts {
             ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
         newed = false;
         if (nf > 0) {
-            // 3.0 阈值横线
+
             if (tt.front() <= tt.back()) {
                 double yt[2] = {tt.front(), tt.back()};
                 double yv[2] = {3.0, 3.0};
@@ -268,7 +268,7 @@ namespace Solvers::Charts {
         ImPlot::EndPlot();
     }
 
-    // 逐卫星残差图（码/相位可切换）
+
     void renderSatResidualPlot(const std::map<SatID, std::vector<double> > &satResT,
                                const std::map<SatID, std::vector<double> > &satResV,
                                const std::map<SatID, std::vector<double> > &phaseT,
@@ -278,7 +278,7 @@ namespace Solvers::Charts {
                                const double *codeLo, const double *codeHi,
                                const double *phaseLo, const double *phaseHi,
                                const float plotH) {
-        // 切换：码(伪距) / 载波相位。状态由调用方持有（SolveTask::resMode），这里只读写。
+
         int mode = resMode ? *resMode : 0;
         ImGui::PushID("resmode");
         if (ImGui::RadioButton("伪距", mode == 0)) mode = 0;
@@ -328,7 +328,7 @@ namespace Solvers::Charts {
                         if (!std::isfinite(v[i])) continue;
                         if (i > 0 && std::isfinite(t[i]) && std::isfinite(t[i - 1]) && t[i] - t[i - 1] > 2.5) {
                             tt.push_back(t[i - 1]);
-                            vv.push_back(std::numeric_limits<double>::quiet_NaN()); // 断点：前后两段不相连
+                            vv.push_back(std::numeric_limits<double>::quiet_NaN());
                         }
                         tt.push_back(t[i]);
                         vv.push_back(v[i]);
@@ -433,7 +433,7 @@ namespace Solvers::Charts {
         }
     }
 
-    // LEO 轨迹（实现：绘制逻辑本体，无 SEH；独立成自由函数以避开 __try 与局部对象展开的 C2712 冲突）
+
     static void RenderLeo3DImpl(const Eigen::Vector3d &leoPos,
                                 const std::vector<GnssTask::TrajPoint> &leoTraj,
                                 const std::vector<GnssTask::TrajPoint> &refTraj,
@@ -480,7 +480,7 @@ namespace Solvers::Charts {
         }
     }
 
-    // LEO 轨迹（SEH 包裹，渲染异常不崩溃）
+
     void RenderLeo3D(const Eigen::Vector3d &leoPos,
                      const std::vector<GnssTask::TrajPoint> &leoTraj,
                      const std::vector<GnssTask::TrajPoint> &refTraj,
@@ -493,7 +493,7 @@ namespace Solvers::Charts {
     }
 
     namespace {
-        // 章节标题；flag 非空时在标题右侧补一个 显示/隐藏 开关
+
         void SectionHeader(const char *title, bool *flag) {
             ImGui::SeparatorText(title);
             if (flag) {
@@ -512,22 +512,22 @@ namespace Solvers::Charts {
             return flag ? *flag : fallback;
         }
 
-        // 顶部状态行 + 历元导航（首/末/前后 + 滑块 + 历元信息）
+
         void renderStatusAndEpochNav(const PosTabView &v) {
-            // 状态行
+
             if (!v.statusText.empty())
                 ImGui::TextColored(v.statusColor, "%s", v.statusText.c_str());
             else if (v.epochCount > 0)
                 ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "处理完成: 共 %d 个历元", v.epochCount);
 
-            // 历元导航：先 Clamp，防御解算线程/上帧把 selectedEpoch 改出当前范围。
+
             if (v.selectedEpoch && v.epochCount > 0) {
                 int &se = *v.selectedEpoch;
                 if (se < 0) se = 0;
                 if (se >= v.epochCount) se = v.epochCount - 1;
             }
 
-            // 历元导航（箭头 + 滑块 + 信息）
+
             if (v.epochCount > 0 && v.selectedEpoch) {
                 if (ImGui::Button("<<")) *v.selectedEpoch = 0;
                 ImGui::SameLine();
@@ -601,7 +601,7 @@ namespace Solvers::Charts {
             }
         }
 
-        // 选中卫星的观测详情表（伪距 / 载波 / Doppler / 强度，按频点分行）
+
         void renderObsDetailTable(const PosTabView &v) {
             if (v.showObsDetail && v.selectedSatIdx && *v.selectedSatIdx >= 0 &&
                 *v.selectedSatIdx < static_cast<int>(v.satRows.size())) {
@@ -645,10 +645,10 @@ namespace Solvers::Charts {
             }
         }
 
-        // 右侧面板三表
+
         void renderPosTables(const PosTabView &v) {
             ImGui::SeparatorText("位置");
-            // 表1：坐标表（数据 | X | Y | Z | 长度 | σ）
+
             if (ImGui::BeginTable("##coord", 6, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("数据");
                 ImGui::TableSetupColumn("X/m", ImGuiTableColumnFlags_WidthFixed, 92);
@@ -698,7 +698,7 @@ namespace Solvers::Charts {
                 ImGui::EndTable();
             }
 
-            // 表2：参考 + ENU/RTN（无表头；仅在有固定算法时；LEO 无参考轨道不显示）
+
             if (v.showRefTable) {
                 ImGui::SeparatorText("参考");
                 if (ImGui::BeginTable("##ref", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
@@ -743,7 +743,7 @@ namespace Solvers::Charts {
                 }
             }
 
-            // 表3：DOP + 卫星数
+
             {
                 ImGui::SeparatorText("其他");
                 if (const int nC = v.isRtk ? 5 : 6;
@@ -756,7 +756,7 @@ namespace Solvers::Charts {
                     if (!v.isRtk) ImGui::TableSetupColumn("TDOP");
                     ImGui::TableSetupColumn("卫星数");
                     ImGui::TableHeadersRow();
-                    // 行2：数值
+
                     ImGui::TableNextRow();
                     int ci = 0;
                     auto set = [&](const char *fmt, const double val) {
@@ -770,7 +770,7 @@ namespace Solvers::Charts {
                     if (!v.isRtk) set("%.2f", v.tdop);
                     ImGui::TableSetColumnIndex(ci++);
                     ImGui::Text("%d/%d", v.numSatsResult, v.numObs);
-                    // 行3/行4：解状态、ratio 作为 2 列表头 + 数值行（仅固定/浮点区分模式）
+
                     if (v.showSolveStatus) {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
@@ -788,13 +788,13 @@ namespace Solvers::Charts {
             }
         }
 
-        // 左右并排：卫星概览表（含选中星观测详情） | 位置面板（含导出 CSV）
+
         void renderSatelliteAndPositionPanels(const PosTabView &v, const float th) {
             {
                 bool *stTg = v.renderToggles ? &v.renderToggles->satTable : nullptr;
                 bool *ppTg = v.renderToggles ? &v.renderToggles->posPanel : nullptr;
                 const bool stVis = vis(stTg, v.showSatTable);
-                const bool ppVis = vis(ppTg, v.showPosPanel); //NOLINT
+                const bool ppVis = vis(ppTg, v.showPosPanel);
                 if (stVis || ppVis || v.renderToggles) {
                     if (ImGui::BeginTable("##ms", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
                         ImGui::TableSetupColumn("L", ImGuiTableColumnFlags_WidthStretch, 0.6f);
@@ -862,7 +862,7 @@ namespace Solvers::Charts {
                 return;
             }
             if (ImPlot::BeginPlot("E-N 平面图", ImVec2(-1, -1), ImPlotFlags_NoLegend | ImPlotFlags_NoBoxSelect)) {
-                // 仅取已解算历元
+
                 std::vector<double> xe, xn;
                 const int n = static_cast<int>(enu_e.size());
                 xe.reserve(n);
@@ -875,7 +875,7 @@ namespace Solvers::Charts {
                     xn.push_back(nn);
                 }
                 const int m = static_cast<int>(xe.size());
-                // 对称等距坐标范围（1:1 显示比例由数据范围保证，不依赖控件是否正方形）
+
                 double r = 1e-6;
                 for (int i = 0; i < m; ++i)
                     r = std::max(r, std::max(std::abs(xe[i]), std::abs(xn[i])));
@@ -883,14 +883,14 @@ namespace Solvers::Charts {
                 ImPlot::SetupAxes("E (m) ", "N (m) ");
                 ImPlot::SetupAxisLimits(ImAxis_X1, -r, r, ImPlotCond_Once);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, -r, r, ImPlotCond_Once);
-                // 轨迹连线（淡）
+
                 if (m > 1) {
                     ImPlotSpec ls;
                     ls.LineColor = ImVec4(0.5f, 0.7f, 0.9f, 0.35f);
                     ls.LineWeight = 1.0f;
                     ImPlot::PlotLine("轨迹", xe.data(), xn.data(), m, ls);
                 }
-                // 逐历元描点
+
                 if (m > 0) {
                     ImPlotSpec ps;
                     ps.Marker = ImPlotMarker_Circle;
@@ -898,28 +898,28 @@ namespace Solvers::Charts {
                     ps.LineColor = ImVec4(0.2f, 0.9f, 0.4f, 0.9f);
                     ImPlot::PlotScatter("解算轨迹", xe.data(), xn.data(), m, ps);
                 }
-                // —— 中心点（参考点）拖拽：拖动即把参考坐标搬到松手处 ——
-                // ENU 坐标本来就是"相对参考点"的，所以标记平时钉在原点；拖动时暂时离开原点，
-                // 松手后把 refECEF 平移 (ΔE,ΔN)，下一帧轨迹整体平移、标记回到原点。
-                // 状态跨帧保存（ImPlot 拖拽工具本身就跨帧）：只有一块 E-N 图，用函数内静态量即可。
-                static double cx = 0.0, cy = 0.0; // 待定中心（当前 ENU 系，m）
+
+
+
+
+                static double cx = 0.0, cy = 0.0;
                 static bool wasHeld = false;
                 bool held = false;
                 ImPlot::DragPoint(0, &cx, &cy, ImVec4(0.95f, 0.6f, 0.1f, 1.0f), 7.0f,
                                   ImPlotDragToolFlags_NoFit, nullptr, nullptr, &held);
-                // 十字线跟随待定中心，明确"搬到哪"
+
                 ImPlot::DragLineX(99, &cx, ImVec4(0.95f, 0.6f, 0.1f, 0.55f), 1.0f,
                                   ImPlotDragToolFlags_NoInputs);
                 ImPlot::DragLineY(99, &cy, ImVec4(0.95f, 0.6f, 0.1f, 0.55f), 1.0f,
                                   ImPlotDragToolFlags_NoInputs);
                 if (!held) {
                     if (wasHeld && v.refECEF && (std::abs(cx) > 1e-9 || std::abs(cy) > 1e-9)) {
-                        // 水平位移（E,N）→ ECEF 增量：老参考点的 ENU 基做反变换，三个分量都会变。
+
                         const Eigen::Vector3d oldRef = *v.refECEF;
                         *v.refECEF = ENUToXYZ(Eigen::Vector3d(cx, cy, 0.0), oldRef);
-                        if (v.onRefChanged) v.onRefChanged(); // 重算 ENU 序列
+                        if (v.onRefChanged) v.onRefChanged();
                     }
-                    cx = 0.0; // 未拖动 / 已提交：标记回到原点
+                    cx = 0.0;
                     cy = 0.0;
                 }
                 wasHeld = held;
@@ -932,7 +932,7 @@ namespace Solvers::Charts {
             if (v.epochCount > 0 && !v.times.empty() && !v.show3d &&
                 !v.enu_e.empty() && !v.enu_n.empty() && !v.enu_u.empty()) {
                 SectionHeader("ENU 收敛轨迹 / E-N 平面图", nullptr);
-                // 行高取本区域剩余高度（视口内自适应，窗口拉高图就跟着长），不再写死 380。
+
                 const ImGuiStyle &style = ImGui::GetStyle();
                 float rowH = ImGui::GetContentRegionAvail().y - style.ItemSpacing.y;
                 rowH = std::max(280.0f, std::min(rowH, 720.0f));
@@ -944,8 +944,8 @@ namespace Solvers::Charts {
                     return;
                 }
                 const float availX = ImGui::GetContentRegionAvail().x;
-                // 左：ENU 时间序列；右：E-N 平面图。两列都是 Stretch + Resizable，
-                // 分隔条可以自由拖拽（旧实现右列 WidthFixed + 内部正方形，拉宽只会留空白）。
+
+
                 const float planRatio = std::clamp(380.0f / std::max(availX, 1.0f), 0.22f, 0.6f);
                 if (availX >= 640.0f) {
                     if (ImGui::BeginTable("##enuRow", 2,
@@ -958,12 +958,12 @@ namespace Solvers::Charts {
                                       *v.selectedEpoch, newed, v.fixedY,
                                       v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount, rowH);
                         ImGui::TableSetColumnIndex(1);
-                        // 显式传入行高：表格单元格内 GetContentRegionAvail() 取值不可靠，直接给 rowH 才能撑满
+
                         renderENPlanView(v, rowH);
                         ImGui::EndTable();
                     }
                 } else {
-                    // 宽度不足时竖向堆叠：序列在上，平面图在下（给固定高度，避免抢走整页）
+
                     renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
                                   *v.selectedEpoch, newed, v.fixedY,
                                   v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount,
@@ -973,7 +973,7 @@ namespace Solvers::Charts {
             }
         }
 
-        // Ratio 时序（RTK/LEO/PPP）
+
         void renderRatioPlotSection(const PosTabView &v) {
             if (!v.showRatio || v.epochCount == 0 || v.times.empty() || v.ratioVals.empty()) return;
             SectionHeader("Ratio 时序 (阈值 3.0)", nullptr);
@@ -981,9 +981,9 @@ namespace Solvers::Charts {
             renderRatioPlot(v.times, v.ratioVals, *v.selectedEpoch, newed, v.epochCount);
         }
 
-        // 天顶图 / LEO 3D 轨迹 与 逐星残差 并排
+
         void renderSkyResidualRow(const PosTabView &v) {
-            // 3D 卫星坐标图 / 天顶图 + 逐星残差（并排；标题右侧带开关）
+
             {
                 bool *d3Tg = v.renderToggles ? &v.renderToggles->plot3d : nullptr;
                 bool *resTg = v.renderToggles ? &v.renderToggles->residual : nullptr;
@@ -995,7 +995,7 @@ namespace Solvers::Charts {
                         ImGui::TableSetupColumn("Res", ImGuiTableColumnFlags_WidthStretch, 0.67f);
                         ImGui::TableNextRow();
                         int ci = 0;
-                        // 左列
+
                         ImGui::TableSetColumnIndex(ci++);
                         if (ImGui::BeginChild("##leftpanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
                             SectionHeader(v.renderToggles ? "LEO 轨迹 (ECEF XYZ)" : "天顶图", d3Tg);
@@ -1011,7 +1011,7 @@ namespace Solvers::Charts {
                             }
                         }
                         ImGui::EndChild();
-                        // 右列（有残差或 LEO 模式时渲染，保证开关可点）
+
                         if (right || v.renderToggles) {
                             ImGui::TableSetColumnIndex(ci++); //NOLINT
                             if (ImGui::BeginChild("##respanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
@@ -1025,7 +1025,7 @@ namespace Solvers::Charts {
                                     renderSatResidualPlot(v.resT, v.resV,
                                                           v.resPhaseT, v.resPhaseV, v.resMode,
                                                           *v.selectedEpoch, v.epochCount, rnewed,
-                                                          &ylo, &yhi, &plo, &phi, 0.0f); // 0 = 填满容器
+                                                          &ylo, &yhi, &plo, &phi, 0.0f);
                                 } else {
                                     ImGui::TextDisabled("(已隐藏)");
                                 }
@@ -1038,14 +1038,14 @@ namespace Solvers::Charts {
             }
         }
 
-        // DOP 五曲线叠图（P·G·H·V·T 共享时间轴），未解算历元以 NaN 断点，中途断点不连线。
+
         void renderDopPlot(const PosTabView &v, const bool newed) {
             if (ImPlot::BeginPlot("DOP", ImVec2(-1, 350))) {
                 ImPlot::SetupAxes("Epoch", "DOP");
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 std::vector<double> tt;
                 std::vector<int> kept;
-                buildBrokenAxis(v.times, tt, kept); // 自适应断点：相邻间隔过大插 NaN
+                buildBrokenAxis(v.times, tt, kept);
                 const int n = static_cast<int>(tt.size());
                 if (n > 0 && newed && std::isfinite(tt.back()))
                     ImPlot::SetupAxisLimits(ImAxis_X1, 0, tt.back(), ImPlotCond_Always);
@@ -1075,17 +1075,17 @@ namespace Solvers::Charts {
             }
         }
 
-        // σP / σV / DOP 时间序列（动态列）
+
         void renderSigmaDopRow(const PosTabView &v) {
-            // σP / σV / DOP（最右列：P·G·H·V·T 五曲线叠图）
+
             if (v.showSigmaDop && v.epochCount > 0 && !v.times.empty()) {
                 SectionHeader("σ / 精度 (P·V·DOP)", nullptr);
-                const bool newed = v.newed; // ENU 之后已置 false（与 SPP 一致：X 轴自动缩放）
-                // 动态列：只包含启用且非空的序列
+                const bool newed = v.newed;
+
                 struct Col {
                     const char *name;
-                    const std::vector<double> *data; // 单序列列使用
-                    bool isDop; // DOP 叠图列
+                    const std::vector<double> *data;
+                    bool isDop;
                 };
                 std::vector<Col> cols;
                 if (!v.sigmaPs.empty()) cols.push_back({"SigmaP", &v.sigmaPs, false});

@@ -7,6 +7,7 @@
 #include "Ephemeris.h"
 #include "CycleSlip.h"
 #include "Weight.h"
+#include "RtkConfig.h"
 #include "SolverOptions.h"   // 统一参数对象：applyOptions 注入
 #include <Eigen/Eigen>
 #include <map>
@@ -22,48 +23,23 @@ public:
 
     ~RTK() = default;
 
-    // 解算器配置
-    struct Config {
-        double cutoffElevRad = 10.0 * DEG_TO_RAD; // 截止高度角(rad)
-        std::set<char> enabledSystems = {'G', 'R', 'E', 'C'}; // 参与解算的星座集合
-        double arThreshold = 3.0; // LAMBDA 成功率阈值
-        double minSinElev = 1e-3; // sin(el) 下限防除零
-        double convEps = 1e-5; // 收敛阈值(m)
-        int maxIterFloat = 8; // 浮点解最大迭代
-        int maxIterFix = 6; // 固定解最大迭代
-        int minSats = 4; // 双差解算最少卫星数
-        bool useAR = true; // 模糊度固定开关
-        bool useCycleSlip = true; // 周跳检测开关
-        bool useGfCycleSlip = true; // GF 几何无关周跳检测
-
-        double codeOverPhaseVar = 10000.0; // 伪距:相位 方差比
-        bool fullCovariance = true; // 双差满阵 R 求逆做 GLS；false=对角近似
-        bool excludeGeoRef = true; // 参考星排除北斗 GEO
-        Weight phaseWeight{0.004, 0.003, 1e-3}; // 相位高度角方差模型
-
-    };
-
-    Config mConfig;
+    // 解算器配置：定义在 `RtkConfig.h`（纯数据、含默认值），`SolverOptions` 直接持有它。
+    RtkConfig mConfig;
     void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * DEG_TO_RAD; }
 
     void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
 
 
-    void setConfig(const Config &c) { mConfig = c; }
+    void setConfig(const RtkConfig &c) { mConfig = c; }
 
-    /// 统一参数注入：把 SolverOptions 转回 RTK::Config（仅覆盖 CLI/GUI 实际设置的字段，
-    /// 其余 RTK::Config 默认值保留），等价于原先手填 RTK::Config 的写法。
+    /// 统一参数注入：把 SolverOptions 的 rtk 子对象整份写回 Config（RTK 无 ctor 基线，
+    /// 可以整份覆盖），截止角 / 星座这两个表示不同的字段另行转换。
     void applyOptions(const SolverOptions &o);
 
     /// 选参考星
     static std::optional<SatID> selectRtkRefSat(const std::vector<SatID> &candidates,
                                                 const std::map<SatID, double> &roverElev,
                                                 bool excludeGeo);
-
-    static double measStd(const double elev, const double sigma0, const double minSinElev) {
-        const double s = (std::max)(std::sin(elev), minSinElev);
-        return sigma0 * (1.0 + 1.0 / s);
-    }
 
 
     Eigen::Vector3d mBaseXyz{0, 0, 0}; // 基准站

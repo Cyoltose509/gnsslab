@@ -37,8 +37,10 @@ bool LEO::loadLeoReference(const std::string &path, const SatID &sat) {
 
 Eigen::Vector3d LEO::recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const {
     if (!mHasAux) return Eigen::Vector3d::Zero();
+    // r_CoG_ARP 在轨道系(老师约定：X=速度,Y=跨轨,Z=指向地心)下给出，旋到 ECEF。
+    // ECEFToLVLHDCM 现已是正确右手旋转矩阵，直接 M^T 即可，无需额外取负。
     const Eigen::Matrix3d M = ECEFToLVLHDCM(xyzEst, mRecvVel);
-    return -M.transpose() * mLeoAntOffset;
+    return M.transpose() * mLeoAntOffset;
 }
 
 void LEO::bootstrapFirstEpoch(ObsData &obsData) {
@@ -120,12 +122,10 @@ bool LEO::processEpoch(ObsData &obs) {
 }
 
 void LEO::applyOptions(const SolverOptions &o) {
-    SPP::applyOptions(o); //不要改成PPPStatic NOLINT
-    mApplySolidTide = o.solidTide != 0;
-    setMeasNoise(o.sigIFCode, o.sigPhase);
+    PPPStatic::applyOptions(o);
+    setTropo(false, o.spp.ztdInitValue, o.spp.ztdInitVar, o.spp.ztdProcNoise);
     setPosProcNoise(o.posNoise);
-    setKeepAmbMaxGap(o.keepAmbMaxGap);
     mMotionThresh = o.motionThresh;
     mSppVsPredThresh = o.sppVsPredThresh;
-    if (o.sampleInterval > 0.0) mNominalInterval = o.sampleInterval;
+    mConfig.sppResidualThr = o.spp.sppResidualThr;
 }

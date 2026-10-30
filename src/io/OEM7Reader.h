@@ -11,14 +11,14 @@
 class OEM7Reader {
 public:
     struct InsRecordLayout {
-        bool valid = false;     // 探测是否成功
-        int recLen = 56;        // 单条记录字节数
-        int weekOffset = 14;    // GPS 周（u16）
-        int imuTypeOffset = 13; // IMU Type（u8）
-        int towMsOffset = 8;    // 整毫秒（u32）
-        int secOffset = 16;     // 周内秒（double）
-        int statusOffset = 24;  // IMU status（u32，低 16 位状态、高 16 位温度）
-        int countsOffset = 28;  // 6 × int32 计数
+        bool valid = false;
+        int recLen = 56;
+        int weekOffset = 14;
+        int imuTypeOffset = 13;
+        int towMsOffset = 8;
+        int secOffset = 16;
+        int statusOffset = 24;
+        int countsOffset = 28;
         const char *name = "未识别";
     };
 
@@ -34,18 +34,18 @@ public:
 
     [[nodiscard]] const InsRecordLayout &insLayout() const { return mInsLayout; }
 
-    /// 记录里读到的 IMU Type 码；-1 表示该文件没提供
+
     [[nodiscard]] int detectedImuType() const { return mImuType; }
 
-    /// 按型号查当量表；返回 nullptr = 型号未知
+
     [[nodiscard]] const ImuModel *detectedImuModel() const { return findImuModel(mImuType); }
 
-    /// 布局/型号识别失败的诊断信息
+
     [[nodiscard]] const std::string &insDiagnostic() const { return mInsDiag; }
 
     bool getNextImu(ImuSample &s) {
         std::vector<uint8_t> message;
-        while (getNextMessage(message, true)) { // 阻塞取：文件读到尾返回 false，socket 等下一帧
+        while (getNextMessage(message, true)) {
             if (const size_t before = mImuLog.size(); parseImu(message) && mImuLog.size() > before) {
                 s = mImuLog.back();
                 return true;
@@ -63,7 +63,7 @@ public:
 
     std::shared_ptr<EphemerisTable> mEphSnap;
 
-    /// 收到一条（系统,prn）星历时：TOE 未变则跳过
+
     template<typename E>
     void storeEph(std::map<int, std::vector<std::shared_ptr<E> > > EphemerisTable::*member,
                   int prn, E &&e) {
@@ -90,11 +90,11 @@ protected:
     } currentHeader = {};
 
     std::vector<unsigned char> buffer;
-    size_t bufferIndex = 0; // 当前读取位置
-    size_t fileSize = 0; // 文件总字节数
+    size_t bufferIndex = 0;
+    size_t fileSize = 0;
     ObsData currentObs;
-    ImuLog mImuLog; // IMU 累积缓存
-    Eigen::Vector3d antennaPosition{0, 0, 0}; // 默认值
+    ImuLog mImuLog;
+    Eigen::Vector3d antennaPosition{0, 0, 0};
 
     InsRecordLayout mInsLayout;
     int mImuType = -1;

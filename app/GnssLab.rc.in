@@ -1,6 +1,6 @@
 #include <windows.h>
 
-// Use numeric ID and absolute path to ensure reliability
+
 101 ICON "@CMAKE_CURRENT_SOURCE_DIR@/icon.ico"
 
 VS_VERSION_INFO VERSIONINFO

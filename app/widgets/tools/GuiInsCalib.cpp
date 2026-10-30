@@ -30,8 +30,7 @@ namespace Tools::InsPanel {
     void SixPosCalibTask::startCalib() {
         {
             const auto &cfg = AppConfig::PathMemory::instance();
-            cfg.setNum("ins_g", g);
-            cfg.setNum("ins_turn", turnAngleDeg);
+            saveInsParams(par);
             std::string joined;
             for (size_t i = 0; i < filePaths.size(); ++i) {
                 if (i) joined += '|';
@@ -43,12 +42,8 @@ namespace Tools::InsPanel {
             setError("请先添加至少一个 IMU 日志文件。");
             return;
         }
-        if (g <= 0.0 || turnAngleDeg <= 0.0) {
-            setError("重力加速度 g 与转台转角 α 必须为正数。");
-            return;
-        }
         {
-            std::string sig = std::to_string(g);
+            std::string sig = std::to_string(par.g);
             for (const auto &p: filePaths) {
                 sig += '\n';
                 sig += p;
@@ -71,7 +66,7 @@ namespace Tools::InsPanel {
             accelRmsp = 0.0;
             report = CalibReport();
             scaleNotice = ScaleNotice{};
-            // 上一轮的分段也一并作废：留着会让人以为「分段有了 = 标定有结果」
+
             compSegs.pos.clear();
             compSegs.rot.clear();
             compSel = 0;
@@ -80,7 +75,7 @@ namespace Tools::InsPanel {
     }
 
     void SixPosCalibTask::calibWorker() {
-        // 当量识别走共用流水线（GuiInsCommon.h::ScaleIdentifier），与对准是同一个对象、同一时机。
+
         ScaleIdentifier sen(scaleSf);
         ImuCalibrator::CalibSegments segs;
         std::vector<std::pair<std::string, std::string> > detSeqLines;
@@ -93,7 +88,7 @@ namespace Tools::InsPanel {
             auto onReader = [&](auto &r) -> bool {
                 return sen.observe(r, [&](const std::string &, const ScaleNotice &n) {
                     std::lock_guard lk(resultMutex);
-                    scaleNotice = n; // 型号读到就先亮横幅，与对准同一时机
+                    scaleNotice = n;
                 });
             };
             if (!pumpImuFile(path, stop, onReader, onSample, onBatch)) return false;
@@ -113,7 +108,7 @@ namespace Tools::InsPanel {
             ImuLog log;
             if (!parseOne(path, log) || log.empty()) {
                 if (sen.mixedModel()) {
-                    // 一批里混了两台设备：当量没法统一，直接停
+
                     abortRun(*this, sen.openFailure(path));
                     return;
                 }
@@ -130,13 +125,13 @@ namespace Tools::InsPanel {
 
 
             auto segsFile = ImuCalibrator::detect(log);
-            std::string seq; // 该文件的段序列（导出分段摘要 CSV 用）
+            std::string seq;
             for (const auto &[isStatic, pos, rot, i0, i1]: segsFile) {
                 if (i1 <= i0) continue;
                 ImuLog sub(log.begin() + i0, log.begin() + i1);
                 if (isStatic) {
                     ++nStatic;
-                    sen.offerStatic(sub); // 静置段才配当反推当量的候选；读到过型号时这条会被跳过
+                    sen.offerStatic(sub);
                     segs.pos.emplace_back(pos, std::move(sub));
                     seq += std::string(seq.empty() ? "" : " ") + ImuCalibrator::posLabel(pos);
                 } else {
@@ -164,12 +159,12 @@ namespace Tools::InsPanel {
             abortRun(*this, "未识别到任何静置段或旋转段。请确认所选文件是 IMU 原始日志，且包含完整的六位置静置与旋转过程。");
             return;
         }
-        if (!sen.resolve(g)) {
-            // 当量定不下来：反推到的 k_a / 采样率已预填进手填框，等用户补 k_g 后重算
+        if (!sen.resolve(par.g)) {
+
             abortRun(*this, sen.failText());
             return;
         }
-        CalibReport rep = ImuCalibrator::calibrate(segs, turnAngleDeg * DEG_TO_RAD, g);
+        CalibReport rep = ImuCalibrator::calibrate(segs, par.turnAngleDeg * DEG_TO_RAD, par.g);
         if (!rep.ok) {
             abortRun(*this, rep.errorMsg);
             return;
@@ -201,7 +196,7 @@ namespace Tools::InsPanel {
         accelReady.store(true);
 
         {
-            // 结果摘要进日志：面板只看得到一屏，事后要能对上这次标定到底用了什么当量
+
             char ka[96];
             std::snprintf(ka, sizeof ka, "[%.2f %.2f %.2f] LSB/g",
                           rep.accelScaleG(0), rep.accelScaleG(1), rep.accelScaleG(2));
@@ -212,7 +207,7 @@ namespace Tools::InsPanel {
         {
             std::lock_guard lk(resultMutex);
             report = std::move(rep);
-            scaleNotice = sen.notice(true); // 当量从哪来 → 结果区顶部横幅（与对准同一份文案）
+            scaleNotice = sen.notice(true);
         }
         finishRun(*this);
     }
@@ -273,9 +268,7 @@ namespace Tools::InsPanel {
                             }
                         },
                         [&] {
-                            ImGui::Text("站点与仪器参数");
-                            ImGui::InputDouble("当地重力加速度 g (m/s²)", &g, 0.0, 0.0, "%.6f");
-                            ImGui::InputDouble("转台精确转角 α (°)", &turnAngleDeg, 0.0, 0.0, "%.3f");
+                            renderInsParams(par);
                         },
                         [this] { startCalib(); });
     }
@@ -350,12 +343,12 @@ namespace Tools::InsPanel {
             auto qtyRow = [&](const int q, const bool ready) {
                 const CalibQty &def = kCalibQty[q];
                 const CalibUnit &u = def.units[gCalibQtyUnit[q]];
-                const Eigen::Vector3d v = calibQtyValue(def, u, rep, g);
+                const Eigen::Vector3d v = calibQtyValue(def, u, rep, par.g);
                 const bool withSigma = def.sigmaQty >= 0;
                 Eigen::Vector3d sg = Eigen::Vector3d::Zero();
                 int d = 0;
                 if (withSigma) {
-                    sg = calibQtyValue(kCalibQty[def.sigmaQty], u, rep, g);
+                    sg = calibQtyValue(kCalibQty[def.sigmaQty], u, rep, par.g);
                     for (int c = 0; c < 3; ++c) d = std::max(d, pmDecimals(sg(c)));
                 }
                 ImGui::TableNextRow();
@@ -495,7 +488,7 @@ namespace Tools::InsPanel {
 
         ImGui::Spacing();
         {
-            // 没结果就把按钮禁掉：点得下去再弹「尚无结果」纯属自找，还容易把错误状态留在面板上
+
             ImGui::BeginDisabled(!done);
             const bool clicked = ImGui::Button("导出标定结果 CSV", ImVec2(180, 0));
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -505,7 +498,7 @@ namespace Tools::InsPanel {
         }
 
         ImGui::SeparatorText("补偿序列");
-        // 段标签每帧只取一次（compSegLabels 内部要加锁）
+
         if (const auto segLabels = compSegLabels(); segLabels.empty()) {
             ImGui::TextDisabled("标定完成后可按段导出、按段查看补偿结果。");
         } else {
@@ -524,11 +517,11 @@ namespace Tools::InsPanel {
             ImGui::SameLine();
             if (ImGui::Button("导出该段补偿序列", ImVec2(210, 0))) exportCompCsv();
 
-            // 渲染路径只读快照：这里 setError 会让面板每帧重新报错并永久停在错误页
+
             if (CalibReport r; peekReport(r)) {
                 ImuLog seg;
                 {
-                    // 锁内直接抽稀再拷：整段可能是几万条，为了看一眼形状每帧搬一遍不值得
+
                     std::lock_guard lk(resultMutex);
                     const int np = static_cast<int>(compSegs.pos.size());
                     const int nr = static_cast<int>(compSegs.rot.size());
@@ -590,7 +583,7 @@ namespace Tools::InsPanel {
             auto qtyRow = [&](const int q) {
                 const CalibQty &def = kCalibQty[q];
                 const CalibUnit &u = def.units[gCalibQtyUnit[q]];
-                const Eigen::Vector3d v = calibQtyValue(def, u, r, g);
+                const Eigen::Vector3d v = calibQtyValue(def, u, r, par.g);
                 const std::string name = std::string(def.csv) + "(" + u.csv + ")";
                 const int d = def.csvDigits;
                 if (def.scalar) {
@@ -625,7 +618,7 @@ namespace Tools::InsPanel {
             qtyRow(Q_GYRO_KEFF_NOM);
             qtyRow(Q_GYRO_SCALE);
             qtyRow(Q_GYRO_DS);
-            // 陀螺交轴耦合矩阵 N_g（无量纲，对角置 0，选做项）
+
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "Ng" + std::to_string(k) + "0, Ng" + std::to_string(k) + "1, Ng" +
                                        std::to_string(k) + "2";

@@ -84,7 +84,7 @@ public:
 
     void setPosProcNoise(const double v) { mConfig.posNoise = v; }
 
-    /// 观测中断恢复时保留跨间隙模糊度（见 SPP.h::Config::keepAmbAcrossGap 注释）。
+    /// 观测中断恢复时保留跨间隙模糊度（见 SppConfig::keepAmbMaxGap 注释）。
     void setKeepAmbMaxGap(const double sec) { mConfig.keepAmbMaxGap = sec; }
 
     void setPosVarFloor(const double v) { mConfig.posVarFloor = v; }
@@ -125,9 +125,10 @@ public:
     bool mApplySolidTide = true; // 固体潮
 
     bool mUseCycleSlip = true;
+    double mGfSlipMult = 3.0; // GF 周跳阈值倍数（×单周跳阶跃）
 
     bool mHasTropo = true; // 估计 ZTD
-    std::string mTropoMap = "gmf"; // 对流层映射函数: "gmf"(默认, 对接 VMF3) / "nmf"(Niell)
+    // 对流层映射函数（gmf/nmf/hopfield）在 `SppConfig::tropoMap`：SPP/PPP/LEO 共用同一个选择
     bool mUseTroGrad = true; // TRO 水平梯度固定改正开关（默认开；关=退化为仅 ZTD，便于 A/B）
     double mZtdEstimate = 0.0; // 当前 ZTD 状态估计(m)
 

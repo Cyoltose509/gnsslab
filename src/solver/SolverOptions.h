@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SppConfig.h"
+#include "RtkConfig.h"
 #include <set>
 #include <string>
 
@@ -21,43 +23,19 @@ struct SolverOptions {
     int realtimeSec = 0;
     int maxEpochs = 0;
 
-    // —— 解算器参数（applyOptions 注入） ——
     double cutoffDeg = 15.0;
     std::set<char> systems{'G', 'C'};
     double sampleInterval = 0.0;
-    double sigIFCode = 1.273, sigPhase = 0.01273;
-    int useAR = 1, useCycleSlip = 1, useGfCycleSlip = 1, fullCovariance = 1;
-    int solidTide = 1;
     int kinematic = 0;
+
+    SppConfig spp;
+    RtkConfig rtk;
+
     double posNoise = 100.0;
     double staticPosNoise = 0.0;
-    int applyWindup = 1;
-    double ztdQ = 1.0E-8;
-    double ambQ = 1.0E-8;
-    double troZtdSigma = 0.05;
-    int useTroGrad = 1;
-    std::string tropoMap = "gmf";
-    double ztdPrior = 0.30;
-    double ztdInitValue = 0.0, ztdInitVar = 0.36;
 
-    double ambInitVar = 3600.0;
     double motionThresh = 0.0, sppVsPredThresh = 300.0;
 
-    double firstEpochPosVar = 3600.0;
-
-    double keepAmbMaxGap = 0.0;
-
-    double codeBiasProcNoise = 1.0E-8;
-    double codeBiasInitVar = 900.0;
-
-    double gloIfcbProcNoise = 1.0E-8;
-    double gloIfcbInitVar = 900.0;
-
-    double isbProcNoise = 1.0e-3;
-    double isbInitVar = 1.0;
-    double posVarFloor = 1.0E-6;
-
-    // —— 输出 ——
     std::string csvPath;
     double refX = 0, refY = 0, refZ = 0;
     bool hasRef = false;

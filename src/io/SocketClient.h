@@ -30,7 +30,7 @@ using SocketType = int;
 #define SOCKET_INVALID  (-1)
 #endif
 
-// 统一封装的 socket 操作
+
 inline void socket_close(SocketType s) {
 #ifdef _WIN32
     closesocket(s);

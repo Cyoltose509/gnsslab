@@ -6,27 +6,27 @@
 
 class Ionosphere {
 public:
-    // 电离层穿刺点(IPP)几何
+
     struct IppGeometry {
-        double latDeg = 0.0;     // IPP 纬度 [deg]
-        double lonDeg = 0.0;     // IPP 经度 [deg]
-        double vtecToStec = 1.0; // VTEC[TECU] -> STEC[el/m²]（含斜路径映射与 1e16 换算）
-        double bMag = 0.0;       // IPP 处地磁场强度 [T]
-        double cosThetaB = 0.0;  // LOS 与地磁场夹角余弦
+        double latDeg = 0.0;
+        double lonDeg = 0.0;
+        double vtecToStec = 1.0;
+        double bMag = 0.0;
+        double cosThetaB = 0.0;
     };
 
     static IppGeometry ippGeometry(const Eigen::Vector3d &xyzRecv, const Eigen::Vector3d &xyzSat,
                                    const double elev, const double azim, const double ionoHeightKm) {
         IppGeometry g;
-        const double hIon = ionoHeightKm * 1000.0;                          // 单层高度 (m)
-        const double z = PI / 2.0 - elev;                                    // 接收机处天顶距 (rad)
-        const double alpha = std::asin((Rearth / (Rearth + hIon)) * std::sin(z)); // IPP 天顶距
-        const double psi = z - alpha;                                        // 地心角 (rad)
-        const double mfac = 1.0 / std::cos(alpha);                           // 斜路径映射因子
+        const double hIon = ionoHeightKm * 1000.0;
+        const double z = PI / 2.0 - elev;
+        const double alpha = std::asin((Rearth / (Rearth + hIon)) * std::sin(z));
+        const double psi = z - alpha;
+        const double mfac = 1.0 / std::cos(alpha);
 
-        // IPP 经纬度：在接收机大地坐标上沿方位角推进地心角 psi
+
         const auto blh = XYZToBLH(xyzRecv, Frame::WGS84);
-        const double latR = blh[0], lonR = blh[1]; // rad
+        const double latR = blh[0], lonR = blh[1];
         const double sPsi = std::sin(psi), cPsi = std::cos(psi);
         const double sAz = std::sin(azim), cAz = std::cos(azim);
         const double latI = std::asin(std::sin(latR) * cPsi + std::cos(latR) * sPsi * cAz);
@@ -36,12 +36,12 @@ public:
         g.lonDeg = lonI * RAD_TO_DEG;
         g.vtecToStec = mfac * 1.0e16;
 
-        // 偶极子地磁场 @ IPP（地磁北极近似 lat 80°N, lon 290°E）
+
         const double latM = 80.0 * DEG_TO_RAD, lonM = 290.0 * DEG_TO_RAD;
         const Eigen::Vector3d mHat(std::cos(latM) * std::cos(lonM),
                             std::cos(latM) * std::sin(lonM),
                             std::sin(latM));
-        const Eigen::Vector3d rHat = xyzRecv.normalized(); // 近似 IPP 方向(地心单位向量)
+        const Eigen::Vector3d rHat = xyzRecv.normalized();
         const double cTm = rHat.dot(mHat);
         const double rIpp = Rearth + hIon;
         const double k = B0 * std::pow(Rearth, 3.0) / (rIpp * rIpp * rIpp);

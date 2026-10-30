@@ -17,8 +17,8 @@ static std::set<char> parseSystems(const std::string &s) {
     return out;
 }
 
-SolverOptions loadConfig(const AppConfig::IniFile &ini) {
-    SolverOptions c;
+SolverOptions loadConfig(const AppConfig::IniFile &ini, const GnssTask::SolverMode mode) {
+    SolverOptions c = GnssTask::defaultSolverOptions(mode);
 
     c.source = ini.get("input", "source", c.source);
     c.obsPath = ini.get("input", "obs", "");
@@ -51,41 +51,75 @@ SolverOptions loadConfig(const AppConfig::IniFile &ini) {
 
     c.cutoffDeg = ini.getD("solver", "cutoff_deg", c.cutoffDeg);
     c.systems = parseSystems(ini.get("solver", "systems", "GC"));
-    c.sampleInterval = ini.getD("solver", "sample_interval", c.sampleInterval); // 0=按文件自动
-    c.sigIFCode = ini.getD("solver", "sig_if_code", c.sigIFCode);
-    c.sigPhase = ini.getD("solver", "sig_phase", c.sigPhase);
-    c.useAR = ini.getInt("solver", "use_ar", c.useAR);
-    c.useCycleSlip = ini.getInt("solver", "use_cycle_slip", c.useCycleSlip);
-    c.useGfCycleSlip = ini.getInt("solver", "use_gf_cycle_slip", c.useGfCycleSlip);
-    c.fullCovariance = ini.getInt("solver", "full_covariance", c.fullCovariance);
-    c.solidTide = ini.getInt("solver", "solid_tide", c.solidTide);
+    c.sampleInterval = ini.getD("solver", "sample_interval", c.sampleInterval);
+
+    c.spp.sigIFCode = ini.getD("solver", "sig_if_code", c.spp.sigIFCode);
+    c.spp.sigmaPhase = ini.getD("solver", "sig_phase", c.spp.sigmaPhase);
+
+    auto both = [&ini](const char *key, double &a, double &b) {
+        a = ini.getD("solver", key, a);
+        b = ini.getD("solver", key, b);
+    };
+    auto bothFlag = [&ini](const char *key, bool &a, bool &b) {
+        a = ini.getInt("solver", key, a ? 1 : 0) != 0;
+        b = ini.getInt("solver", key, b ? 1 : 0) != 0;
+    };
+    both("min_sin_elev", c.spp.minSinElev, c.rtk.phaseWeight.minSinElev);
+    both("conv_eps", c.spp.convEps, c.rtk.convEps);
+    both("ar_ratio_threshold", c.spp.arRatioThreshold, c.rtk.arThreshold);
+    bothFlag("use_ar", c.spp.useAR, c.rtk.useAR);
+    bothFlag("use_cycle_slip", c.spp.useCycleSlip, c.rtk.useCycleSlip);
+    both("gf_slip_mult", c.spp.gfSlipMult, c.rtk.gfSlipMult);
+
+    c.rtk.useGfCycleSlip = ini.getInt("solver", "use_gf_cycle_slip", c.rtk.useGfCycleSlip ? 1 : 0) != 0;
+    c.rtk.fullCovariance = ini.getInt("solver", "full_covariance", c.rtk.fullCovariance ? 1 : 0) != 0;
+    c.spp.applySolidTide = ini.getInt("solver", "solid_tide", c.spp.applySolidTide ? 1 : 0) != 0;
+    c.spp.applyWindup = ini.getInt("solver", "windup", c.spp.applyWindup ? 1 : 0) != 0;
     c.kinematic = ini.getInt("solver", "kinematic", c.kinematic);
     c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
     c.staticPosNoise = ini.getD("solver", "static_pos_noise", c.staticPosNoise);
-    c.ztdQ = ini.getD("solver", "ztd_q", c.ztdQ);
-    c.ambQ = ini.getD("solver", "amb_q", c.ambQ);
-    c.troZtdSigma = ini.getD("solver", "tro_ztd_sigma", c.troZtdSigma);
-    if (ini.getInt("solver", "use_tro_ztd", 1) == 0) c.troZtdSigma = 0.0;
-    c.useTroGrad = ini.getInt("solver", "use_tro_grad", 1);
-    c.tropoMap = ini.get("solver", "tropo_map", c.tropoMap);
-    c.ztdPrior = ini.getD("solver", "ztd_prior", c.ztdPrior);
+    c.spp.ztdProcNoise = ini.getD("solver", "ztd_q", c.spp.ztdProcNoise);
+    c.spp.ambNoise = ini.getD("solver", "amb_q", c.spp.ambNoise);
+    c.spp.troZtdSigma = ini.getD("solver", "tro_ztd_sigma", c.spp.troZtdSigma);
+    if (ini.getInt("solver", "use_tro_ztd", 1) == 0) c.spp.troZtdSigma = 0.0;
+    c.spp.useTroGrad = ini.getInt("solver", "use_tro_grad", c.spp.useTroGrad ? 1 : 0) != 0;
+
+    c.spp.tropoMap = Troposphere::tropoMapFromName(
+        ini.get("solver", "tropo_map", Troposphere::tropoMapName(c.spp.tropoMap)));
+
+    c.spp.ztdPriorSigma = ini.getD("solver", "ztd_prior", c.spp.ztdPriorSigma);
     c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
     c.sppVsPredThresh = ini.getD("solver", "spp_vs_pred_thresh", c.sppVsPredThresh);
-    c.firstEpochPosVar = ini.getD("solver", "first_epoch_pos_var", c.firstEpochPosVar);
-    c.ztdInitValue = ini.getD("solver", "ztd_init", c.ztdInitValue);
-    c.ztdInitVar = ini.getD("solver", "ztd_init_var", c.ztdInitVar);
-    c.ambInitVar = ini.getD("solver", "amb_init_var", c.ambInitVar);
-    c.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.keepAmbMaxGap);
-    c.codeBiasProcNoise = ini.getD("solver", "code_bias_proc_noise", c.codeBiasProcNoise);
-    c.codeBiasInitVar = ini.getD("solver", "code_bias_init_var", c.codeBiasInitVar);
-    c.gloIfcbProcNoise = ini.getD("solver", "glo_ifcb_proc_noise", c.gloIfcbProcNoise);
-    c.gloIfcbInitVar = ini.getD("solver", "glo_ifcb_init_var", c.gloIfcbInitVar);
-    c.isbProcNoise = ini.getD("solver", "isb_proc_noise", c.isbProcNoise);
-    c.isbInitVar = ini.getD("solver", "isb_init_var", c.isbInitVar);
-    c.posVarFloor = ini.getD("solver", "pos_var_floor", c.posVarFloor);
+    c.spp.firstEpochPosVar = ini.getD("solver", "first_epoch_pos_var", c.spp.firstEpochPosVar);
+    c.spp.ztdInitValue = ini.getD("solver", "ztd_init", c.spp.ztdInitValue);
+    c.spp.ztdInitVar = ini.getD("solver", "ztd_init_var", c.spp.ztdInitVar);
+    c.spp.ambInitVar = ini.getD("solver", "amb_init_var", c.spp.ambInitVar);
+    c.spp.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.spp.keepAmbMaxGap);
+    c.spp.codeBiasProcNoise = ini.getD("solver", "code_bias_proc_noise", c.spp.codeBiasProcNoise);
+    c.spp.codeBiasInitVar = ini.getD("solver", "code_bias_init_var", c.spp.codeBiasInitVar);
+    c.spp.gloIfcbProcNoise = ini.getD("solver", "glo_ifcb_proc_noise", c.spp.gloIfcbProcNoise);
+    c.spp.gloIfcbInitVar = ini.getD("solver", "glo_ifcb_init_var", c.spp.gloIfcbInitVar);
+    c.spp.isbProcNoise = ini.getD("solver", "isb_proc_noise", c.spp.isbProcNoise);
+    c.spp.isbInitVar = ini.getD("solver", "isb_init_var", c.spp.isbInitVar);
+    c.spp.posVarFloor = ini.getD("solver", "pos_var_floor", c.spp.posVarFloor);
+
+    c.spp.maxIter = ini.getInt("solver", "max_iter", c.spp.maxIter);
+    c.spp.minCheckIter = ini.getInt("solver", "min_check_iter", c.spp.minCheckIter);
+    c.spp.arSigGate = ini.getD("solver", "ar_sig_gate", c.spp.arSigGate);
+    c.spp.clockNoise = ini.getD("solver", "clock_noise", c.spp.clockNoise);
+    c.spp.minSatsForUpdate = ini.getInt("solver", "min_sats_for_update", c.spp.minSatsForUpdate);
+    c.spp.maxReanchorIter = ini.getInt("solver", "max_reanchor_iter", c.spp.maxReanchorIter);
+    c.spp.sppResidualThr = ini.getD("solver", "spp_residual_thr", c.spp.sppResidualThr);
+
+    c.rtk.maxIterFloat = ini.getInt("solver", "max_iter_float", c.rtk.maxIterFloat);
+    c.rtk.maxIterFix = ini.getInt("solver", "max_iter_fix", c.rtk.maxIterFix);
+    c.rtk.minSats = ini.getInt("solver", "min_sats", c.rtk.minSats);
+    c.rtk.codeOverPhaseVar = ini.getD("solver", "code_over_phase_var", c.rtk.codeOverPhaseVar);
+    c.rtk.excludeGeoRef = ini.getInt("solver", "exclude_geo_ref", c.rtk.excludeGeoRef ? 1 : 0) != 0;
+    c.rtk.phaseWeight.a = ini.getD("solver", "phase_weight_a", c.rtk.phaseWeight.a);
+    c.rtk.phaseWeight.b = ini.getD("solver", "phase_weight_b", c.rtk.phaseWeight.b);
 
     c.csvPath = ini.get("output", "csv", "");
-    c.applyWindup = ini.getInt("solver", "windup", c.applyWindup);
     c.refX = ini.getD("output", "ref_x", 0.0);
     c.refY = ini.getD("output", "ref_y", 0.0);
     c.refZ = ini.getD("output", "ref_z", 0.0);

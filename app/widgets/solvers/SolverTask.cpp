@@ -97,14 +97,14 @@ namespace GnssTask {
     }
 
     void SolverTaskBase::beforeSolveEpoch(void *solver, ObsItem *item) {
-        if (!item || !item->eph) return; // RINEX 路径 eph 恒空，天然跳过
+        if (!item || !item->eph) return;
         const EphemerisTable *tbl = item->eph.get();
         if (tbl->gps.empty() && tbl->bds.empty() && lastGoodEph) tbl = lastGoodEph.get();
         else if (!tbl->gps.empty() || !tbl->bds.empty()) lastGoodEph = item->eph;
-        static_cast<SPP *>(solver)->ephTable = *tbl; // shared_ptr 元素深拷贝廉价
+        static_cast<SPP *>(solver)->ephTable = *tbl;
     }
 
-    // 默认 afterSolveEpoch：首历元参考点初始化（SPP 原先无锁、PPP 有锁，统一加锁版）。
+
     bool SolverTaskBase::afterSolveEpoch(void *, EpochData *data, ObsItem *, int) {
         if (!data->solved) return false;
         if (const auto core = solveResult()) {
@@ -153,7 +153,7 @@ namespace GnssTask {
                     << (core->sampleInterval > 0.0
                             ? ", 采样间隔 " + std::to_string(core->sampleInterval) + "s"
                             : ", 采样间隔按文件");
-            SolverOptions opts;
+            SolverOptions opts = core->opts;
             opts.cutoffDeg = core->cutoffDeg;
             opts.systems = core->enabledSystems;
             opts.sampleInterval = core->sampleInterval;
@@ -183,7 +183,7 @@ namespace GnssTask {
                                          }
                                          if (!ok) data.solved = false;
                                          CommitEpoch(core, std::move(data));
-                                         return true; // 已自行处理 solved 标记，交由外层原样收下
+                                         return true;
                                      },
                                      [job](Solver &s, ObsItem &item) {
                                          job->beforeSolveEpoch(&s, &item);
@@ -204,7 +204,7 @@ namespace GnssTask {
         core->solvingDone = true;
     }
 
-    // 三个单站解算器各实例化一份，函数体仍留在 .cpp（不进头文件）。
+
     template void RunSingleStationSolve<SPP>(
         const std::shared_ptr<SolveTask> &, SPP &, const std::shared_ptr<SolverTaskBase> &);
 
@@ -229,7 +229,7 @@ namespace GnssTask {
                     hasQcInput = !core->qcInput.empty();
                 }
                 if (hasQcInput) Solvers::SolverPanel::LaunchQC(core);
-                else core->qcReady = true; // 无 QC 输入：直接置完成位
+                else core->qcReady = true;
             }
         } catch (const std::exception &e) {
             core->setError(e.what());
@@ -250,7 +250,7 @@ namespace GnssTask {
         GnssTask::SyncTaskStatus(task, task->solveResult());
     }
 
-    // 三个单站解算器各实例化一份，函数体留在 .cpp（理由同 RunSingleStationSolve）。
+
     template void RunSingleStationReader<Solvers::SppProcessor::SppTask>(
         const std::shared_ptr<Solvers::SppProcessor::SppTask> &, const char *);
 
@@ -287,12 +287,12 @@ namespace GnssTask {
         vdops.push_back(solved ? result.vdop : dopNaN);
         tdops.push_back(solved ? result.tdop : dopNaN);
 
-        // ratio 序列：RTK 用 rtkRatio；PPP/LEO 用 sppResult.ratio；未解出用 NaN 制造断点
+
         if (ep.rtkStat != 0) ratioVals.push_back(ep.rtkRatio);
         else if (solved) ratioVals.push_back(result.ratio);
         else ratioVals.push_back(std::numeric_limits<double>::quiet_NaN());
 
-        // 主曲线（固定解优先，否则浮点解）
+
         if (solved) {
             auto enu = XYZToENU(result.xyz, refECEF);
             enu_e.push_back(enu[0]);
@@ -304,7 +304,7 @@ namespace GnssTask {
             enu_u.push_back(0);
         }
 
-        // 浮点解曲线（与固定解对比；无独立浮点解时回退为 xyz；未解算用 NaN 断点）
+
         if (solved) {
             Eigen::Vector3d fxyz;
             if (ep.rtkStat != 0) fxyz = ep.rtkFloatXyz;
@@ -347,7 +347,7 @@ namespace GnssTask {
                 enu_n[i] = 0;
                 enu_u[i] = 0;
             }
-            // 浮点解曲线随参考点重算（未解算保持 NaN 断点，与 insert 一致）
+
             if (ep[i].solved) {
                 Eigen::Vector3d fxyz;
                 if (ep[i].rtkStat != 0) fxyz = ep[i].rtkFloatXyz;
@@ -405,7 +405,7 @@ namespace GnssTask {
         const std::string &path = core->filePath;
         {
             std::lock_guard lk(core->qcInputMutex);
-            core->qcInput.clear(); // 重新收集原始观测，供质量分析（与解算解耦）
+            core->qcInput.clear();
         }
 
         {
@@ -431,7 +431,7 @@ namespace GnssTask {
                 ObsData o = obsReader.parseRinexObs();
                 {
                     std::lock_guard lk(core->qcInputMutex);
-                    core->qcInput.push_back(QC::makeQCObsEpoch(o, o.weekSecond.sow)); // 原始观测 → QC 输入
+                    core->qcInput.push_back(QC::makeQCObsEpoch(o, o.weekSecond.sow));
                 }
                 {
                     std::lock_guard lk(core->queueMutex);
@@ -461,7 +461,7 @@ namespace GnssTask {
         const std::string &path = core->filePath;
         {
             std::lock_guard lk(core->qcInputMutex);
-            core->qcInput.clear(); // 重新收集原始观测，供质量分析（与解算解耦）
+            core->qcInput.clear();
         }
 
         OEM7Reader oem7;
@@ -499,7 +499,7 @@ namespace GnssTask {
             core->setError("OEM7 无历元");
         }
         core->totalEpochs = ok;
-        core->hasNav = ok > 0; // OEM7 内含星历
+        core->hasNav = ok > 0;
         core->readDone = true;
         core->queueCv.notify_all();
         return ok;

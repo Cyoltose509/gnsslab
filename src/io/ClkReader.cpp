@@ -10,14 +10,14 @@
 
 
 bool ClkReader::read(const std::string &path) {
-    return read(path, {}); // 空集 = 不按系统过滤
+    return read(path, {});
 }
 
 bool ClkReader::read(const std::string &path, const std::set<char> &allowedSys) {
     bool headerEnd = false;
     std::map<SatID, std::vector<Record> > tmp;
 
-    // 复用基类 openFile + nextLine（CRLF 安全）。保持「打不开返回 false」契约（forEachLine 同义）。
+
     try {
         openFile(path);
     } catch (const FFStreamError &) {
@@ -32,12 +32,12 @@ bool ClkReader::read(const std::string &path, const std::set<char> &allowedSys) 
         }
         std::string_view sv(line);
         if (sv.size() < 4) continue;
-        if (sv[0] != 'A' || sv[1] != 'S') continue; // 只要 AS（卫星钟差）记录
+        if (sv[0] != 'A' || sv[1] != 'S') continue;
         if (!allowedSys.empty() && !allowedSys.count(sv[3])) continue;
-        const char *p = sv.data() + 2;            // 跳过 "AS"
+        const char *p = sv.data() + 2;
         const char *const qe = sv.data() + sv.size();
 
-        while (p < qe && *p == ' ') ++p;          // 卫星号前缀空白
+        while (p < qe && *p == ' ') ++p;
         if (p >= qe) continue;
         const char sys = *p++;
         int prn = 0;
@@ -57,19 +57,19 @@ bool ClkReader::read(const std::string &path, const std::set<char> &allowedSys) 
             p = ptr; return true;
         };
 
-        int y, mo, d, h, mi, nfields;//NOLINT
+        int y, mo, d, h, mi, nfields;
         double s, bias, drift = 0.0;
         if (!nextInt(y) || !nextInt(mo) || !nextInt(d) || !nextInt(h) ||
             !nextInt(mi) || !nextDbl(s) || !nextInt(nfields) || !nextDbl(bias))
             continue;
-        nextDbl(drift);   // 钟漂可选，缺省 0
+        nextDbl(drift);
 
         const CivilTime ct(y, mo, d, h, mi, s, TimeSystem::GPS);
         const Record rec{CivilTime2CommonTime(ct), bias, drift};
         tmp[sat].push_back(rec);
     }
     if (tmp.empty()) return false;
-    // 预计算每卫星相对首历元的秒数向量(查询时复用，避免每调用 O(n) 拷贝)
+
     relTimes.clear();
     for (const auto &[sat, recs]: tmp) {
         std::vector<double> &rt = relTimes[sat];
@@ -95,9 +95,9 @@ double ClkReader::getClockBias(const SatID &sat, const CommonTime &t) const {
     const auto itT = relTimes.find(sat);
     const std::vector<double> &times = itT != relTimes.end() ? itT->second : std::vector<double>{};
     const double tRel = t - r[0].t;
-    const int lb = Math::lowerBoundIndex(times, tRel); // times[lb] <= tRel < times[lb+1]
-    const double span = r[lb + 1].t - r[lb].t; // 两点间隔秒
-    const double frac = (t - r[lb].t) / span; // 相对左点比例 [0,1]
+    const int lb = Math::lowerBoundIndex(times, tRel);
+    const double span = r[lb + 1].t - r[lb].t;
+    const double frac = (t - r[lb].t) / span;
     return Math::lerp(r[lb].bias, r[lb + 1].bias, frac);
 }
 
@@ -112,8 +112,8 @@ bool ClkReader::covers(const SatID &sat, const CommonTime &t, const double maxGa
     if (tRel < -1e-6) return false;
     const int n = static_cast<int>(times.size());
     const int lb = Math::lowerBoundIndex(times, tRel);
-    if (lb >= n) return false;                       // 超出末点
-    if (tRel - times[lb] > maxGap) return false;      // 左邻点过远（缺口内）
-    if (lb + 1 < n && times[lb + 1] - tRel > maxGap) return false; // 右邻点过远（缺口内）
+    if (lb >= n) return false;
+    if (tRel - times[lb] > maxGap) return false;
+    if (lb + 1 < n && times[lb + 1] - tRel > maxGap) return false;
     return true;
 }

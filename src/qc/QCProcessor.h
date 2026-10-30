@@ -3,7 +3,7 @@
 #include <vector>
 #include <map>
 #include <string>
-#include "GnssStruct.h"   // SatID, TypeValueMap
+#include "GnssStruct.h"
 
 namespace QC {
     struct QCObsEpoch {
@@ -29,81 +29,81 @@ namespace QC {
 
     struct SatQC {
         SatID sat;
-        char band1 = 0; // 高频 (f1)
-        char band2 = 0; // 低频 (f2)
-        int totalEpochs = 0; // 文件总历元数 (理论历元)
-        int validDual = 0; // 双频均有效的历元数 (用于 DIs)
+        char band1 = 0;
+        char band2 = 0;
+        int totalEpochs = 0;
+        int validDual = 0;
 
-        double completeness = 0; // 系统级完整率 DIs % = validDual / totalEpochs * 100
-        double di_f1 = 0; // 频点级完整率 DI_f % (band1 有效历元 / 总历元)
-        double di_f2 = 0; // 频点级完整率 DI_f % (band2 有效历元 / 总历元)
+        double completeness = 0;
+        double di_f1 = 0;
+        double di_f2 = 0;
 
-        int slips = 0; // 探测到的周跳次数 (MW+GF，已剔除钟跳误报)
-        int outliers = 0; // 探测到的粗差次数
-        int clockJumps = 0; // 该星被判定为接收机钟跳的历元数
-        double slipRatio = 0; // 周跳比 = totalEpochs / slips (历元/周跳)，无周跳时用 totalEpochs 表示
+        int slips = 0;
+        int outliers = 0;
+        int clockJumps = 0;
+        double slipRatio = 0;
 
         double mp1Mean = 0, mp1Rms = 0;
         double mp2Mean = 0, mp2Rms = 0;
 
-        double sigRho1 = 0; // 伪距噪声 (m)  @f1
-        double sigRho2 = 0; // 伪距噪声 (m)  @f2
-        double sigPh1 = 0; // 载波相位噪声 (周) @f1
-        double sigPh2 = 0; // 载波相位噪声 (周) @f2
+        double sigRho1 = 0;
+        double sigRho2 = 0;
+        double sigPh1 = 0;
+        double sigPh2 = 0;
 
-        double ionoRateStd = 0; // 两个频点 IOD std 的平均 (m/s)
-        double ionoRateStd1 = 0; // 频点1 IOD std (m/s)
-        double ionoRateStd2 = 0; // 频点2 IOD std (m/s)
-        int ionoJumps = 0; // 两个频点 IOD 越界 (>0.07 m/s) 次数之和
-        int ionoJumps1 = 0; // 频点1 IOD 越界次数
-        int ionoJumps2 = 0; // 频点2 IOD 越界次数
+        double ionoRateStd = 0;
+        double ionoRateStd1 = 0;
+        double ionoRateStd2 = 0;
+        int ionoJumps = 0;
+        int ionoJumps1 = 0;
+        int ionoJumps2 = 0;
 
-        // 绘图序列 (按时间排序的逐历元记录)
+
         std::vector<int> epIdx;
-        std::vector<double> t; // sow
-        std::vector<double> mp1, mp2; // m  (原始 MP 组合，含整周模糊度)
-        std::vector<double> mp1Resid, mp2Resid; // m  (多路径误差：窗口去均值残差，公式17)
-        std::vector<double> ionoRate; // m/s 电离层残差变化率 IOD (f1 频点，逐历元差分)
-        std::vector<double> ionoRate2; // m/s 电离层残差变化率 IOD (f2 频点，逐历元差分)
-        std::vector<char> slipFlag; // 该历元是否发生周跳 (1=是)
-        std::vector<char> outlierFlag; // 该历元是否为粗差 (1=是)
-        std::vector<char> clockJumpFlag; // 该历元是否为接收机钟跳 (1=是)
+        std::vector<double> t;
+        std::vector<double> mp1, mp2;
+        std::vector<double> mp1Resid, mp2Resid;
+        std::vector<double> ionoRate;
+        std::vector<double> ionoRate2;
+        std::vector<char> slipFlag;
+        std::vector<char> outlierFlag;
+        std::vector<char> clockJumpFlag;
 
-        // 与 RTKLIB 对齐：SNR/EL/AZ 序列及统计
-        std::vector<double> cnr; // dB-Hz, 与 t 对齐 (band1, 载噪比 C/N0)
-        std::vector<double> cnr2; // dB-Hz, 与 t 对齐 (band2, 载噪比 C/N0)
-        double cnrMean = 0, cnrMin = 0, cnrMax = 0; // band1 载噪比统计
-        double cnrMean2 = 0, cnrMin2 = 0, cnrMax2 = 0; // band2 载噪比统计
+
+        std::vector<double> cnr;
+        std::vector<double> cnr2;
+        double cnrMean = 0, cnrMin = 0, cnrMax = 0;
+        double cnrMean2 = 0, cnrMin2 = 0, cnrMax2 = 0;
     };
 
-    /// 6.8 数据质量综合评估结果
+
     struct ComprehensiveEval {
-        std::vector<std::string> indicators; // 7 项指标名称
-        std::vector<double> weights; // 熵权 w_l (size = 7)
-        std::map<SatID, std::vector<double> > z; // 各卫星无量纲化值 z_lm (size 7)
-        std::map<SatID, double> E; // 各卫星综合评估值 (越小越好)
-        std::map<char, double> sysE; // 各系统综合评估值（系统内卫星 E 的均值）
-        double overallE = 0; // 全部卫星 E 的均值
+        std::vector<std::string> indicators;
+        std::vector<double> weights;
+        std::map<SatID, std::vector<double> > z;
+        std::map<SatID, double> E;
+        std::map<char, double> sysE;
+        double overallE = 0;
     };
 
     struct QualityReport {
-        int totalEpochs = 0; // 已解算（用于统计）的历元数
-        int totalInputEpochs = 0; // 文件读入的全部历元数（含未解算），供概览对照
-        double interval = 0; // 估计的历元间隔 (s)
+        int totalEpochs = 0;
+        int totalInputEpochs = 0;
+        double interval = 0;
         std::vector<SatID> satOrder;
         std::map<SatID, SatQC> sats;
 
-        std::map<char, double> sysCompleteness; // 系统级完整率 DIs 均值
-        std::map<char, double> sysDI_f1, sysDI_f2; // 频点级完整率 DI_f 均值
+        std::map<char, double> sysCompleteness;
+        std::map<char, double> sysDI_f1, sysDI_f2;
         std::map<char, double> sysSlipRatio;
         std::map<char, double> sysMp1, sysMp2;
         std::map<char, double> sysSigRho, sysSigPhase;
         std::map<char, int> sysSlips, sysIonoJumps, sysOutliers, sysClockJumps;
-        std::map<char, double> sysIonoRate; // 各系统电离层变化率 std 均值 (双频平均)
-        std::map<char, double> sysIonoRate1; // 各系统 f1 频点 IOD std 均值
-        std::map<char, double> sysIonoRate2; // 各系统 f2 频点 IOD std 均值
-        std::map<char, int> sysIonoJumps1; // 各系统 f1 频点 IOD 跳变次数
-        std::map<char, int> sysIonoJumps2; // 各系统 f2 频点 IOD 跳变次数
+        std::map<char, double> sysIonoRate;
+        std::map<char, double> sysIonoRate1;
+        std::map<char, double> sysIonoRate2;
+        std::map<char, int> sysIonoJumps1;
+        std::map<char, int> sysIonoJumps2;
 
         std::map<char, double> sysCnr;
         std::map<char, double> sysCnr1;
@@ -114,10 +114,10 @@ namespace QC {
 
         double overallCompleteness = 0;
 
-        int clockJumpEpochs = 0; // 全局确认发生接收机钟跳的历元数
+        int clockJumpEpochs = 0;
         ComprehensiveEval comprehensive;
     };
 
-    /// @param nominalInterval 标称采样间隔(s)，>0 时替代从历元差自动推断（用户在面板声明的采样率）
+
     QualityReport compute(const std::vector<QCObsEpoch> &epochs, double nominalInterval = 0.0);
-} // namespace QC
+}

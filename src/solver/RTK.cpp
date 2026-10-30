@@ -3,20 +3,20 @@
 #include "Const.h"
 #include "RinexNavStore.h"
 #include "ARLambda.h"
-#include "SPP.h"            // estimateApproxPosition：RTK 自举基准/流动站线性化初值用单历元 SPP 冷启动
+#include "SPP.h"
 #include "Log.h"
 
 
 
 Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph,
                                             const std::set<char> &systems, const double cutoffElevDeg) {
-    if (eph.gps.empty() && eph.bds.empty()) return Eigen::Vector3d::Zero(); // 星历快照仍空
+    if (eph.gps.empty() && eph.bds.empty()) return Eigen::Vector3d::Zero();
     SPP spp;
     spp.ephTable = eph;
     spp.setEnabledSystems(systems);
     spp.setCutoffElevDeg(cutoffElevDeg);
     ObsData work = obs;
-    work.antennaPosition = Eigen::Vector3d::Zero(); // 冷启动：线性化初值取地心
+    work.antennaPosition = Eigen::Vector3d::Zero();
     try { if (spp.processEpoch(work)) return spp.result.xyz; } catch (...) {
 
     }
@@ -26,7 +26,6 @@ Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisT
 bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph) {
     result.reset();
 
-    // 基准站线性化初值自举
     if (mBaseXyzUser.norm() > 1e3) {
         mBaseXyz = mBaseXyzUser;
     } else if (base.antennaPosition.norm() > 1e3) {
@@ -47,7 +46,6 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
         return false;
     }
 
-    // 流动站线性化初值自举（同样实时流星历陆续到达，故用同一套精化逻辑）
     if (rover.antennaPosition.norm() > 1e3) {
         mRoverApprox = rover.antennaPosition;
     } else {
@@ -371,6 +369,7 @@ void RTK::detectSlips() {
 
     std::set<SatID> fedBase, fedRover; // 已喂入有效观测的检测器
     const double gfThr = mConfig.useGfCycleSlip ? 1.0 : 0.0; // >0 开启 GF
+    const double gfMult = mConfig.gfSlipMult; // GF 周跳阈值倍数
 
     for (char sys: mConfig.enabledSystems) {
         auto itc = mRtkCombos.find(sys);
@@ -389,6 +388,7 @@ void RTK::detectSlips() {
                 CycleSlip &dB = mSlipDetBase[sat];
                 dB.configure(sc.base);
                 dB.setGfThreshold(gfThr);
+                dB.setGfSlipMult(gfMult);
                 const double L1 = tvb.at(sc.base.phase1), L2 = tvb.at(sc.base.phase2);
 
                 const double C1 = tvb.at(sc.base.code1), C2 = tvb.at(sc.base.code2);
@@ -404,6 +404,7 @@ void RTK::detectSlips() {
                 CycleSlip &dR = mSlipDetRover[sat];
                 dR.configure(sc.rover);
                 dR.setGfThreshold(gfThr);
+                dR.setGfSlipMult(gfMult);
                 const TypeValueMap &tvr = itr->second;
                 const double L1 = tvr.at(sc.rover.phase1), L2 = tvr.at(sc.rover.phase2);
 
@@ -596,15 +597,11 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
 }
 
 void RTK::applyOptions(const SolverOptions &o) {
-    // 把 SolverOptions 转回 RTK::Config：仅覆盖 CLI/GUI 实际设置的字段，
-    // 其余 RTK::Config 默认值（arThreshold / minSinElev / convEps / maxIter* /
-    // minSats / codeOverPhaseVar / excludeGeoRef / phaseWeight）保留。
-    Config rc;
+    // RTK 没有构造函数基线（RTK() = default），所以可以**整份覆盖**：
+    // rc 初值即 RtkConfig 默认值，未显式配置时行为与旧版一致。
+    // 只有两处需要表示转换：截止角（外层用度、Config 用 rad）、星座（文件页统一管）。
+    RtkConfig rc = o.rtk;
     rc.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
     rc.enabledSystems = o.systems;
-    rc.useAR = o.useAR != 0;
-    rc.useCycleSlip = o.useCycleSlip != 0;
-    rc.useGfCycleSlip = o.useGfCycleSlip != 0;
-    rc.fullCovariance = o.fullCovariance != 0;
     setConfig(rc);
 }

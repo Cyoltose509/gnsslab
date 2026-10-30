@@ -89,7 +89,7 @@ namespace Tools::CoordConverter {
     }
 
     static bool InputRow3(const char *id, const char *l1, double *v1, const char *l2, double *v2,
-                          const char *l3, double *v3, const char *fmt, ImGuiInputTextFlags flags = 0) { //NOLINT
+                          const char *l3, double *v3, const char *fmt, ImGuiInputTextFlags flags = 0) {
         bool edited = false;
         if (ImGui::BeginTable(id, 3, ImGuiTableFlags_SizingStretchSame)) {
             ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthStretch);
@@ -154,14 +154,14 @@ namespace Tools::CoordConverter {
 
         ImGui::SeparatorText("站心坐标 (ENU)");
 
-        // Reference point
+
         ImGui::TextDisabled("参考点:");
         ImGui::SameLine();
         const bool ref_edited = InputRow3("##ref", "B (度)", &s_RefB_deg, "L (度)", &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
 
         ImGui::Spacing();
 
-        // XYZ <-> ENU rows
+
         const bool tgt_edited = InputRow3("##tgt", "目标 X (m)", &s_TgtX, "目标 Y (m)", &s_TgtY, "目标 Z (m)", &s_TgtZ, "%.4f");
         const bool enu_edited = InputRow3("##enu", "E (m)", &s_E, "N (m)", &s_N, "U (m)", &s_U, "%.4f");
 

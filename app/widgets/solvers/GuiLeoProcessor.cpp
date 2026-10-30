@@ -49,7 +49,7 @@ namespace Solvers::LeoProcessor {
             LOG_INFO << "LEO 读取参考轨道 SP3: " << refSp3PathBuf;
             refRdr.read(refSp3PathBuf);
             const auto &rdata = refRdr.getData();
-            bool refFound = false; // 是否已在 SP3 中找到 L 系统卫星
+            bool refFound = false;
             for (const auto &[sat, _]: rdata)
             if (sat.system == 'L') {
                 refPrn = sat.id;
@@ -68,7 +68,7 @@ namespace Solvers::LeoProcessor {
         core->hasRefOrbit = hasRefOrbit;
 
         if (!auxFiles.empty()) {
-            for (const auto &f: auxFiles) leo.loadAuxFile(f); // 多 HDR：后者覆盖 mLeoAntOffset
+            for (const auto &f: auxFiles) leo.loadAuxFile(f);
         } else {
             LOG_INFO << "LEO: 未加载辅助文件(.HDR 杠杆臂)，CoG→ARP 偏移为 0";
         }
@@ -101,12 +101,12 @@ namespace Solvers::LeoProcessor {
                 GnssTask::SatVis{data->satIds[si], data->satIds[si].system, sp.p, true});
                 core->gnssTraj[data->satIds[si]].push_back({index, sp.p});
         }
-        core->gnssVis = std::move(gnssVis);   // 只留当前历元的可见星
+        core->gnssVis = std::move(gnssVis);
         core->leoPos3d = leoPos;
         core->leoTraj.push_back({index, leoPos});
         core->hasLeo = true;
 
-        Eigen::Vector3d refPos = leoPos;   // 无参考轨道时自比，RTN 全零
+        Eigen::Vector3d refPos = leoPos;
         if (hasRefOrbit) {
                 const PVT ref = refRdr.getPVT(refSat, item->obs.epoch);
                 refPos = ref.p.squaredNorm() > 1e12 ? ref.p : leoPos;
@@ -117,8 +117,8 @@ namespace Solvers::LeoProcessor {
                 data->rtnN = rtn(2);
                 core->leoRef3d = refPos;
                 core->leoRefTraj.push_back({index, refPos});
-                // 横轴 = 历元序号（与 ENU/RMS/DOP 等图及 selectedEpoch 游标同一坐标系），
-                // 单调递增，跨天数据自然继续往后；缺口由 buildBrokenAxis 按前向大间隔断线
+
+
                 core->rtnTimes.push_back(index);
                 core->rtnR.push_back(rtn(0));
                 core->rtnT.push_back(rtn(1));
@@ -144,83 +144,98 @@ namespace Solvers::LeoProcessor {
     void LeoTask::renderConfigPanel() {
         Helpers::beginConfigBody("LEO 处理配置###leo_cfg_", *this);
 
-        Helpers::fileRow("观测文件 (RINEX .??O / OEM7 .log)", &this->leoObsPathBuf, "leo_obs", Helpers::fObs, 3,
-                            {}, "leo_obs", &this->gnssBrdcPathBuf);
-        Helpers::fileRow("广播星历 BRDC", &this->gnssBrdcPathBuf, "leo_gnss_brdc", Helpers::fRnx, 2, {}, "leo_obs");
-        Helpers::fileRow("精密轨道 SP3", &this->gnssSp3PathBuf, "leo_gnss_sp3", Helpers::fSp3, 2, {}, "leo_obs");
-        Helpers::fileRow("精密钟差 CLK", &this->gnssClkPathBuf, "leo_gnss_clk", Helpers::fClk, 2, {}, "leo_obs");
-        Helpers::fileRow("天线文件 ATX", &this->atxPathBuf, "leo_atx", Helpers::fAtx, 2, {}, "leo_obs");
-        Helpers::fileRow("码偏差 OSB/BIA", &this->osbPathBuf, "leo_osb", Helpers::fOsb, 2, {}, "leo_obs");
-        Helpers::fileRow("参考轨道 SP3 (可选)", &this->refSp3PathBuf, "leo_ref_sp3", Helpers::fSp3, 2, {}, "leo_obs");
-        ImGui::Text("辅助文件 (.HDR 等):");
-        if (!this->auxFiles.empty()) {
-            for (size_t i = 0; i < this->auxFiles.size(); i++) {
-                ImGui::Bullet();
-                std::string shortName = Helpers::baseName(this->auxFiles[i]);
-                ImGui::Text("%s", shortName.c_str());
+        if (ImGui::BeginTabBar("##leo_cfg_tabs")) {
+            if (ImGui::BeginTabItem("文件")) {
+                ImGui::Spacing();
+
+                Helpers::fileRow("观测文件 (RINEX .??O / OEM7 .log)", &this->leoObsPathBuf, "leo_obs", Helpers::fObs, 3,
+                                 {}, "leo_obs", &this->gnssBrdcPathBuf);
+                Helpers::fileRow("广播星历 BRDC", &this->gnssBrdcPathBuf, "leo_gnss_brdc", Helpers::fRnx, 2, {}, "leo_obs");
+                Helpers::fileRow("精密轨道 SP3", &this->gnssSp3PathBuf, "leo_gnss_sp3", Helpers::fSp3, 2, {}, "leo_obs");
+                Helpers::fileRow("精密钟差 CLK", &this->gnssClkPathBuf, "leo_gnss_clk", Helpers::fClk, 2, {}, "leo_obs");
+                Helpers::fileRow("天线文件 ATX", &this->atxPathBuf, "leo_atx", Helpers::fAtx, 2, {}, "leo_obs");
+                Helpers::fileRow("码偏差 OSB/BIA", &this->osbPathBuf, "leo_osb", Helpers::fOsb, 2, {}, "leo_obs");
+                Helpers::fileRow("参考轨道 SP3 (可选)", &this->refSp3PathBuf, "leo_ref_sp3", Helpers::fSp3, 2, {}, "leo_obs");
+                ImGui::Text("辅助文件 (.HDR 等):");
+                if (!this->auxFiles.empty()) {
+                    for (size_t i = 0; i < this->auxFiles.size(); i++) {
+                        ImGui::Bullet();
+                        std::string shortName = Helpers::baseName(this->auxFiles[i]);
+                        ImGui::Text("%s", shortName.c_str());
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(("删除##aux" + std::to_string(i)).c_str()))
+                            this->auxFiles.erase(this->auxFiles.begin() + i);
+                    }
+                }
+                if (ImGui::Button("添加...")) {
+                    if (std::vector<std::wstring> wpaths; ShowOpenFilesDialog(wpaths, Helpers::fHdr, 2)) {
+                        for (auto &wp: wpaths) {
+                            std::string p = wideToAcp(wp);
+                            if (std::find(this->auxFiles.begin(), this->auxFiles.end(), p) == this->auxFiles.end())
+                                this->auxFiles.push_back(p);
+                            AppConfig::PathMemory::instance().addRecent("leo_aux", p);
+                        }
+                    }
+                }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(("删除##aux" + std::to_string(i)).c_str()))
-                    this->auxFiles.erase(this->auxFiles.begin() + i);
-            }
-        }
-        if (ImGui::Button("添加...")) {
-            if (std::vector<std::wstring> wpaths; ShowOpenFilesDialog(wpaths, Helpers::fHdr, 2)) {
-                for (auto &wp: wpaths) {
-                    std::string p = wideToAcp(wp);
-                    if (std::find(this->auxFiles.begin(), this->auxFiles.end(), p) == this->auxFiles.end())
-                        this->auxFiles.push_back(p);
-                    AppConfig::PathMemory::instance().addRecent("leo_aux", p);
+                if (ImGui::Button("从记录添加")) ImGui::OpenPopup("##leo_aux_hist_pop");
+                if (ImGui::BeginPopup("##leo_aux_hist_pop")) {
+                    const auto recent = AppConfig::PathMemory::instance().getRecent("leo_aux");
+                    if (recent.empty()) ImGui::TextDisabled("(暂无记录)");
+                    for (auto &r: recent) {
+                        if (ImGui::Selectable(r.c_str())) {
+                            if (std::find(this->auxFiles.begin(), this->auxFiles.end(), r) == this->auxFiles.end())
+                                this->auxFiles.push_back(r);
+                            AppConfig::PathMemory::instance().addRecent("leo_aux", r);
+                        }
+                    }
+                    ImGui::EndPopup();
                 }
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("从记录添加")) ImGui::OpenPopup("##leo_aux_hist_pop");
-        if (ImGui::BeginPopup("##leo_aux_hist_pop")) {
-            const auto recent = AppConfig::PathMemory::instance().getRecent("leo_aux");
-            if (recent.empty()) ImGui::TextDisabled("(暂无记录)");
-            for (auto &r: recent) {
-                if (ImGui::Selectable(r.c_str())) {
-                    if (std::find(this->auxFiles.begin(), this->auxFiles.end(), r) == this->auxFiles.end())
-                        this->auxFiles.push_back(r);
-                    AppConfig::PathMemory::instance().addRecent("leo_aux", r);
-                }
-            }
-            ImGui::EndPopup();
-        }
-        ImGui::Separator();
-        Helpers::renderCutoffAndSystems(&this->core->cutoffDeg, &this->core->enabledSystems, &this->core->sampleInterval);
-        ImGui::Separator();
-        if (ImGui::Button("开始解算", ImVec2(200, 40))) {
-            // 校验/停旧任务/填 core/置运行态走公共 helper（与 SPP/PPP 同一份）；
-            // ini 持久化键与日志文案各家不同，留在调用方。校验不过时红字已由 helper 绘出。
-            if (Helpers::beginFileSolve(this, this->leoObsPathBuf)) {
-                const std::string &path = this->leoObsPathBuf;
-                const auto &cfg = AppConfig::PathMemory::instance();
-                cfg.set("leo_obs", path);
-                cfg.set("leo_gnss_brdc", this->gnssBrdcPathBuf);
-                cfg.set("leo_gnss_sp3", this->gnssSp3PathBuf);
-                cfg.set("leo_gnss_clk", this->gnssClkPathBuf);
-                cfg.set("leo_atx", this->atxPathBuf);
-                cfg.set("leo_osb", this->osbPathBuf);
-                cfg.set("leo_ref_sp3", this->refSp3PathBuf);
-                cfg.set("leo_ref_prn", std::to_string(this->refPrn));
-                cfg.setNum("leo_cutoff", this->core->cutoffDeg);
-                cfg.setNum("leo_interval", this->core->sampleInterval);
-                cfg.set("leo_systems", GnssTask::sysSetToString(this->core->enabledSystems));
+                ImGui::Separator();
+                Helpers::renderCutoffAndSystems(&this->core->cutoffDeg, &this->core->enabledSystems, &this->core->sampleInterval);
+                ImGui::Separator();
+                if (ImGui::Button("开始解算", ImVec2(200, 40))) {
 
-                {
-                    const std::string refInfo =
-                        this->refSp3PathBuf.empty() ? std::string("无") : this->refSp3PathBuf;
-                    LOG_INFO << "[LEO] 开始定轨: 观测=" << path
-                             << ", 格式=" << (this->core->isRinex ? "RINEX" : "OEM7")
-                             << ", 参考轨道=" << refInfo;
-                }
 
-                this->worker = std::thread(SolveThread, std::static_pointer_cast<LeoTask>(shared_from_this()));
+                    if (Helpers::beginFileSolve(this, this->leoObsPathBuf)) {
+                        const std::string &path = this->leoObsPathBuf;
+                        const auto &cfg = AppConfig::PathMemory::instance();
+                        cfg.set("leo_obs", path);
+                        cfg.set("leo_gnss_brdc", this->gnssBrdcPathBuf);
+                        cfg.set("leo_gnss_sp3", this->gnssSp3PathBuf);
+                        cfg.set("leo_gnss_clk", this->gnssClkPathBuf);
+                        cfg.set("leo_atx", this->atxPathBuf);
+                        cfg.set("leo_osb", this->osbPathBuf);
+                        cfg.set("leo_ref_sp3", this->refSp3PathBuf);
+                        cfg.set("leo_ref_prn", std::to_string(this->refPrn));
+                        cfg.setNum("leo_cutoff", this->core->cutoffDeg);
+                        cfg.setNum("leo_interval", this->core->sampleInterval);
+                        cfg.set("leo_systems", GnssTask::sysSetToString(this->core->enabledSystems));
+                        Helpers::saveSolverParams(GnssTask::SolverMode::Leo, core->opts);
+
+                        {
+                            const std::string refInfo =
+                                    this->refSp3PathBuf.empty() ? std::string("无") : this->refSp3PathBuf;
+                            LOG_INFO << "[LEO] 开始定轨: 观测=" << path
+                                     << ", 格式=" << (this->core->isRinex ? "RINEX" : "OEM7")
+                                     << ", 参考轨道=" << refInfo;
+                        }
+
+                        this->worker = std::thread(SolveThread, std::static_pointer_cast<LeoTask>(shared_from_this()));
+                    }
+                }
+                ImGui::SameLine();
+                Helpers::renderCancelButton(this);
+                ImGui::EndTabItem();
             }
+
+            if (ImGui::BeginTabItem("参数")) {
+                ImGui::Spacing();
+                Helpers::renderAdvancedParams(core->opts, GnssTask::SolverMode::Leo);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
-        ImGui::SameLine();
-        Helpers::renderCancelButton(this);
 
         Helpers::endConfigBody();
     }

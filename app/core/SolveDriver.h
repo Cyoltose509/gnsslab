@@ -261,14 +261,14 @@ namespace SolveDriver {
         if (baseRinex) {
             CommonTime t;
             bool ok = false;
-            if (h.roverCached) { t = h.roverCache.epoch; ok = true; }   // rover OEM7 探测缓存
+            if (h.roverCached) { t = h.roverCache.epoch; ok = true; }
             else if (roverRinex) t = probeRinexFirstEpoch(roverPath, ok);
             if (ok) h.rnxBase.fastForwardToEpoch(t);
         }
         if (roverRinex) {
             CommonTime t;
             bool ok = false;
-            if (h.baseCached) { t = h.baseCache.epoch; ok = true; }     // base OEM7 探测缓存
+            if (h.baseCached) { t = h.baseCache.epoch; ok = true; }
             else if (baseRinex) t = probeRinexFirstEpoch(basePath, ok);
             if (ok) h.rnxRover.fastForwardToEpoch(t);
         }
@@ -315,40 +315,40 @@ namespace SolveDriver {
             if (!haveBase) {
                 if (!basePolling) { basePolling = true; basePollSince = std::chrono::steady_clock::now(); }
                 const int r = getBase(base, baseEph);
-                if (r < 0) return false;                        // 基准站断线
+                if (r < 0) return false;
                 if (r > 0) {
                     pairing.observeBase(base.weekSecond.sow);
                     haveBase = true;
                     basePolling = false;
                 } else if (std::chrono::steady_clock::now() - basePollSince > kIdleEpochMs) {
-                    return false;                               // 轮询 10s 无历元：半开连接
+                    return false;
                 }
             }
             if (!haveRover) {
                 if (!roverPolling) { roverPolling = true; roverPollSince = std::chrono::steady_clock::now(); }
                 const int r = getRover(rover, roverEph);
-                if (r < 0) return false;                        // 流动站断线
+                if (r < 0) return false;
                 if (r > 0) {
                     pairing.observeRover(rover.weekSecond.sow);
                     haveRover = true;
                     roverPolling = false;
                 } else if (std::chrono::steady_clock::now() - roverPollSince > kIdleEpochMs) {
-                    return false;                               // 轮询 10s 无历元：半开连接
+                    return false;
                 }
             }
             if (!haveBase || !haveRover) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
                 continue;
             }
-            if (!onAttempt()) return true;                     // 调用方要求停止（如历元到限）
+            if (!onAttempt()) return true;
             const double tol = pairing.pairWindow();
             if (const auto act = DualObsPairing::classify(base.epoch, rover.epoch, tol); act == DualObsPairing::Action::Pair) {
                 if (!onPair(base, rover, DualObsPairing::selectEph(baseEph, roverEph))) return true;
                 haveBase = haveRover = false;
             } else if (act == DualObsPairing::Action::AdvanceBase) {
-                haveBase = false;                               // 基准站历元过时，丢弃重读
+                haveBase = false;
             } else {
-                haveRover = false;                              // 流动站历元过时，丢弃重读
+                haveRover = false;
             }
         }
         return true;

@@ -4,66 +4,22 @@
 #include "SolverLSQ.h"
 #include "Ephemeris.h"
 #include "EphemerisTable.h"
-#include "RinexNavStore.h"   // loadBrdc：广播星历加载（与 PPP 一致，类内加载）
+#include "RinexNavStore.h"
 #include "FreqCombo.h"
 #include "Weight.h"
-#include "SolverOptions.h"   // 统一参数对象：applyOptions 注入
+#include "SppConfig.h"
+#include "SolverOptions.h"
 #include <Eigen/Eigen>
 #include <set>
 
-// SPP 的 IF 组合类型
+
 using IFCodeTypes = std::map<char, FreqCombo>;
 
 class SPP {
 protected:
-    struct Config {
-        // —— 基础段：SPP 与 PPP 都读 ——
-        double cutoffElevRad = 15.0 * DEG_TO_RAD;
-        std::set<char> enabledSystems{};
-        double sigIFCode = 1.273;
-        double convEps = 1e-4; // 收敛阈值(m)
-        int maxIter = 10; // 最大迭代
-        int minCheckIter = 2; // 起始收敛检查的迭代
-        // —— PPP / LEO 专有段：SPP 不读 ——
-        double sigmaPhase = 0.01273; // IF 相位量测噪声(PPP 默认)
-        double troZtdSigma = 0.05; // TRO ZTD 先验 sigma
-        double arRatioThreshold = 3.0; // LAMBDA 成功率阈值
-        double arSigGate = 5.0; // 进入 LAMBDA 的浮点模糊度 std 上限(m)
-        double posNoise = 0.0; // 位置过程噪声(静态0)
-
-        double posVarFloor = 1.0E-6;// 位置后验方差下限(m^2)
-        double ambNoise = 1.0E-8; // 模糊度过程噪声
-
-        double ambInitVar = 3600.0;// 模糊度初方差(m^2)
-        double clockNoise = 0.0; // 钟差过程噪声
-        double ztdInitValue = 0.0; // ZTD 初值
-        double ztdInitVar = 0.36;// ZTD 初方差(m^2)
-        double ztdProcNoise = 1.0E-8; // ZTD 随机游走噪声
-        double ztdPriorSigma = 0.30; // ZWD 先验 sigma(m)
-
-        double firstEpochPosVar = 3600.0;// 首历元位置先验方差(m^2)
-        int minSatsForUpdate = 0; // 滤波更新最少卫星(PPP 默认0=不限)
-
-        // 内部码偏/IFCB 估计：取消开关，改为「自动规则」——外部 OSB 未覆盖的星才估内部码偏/IFCB，
-        // OSB 已覆盖则跳过（避免与 OSB 共线）。过程噪声/初方差参数保留供调节。
-        double gloIfcbProcNoise = 1.0E-8;   // 逐星 IFCB 随机常数过程噪声(m^2/epoch)
-        double gloIfcbInitVar = 900.0;      // 逐星 IFCB 初方差(m^2)
-
-        double keepAmbMaxGap = 0.0;// 观测中断(间隙)恢复时的模糊度策略阈值(s)。
-        double codeBiasProcNoise = 1.0E-8;   // 码偏置随机常数过程噪声(m^2/epoch)
-        double codeBiasInitVar = 900.0;// 码偏置初方差(m^2)
-        int maxReanchorIter = 8; // LEO 重锚定最大迭代
-        double sppResidualThr = 10.0; // SPP 后验残差 RMS 阈值(m)
-        // ISB（系统间偏差）过程噪声/初方差：非参考系统接收机钟差(cdt2~4)不再当白噪声，
-        // 改以"常数(isbProcNoise=0)"或"随机游走(isbProcNoise>0)"估计（对齐老师"ISB 当常数/随机游走估"）。
-        // SPP 是逐历元 LSQ，无跨历元状态；此处用于给每历元非参考系统钟差加"上一历元值"伪观测先验
-        // （等价于 EKF 里的常数 ISB）。参考系统(GPS)不施加——SPP 每历元重解主钟。GPS-only 不受影响。
-        // 默认 RW-ISB：isbProcNoise=1.0e-3、isbInitVar=1.0。由 SPP 解算入口（spp_cli / ppp_cli / leo_cli / GUI 处理器）经 setIsbProcNoise 注入。
-        double isbProcNoise = 1.0e-3; // 0=常数 ISB；>0=随机游走(m^2/epoch)，默认 RW-ISB
-        double isbInitVar = 1.0;   // ISB 初方差(m^2)，>0 启用；SPP 侧作伪观测先验方差
-    };
-
-    Config mConfig;
+    // 配置结构体定义在 `SppConfig.h`（纯数据、含默认值）：`SolverOptions` 直接持有它，
+    // 所以此处用的就是同一个类型名，不另起别名。
+    SppConfig mConfig;
     Weight mWeight;
     bool mWeightInit = false; // mWeight 首轮解算惰性初始化一次，迭代内不再重建
 
@@ -187,6 +143,20 @@ protected:
 private:
     // —— SPP 私有 LSQ 实现细节（H3：PPP 不依赖，下沉为 private） ——
     double rClockDrift{};
+
+    /// 每历元一次的测站对流层几何：NMF/GMF 映射需要纬度/经度/高程与时间，逐星重算没有必要
+    struct TropoSite {
+        bool valid = false;
+        double latRad = 0.0, lonRad = 0.0, hgt = 0.0;
+        double doy = 0.0, mjd = 0.0;
+    };
+    TropoSite mTropoSite;
+
+    /// 由当前线性化点与历元刷新 mTropoSite（位置无效则 valid=false → 该历元不改正对流层）
+    void updateTropoSite(const Eigen::Vector3d &xyzEcef, const CommonTime &epoch);
+
+    /// 对流层斜路径延迟(m)：天顶延迟用 Hopfield 干/湿模型，映射函数由 mConfig.tropoMap 选
+    [[nodiscard]] double tropoDelay(double elevRad) const;
 
     EquSys posEquations{};
     EquSys velEquations{};

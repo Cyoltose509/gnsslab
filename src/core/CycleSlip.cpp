@@ -20,7 +20,7 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
     if (!valid) {
         if (gfThres > 0.0 && gfLbuf.size() >= 6) {
             std::vector<char> slip(gfLbuf.size(), 0), artifact(gfLbuf.size(), 0);
-            detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact);
+            detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact, gfSlipMult);
             for (size_t k = 0; k < slip.size(); ++k) {
                 if (slip[k]) gfSlipSet.insert(static_cast<int>(k));
                 if (artifact[k]) gfArtifactSet.insert(static_cast<int>(k));
@@ -43,7 +43,7 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
 
     if (gfThres > 0.0 && gfLbuf.size() >= 6) {
         std::vector<char> slip(gfLbuf.size(), 0), artifact(gfLbuf.size(), 0);
-        detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact);
+        detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact, gfSlipMult);
         for (size_t k = 0; k < slip.size(); ++k) {
             if (slip[k]) gfSlipSet.insert(static_cast<int>(k));
             if (artifact[k]) gfArtifactSet.insert(static_cast<int>(k));
@@ -136,12 +136,12 @@ void CycleSlip::detectMW(const std::vector<double> &MW, const std::vector<char> 
 
 void CycleSlip::detectGF(const std::vector<double> &LGF, const std::vector<double> &PGF,
                          const std::vector<char> &ok, const double lam1, const double lam2,
-                         std::vector<char> &slip, std::vector<char> &artifact) {
+                         std::vector<char> &slip, std::vector<char> &artifact, const double mult) {
     const int n = static_cast<int>(LGF.size());
     slip.assign(n, 0); artifact.assign(n, 0);
     if (n < 2) return;
     const double step = lam2 - lam1;                       // 单周跳阶跃(米)
-    const double thr  = 3.0 * step;                         // 相位跳变阈值(默认 3×单周跳)
+    const double thr  = mult * step;                        // 相位跳变阈值(mult×单周跳)，默认 3.0
     for (int k = 1; k < n; ++k) {
         if (!ok[k] || !ok[k - 1]) continue;
         if (std::fabs(LGF[k] - LGF[k - 1]) > thr) {

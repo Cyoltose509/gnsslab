@@ -41,7 +41,7 @@ public:
         }
         return *this;
     }
-}; // end class pvt
+};
 
 inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
     noexcept {
@@ -53,20 +53,15 @@ inline std::ostream &operator<<(std::ostream &os, PVT &pvt)
     return os;
 }
 
-// 卫星钟相对论改正（狭义+广义，秒）：−2(r·v)/c²。PVT.relativityCorrection 的唯一内核。
-// BRDC 星历（Ephemeris.cpp）与 SP3 精密轨道（Sp3OrbitReader.cpp）共用——BRDC 侧原用
-// 开普勒式 −2√(gm)/c²·e·√a·sinE，两者对开普勒轨道恒等（r·v = e√(μa)·sinE），含
-// 调和项时相差 ~mm 级；统一取 r·v 式：对任意轨道表示都成立，且直接用的就是
-// 解算出的位置/速度。
 inline double satRelativityCorrection(const Eigen::Vector3d &p, const Eigen::Vector3d &v) {
     return -2.0 * p.dot(v) / (C_MPS * C_MPS);
 }
 
-// 基类：包含所有卫星通用的轨道参数
+
 struct Ephemeris {
-    // --- 通用轨道参数 (所有系统都有) ---
-    double toe{}; // 星历参考时刻
-    double m0{}; // 平近点角
+
+    double toe{};
+    double m0{};
     double e{}; // 偏心率
     double rootA{}; // 或者是 A (半长轴)，建议统一存 sqrt(A)，计算时更方便
     double dn{}; // 平均运动角速度的修正值

@@ -5,11 +5,13 @@
 #include <Eigen/Eigen>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 #include <set>
 
 #include "Log.h"
 #include "CoordStruct.h"
 #include "Troposphere.h"
+#include "TimeConvert.h"
 #include "Weight.h"
 
 bool SPP::processEpoch(ObsData &obsData) {
@@ -178,6 +180,35 @@ void SPP::buildResidualMap() {
     }
 }
 
+void SPP::updateTropoSite(const Eigen::Vector3d &xyzEcef, const CommonTime &epoch) {
+    mTropoSite = TropoSite{};
+    if (!(xyzEcef.norm() > 1000.0)) return; // 首个线性化点还是原点：本历元不改正对流层
+    const auto blh = XYZToBLH(xyzEcef, frame);
+    if (!(blh.H() > 0.0)) return;           // 与历史行为一致：高程非正不改正
+    mTropoSite.valid = true;
+    mTropoSite.latRad = blh.B();
+    mTropoSite.lonRad = blh.L();
+    mTropoSite.hgt = blh.H();
+    mTropoSite.doy = static_cast<double>(CommonTime2YDSTime(epoch).doy);
+    MJD mjd{};
+    CommonTime2MJD(epoch, mjd);
+    mTropoSite.mjd = mjd.mjd;
+}
+
+double SPP::tropoDelay(const double elevRad) const {
+    if (!mTropoSite.valid) return 0.0;
+    // 天顶延迟：Hopfield 干/湿（SPP 的历史模型，不受映射函数选择影响）
+    const double zhd = Troposphere::tropoHopfieldDry(mTropoSite.hgt);
+    const double zwd = Troposphere::tropoHopfieldWet(mTropoSite.hgt);
+    double mW = 0.0;
+    const double mH = Troposphere::tropoMapping(mConfig.tropoMap, elevRad, mTropoSite.latRad,
+                                                mTropoSite.lonRad, mTropoSite.hgt,
+                                                mTropoSite.doy, mTropoSite.mjd, &mW);
+    const double tropo = zhd * mH + zwd * mW;
+    if (!std::isfinite(tropo) || tropo < 0.0 || tropo > 100.0) return 0.0;
+    return tropo;
+}
+
 void SPP::linearize(ObsData &obsData, const int iter) {
     SatID outlierSat;
     double worstW = 0.0;
@@ -194,8 +225,10 @@ void SPP::linearize(ObsData &obsData, const int iter) {
     const bool rejectOutlier = worstW > W_THRESHOLD;
 
     if (!mWeightInit) {
-        mWeight = Weight(mConfig.sigIFCode / std::sqrt(2.0), mConfig.sigIFCode / std::sqrt(2.0),
-                         std::sin(mConfig.cutoffElevRad));
+        // 高度角随机模型：a=b=σ/√2（等价于 σ²/2·(1+1/sin²el)）。sin(el) 下限见
+        // SppConfig::sinElevFloor（0 = 跟随截止角）。
+        const double a = mConfig.sigIFCode / std::sqrt(2.0);
+        mWeight = Weight(a, a, mConfig.sinElevFloor());
         mWeightInit = true;
     }
 
@@ -215,11 +248,7 @@ void SPP::linearize(ObsData &obsData, const int iter) {
     const Variable dvz(obsData.station, Parameter::dVZ);
     const Variable dcdt(obsData.station, Parameter::cdtr_dot);
 
-    double refHgt = 0.0;
-    if (xyz.norm() > 1000.0) {
-        const auto BLH = XYZToBLH(xyz, frame);
-        refHgt = BLH[2];
-    }
+    updateTropoSite(xyz, obsData.epoch);
 
     activeSystems.clear();
     int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
@@ -274,8 +303,8 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         };
 
         double trop = 0.0;
-        if (refHgt > 0.0)
-            trop = Troposphere::tropoHopfield(refHgt, elev);
+        if (mTropoSite.valid)
+            trop = tropoDelay(elev);
 
         // 位置方程权：高度角随机模型（Weight 类）
         double weight = mWeight.weight(elev);
@@ -463,7 +492,17 @@ void SPP::computeElevAzim() {
 }
 
 void SPP::applyOptions(const SolverOptions &o) {
+    // 稀疏覆盖：只搬「SPP 该由用户配」的项。派生类（LEO/PPPKinematic）构造函数里
+    // 设的基线（firstEpochPosVar / ambNoise / minSatsForUpdate …）必须保留，
+    // 所以这里绝不能用 mConfig = o.spp 整份覆盖。
     setCutoffElevDeg(o.cutoffDeg);
     setEnabledSystems(o.systems);
-    setIsbProcNoise(o.isbProcNoise, o.isbInitVar);
+    mConfig.sigIFCode = o.spp.sigIFCode;
+    mConfig.minSinElev = o.spp.minSinElev;
+    mConfig.tropoMap = o.spp.tropoMap;
+    mConfig.convEps = o.spp.convEps;
+    mConfig.maxIter = o.spp.maxIter;
+    mConfig.minCheckIter = o.spp.minCheckIter;
+    setIsbProcNoise(o.spp.isbProcNoise, o.spp.isbInitVar);
+    mWeightInit = false; // 噪声/截止角/下限变了 → 高度角随机模型必须重建
 }

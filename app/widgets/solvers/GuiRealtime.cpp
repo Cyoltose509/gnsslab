@@ -58,7 +58,7 @@ namespace Solvers::Realtime {
 
                 const bool stopped = Pump();
                 Close();
-                if (stopped) break; // Pump 说"该收工了"：Run 到此为止，绝不回头再 Connect（否则重连空转）
+                if (stopped) break;
 
                 if (!Stopped()) {
                     if (StreamBreakBackoffMs() > 0)
@@ -129,19 +129,19 @@ namespace Solvers::Realtime {
 
     bool SppSession::Pump() {
         ObsData obs;
-        SolveDriver::EpochDecimator dec(task->core->sampleInterval); // 解算抽取：只解算网格历元
+        SolveDriver::EpochDecimator dec(task->core->sampleInterval);
         while (!Stopped()) {
             try {
                 if (reader->getNextEpoch(obs, false)) {
-                    // 非阻塞：单流实时轮询
-                    auto eph = reader->ephSnapshot(); // OEM7 内嵌星历统一经 ephTable 传入
+
+                    auto eph = reader->ephSnapshot();
                     spp.ephTable = *eph;
                     spp.preprocess(obs);
                     {
                         std::lock_guard lk(task->core->qcInputMutex);
                         pushQcWindow(task->core->qcInput, obs, obs.weekSecond.sow);
                     }
-                    if (!dec.accept(obs.weekSecond.sow)) continue; // 抽取：非网格历元不解算
+                    if (!dec.accept(obs.weekSecond.sow)) continue;
 
                     GnssTask::EpochData data;
                     data.getFromObs(obs);
@@ -166,7 +166,7 @@ namespace Solvers::Realtime {
                     }
                 } else {
                     if (!reader->isConnected() || reader->isStale(std::chrono::milliseconds(5000)))
-                        return false; // 跳出进行重连
+                        return false;
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 }
             } catch (const std::exception &) {
@@ -180,7 +180,7 @@ namespace Solvers::Realtime {
     RtkSession::RtkSession(std::shared_ptr<RtkProcessor::RtkTask> task,
                            GnssTask::RealtimeEndpoint base, GnssTask::RealtimeEndpoint rover)
         : task(std::move(task)), baseEp(std::move(base)), roverEp(std::move(rover)) {
-        SolverOptions opts;
+        SolverOptions opts = this->task->core->opts;
         opts.cutoffDeg = this->task->cutoffDeg;
         opts.systems = this->task->enabledSystems;
         this->task->rtk.applyOptions(opts);
@@ -198,7 +198,7 @@ namespace Solvers::Realtime {
         baseQc->isRealtime = true;
         baseQc->filePath = this->task->core->rtEndpoints[0].ip;
         baseQc->fileName = Helpers::baseName(this->task->core->rtEndpoints[0].ip);
-        baseQc->sampleInterval = this->task->sampleInterval; // 基准站 QC 用同一标称间隔
+        baseQc->sampleInterval = this->task->sampleInterval;
         {
             std::lock_guard lk(this->task->core->mutex);
             this->task->core->extraQcTabs.clear();
@@ -266,8 +266,8 @@ namespace Solvers::Realtime {
 
     bool RtkSession::Pump() {
         SolveDriver::DualObsPairing pairing;
-        pairing.setInterval(task->sampleInterval); // 声明的标称采样间隔：实时容差免窗口学习期
-        SolveDriver::EpochDecimator dec(task->sampleInterval); // 解算抽取：只解算网格历元
+        pairing.setInterval(task->sampleInterval);
+        SolveDriver::EpochDecimator dec(task->sampleInterval);
         std::chrono::steady_clock::time_point lastQcTime;
 
         std::chrono::steady_clock::time_point lastCommit = std::chrono::steady_clock::now();
@@ -281,13 +281,13 @@ namespace Solvers::Realtime {
         };
         auto getBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
             if (stallExceeded()) return -1;
-            if (!baseRdr->getNextEpoch(o, false)) return baseRdr->isConnected() ? 0 : -1; // 非阻塞：与 rover 并发轮询
+            if (!baseRdr->getNextEpoch(o, false)) return baseRdr->isConnected() ? 0 : -1;
             e = baseRdr->ephSnapshot();
             return 1;
         };
         auto getRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
             if (stallExceeded()) return -1;
-            if (!roverRdr->getNextEpoch(o, false)) return roverRdr->isConnected() ? 0 : -1; // 非阻塞：与 base 并发轮询
+            if (!roverRdr->getNextEpoch(o, false)) return roverRdr->isConnected() ? 0 : -1;
             e = roverRdr->ephSnapshot();
             return 1;
         };
@@ -310,7 +310,7 @@ namespace Solvers::Realtime {
                                                  return true;
                                              },
                                              [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
-                                                 // QC 保持全采样率喂入（不受解算抽取影响）
+
                                                  {
                                                      std::lock_guard lk(task->core->qcInputMutex);
                                                      pushQcWindow(task->core->qcInput, r, r.weekSecond.sow);
@@ -325,7 +325,7 @@ namespace Solvers::Realtime {
                                                      SolverPanel::LaunchQC(task->core);
                                                      SolverPanel::LaunchQC(baseQc);
                                                  }
-                                                 if (!dec.accept(r.weekSecond.sow)) return true; // 抽取：非网格历元不解算
+                                                 if (!dec.accept(r.weekSecond.sow)) return true;
                                                  bool ok = false;
                                                  try {
                                                      ok = task->rtk.processEpoch(b, r, *eph);

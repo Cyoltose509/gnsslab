@@ -61,7 +61,7 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
                                     const SiteParams &sp,
                                     const ImuScale &sen) {
     AlignQuality q;
-    const Eigen::Vector3d gB = -accMean; // 比力取负 = 重力方向（b 系）
+    const Eigen::Vector3d gB = -accMean;
     const Eigen::Vector3d wB = gyrMean;
     const Eigen::Matrix3d C = alignDCM(gB, wB, sp);
     const AttQuat qAtt = AttQuat::fromDCM(C);
@@ -70,18 +70,18 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
     q.axisY = C.col(1);
     q.axisZ = C.col(2);
 
-    // (1) 单位正交性：指导书式(30)(31)(32) 归一化正交化的直接验收
+
     q.dcmDet = C.determinant();
     q.dcmOrthoErr = (C.transpose() * C - Eigen::Matrix3d::Identity()).cwiseAbs().maxCoeff();
 
-    // (2) 地球自转方向残差：实测 ω 旋到 n 系后与 ω_ie^n 的夹角。
-    //     重力方向被 TRIAD 按构造对齐（残差恒 0），只有沿重力方向的分量不受约束，故只保留这一项。
+
+
     const Eigen::Vector3d wRef = navEarthRate(sp.latDeg);
     if (wB.norm() > 0.0) q.earthRateErrDeg = Math::angleBetween(qAtt.rotate(wB), wRef) * RAD_TO_DEG;
 
-    // (3) 模长校验：counts → 物理量必须走型号当量（语义自描述）；缺当量就明确标"不可用"，不填 0 冒充实测
-    //     参考值取用户填的当地重力 g，不再用正常重力公式现算——g 在这里只是比对基准，
-    //     不参与定姿，故保持"一个站点量、一处可改"的最简口径。
+
+
+
     q.hasScale = sen.known();
     q.gravityRef = sp.g;
     q.gyroRef = OMEGA_EARTH;
@@ -90,8 +90,8 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
         q.gyroNorm = gyrMean.norm() * sen.gyroRadPerLsb * sen.rateHz;
     }
 
-    // (4) 反解纬度：先用重力把 b 系摆平，再看 ω 的垂向/水平分量之比
-    //     ω_D = -Ω sinφ、|ω_H| = Ω cosφ ⇒ φ̂ = atan2(-ω_D, |ω_H|)；比值里当量自动约掉
+
+
     if (gB.norm() > 1e-9) {
         const Eigen::Quaterniond qLevel =
                 Eigen::Quaterniond::FromTwoVectors(gB.normalized(), Eigen::Vector3d::UnitZ());

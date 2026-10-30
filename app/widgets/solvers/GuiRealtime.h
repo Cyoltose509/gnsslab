@@ -41,10 +41,10 @@ namespace Solvers::Realtime {
         virtual void SetConnectError() = 0;
 
         virtual void SetStreamBroken() {
-        } ///< 断流提示，默认无
+        }
         virtual void OnException(const std::exception &e) = 0;
 
-        virtual void Finish() = 0; ///< 收尾：loading/done 等
+        virtual void Finish() = 0;
 
         virtual int ConnectFailBackoffMs() const noexcept { return 2000; }
         virtual int StreamBreakBackoffMs() const noexcept { return 0; }
@@ -96,7 +96,7 @@ namespace Solvers::Realtime {
                    GnssTask::RealtimeEndpoint base,
                    GnssTask::RealtimeEndpoint rover);
 
-        ~RtkSession() override; ///< 外置：baseRdr/roverRdr 成员为不完整类型
+        ~RtkSession() override;
 
     protected:
         const char *Tag() const noexcept override;

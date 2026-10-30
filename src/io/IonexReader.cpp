@@ -7,9 +7,9 @@
 #include "Const.h"
 
 namespace {
-    constexpr int IONEX_FIELD_WIDTH = 5; // IONEX 数值定宽 5 字符
+    constexpr int IONEX_FIELD_WIDTH = 5;
 
-    // 从定宽 5 字符字段解析数值
+
     bool parseFixedField(const std::string &line, const int idx, double &out) {
         const size_t pos = static_cast<size_t>(idx) * IONEX_FIELD_WIDTH;
         if (pos >= line.size()) return false;
@@ -38,7 +38,7 @@ bool IonexReader::read(const std::string &path) {
     int nLon = 0;
 
     while (std::getline(ifs, line)) {
-        // —— 头段关键字 ——
+
         if (line.find("EXPONENT") != std::string::npos) {
             if (std::istringstream iss(line.substr(0, 20)); iss >> exponent) { /* ok */ }
             continue;
@@ -86,7 +86,7 @@ bool IonexReader::read(const std::string &path) {
             continue;
         }
         if (line.find("LAT/LON1/LON2/DLON/H") != std::string::npos) {
-            // 新纬度行：先把上一行收尾
+
             if (!row.empty()) { cur.tec.push_back(row); row.clear(); }
             double lat = 0.0, l1 = -180.0, l2 = 180.0, dl = 5.0, h = hgtKm;
             if (std::istringstream iss(line.substr(0, 30)); !(iss >> lat >> l1 >> l2 >> dl >> h)) continue;
@@ -99,7 +99,7 @@ bool IonexReader::read(const std::string &path) {
             continue;
         }
 
-        // —— 数据行：定宽 5 字符，每行最多 16 个 ——
+
         const int nFields = static_cast<int>(line.size()) / IONEX_FIELD_WIDTH;
         for (int i = 0; i < nFields && static_cast<int>(row.size()) < nLon; ++i) {
             double v = 0.0;
@@ -123,15 +123,15 @@ double IonexReader::interpolateMap(const TecMap &mp, const double latDeg, const 
     const int nLat = static_cast<int>(mp.lats.size());
     const int nLon = static_cast<int>(mp.tec[0].size());
 
-    // 经度：单调递增（lon1 -> lon2）
+
     const double dlon = mp.dlon > 0.0 ? mp.dlon : 5.0;
     double fx = (lonDeg - mp.lon1) / dlon;
-    fx = std::fmod(fx + static_cast<double>(nLon) * 2.0, static_cast<double>(nLon)); // 环绕
+    fx = std::fmod(fx + static_cast<double>(nLon) * 2.0, static_cast<double>(nLon));
     const int i0 = static_cast<int>(std::floor(fx));
     const double tx = fx - i0;
     const int i1 = (i0 + 1) % nLon;
 
-    // 纬度：文件通常由 +87.5 递减到 -87.5
+
     const bool descending = nLat > 1 && mp.lats[1] < mp.lats[0];
     double fy;
     if (descending) {
@@ -161,12 +161,12 @@ bool IonexReader::getTec(const CommonTime &t, const double latDeg, const double 
     CommonTime2MJD(t, m);
     const auto mjd = static_cast<double>(m.mjd);
 
-    const int idx = Math::lowerBoundIndex(mjds, mjd); // 最后一个 mjd <= t 的索引(已边界 clamp)
+    const int idx = Math::lowerBoundIndex(mjds, mjd);
     if (idx >= static_cast<int>(maps.size()) - 1) {
         tec = interpolateMap(maps.back(), latDeg, lonDeg);
         return true;
     }
-    if (idx == 0 && mjd <= mjds.front()) { // t 早于首图：clamp 到首图(不时间插值)
+    if (idx == 0 && mjd <= mjds.front()) {
         tec = interpolateMap(maps.front(), latDeg, lonDeg);
         return true;
     }

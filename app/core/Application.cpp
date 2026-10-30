@@ -59,10 +59,11 @@ void Application::Initialize() {
 }
 
 void Application::Shutdown() {
+    AppConfig::PathMemory::instance().flush();
     LOG_INFO << "GnssLab 退出";
     stopAndJoinTasks(m_tasks);
     stopAndJoinTasks(m_closingTasks);
-    Tools::FtpDownload::Shutdown();   // 后台下载/扫描线程须在 GUI 销毁前收尾
+    Tools::FtpDownload::Shutdown();
     m_ui.Shutdown();
 }
 
@@ -130,21 +131,20 @@ void Application::RenderTaskTabList() {
 
     for (int i = 0; i < static_cast<int>(tasks.size()); ++i) {
         auto &task = tasks[i];
-        using State = GnssTask::SolverTaskBase::State;
         const auto res = task->solveResult();
         const char *tag = GnssTask::modeLabel(res->mode);
         const bool isRealtime = task->isRealtime;
         const std::string defaultName = std::string(tag) + "解算";
 
         std::string label;
-        if (task->state == State::Config)
+        if (task->state == GnssTask::SolverTaskBase::State::Config)
             label = std::string("[配置][") + tag + "] " + (res->fileName.empty() ? defaultName : res->fileName);
         else if (isRealtime)
             label = std::string("[实时][") + tag + "] " + res->fileName;
         else
             label = std::string("[") + tag + "] " + res->fileName;
 
-        if (task->state != State::Config && !isRealtime) {
+        if (task->state != GnssTask::SolverTaskBase::State::Config && !isRealtime) {
             if (task->loading.load())
                 label += " [加载中]";
             else if (task->errorFlag())
@@ -183,7 +183,7 @@ void Application::RenderTaskTabList() {
 
 void Application::RenderTasks() {
     if (m_tasks.empty()) {
-        // 空状态：居中提示
+
         const ImGuiViewport *viewport = ImGui::GetMainViewport();
         const auto center = ImVec2(
             viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -371,6 +371,7 @@ void Application::Run() {
         if (!ready) continue;
         Update();
         Render();
+        AppConfig::PathMemory::instance().flush();
         m_ui.EndFrame();
     }
 

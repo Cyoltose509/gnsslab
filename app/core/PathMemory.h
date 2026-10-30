@@ -1,9 +1,12 @@
 #pragma once
 
+#include "core/IniFile.h"
+
 #include <string>
 #include <vector>
 
 namespace AppConfig {
+
     class PathMemory {
     public:
         static PathMemory &instance();
@@ -24,11 +27,19 @@ namespace AppConfig {
 
         void addRecent(const std::string &group, const std::string &entry, int max = 12) const; //NOLINT
 
+        void flush() const; //NOLINT
+
         [[nodiscard]] const std::string &path() const { return filePath; }
 
     private:
         PathMemory();
 
+
+        IniFile &file() const; //NOLINT
+
         std::string filePath;
+        mutable IniFile cache;
+        mutable bool loaded = false;
+        mutable bool dirty = false;
     };
 }

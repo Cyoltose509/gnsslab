@@ -86,7 +86,7 @@ namespace Solvers::RtkProcessor {
             }
             const bool baseRinex = fmtBase == GnssTask::ObsFormat::Rinex;
             const bool roverRinex = fmtRover == GnssTask::ObsFormat::Rinex;
-            const bool anyRinex = baseRinex || roverRinex; // 任一侧 RINEX 即需外部广播星历
+            const bool anyRinex = baseRinex || roverRinex;
 
             {
                 std::lock_guard lk(task->core->qcInputMutex);
@@ -94,13 +94,13 @@ namespace Solvers::RtkProcessor {
             }
             task->core->extraQcTabs.clear();
             task->core->qcTabLabel = "质量分析[流动站]";
-            task->core->qcLazy = true; // 两份 QC 推迟到打开对应标签时算，加快首屏加载
+            task->core->qcLazy = true;
             std::vector<QC::QCObsEpoch> baseQcInput;
             auto baseQc = std::make_shared<SolveTask>();
             baseQc->mode = SolverMode::Rtk;
             baseQc->filePath = task->baseObsPathBuf;
             baseQc->fileName = Helpers::baseName(task->baseObsPathBuf);
-            baseQc->sampleInterval = task->sampleInterval; // 基准站 QC 用同一标称间隔
+            baseQc->sampleInterval = task->sampleInterval;
             baseQc->qcLazy = true;
 
             if (anyRinex) {
@@ -128,8 +128,8 @@ namespace Solvers::RtkProcessor {
 
             int ok = 0;
             SolveDriver::DualObsPairing p(nextBase, nextRover);
-            p.setInterval(task->sampleInterval); // 声明的标称采样间隔：配对容差免窗口学习期
-            SolveDriver::EpochDecimator dec(task->sampleInterval); // 解算抽取：只解算网格历元
+            p.setInterval(task->sampleInterval);
+            SolveDriver::EpochDecimator dec(task->sampleInterval);
             SolveDriver::DualObsPairing::Pair pr;
             while (true) {
                 if (task->stop) break;
@@ -217,8 +217,8 @@ namespace Solvers::RtkProcessor {
 
     static void SolveThread(const std::shared_ptr<RtkTask> &task) {
         const auto tRtk0 = std::chrono::steady_clock::now();
-        // 统一参数注入：RTK GUI 仅暴露 截止角/星座，其余取 SolverOptions 默认（= RTK::Config 默认，与 CLI 一致）
-        SolverOptions opts;
+
+        SolverOptions opts = task->core->opts;
         opts.cutoffDeg = task->cutoffDeg;
         opts.systems = task->enabledSystems;
         opts.sampleInterval = task->sampleInterval;
@@ -268,12 +268,13 @@ namespace Solvers::RtkProcessor {
                     cfg.setNum("rtk_cutoff", this->cutoffDeg);
                     cfg.setNum("rtk_interval", this->sampleInterval);
                     cfg.set("rtk_systems", sysSetToString(this->enabledSystems));
+                    Helpers::saveSolverParams(GnssTask::SolverMode::Rtk, core->opts);
                     persistBaseCoord(this);
                     this->core->enabledSystems = this->enabledSystems;
                     this->core->cutoffDeg = this->cutoffDeg;
                     this->core->sampleInterval = this->sampleInterval;
 
-                    // 输入校验与 ReaderThread / rtk_cli 共用同一份判定
+
                     if (const std::string inputErr = SolveDriver::rtkFileInputError(
                             this->baseObsPathBuf, this->roverObsPathBuf, this->navPathBuf);
                         !inputErr.empty()) {
@@ -318,6 +319,7 @@ namespace Solvers::RtkProcessor {
                         cfg.setNum("rtk_cutoff", this->cutoffDeg);
                         cfg.setNum("rtk_interval", this->sampleInterval);
                         cfg.set("rtk_systems", sysSetToString(this->enabledSystems));
+                        Helpers::saveSolverParams(GnssTask::SolverMode::Rtk, core->opts);
                         persistBaseCoord(this);
                         this->core->enabledSystems = this->enabledSystems;
                         this->core->cutoffDeg = this->cutoffDeg;
@@ -343,6 +345,12 @@ namespace Solvers::RtkProcessor {
                                                    this->core->rtEndpoints[0], this->core->rtEndpoints[1]);
                     },
                     [&] { renderBaseCoordInput(this); });
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("参数")) {
+                ImGui::Spacing();
+                Helpers::renderAdvancedParams(core->opts, GnssTask::SolverMode::Rtk);
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();

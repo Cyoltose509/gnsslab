@@ -20,7 +20,7 @@ void RinexObsReader::parseRinexHeader() {
     syncStream();
     XYZ antennaPosition;
     std::map<char, std::vector<string> > mapObsTypes;
-    // 天线偏心（marker -> 天线参考点 ARP），RINEX: ANTENNA: DELTA H/E/N（本地 E/N/U 偏移）
+
     bool haveAntDelta = false;
     double antDh = 0.0, antDe = 0.0, antDn = 0.0;
     scanLabeledHeader([&](const std::string &label, std::string &line) {
@@ -93,11 +93,11 @@ ObsData RinexObsReader::parseRinexObs() {
         isHeaderRead = true;
     }
 
-    // 读取观测值（跳过空行以及可能被污染的尾部非 epoch 行）
+
     std::string line;
     while (true) {
         if (!nextLine(line)) throw EndOfFile("EOF encountered!");
-        // 跳过空行
+
         if (strip(line).empty()) continue;
         bool isEpochLine = line.size() >= 2 && line[0] == '>' && line[1] == ' ' &&
                            safeSubstr(line, 2, 27) != std::string(27, ' ');
@@ -134,7 +134,7 @@ ObsData RinexObsReader::parseRinexObs() {
                     sat.chan = it->second;
                 }
             }
-            // 仅解析已实现定位的星座：GPS / BDS / GLONASS / Galileo
+
             if (sat.system != 'G' && sat.system != 'C' && sat.system != 'R' && sat.system != 'E') {
                 continue;
             }
@@ -155,7 +155,7 @@ ObsData RinexObsReader::parseRinexObs() {
                 double data = safeStod(tmpStr);
 
                 if (obsTypeStr[0] == 'L') {
-                    // GLONASS 频率随通道号变化（FDMA），必须用逐星频率；其余系统用 (sys, band) 频率
+
                     double freq = sat.system == 'R'
                                       ? getGlonassFreq(obsTypeStr[1], sat.chan)
                                       : getFreq(sat.system, obsTypeStr);
@@ -233,7 +233,7 @@ void RinexObsReader::fastForwardToEpoch(const CommonTime &target) const {
         }
         lineStart = nl + 1;
     }
-    // 无匹配历元：流已到 EOF，后续 parseRinexObs 走 EndOfFile 收尾
+
 }
 
 CommonTime RinexObsReader::parseTime(const string &line) {

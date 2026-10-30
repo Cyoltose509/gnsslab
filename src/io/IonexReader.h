@@ -4,16 +4,16 @@
 #include <string>
 #include <vector>
 
-/// IONEX 全球电离层图 GIM（如 `COD..._01H_GIM.INX`）读取器
+
 class IonexReader {
 public:
     struct TecMap {
         CommonTime t;
-        double mjd = 0.0;                       // 内插用
-        std::vector<double> lats;               // 各纬度行(度)，通常 87.5 → -87.5
-        double lon1 = -180.0, lon2 = 180.0, dlon = 5.0; // 经度范围(度)
-        double hgt = 450.0;                     // 单层高度(km)
-        std::vector<std::vector<double> > tec;  // tec[iLat][iLon]，TECU
+        double mjd = 0.0;
+        std::vector<double> lats;
+        double lon1 = -180.0, lon2 = 180.0, dlon = 5.0;
+        double hgt = 450.0;
+        std::vector<std::vector<double> > tec;
     };
 
     bool read(const std::string &path);
@@ -31,7 +31,7 @@ private:
     [[nodiscard]] static double interpolateMap(const TecMap &mp, double latDeg, double lonDeg) ;
 
     std::vector<TecMap> maps;
-    std::vector<double> mjds;  // 与 maps 同步的历元 MJD 序列(升序)，供 getTec 时间括号查找
+    std::vector<double> mjds;
     double hgtKm = 450.0;
-    double exponent = -1.0; // 文件内数值 × 10^exponent = TECU
+    double exponent = -1.0;
 };

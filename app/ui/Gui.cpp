@@ -22,7 +22,7 @@ static UINT g_ResizeWidth = 0;
 static UINT g_ResizeHeight = 0;
 static HWND g_mainHwnd = nullptr;
 
-// ========== 帧截屏（PNG 导出）==========
+
 static bool g_captureReq = false;
 static bool g_captureRegion = false;
 static int g_capX = 0, g_capY = 0, g_capW = 0, g_capH = 0;

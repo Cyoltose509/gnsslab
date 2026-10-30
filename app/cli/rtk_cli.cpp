@@ -90,8 +90,8 @@ namespace {
         }
 
         SolveDriver::DualObsPairing p(nextBase, nextRover);
-        p.setInterval(cfg.sampleInterval); // 声明的标称采样间隔：配对容差免窗口学习期
-        SolveDriver::EpochDecimator dec(cfg.sampleInterval); // 解算抽取：只解算网格历元
+        p.setInterval(cfg.sampleInterval);
+        SolveDriver::EpochDecimator dec(cfg.sampleInterval);
         SolveDriver::DualObsPairing::Pair pr;
         while (p.next(pr)) {
             if (!dec.accept(pr.rover.weekSecond.sow)) continue;
@@ -143,7 +143,7 @@ namespace {
 
         SolveDriver::DualObsPairing pairing;
         pairing.setInterval(cfg.sampleInterval);
-        SolveDriver::EpochDecimator dec(cfg.sampleInterval); // 解算抽取：只解算网格历元
+        SolveDriver::EpochDecimator dec(cfg.sampleInterval);
         long long nProc = 0, nOk = 0, nAligned = 0;
         long long nBaseEp = 0, nRoverEp = 0, nIdle = 0;
         auto elapsedSec = [&] {
@@ -160,7 +160,7 @@ namespace {
         };
         auto getBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
             heartbeat("base");
-            if (!baseRdr.getNextEpoch(o, false)) {   // 非阻塞：仅取已缓冲历元，由泵循环并发轮询 base/rover
+            if (!baseRdr.getNextEpoch(o, false)) {
                 if (!baseRdr.isConnected()) {
                     std::cerr << "[RTK实时] base 连接断开 (t=" << static_cast<int>(elapsedSec()) << "s)\n";
                     return -1;
@@ -174,7 +174,7 @@ namespace {
         };
         auto getRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
             heartbeat("rover");
-            if (!roverRdr.getNextEpoch(o, false)) {   // 非阻塞：与 base 并发轮询，避免串行等待把 1Hz 压到 0.4Hz
+            if (!roverRdr.getNextEpoch(o, false)) {
                 if (!roverRdr.isConnected()) {
                     std::cerr << "[RTK实时] rover 连接断开 (t=" << static_cast<int>(elapsedSec()) << "s)\n";
                     return -1;
@@ -194,7 +194,7 @@ namespace {
                 return true;
             },
             [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
-                if (!dec.accept(r.weekSecond.sow)) return true; // 抽取：非网格历元不解算
+                if (!dec.accept(r.weekSecond.sow)) return true;
                 ++nProc;
                 bool ok = false;
                 try { ok = rtk.processEpoch(b, r, *eph); } catch (const std::exception &e) {
@@ -238,7 +238,7 @@ int main(const int argc, char **argv) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolverOptions cfg = loadConfig(f);
+    const SolverOptions cfg = loadConfig(f, GnssTask::SolverMode::Rtk);
     Log::init("cli_gnsslab.log");
     std::cout << "[RTK] base=" << cfg.basePath << " rover=" << cfg.roverPath
             << " nav=" << (cfg.navPath.empty() ? "(无)" : cfg.navPath) << "\n";

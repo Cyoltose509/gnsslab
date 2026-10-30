@@ -44,18 +44,18 @@ inline DCM ECEFToENUDCM(const double B, const double L) {
 
 
 inline DCM ECEFToLVLHDCM(const Eigen::Vector3d &pos, const Eigen::Vector3d &vel) {
-    const Eigen::Vector3d ur = pos.normalized(); // 径向(向外) Zb
+    const Eigen::Vector3d ur = pos.normalized(); // 径向(向外)
     Eigen::Vector3d ut;
-    if (vel.squaredNorm() > 1.0) ut = vel.normalized(); // 沿迹 Xb
+    if (vel.squaredNorm() > 1.0) ut = vel.normalized(); // 沿迹(速度方向)
     else ut = Eigen::Vector3d(0, 0, 1);
-    Eigen::Vector3d uc = ur.cross(ut); // 轨道法向(角动量方向) Yb
+    Eigen::Vector3d uc = ur.cross(ut); // 轨道法向(角动量方向)
     if (uc.squaredNorm() < 1e-6) uc = Eigen::Vector3d(1, 0, 0);
     uc.normalize();
     ut = uc.cross(ur).normalized(); // 重新正交化：沿迹 = 法向 × 径向
     DCM M;
-    M.row(0) = -ut; // Xb 沿迹
-    M.row(1) = uc; // Yb 轨道法向
-    M.row(2) = ur; // Zb 径向
+    M.row(0) = ut; // X 沿迹(速度方向)
+    M.row(1) = -uc; // Y 跨轨道( = Z×X )
+    M.row(2) = -ur; // Z 径向指向地心(nadir)
     return M;
 }
 
@@ -212,8 +212,10 @@ inline XYZ ENUToXYZ(const ENU &enu, const XYZ &refXYZ, const FrameInfo &frame = 
 
 inline Eigen::Vector3d XYZToRTN(const Eigen::Vector3d &posEst, const Eigen::Vector3d &posRef,
                                 const Eigen::Vector3d &velRef) {
+    // LVLH 矩阵现为正确右手系：行 = {沿迹, -跨轨, -径向(向外)}。
+    // 返回 (径向向外, 沿迹, 跨轨道+) 的经典 RTN 次序，保持历史行为不变。
     const Eigen::Vector3d b = ECEFToLVLHDCM(posRef, velRef) * (posEst - posRef);
-    return {b.z(), -b.x(), b.y()};
+    return {-b.z(), b.x(), -b.y()};
 }
 
 inline NED ENUToNED(const ENU &enu) { return {enu.N(), enu.E(), -enu.U()}; }
