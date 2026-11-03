@@ -16,8 +16,7 @@
 #include "solvers/common/Driver.h"
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
-#include "view/GuiSolverPanel.h"
-#include "../GuiRTKProcessor.h"
+#include "Task.h"
 
 namespace Solvers::Realtime {
     RTKSession::RTKSession(std::shared_ptr<RTK::Task> task,
@@ -33,10 +32,10 @@ namespace Solvers::Realtime {
                                            : Eigen::Vector3d::Zero();
 
         {
-            std::lock_guard lk(this->task->core->qcInputMutex);
-            this->task->core->qcInput.clear();
+            std::lock_guard lk(this->task->core->view.qcInputMutex);
+            this->task->core->view.qcInput.clear();
         }
-        this->task->core->qcTabLabel = "质量分析[流动站]";
+        this->task->core->view.qcTabLabel = "质量分析[流动站]";
         baseQc = std::make_shared<Solvers::Core>();
         baseQc->mode = Solvers::Mode::RTK;
         baseQc->isRealtime = true;
@@ -45,8 +44,8 @@ namespace Solvers::Realtime {
         baseQc->sampleInterval = this->task->sampleInterval;
         {
             std::lock_guard lk(this->task->core->mutex);
-            this->task->core->extraQcTabs.clear();
-            this->task->core->extraQcTabs.emplace_back("质量分析[基准站]", baseQc);
+            this->task->core->view.extraQcTabs.clear();
+            this->task->core->view.extraQcTabs.emplace_back("质量分析[基准站]", baseQc);
         }
     }
 
@@ -106,7 +105,7 @@ namespace Solvers::Realtime {
         roverRdr.reset();
     }
 
-    bool RTKSession::stopped() const { return task->stop.load() || task->core->stop.load(); }
+    bool RTKSession::stopped() { return task->shouldStop() || task->core->stop.load(); }
 
     bool RTKSession::pump() {
         Observer::DualPair pairing;
@@ -155,18 +154,18 @@ namespace Solvers::Realtime {
                          },
                          [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
                              {
-                                 std::lock_guard lk(task->core->qcInputMutex);
-                                 pushQcWindow(task->core->qcInput, r, r.weekSecond.sow);
+                                 std::lock_guard lk(task->core->view.qcInputMutex);
+                                 pushQcWindow(task->core->view.qcInput, r, r.weekSecond.sow);
                              }
                              {
-                                 std::lock_guard lk(baseQc->qcInputMutex);
-                                 pushQcWindow(baseQc->qcInput, b, b.weekSecond.sow);
+                                 std::lock_guard lk(baseQc->view.qcInputMutex);
+                                 pushQcWindow(baseQc->view.qcInput, b, b.weekSecond.sow);
                              }
                              if (const auto now = std::chrono::steady_clock::now();
                                  now - lastQcTime > std::chrono::milliseconds(500)) {
                                  lastQcTime = now;
-                                 SolverPanel::launchQC(task->core);
-                                 SolverPanel::launchQC(baseQc);
+                                 task->core->view.qcDirty = true;
+                                 baseQc->view.qcDirty = true;
                              }
                              if (!dec.accept(r.weekSecond.sow)) return true;
                              bool ok = false;

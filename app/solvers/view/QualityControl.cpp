@@ -635,15 +635,18 @@ namespace QualityControl {
 
 
 
-        if (task->qcLazy && !task->qcReady && !task->qcComputing) Solvers::SolverPanel::launchQC(task);
+        if (task->view.qcDirty && !task->view.qcComputing) {
+            task->view.qcDirty = false;
+            Solvers::SolverPanel::launchQC(task);
+        }
 
         std::shared_ptr<QualityReport> repPtr;
         {
-            std::lock_guard lk(task->qcMutex);
-            repPtr = task->qcReport;
+            std::lock_guard lk(task->view.qcMutex);
+            repPtr = task->view.qcReport;
         }
-        if (!repPtr || !task->qcReady) {
-            if (task->qcComputing) {
+        if (!repPtr || !task->view.qcReady) {
+            if (task->view.qcComputing) {
                 ImGui::TextColored(UI::kColInfo, "正在解算…");
             } else {
                 ImGui::TextColored(UI::kColInfo, "正在准备质量分析…");

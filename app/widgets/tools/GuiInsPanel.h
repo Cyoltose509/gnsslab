@@ -132,7 +132,7 @@ namespace Tools::InsPanel {
 
         SixPosCalibTask();
 
-        void renderConfigPanel() override;
+        void renderConfigPanel();
 
         void renderResult();
 
@@ -176,7 +176,7 @@ namespace Tools::InsPanel {
 
         StaticAlignTask();
 
-        void renderConfigPanel() override;
+        void renderConfigPanel();
 
         void renderResult();
 
@@ -200,4 +200,6 @@ namespace Tools::InsPanel {
 
 
     bool RenderInsResult(const std::shared_ptr<Solvers::Task> &job);
+
+    void RenderInsConfig(Solvers::Task &job);
 }

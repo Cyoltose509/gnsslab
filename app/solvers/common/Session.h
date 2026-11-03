@@ -27,7 +27,7 @@ namespace Solvers::Realtime {
 
         virtual bool pump() = 0;
 
-        virtual bool stopped() const = 0;
+        virtual bool stopped() = 0;
 
         virtual void clearError() = 0;
 

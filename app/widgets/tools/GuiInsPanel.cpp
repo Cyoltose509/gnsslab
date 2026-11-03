@@ -34,6 +34,16 @@ namespace Tools::InsPanel {
         return t;
     }
 
+    void RenderInsConfig(Solvers::Task &job) {
+        if (auto *c = dynamic_cast<SixPosCalibTask *>(&job)) {
+            c->renderConfigPanel();
+            return;
+        }
+        if (auto *a = dynamic_cast<StaticAlignTask *>(&job)) {
+            a->renderConfigPanel();
+        }
+    }
+
     bool RenderInsResult(const std::shared_ptr<Solvers::Task> &job) {
         if (auto *c = dynamic_cast<SixPosCalibTask *>(job.get())) {
             c->renderResult();

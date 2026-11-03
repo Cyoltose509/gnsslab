@@ -64,7 +64,7 @@ namespace Solvers::Realtime {
 
         bool pump() override;
 
-        bool stopped() const override;
+        bool stopped() override;
 
         void clearError() override;
 

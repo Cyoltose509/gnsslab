@@ -13,9 +13,10 @@
 #include "CSV.h"
 #include "Config.h"
 #include "Task.h"
-#include "view/QualityControl.h"
+#include "view/View.h"
 
 namespace Solvers {
+    /// 一次解算的配置与结果：CLI 与 GUI 共用，呈现状态另存于 View。
     struct Core : Task {
         std::string filePath;
         bool isRINEX = false;
@@ -43,66 +44,25 @@ namespace Solvers {
         std::atomic<bool> solvingDone{false};
 
         std::vector<Epoch> epochs;
-        PlotData plotData;
-        std::mutex plotMutex;
         XYZ refECEF{0, 0, 0};
         bool initializedRefECEF = false;
         bool hasRefOrbit = false;
 
         bool isKinematic = false;
 
-        bool hasLeo = false;
-        Eigen::Vector3d leoPos3d{0, 0, 0};
-        Eigen::Vector3d leoRef3d{0, 0, 0};
-        std::vector<TrajPoint> leoTraj;
-        std::vector<TrajPoint> leoRefTraj;
-        std::vector<SatVis> gnssVis;
-        std::map<SatID, std::vector<TrajPoint> > gnssTraj;
-        std::vector<double> rtnTimes, rtnR, rtnT, rtnN, rtnD3;
+        View view;
 
-        std::mutex qcInputMutex;
-        std::vector<QC::QCObsEpoch> qcInput;
-
-        std::map<SatID, std::vector<SkyPoint> > skyTracks;
-        int skyTracksBuilt = 0;
-
-        int selectedEpoch = -1;
-        int selectedSatIdx = -1;
-        int resMode = 0;
-
-        std::string obsPathBuf;
-        std::vector<RealtimeEndpoint> rtEndpoints;
-
-        Mode mode{Mode::SPP};
-
-        std::shared_ptr<QualityReport> qcReport;
-        std::atomic<bool> qcReady{false};
-        std::mutex qcMutex;
-        std::thread qcWorker;
-
-        std::atomic<bool> qcComputing{false};
-        bool qcLazy = false;
         bool hasNav = false;
         bool noEphSolve = false;
 
-        std::string qcTabLabel = "质量分析";
-        std::vector<std::pair<std::string, std::shared_ptr<Core> > > extraQcTabs;
+        std::vector<RealtimeEndpoint> rtEndpoints;
 
-        ~Core() override {
-            stop = true;
-            if (qcWorker.joinable()) {
-                if (qcWorker.get_id() == std::this_thread::get_id()) qcWorker.detach();
-                else qcWorker.join();
-            }
-        }
+        Mode mode{Mode::SPP};
 
         std::shared_ptr<Core> solveResult() override { return std::static_pointer_cast<Core>(shared_from_this()); }
 
         void exportCSV(std::ostream &out) const {
             Solvers::exportCSV(out, epochs, mode, refECEF, hasRefOrbit);
-        }
-
-        void renderConfigPanel() override {
         }
     };
 

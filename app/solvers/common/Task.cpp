@@ -10,7 +10,6 @@
 #include "SPP.h"
 #include "solvers/common/Driver.h"
 #include "solvers/common/Session.h"
-#include "view/GuiSolverPanel.h"
 
 namespace Solvers {
     bool Task::errorFlag() const { return hasError.load(); }
@@ -69,8 +68,27 @@ namespace Solvers {
         return core ? core->mode : Mode::SPP;
     }
 
-    bool Task::shouldStop() const {
-        return stop.load();
+    bool Task::shouldStop() {
+        if (stop.load()) return true;
+        if (realtimeSec > 0) {
+            const auto elapsed = std::chrono::steady_clock::now() - tStart;
+            if (elapsed >= std::chrono::seconds(realtimeSec)) return true;
+        }
+        if (maxEpochs > 0) {
+            if (const auto core = solveResult()) {
+                std::lock_guard lk(core->mutex);
+                if (static_cast<int>(core->epochs.size()) >= maxEpochs) return true;
+            }
+        }
+        return false;
+    }
+
+    void Task::waitDone() {
+        if (worker.joinable()) worker.join();
+    }
+
+    bool Task::ok() const {
+        return !errorFlag();
     }
 
     void Task::fileRead() {
@@ -80,11 +98,11 @@ namespace Solvers {
             if (const int ok = readObsToQueue(core, core->stop); ok >= 0) {
                 bool hasQcInput = false;
                 {
-                    std::lock_guard lk(core->qcInputMutex);
-                    hasQcInput = !core->qcInput.empty();
+                    std::lock_guard lk(core->view.qcInputMutex);
+                    hasQcInput = !core->view.qcInput.empty();
                 }
-                if (hasQcInput) Solvers::SolverPanel::launchQC(core);
-                else core->qcReady = true;
+                if (hasQcInput) core->view.qcDirty = true;
+                else core->view.qcReady = true;
             }
         } catch (const std::exception &e) {
             core->setError(e.what());
@@ -99,11 +117,16 @@ namespace Solvers {
     namespace {
         struct TaskQueueSource : Observer::Source {
             std::shared_ptr<Core> core;
+            const Task *owner = nullptr;
 
-            explicit TaskQueueSource(std::shared_ptr<Core> c) : core(std::move(c)) {
+            TaskQueueSource(std::shared_ptr<Core> c, const Task *o) : core(std::move(c)), owner(o) {
             }
 
             bool next(Observer::Item &out) override {
+                if (owner->maxEpochs > 0) {
+                    std::lock_guard lk(core->mutex);
+                    if (static_cast<int>(core->epochs.size()) >= owner->maxEpochs) return false;
+                }
                 return nextObsQueue(core, out);
             }
         };
@@ -144,7 +167,7 @@ namespace Solvers {
                 return;
             }
 
-            TaskQueueSource src(core);
+            TaskQueueSource src(core, this);
             Driver::solveStream(src, *solver,
                                      [this, core](::SPP &s, Observer::Item &item, Epoch &data) {
                                          int idx = 0;
@@ -198,6 +221,7 @@ namespace Solvers {
 
     void Task::startRealtime() {
         if (worker.joinable()) worker.join();
+        tStart = std::chrono::steady_clock::now();
         stop = false;
         if (const auto core = solveResult()) {
             core->stop = false;

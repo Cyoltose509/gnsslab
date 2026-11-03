@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -46,8 +47,6 @@ namespace Solvers {
 
         virtual std::shared_ptr<Core> solveResult() = 0;
 
-        virtual void renderConfigPanel() = 0;
-
         Mode mode();
 
         void startFile();
@@ -55,6 +54,17 @@ namespace Solvers {
         void startRealtime();
 
         void writeCsv(std::ostream &out);
+
+        /// 等解算线程收尾（CLI 与 GUI 的 join 语义合一）。
+        void waitDone();
+
+        bool ok() const;
+
+        /// 停止条件：stop 位、实时时限、历元上限。实时会话与文件解算共用。
+        virtual bool shouldStop();
+
+        int maxEpochs = 0;
+        int realtimeSec = 0;
 
         virtual bool initSolver(void *solver) { return true; }
 
@@ -81,13 +91,13 @@ namespace Solvers {
 
         virtual bool afterSolveEpoch(void *solver, Epoch *data, Observer::Item *item, int index);
 
-        virtual bool shouldStop() const;
-
         /// 实时会话工厂；不做实时的模式不覆盖。
         virtual std::unique_ptr<Realtime::Session> makeSession() { return nullptr; }
 
     private:
         void fileRead();
+
+        std::chrono::steady_clock::time_point tStart = std::chrono::steady_clock::now();
 
         mutable std::mutex errorMutex;
         std::atomic<bool> hasError{false};

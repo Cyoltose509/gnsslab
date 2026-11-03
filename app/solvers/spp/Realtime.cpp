@@ -14,8 +14,7 @@
 #include "solvers/common/Driver.h"
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
-#include "view/GuiSolverPanel.h"
-#include "../GuiSPPProcessor.h"
+#include "Task.h"
 
 namespace Solvers::Realtime {
     SPPSession::SPPSession(std::shared_ptr<SPP::Task> task, Solvers::RealtimeEndpoint endpoint)
@@ -62,7 +61,7 @@ namespace Solvers::Realtime {
         reader.reset();
     }
 
-    bool SPPSession::stopped() const { return task->stop.load() || task->core->stop.load(); }
+    bool SPPSession::stopped() { return task->shouldStop() || task->core->stop.load(); }
 
     bool SPPSession::pump() {
         const EpochDecimator dec(task->core->sampleInterval);
@@ -71,8 +70,8 @@ namespace Solvers::Realtime {
                          [&] { return stopped(); },
                          [&](ObsData &obs, const EphemerisTable &eph, const bool accepted) {
                              {
-                                 std::lock_guard lk(task->core->qcInputMutex);
-                                 pushQcWindow(task->core->qcInput, obs, obs.weekSecond.sow);
+                                 std::lock_guard lk(task->core->view.qcInputMutex);
+                                 pushQcWindow(task->core->view.qcInput, obs, obs.weekSecond.sow);
                              }
                              if (!accepted) return;
                              Solvers::Epoch data;
@@ -92,7 +91,7 @@ namespace Solvers::Realtime {
                              if (const auto now = std::chrono::steady_clock::now();
                                  now - lastQcTime > std::chrono::milliseconds(500)) {
                                  lastQcTime = now;
-                                 SolverPanel::launchQC(task->core);
+                                 task->core->view.qcDirty = true;
                              }
                          });
     }

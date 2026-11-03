@@ -1,19 +1,55 @@
 #pragma once
 
-#include <future>
 #include <functional>
+#include <future>
 #include <string>
 #include <vector>
 
 #include "Log.h"
+#include "SolverOptions.h"
 #include "StringUtils.h"
 #include "Troposphere.h"
-#include "solvers/common/Core.h"
-#include "core/Products.h"
-#include "download/ProductStore.h"
-#include "download/ProductCatalog.h"
 
+/// 精密产品的读取与派发。路径来源有两层：调用方显式给（CLI 的 ini），
+/// 或 GUI 启动时注册的默认值（Products + 下载目录）。引擎本身不认识 GUI 配置。
 namespace ProductLoad {
+    struct Paths {
+        std::string sp3, clk, brdc, osb, att, erp, atx;
+    };
+
+    /// GUI 注册的默认产品路径；CLI 不注册，缺项即视为未提供。
+    struct Defaults {
+        Paths paths;
+        std::string tro, ionex, met, vmf, gpt3;
+    };
+
+    inline std::function<Defaults()> &defaultsProvider() {
+        static std::function<Defaults()> provider;
+        return provider;
+    }
+
+    /// 显式优先、缺项回落默认。
+    inline Defaults resolve(const SolverOptions &opts) {
+        const Defaults fallback = defaultsProvider() ? defaultsProvider()() : Defaults{};
+        const auto pick = [](const std::string &explicitPath, const std::string &dflt) {
+            return explicitPath.empty() ? dflt : explicitPath;
+        };
+        Defaults r;
+        r.paths.sp3 = pick(opts.sp3, fallback.paths.sp3);
+        r.paths.clk = pick(opts.clk, fallback.paths.clk);
+        r.paths.brdc = pick(opts.navPath, fallback.paths.brdc);
+        r.paths.osb = pick(opts.osb, fallback.paths.osb);
+        r.paths.att = pick(opts.att, fallback.paths.att);
+        r.paths.erp = pick(opts.erp, fallback.paths.erp);
+        r.paths.atx = pick(opts.atx, fallback.paths.atx);
+        r.tro = pick(opts.tro, fallback.tro);
+        r.ionex = pick(opts.ionex, fallback.ionex);
+        r.met = pick(opts.met, fallback.met);
+        r.vmf = pick(opts.vmf, fallback.vmf);
+        r.gpt3 = pick(opts.gpt3, fallback.gpt3);
+        return r;
+    }
+
     template<class Fn>
     void launch(std::vector<std::future<bool> > &jobs, const char *tag,
                 const char *name, const std::string &path, Fn fn) {
@@ -61,19 +97,17 @@ namespace ProductLoad {
 
     /// PPP 精密产品之外的附加产品（TRO/IONEX/MET/VMF3/GPT3），空路径跳过
     template<class Solver>
-    void loadPPPExtras(Solver &solver, std::vector<std::future<bool> > &jobs,
-                       const std::string &tro, const std::string &ionex, const std::string &met,
-                       const std::string &vmf, const std::string &gpt3) {
-        launch(jobs, "PPP", "对流层 TRO", tro, solver, &Solver::loadTRO);
-        launch(jobs, "PPP", "电离层 IONEX", ionex, solver, &Solver::loadIONEX);
-        launch(jobs, "PPP", "气象文件 MET", met, solver, &Solver::loadMET);
-        launch(jobs, "PPP", "映射函数格网 VMF3", vmf,
-                [&solver, paths = Str::split(vmf, ';', false)] { return solver.loadVMF3(paths); });
-        launch(jobs, "PPP", "对流层格网 GPT3", gpt3, solver, &Solver::loadGPT3);
+    void loadPPPExtras(Solver &solver, std::vector<std::future<bool> > &jobs, const Defaults &d) {
+        launch(jobs, "PPP", "对流层 TRO", d.tro, solver, &Solver::loadTRO);
+        launch(jobs, "PPP", "电离层 IONEX", d.ionex, solver, &Solver::loadIONEX);
+        launch(jobs, "PPP", "气象文件 MET", d.met, solver, &Solver::loadMET);
+        launch(jobs, "PPP", "映射函数格网 VMF3", d.vmf,
+                [&solver, paths = Str::split(d.vmf, ';', false)] { return solver.loadVMF3(paths); });
+        launch(jobs, "PPP", "对流层格网 GPT3", d.gpt3, solver, &Solver::loadGPT3);
     }
 
-    inline bool fail(Solvers::Task *core) {
-        core->setError("产品加载失败：需(精密轨道SP3 或 广播星历BRDC)至少其一提供卫星位置；"
+    inline bool fail(Solvers::Task *task) {
+        task->setError("产品加载失败：需(精密轨道SP3 或 广播星历BRDC)至少其一提供卫星位置；"
             "另检查 SP3/CLK/OSB/ATX 等路径是否正确");
         return false;
     }
@@ -83,15 +117,6 @@ namespace ProductLoad {
         LOG_ERROR << "[" << tag << "] 既未填精密轨道 SP3 也未填广播星历 BRDC：无法获取卫星位置，全历元无解";
         return false;
     }
-
-    inline bool requireSatellite(const char *tag) {
-        const auto &prod = AppConfig::Products::instance();
-        return requireSatellite(tag, prod.sp3, prod.brdc);
-    }
-
-    struct Paths {
-        std::string sp3, clk, brdc, osb, att, erp, atx;
-    };
 
     template<class Solver, class SysT>
     void core(Solver &solver, std::vector<std::future<bool> > &jobs, const char *tag,
@@ -108,13 +133,9 @@ namespace ProductLoad {
 
     template<class Task, class Solver>
     void core(Task &task, Solver &solver, std::vector<std::future<bool> > &jobs, const char *tag) {
-        const auto &prod = AppConfig::Products::instance();
-        Paths paths{prod.sp3, prod.clk, prod.brdc, prod.osb, prod.att, prod.erp, {}};
-        if (task.core->opts.spp.applyAtx) {
-            paths.atx = Download::Store::activeFile(Download::Catalog::atx());
-            if (paths.atx.empty())
-                LOG_WARN << "[" << tag << "] 未检测到 ATX 天线文件，本次按无 PCO/PCV 处理（参数页「天线改正」可点获取）";
-        }
-        core(solver, jobs, tag, paths, task.core->enabledSystems);
+        const Defaults d = resolve(task.core->opts);
+        if (task.core->opts.spp.applyAtx && d.paths.atx.empty())
+            LOG_WARN << "[" << tag << "] 未检测到 ATX 天线文件，本次按无 PCO/PCV 处理（参数页「天线改正」可点获取）";
+        core(solver, jobs, tag, d.paths, task.core->enabledSystems);
     }
 }

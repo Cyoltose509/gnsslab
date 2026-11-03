@@ -6,12 +6,16 @@
 #include "widgets/tools/GuiInsPanel.h"
 #include "widgets/tools/GuiFtpDownload.h"
 #include "solvers/view/GuiSolverPanel.h"
-#include "solvers/GuiSPPProcessor.h"
-#include "solvers/GuiPPPProcessor.h"
-#include "solvers/GuiLEOProcessor.h"
-#include "solvers/GuiRTKProcessor.h"
+#include "solvers/spp/Task.h"
+#include "solvers/ppp/Task.h"
+#include "solvers/leo/Task.h"
+#include "solvers/rtk/Task.h"
 #include "solvers/view/GuiHelpers.h"
 #include "core/PathMemory.h"
+#include "core/Products.h"
+#include "download/ProductStore.h"
+#include "download/ProductCatalog.h"
+#include "io/ProductLoad.h"
 #include "download/AutoSync.h"
 #include "version.h"
 #include "Log.h"
@@ -26,7 +30,7 @@ namespace {
             task->stop = true;
             if (const auto c = task->solveResult()) {
                 c->stop = true;
-                if (c->qcWorker.joinable()) c->qcWorker.join();
+                if (c->view.qcWorker.joinable()) c->view.qcWorker.join();
             }
         }
         for (const auto &task: tasks) {
@@ -47,7 +51,27 @@ namespace {
     }
 }
 
-Application::Application() = default;
+namespace {
+    /// GUI 提供的产品默认路径：引擎解析缺失项时回落到这里（CLI 不注册，只认 ini）。
+    void registerProductDefaults() {
+        ProductLoad::defaultsProvider() = [] {
+            const auto &p = AppConfig::Products::instance();
+            ProductLoad::Defaults d;
+            d.paths = {p.sp3, p.clk, p.brdc, p.osb, p.att, p.erp,
+                       Download::Store::activeFile(Download::Catalog::atx())};
+            d.tro = p.tro;
+            d.ionex = p.ionex;
+            d.met = p.met;
+            d.vmf = p.vmf;
+            d.gpt3 = Download::Store::activeFile(Download::Catalog::gpt3());
+            return d;
+        };
+    }
+}
+
+Application::Application() {
+    registerProductDefaults();
+}
 
 void Application::Initialize() {
     Log::init("gnsslab.log");
@@ -253,108 +277,59 @@ void Application::RenderTasks() {
     ImGui::End();
 }
 
-void Application::OpenSppSolve() {
-    const auto task = std::make_shared<Solvers::SPP::Task>();
-    auto &core = *task->core;
-
-    core.obsPathBuf = AppConfig::PathMemory::instance().get("spp_obs");
-    core.brdcPathBuf = AppConfig::PathMemory::instance().get("spp_brdc");
-
-    core.rtEndpoints.resize(1);
-    core.rtEndpoints[0].ip = AppConfig::PathMemory::instance().get("rt_ip", "47.114.134.129");
-    core.rtEndpoints[0].port = AppConfig::PathMemory::instance().get("rt_port", "7190");
-
-    LOG_INFO << "[任务] 新建 SPP 配置：观测=" << core.obsPathBuf;
-
+void Application::attachTask(const std::shared_ptr<Solvers::Task> &task) {
     task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
-
     m_tasks.push_back(task);
     m_activeTask = static_cast<int>(m_tasks.size()) - 1;
     m_taskToFocus = m_activeTask;
+}
+
+void Application::OpenSppSolve() {
+    const auto task = std::make_shared<Solvers::SPP::Task>();
+    task->loadFromMemory();
+    LOG_INFO << "[任务] 新建 SPP 配置：观测=" << task->core->view.obsPathBuf;
+
+    attachTask(task);
 }
 
 void Application::OpenPppSolve() {
     const auto task = std::make_shared<Solvers::PPP::Task>();
-
-    const auto &cfg = AppConfig::PathMemory::instance();
-    task->obsPathBuf = cfg.get("ppp_obs");
-    task->kinematic = cfg.get("ppp_kinematic") == "1";
-    LOG_INFO << "[任务] 新建 PPP 配置：观测=" << task->obsPathBuf
+    task->loadFromMemory();
+    LOG_INFO << "[任务] 新建 PPP 配置：观测=" << task->core->view.obsPathBuf
             << ", 动态=" << (task->kinematic ? "是" : "否");
 
-    task->core->mode = Solvers::Mode::PPP;
-
-    task->state = Solvers::Task::State::Config;
-    task->loading = false;
-    task->done = false;
-
-    m_tasks.push_back(task);
-    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
-    m_taskToFocus = m_activeTask;
+    attachTask(task);
 }
 
 void Application::OpenLeoSolve() {
     const auto task = std::make_shared<Solvers::LEO::Task>();
-
-
-    const auto &cfg = AppConfig::PathMemory::instance();
-    task->leoObsPathBuf = cfg.get("leo_obs");
-    task->refSp3PathBuf = cfg.get("leo_ref_sp3");
+    task->loadFromMemory();
     LOG_INFO << "[任务] 新建 LEO 配置：观测=" << task->leoObsPathBuf;
-    task->core->mode = Solvers::Mode::LEO;
 
-    task->state = Solvers::Task::State::Config;
-    task->loading = false;
-    task->done = false;
-
-    m_tasks.push_back(task);
-    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
-    m_taskToFocus = m_activeTask;
+    attachTask(task);
 }
 
 void Application::OpenRtkSolve() {
     const auto task = std::make_shared<Solvers::RTK::Task>();
-
-
-    const auto &cfg = AppConfig::PathMemory::instance();
-    task->baseObsPathBuf = cfg.get("rtk_base");
-    task->roverObsPathBuf = cfg.get("rtk_rover");
-    task->navPathBuf = cfg.get("rtk_nav");
+    task->loadFromMemory();
     LOG_INFO << "[任务] 新建 RTK 配置：基准=" << task->baseObsPathBuf
             << ", 流动站=" << task->roverObsPathBuf;
-    task->core->mode = Solvers::Mode::RTK;
 
-    task->state = Solvers::Task::State::Config;
-    task->loading = false;
-    task->done = false;
-
-    m_tasks.push_back(task);
-    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
-    m_taskToFocus = m_activeTask;
+    attachTask(task);
 }
 
 void Application::OpenInsCalib() {
     const auto task = Tools::InsPanel::MakeSixPosCalibTask();
     LOG_INFO << "[任务] 新建 六位置法标定 配置";
-    task->state = Solvers::Task::State::Config;
-    task->loading = false;
-    task->done = false;
-    m_tasks.push_back(task);
-    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
-    m_taskToFocus = m_activeTask;
+    attachTask(task);
 }
 
 void Application::OpenInsAlign() {
     const auto task = Tools::InsPanel::MakeStaticAlignTask();
     LOG_INFO << "[任务] 新建 静态解析粗对准 配置";
-    task->state = Solvers::Task::State::Config;
-    task->loading = false;
-    task->done = false;
-    m_tasks.push_back(task);
-    m_activeTask = static_cast<int>(m_tasks.size()) - 1;
-    m_taskToFocus = m_activeTask;
+    attachTask(task);
 }
 
 void Application::Render() {

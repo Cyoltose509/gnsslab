@@ -48,10 +48,14 @@ add_executable(GnssLab WIN32
         solvers/common/Core.cpp
         solvers/common/Epoch.cpp
         solvers/common/Session.cpp
-        solvers/GuiSPPProcessor.cpp
-        solvers/GuiPPPProcessor.cpp
-        solvers/GuiLEOProcessor.cpp
-        solvers/GuiRTKProcessor.cpp
+        solvers/spp/Task.cpp
+        solvers/spp/Panel.cpp
+        solvers/ppp/Task.cpp
+        solvers/ppp/Panel.cpp
+        solvers/leo/Task.cpp
+        solvers/leo/Panel.cpp
+        solvers/rtk/Task.cpp
+        solvers/rtk/Panel.cpp
         solvers/view/GuiCharts.cpp
         solvers/view/GuiPosTab.cpp
         solvers/view/GuiHelpers.cpp
@@ -123,21 +127,28 @@ set(CLI_INCLUDES
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CLI_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers
-    ${PROJECT_SOURCE_DIR}/thirdparty/imgui
-    ${PROJECT_SOURCE_DIR}/thirdparty/imgui/backends
-    ${PROJECT_SOURCE_DIR}/thirdparty/implot
-    ${PROJECT_SOURCE_DIR}/thirdparty/implot3d
 )
 
 set(CLI_INIS spp ppp rtk leo)
 
+# 引擎侧源文件：与 GUI 共用同一份任务骨架与逐历元求解，不含任何 imgui/view 依赖
+set(CLI_ENGINE
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Core.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Epoch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Session.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/spp/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/spp/Realtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/ppp/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/leo/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Realtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Pipeline.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/io/ObsSource.cpp
+)
+
 foreach(_cli spp ppp rtk leo)
-    add_executable(${_cli}_cli ${CLI_DIR}/${_cli}_cli.cpp ${CLI_COMMON})
-    if(_cli STREQUAL rtk)
-        target_sources(${_cli}_cli PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/io/ObsSource.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Pipeline.cpp)
-    endif()
+    add_executable(${_cli}_cli ${CLI_DIR}/${_cli}_cli.cpp ${CLI_COMMON} ${CLI_ENGINE})
     target_compile_definitions(${_cli}_cli PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_include_directories(${_cli}_cli PRIVATE ${CLI_INCLUDES})
     target_link_libraries(${_cli}_cli PRIVATE gnss ws2_32)

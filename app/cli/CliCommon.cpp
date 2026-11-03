@@ -2,6 +2,7 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "CliCommon.h"
@@ -137,32 +138,6 @@ SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
 }
 
 namespace Cli {
-    Observer::Source *openObsSource(const std::string &path, const char *tag,
-                                    Observer::RINEXFile &rinex,
-                                    Observer::NovAtelFile &oem) {
-        if (path.empty()) {
-            std::cerr << tag << " 需要观测文件 [input] obs\n";
-            return nullptr;
-        }
-        const auto fmt = Observer::classifyObsPath(path);
-        if (fmt == Observer::Format::NovAtel) {
-            if (!oem.open(path)) {
-                std::cerr << tag << " 无法打开 NovAtel 日志: " << path << "\n";
-                return nullptr;
-            }
-            return &oem;
-        }
-        if (Observer::isRINEX(fmt)) {
-            if (!rinex.open(path)) {
-                std::cerr << tag << " 无法打开 RINEX: " << path << "\n";
-                return nullptr;
-            }
-            return &rinex;
-        }
-        std::cerr << tag << " 无法识别观测文件格式: " << path << "\n";
-        return nullptr;
-    }
-
     std::string defaultCSVName(const Solvers::Mode m) {
         switch (m) {
             case Solvers::Mode::LEO: return "gnss_leo.csv";
@@ -172,20 +147,47 @@ namespace Cli {
         }
     }
 
-    void dumpCSV(const std::vector<Solvers::Epoch> &epochs,
-                 const Solvers::Mode mode, const Eigen::Vector3d &ref,
-                 const bool hasRefOrbit, const SolverOptions &cfg) {
-        const std::string path = cfg.csvPath.empty() ? defaultCSVName(mode) : cfg.csvPath;
+    void dumpTask(Solvers::Task &task, const SolverOptions &cfg) {
+        const auto core = task.solveResult();
+        if (!core) return;
+        if (cfg.hasRef) core->refECEF = XYZ(cfg.refX, cfg.refY, cfg.refZ);
+        const std::string path = cfg.csvPath.empty() ? defaultCSVName(core->mode) : cfg.csvPath;
         std::ofstream out(path);
         if (!out) {
             std::cerr << "无法打开输出文件: " << path << "\n";
             return;
         }
-        Solvers::exportCSV(out, epochs, mode, ref, hasRefOrbit);
-        std::cout << "已写出 " << epochs.size() << " 历元 -> " << path << "\n";
+        std::size_t n = 0;
+        {
+            std::lock_guard lk(core->mutex);
+            n = core->epochs.size();
+        }
+        task.writeCsv(out);
+        std::cout << "已写出 " << n << " 历元 -> " << path << "\n";
     }
 
-    void dumpEmpty(const Solvers::Mode mode, const SolverOptions &cfg) {
-        dumpCSV({}, mode, Eigen::Vector3d(0, 0, 0), false, cfg);
+    int runTask(Solvers::Task &task, const SolverOptions &cfg) {
+        task.maxEpochs = cfg.maxEpochs;
+        task.realtimeSec = cfg.realtimeSec;
+
+        if (cfg.source == "realtime") {
+            std::thread waiter;
+            // 没给时限也没给历元上限时，回车停止（与 GUI 的取消按钮等价）
+            if (cfg.realtimeSec <= 0 && cfg.maxEpochs <= 0)
+                waiter = std::thread([&task] {
+                    std::cin.get();
+                    task.stop = true;
+                });
+            task.startRealtime();
+            task.waitDone();
+            if (waiter.joinable()) waiter.join();
+        } else {
+            task.startFile();
+            task.waitDone();
+        }
+
+        if (task.errorFlag()) std::cerr << "错误: " << task.errorMessage() << "\n";
+        dumpTask(task, cfg);
+        return task.ok() ? 0 : 1;
     }
 }

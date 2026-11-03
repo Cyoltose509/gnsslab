@@ -6,7 +6,6 @@
 #include "SPP.h"
 #include "RTK.h"
 #include "Observer.h"
-#include "DualPair.h"
 #include "EpochDecimator.h"
 
 // 逐历元引擎原语：驱动求解器、提交 Solvers::Epoch。
@@ -49,31 +48,4 @@ namespace Solvers::Driver {
         }
     }
 
-    template<typename Solver, typename OnEpoch>
-    void solveStationStream(Observer::Source &src, Solver &solver, OnEpoch onEpoch,
-                            const double sampleInterval = 0.0) {
-        solveStream(src, solver, std::move(onEpoch),
-                    [](Solver &s, Observer::Item &item) { s.ephTable.mergeEmbedded(item.eph, item.obs.epoch); },
-                    sampleInterval);
-    }
-
-    inline std::vector<Epoch> solveAll(Observer::Source &src, ::SPP &solver,
-                                       const double sampleInterval = 0.0) {
-        std::vector<Epoch> epochs;
-        solveStationStream(src, solver, [&](::SPP &, Observer::Item &, Epoch &data) {
-            epochs.push_back(std::move(data));
-            return true;
-        }, sampleInterval);
-        return epochs;
-    }
-
-    inline bool firstSolvedRef(const std::vector<Epoch> &epochs, Eigen::Vector3d &ref) {
-        for (const auto &e: epochs) {
-            if (e.solved) {
-                ref = e.sppResult.xyz;
-                return true;
-            }
-        }
-        return false;
-    }
 }

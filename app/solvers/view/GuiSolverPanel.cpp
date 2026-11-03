@@ -22,13 +22,17 @@
 #include "view/GuiPosTab.h"
 #include "view/QualityControl.h"
 #include "widgets/tools/GuiInsPanel.h"
+#include "solvers/spp/Task.h"
+#include "solvers/ppp/Task.h"
+#include "solvers/leo/Task.h"
+#include "solvers/rtk/Task.h"
 
 namespace Solvers::SolverPanel {
     static QualityReport buildReport(Solvers::Core &task) {
         std::vector<QC::QCObsEpoch> qcEpochs;
         {
-            std::lock_guard lk(task.qcInputMutex);
-            qcEpochs = task.qcInput;
+            std::lock_guard lk(task.view.qcInputMutex);
+            qcEpochs = task.view.qcInput;
         }
         QualityReport rep = QC::compute(qcEpochs, task.sampleInterval);
         rep.totalInputEpochs = static_cast<int>(qcEpochs.size());
@@ -38,23 +42,23 @@ namespace Solvers::SolverPanel {
     void launchQC(const std::shared_ptr<Solvers::Core> &task) {
         static std::mutex launchMutex;
         std::lock_guard lk(launchMutex);
-        if (task->qcComputing.load()) return;
-        if (task->qcWorker.joinable()) task->qcWorker.join();
+        if (task->view.qcComputing.load()) return;
+        if (task->view.qcWorker.joinable()) task->view.qcWorker.join();
         LOG_INFO << "[QC] 开始质量分析";
-        task->qcComputing = true;
-        task->qcWorker = std::thread([task] {
+        task->view.qcComputing = true;
+        task->view.qcWorker = std::thread([task] {
             try {
                 {
                     QualityReport rep = buildReport(*task);
-                    std::lock_guard lk(task->qcMutex);
-                    task->qcReport = std::make_shared<QualityReport>(std::move(rep));
+                    std::lock_guard lk(task->view.qcMutex);
+                    task->view.qcReport = std::make_shared<QualityReport>(std::move(rep));
                 }
-                task->qcReady = true;
+                task->view.qcReady = true;
                 LOG_INFO << "[QC] 质量分析结束";
             } catch (...) {
-                task->qcReady = true;
+                task->view.qcReady = true;
             }
-            task->qcComputing = false;
+            task->view.qcComputing = false;
         });
     }
 
@@ -104,16 +108,16 @@ namespace Solvers::SolverPanel {
     static void ensureSkyTracks(Solvers::Core &task) {
         std::lock_guard lk(task.mutex);
         const int totalEp = static_cast<int>(task.epochs.size());
-        for (int e = task.skyTracksBuilt; e < totalEp; ++e) {
+        for (int e = task.view.skyTracksBuilt; e < totalEp; ++e) {
             const auto &ep = task.epochs[e];
             for (int j = 0; j < static_cast<int>(ep.satIds.size()); ++j) {
                 const double el = ep.elevations[j] * RAD_TO_DEG;
                 if (el <= 0.0) continue;
-                task.skyTracks[ep.satIds[j]].push_back(
+                task.view.skyTracks[ep.satIds[j]].push_back(
                     {e, static_cast<float>(ep.azimuths[j] * RAD_TO_DEG), static_cast<float>(el), ep.solved && !ep.rejected[j]});
             }
         }
-        task.skyTracksBuilt = totalEp;
+        task.view.skyTracksBuilt = totalEp;
     }
 
     static std::vector<std::pair<SatID, Solvers::SkyPoint>> currentSkyPoints(
@@ -181,8 +185,8 @@ namespace Solvers::SolverPanel {
                                          });
         v.hasSatRows = true;
 
-        if (task.selectedSatIdx >= 0 && task.selectedSatIdx < static_cast<int>(visIdx.size())) {
-            const int oi = visIdx[task.selectedSatIdx];
+        if (task.view.selectedSatIdx >= 0 && task.view.selectedSatIdx < static_cast<int>(visIdx.size())) {
+            const int oi = visIdx[task.view.selectedSatIdx];
             v.showObsDetail = true;
             v.detailSystem = cur.satIds[oi].system;
             v.detailObs = cur.allObs[oi];
@@ -241,7 +245,7 @@ namespace Solvers::SolverPanel {
                 v.sigmaVDisp = r.sigmaV;
             }
 
-            v.showRefTable = canFixed && (!isLeoMode || !task.leoRefTraj.empty());
+            v.showRefTable = canFixed && (!isLeoMode || !task.view.leoRefTraj.empty());
             v.isLeoRtn = isLeoMode;
             v.refDisp = task.refECEF;
             const Eigen::Vector3d xyzPrim = isFixed ? xyzFixed : xyzFloat;
@@ -272,8 +276,8 @@ namespace Solvers::SolverPanel {
                           const int selectedIdx, const int epochCount, const bool isDone) {
         bool sigmaVNonZero = false;
         {
-            std::lock_guard plk(task.plotMutex);
-            auto &pp = task.plotData;
+            std::lock_guard plk(task.view.plotMutex);
+            auto &pp = task.view.plotData;
             v.times = pp.times;
             v.enu_e = pp.enu_e;
             v.enu_n = pp.enu_n;
@@ -288,7 +292,7 @@ namespace Solvers::SolverPanel {
             pp.newed = false;
             v.fixedY = true;
             v.hasResidualData = !pp.satResVals.empty() || !pp.satResPhaseVals.empty();
-            if (task.resMode == 1) {
+            if (task.view.resMode == 1) {
                 v.resPhaseT = pp.satResPhaseTimes;
                 v.resPhaseV = pp.satResPhaseVals;
             } else {
@@ -338,7 +342,7 @@ namespace Solvers::SolverPanel {
         }
         {
             std::lock_guard lk(task.mutex);
-            v.skyTracks = task.skyTracks;
+            v.skyTracks = task.view.skyTracks;
             int solvedCnt = 0, velCnt = 0;
             for (const auto &ep: task.epochs) {
                 if (!ep.solved) continue;
@@ -376,23 +380,23 @@ namespace Solvers::SolverPanel {
 
     static void fillLeo3d(Charts::PosTabView &v, Solvers::Core &task) {
         std::lock_guard lk(task.mutex);
-        if (!task.hasLeo) return;
+        if (!task.view.hasLeo) return;
         v.show3d = true;
-        v.showRtn = !task.leoRefTraj.empty();
-        v.hasRef = !task.leoRefTraj.empty();
+        v.showRtn = !task.view.leoRefTraj.empty();
+        v.hasRef = !task.view.leoRefTraj.empty();
         v.showRefEnu = false;
-        v.leoPos3d = task.leoPos3d;
-        v.leoRef3d = task.leoRef3d;
-        copySampled(task.leoTraj, v.leoTraj);
-        copySampled(task.leoRefTraj, v.leoRefTraj);
-        v.gnssVis = task.gnssVis;
-        for (const auto &[sat, traj]: task.gnssTraj)
+        v.leoPos3d = task.view.leoPos3d;
+        v.leoRef3d = task.view.leoRef3d;
+        copySampled(task.view.leoTraj, v.leoTraj);
+        copySampled(task.view.leoRefTraj, v.leoRefTraj);
+        v.gnssVis = task.view.gnssVis;
+        for (const auto &[sat, traj]: task.view.gnssTraj)
             copySampled(traj, v.gnssTraj[sat], 800);
-        copySampled(task.rtnR, v.rtnR);
-        copySampled(task.rtnT, v.rtnT);
-        copySampled(task.rtnN, v.rtnN);
-        copySampled(task.rtnD3, v.rtnD3);
-        copySampled(task.rtnTimes, v.rtnTimes);
+        copySampled(task.view.rtnR, v.rtnR);
+        copySampled(task.view.rtnT, v.rtnT);
+        copySampled(task.view.rtnN, v.rtnN);
+        copySampled(task.view.rtnD3, v.rtnD3);
+        copySampled(task.view.rtnTimes, v.rtnTimes);
     }
 
     static void fillSolveStatus(Charts::PosTabView &v, Solvers::Core &task, const int selectedIdx) {
@@ -439,13 +443,13 @@ namespace Solvers::SolverPanel {
                 Charts::PosTabView v;
                 v.epochCount = epochCount;
                 v.selectedEpoch = &selectedEpochLocal;
-                v.selectedSatIdx = &task->selectedSatIdx;
-                v.resMode = &task->resMode;
+                v.selectedSatIdx = &task->view.selectedSatIdx;
+                v.resMode = &task->view.resMode;
                 v.refECEF = &task->refECEF;
                 v.onRefChanged = [&] {
                     std::lock_guard lk(task->mutex);
-                    std::lock_guard plk(task->plotMutex);
-                    task->plotData.refreshENU(task->epochs, task->refECEF);
+                    std::lock_guard plk(task->view.plotMutex);
+                    task->view.plotData.refreshENU(task->epochs, task->refECEF);
                 };
                 v.showEnPlan = task->mode != Solvers::Mode::LEO;
 
@@ -474,11 +478,11 @@ namespace Solvers::SolverPanel {
                 if (selectedEpochLocal != selectedIdx) {
                     std::lock_guard lk(task->mutex);
                     if (selectedEpochLocal >= 0 && selectedEpochLocal < static_cast<int>(task->epochs.size()))
-                        task->selectedEpoch = selectedEpochLocal;
+                        task->view.selectedEpoch = selectedEpochLocal;
                 }
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(task->qcTabLabel.c_str())) {
+            if (ImGui::BeginTabItem(task->view.qcTabLabel.c_str())) {
                 try {
                     QualityControl::render(task);
                 } catch (const std::exception &e) {
@@ -488,7 +492,7 @@ namespace Solvers::SolverPanel {
                 }
                 ImGui::EndTabItem();
             }
-            for (auto &[qcLabel, qcSub]: task->extraQcTabs) {
+            for (auto &[qcLabel, qcSub]: task->view.extraQcTabs) {
                 if (!qcSub) continue;
                 if (ImGui::BeginTabItem(qcLabel.c_str())) {
                     try {
@@ -505,9 +509,20 @@ namespace Solvers::SolverPanel {
         }
     }
 
+    static void renderConfigPanel(Solvers::Task &job) {
+        switch (job.mode()) {
+            case Solvers::Mode::SPP: static_cast<Solvers::SPP::Task &>(job).renderConfigPanel(); break;
+            case Solvers::Mode::PPP: static_cast<Solvers::PPP::Task &>(job).renderConfigPanel(); break;
+            case Solvers::Mode::LEO: static_cast<Solvers::LEO::Task &>(job).renderConfigPanel(); break;
+            case Solvers::Mode::RTK: static_cast<Solvers::RTK::Task &>(job).renderConfigPanel(); break;
+            case Solvers::Mode::INS: Tools::InsPanel::RenderInsConfig(job); break;
+            default: break;
+        }
+    }
+
     void renderTask(const std::shared_ptr<Solvers::Task> &job) {
         if (job->state == Solvers::Task::State::Config) {
-            job->renderConfigPanel();
+            renderConfigPanel(*job);
             return;
         }
 

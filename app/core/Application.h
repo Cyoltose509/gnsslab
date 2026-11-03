@@ -33,6 +33,9 @@ private:
     void OpenInsCalib();
     void OpenInsAlign();
 
+    /// 新任务入列并聚焦：六个 Open* 共用的收尾。
+    void attachTask(const std::shared_ptr<Solvers::Task> &task);
+
     Gui   m_ui;
     bool  m_quitRequested      = false;
     bool  m_showTimeConverter  = false;

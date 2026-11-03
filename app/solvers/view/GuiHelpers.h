@@ -85,7 +85,7 @@ namespace Solvers::Helpers {
         core->initializedRefECEF = false;
         core->filePath = obsPath;
         core->fileName = Str::baseName(obsPath);
-        core->obsPathBuf = obsPath;
+        core->view.obsPathBuf = obsPath;
         core->isRINEX = Observer::isRINEX(fmt);
         task->state = Task::State::Running;
         task->loading = true;
@@ -106,8 +106,8 @@ namespace Solvers::Helpers {
     std::pair<int, int> readEpochView(const std::shared_ptr<Task> &task) {
         std::lock_guard lock(task->mutex);
         const int epochCount = static_cast<int>(task->epochs.size());
-        if (task->selectedEpoch >= epochCount) task->selectedEpoch = epochCount - 1;
-        if (task->selectedEpoch < 0 && epochCount > 0) task->selectedEpoch = 0;
-        return {epochCount, task->selectedEpoch};
+        if (task->view.selectedEpoch >= epochCount) task->view.selectedEpoch = epochCount - 1;
+        if (task->view.selectedEpoch < 0 && epochCount > 0) task->view.selectedEpoch = 0;
+        return {epochCount, task->view.selectedEpoch};
     }
 }

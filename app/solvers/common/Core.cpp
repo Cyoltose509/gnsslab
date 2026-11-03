@@ -10,7 +10,10 @@
 namespace Solvers {
     bool waitNavReady(const std::shared_ptr<Core> &core) {
         std::unique_lock lk(core->queueMutex);
-        core->queueCv.wait(lk, [&] { return core->navReady.load() || core->stop.load(); });
+        // 读取端失败时只置 readDone 不置 navReady，这里一并当就绪，避免解算线程永久阻塞
+        core->queueCv.wait(lk, [&] {
+            return core->navReady.load() || core->readDone.load() || core->stop.load();
+        });
         return !core->stop.load();
     }
 
@@ -36,11 +39,11 @@ namespace Solvers {
         core->epochs.push_back(std::move(item));
         if (onStored) onStored(idx, core->epochs.back());
         try {
-            std::lock_guard plk(core->plotMutex);
-            core->plotData.insert(idx, core->epochs.back(), core->refECEF);
+            std::lock_guard plk(core->view.plotMutex);
+            core->view.plotData.insert(idx, core->epochs.back(), core->refECEF);
         } catch (...) {
         }
-        if (core->selectedEpoch == -1 || core->selectedEpoch == idx - 1) core->selectedEpoch = idx;
+        if (core->view.selectedEpoch == -1 || core->view.selectedEpoch == idx - 1) core->view.selectedEpoch = idx;
         core->solvingProgress = idx + 1;
         core->solvedCount = static_cast<int>(core->epochs.size());
     }
@@ -48,8 +51,8 @@ namespace Solvers {
     int readRINEXObsToQueue(const std::shared_ptr<Core> &core, const std::atomic<bool> &stopFlag) {
         const std::string &path = core->filePath;
         {
-            std::lock_guard lk(core->qcInputMutex);
-            core->qcInput.clear();
+            std::lock_guard lk(core->view.qcInputMutex);
+            core->view.qcInput.clear();
         }
 
         {
@@ -73,8 +76,8 @@ namespace Solvers {
             try {
                 ObsData o = obsReader->parseRINEXObs();
                 {
-                    std::lock_guard lk(core->qcInputMutex);
-                    core->qcInput.push_back(QC::makeQCObsEpoch(o, o.weekSecond.sow));
+                    std::lock_guard lk(core->view.qcInputMutex);
+                    core->view.qcInput.push_back(QC::makeQCObsEpoch(o, o.weekSecond.sow));
                 }
                 {
                     std::lock_guard lk(core->queueMutex);
@@ -103,8 +106,8 @@ namespace Solvers {
     int readNovAtelObsToQueue(const std::shared_ptr<Core> &core, const std::atomic<bool> &stopFlag) {
         const std::string &path = core->filePath;
         {
-            std::lock_guard lk(core->qcInputMutex);
-            core->qcInput.clear();
+            std::lock_guard lk(core->view.qcInputMutex);
+            core->view.qcInput.clear();
         }
 
         const auto reader = Observer::makeNovAtelReader(path); // 二进制 / ASC 由内容决定
@@ -127,8 +130,8 @@ namespace Solvers {
             if (stopFlag) break;
             auto eph = reader->ephSnapshot();
             {
-                std::lock_guard lk(core->qcInputMutex);
-                core->qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
+                std::lock_guard lk(core->view.qcInputMutex);
+                core->view.qcInput.push_back(QC::makeQCObsEpoch(obs, obs.weekSecond.sow));
             }
             {
                 std::lock_guard lk(core->queueMutex);
