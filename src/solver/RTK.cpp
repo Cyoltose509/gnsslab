@@ -1,7 +1,7 @@
 #include "RTK.h"
 #include "Weight.h"
 #include "Const.h"
-#include "RinexNavStore.h"
+#include "rinex/RINEXNavStore.h"
 #include "ARLambda.h"
 #include "SPP.h"
 #include "Log.h"
@@ -82,7 +82,7 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
         return false;
     mBaselineFloat = baseline;
     result.xyz = mBaseXyz + baseline;
-    result.blh = XYZToBLH(result.xyz, Frame::WGS84);
+    result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
     result.xyzFloat = result.xyz; // 浮点解 ECEF 单独留存：固定时 result.xyz 会被覆盖
     result.sigmaXYZ = Eigen::Vector3d(std::sqrt(solverFloat.covMatrix(0, 0)),
                                       std::sqrt(solverFloat.covMatrix(1, 1)),
@@ -100,7 +100,7 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
     if (mConfig.useAR) fixed = tryFixAmbiguities(eqFloat, solverFloat);
     if (fixed) {
         result.xyz = mBaseXyz + mBaselineFixed;
-        result.blh = XYZToBLH(result.xyz, Frame::WGS84);
+        result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
         result.xyzFixed = result.xyz;
         result.blhFixed = result.blh;
         result.sigmaXYZ = mBaselineSigmaFixed;
@@ -160,16 +160,16 @@ bool RTK::buildGeometry() {
             t_emit.m_sod -= Pb / C_MPS;
             PVT pvt = e->getPVT(t_emit);
 
-            const double elev = elevation(mBaseXyz, pvt.p, Frame::WGS84);
-            const double azim = azimuth(mBaseXyz, pvt.p, Frame::WGS84);
+            const double elev = Coord::elevation(mBaseXyz, pvt.p, Frame::WGS84);
+            const double azim = Coord::azimuth(mBaseXyz, pvt.p, Frame::WGS84);
             if (elev < mConfig.cutoffElevRad) continue;
 
             // 缓存 PVT/仰角/方位
             satPVTRecTime[sat] = pvt;
             satElevData[sat] = elev;
             satAzimData[sat] = azim;
-            const double elevRover = elevation(mRoverApprox, pvt.p, Frame::WGS84);
-            //const double azimRover = azimuth(mRoverApprox, pvt.p, Frame::WGS84);
+            const double elevRover = Coord::elevation(mRoverApprox, pvt.p, Frame::WGS84);
+            //const double azimRover = Coord::azimuth(mRoverApprox, pvt.p, Frame::WGS84);
             satRoverElevData[sat] = elevRover;
             sysPart.push_back(sat);
         }
@@ -183,7 +183,7 @@ bool RTK::buildGeometry() {
 
     if (mRtkPartSats.empty()) return false;
 
-    // 记录实际参与双差解算的卫星集合（扁平，供 GUI）
+    // 记录实际参与双差解算的卫星集合
     for (auto &[sys, vec]: mRtkPartSats)
         for (auto &sat: vec) mUsedSats.insert(sat);
     int nCov = 0;
@@ -266,12 +266,12 @@ void RTK::computeSdVariance() {
 std::optional<SatID> RTK::selectRtkRefSat(const std::vector<SatID> &candidates,
                                           const std::map<SatID, double> &roverElev,
                                           const bool excludeGeo) {
-    // 候选 = 系统内满足截止角/可用观测的星；可选排除北斗 GEO（GEO 轨道高、几何弱，不宜作参考）。
+    // 候选 = 系统内满足截止角/可用观测的星；可选排除北斗 GEO
     std::vector<SatID> cands;
     for (const SatID &s: candidates)
         if (!excludeGeo || getSatType(s.system, s.id) != SatType::GEO) cands.push_back(s);
     if (cands.empty()) return std::nullopt;
-    // 参考星 = 流动站高度角最大者（高度角大→信号强、误差小，双差相关性建模更稳）。
+    // 参考星 = 流动站高度角最大者
     return *std::max_element(cands.begin(), cands.end(),
                              [&](const SatID &a, const SatID &b) {
                                  return roverElev.at(a) < roverElev.at(b);
@@ -296,33 +296,20 @@ void RTK::buildStochasticModel(const EquSys &eq) {
         return eid.obsType[0] == 'L' ? phase : code;
     };
 
-    // R 按 (system, obsType) 分块：每块内 R = diag(selfVar_i) + b·11ᵀ（b=同块参考星方差，块内恒定）。
-    // 该结构的逆有解析形式(Sherman-Morrison)：P = diag(w_i) − b/(1+b·Σw)·w·wᵀ，w_i=1/selfVar_i。
+    Eigen::MatrixXd R = Eigen::MatrixXd::Zero(m, m);
     std::map<std::pair<char, std::string>, std::vector<int> > blocks;
     for (int i = 0; i < m; ++i)
         blocks[{rows[i].sat.system, rows[i].obsType}].push_back(i);
 
     for (auto &[_, idx]: blocks) {
-        const int kk = static_cast<int>(idx.size());
         const double b = refVar(rows[idx[0]]);
-        std::vector<double> w(kk);
-        double S = 0.0;
-        for (int a = 0; a < kk; ++a) {
-            const double sv = selfVar(rows[idx[a]]);
-            w[a] = sv > 0.0 ? 1.0 / sv : 0.0;
-            S += w[a];
-        }
-        const double denom = 1.0 + b * S;
-        for (int a = 0; a < kk; ++a) {
-            const int ia = idx[a];
-            const double wa = w[a];
-            for (int c = 0; c < kk; ++c)
-                mDDWeight(ia, idx[c]) = (a == c ? wa : 0.0) - b * wa * w[c] / denom;
+        for (int a = 0; a < static_cast<int>(idx.size()); ++a) {
+            const double va = selfVar(rows[idx[a]]);
+            for (int c = 0; c < static_cast<int>(idx.size()); ++c)
+                R(idx[a], idx[c]) = a == c ? va + b : b;
         }
     }
-    // 同步块结构（供 SolverLSQ 逐块算 HᵀPH，等价于朴素满阵求解）
-    mDDWeightBlocks.clear();
-    for (auto &[_, snd]: blocks) mDDWeightBlocks.push_back(snd);
+    mDDWeight = R.inverse();
 }
 
 void RTK::setupFullWeight(EquSys &eq) {
@@ -332,7 +319,6 @@ void RTK::setupFullWeight(EquSys &eq) {
         buildStochasticModel(eq);
         mDDWeightReady = true;
     }
-    // ed.weight 只用于后验 σ0 与诊断
     int i = 0;
     for (auto &[eid, ed]: eq.obsEquData) {
         ed.weight = mDDWeight(i, i);
@@ -343,7 +329,7 @@ void RTK::setupFullWeight(EquSys &eq) {
 // 后处理回填
 void RTK::readback(const EquSys &eqFloat, const SolverLSQ &solverFloat, const Eigen::Vector3d &posEcef) {
     const auto &P = solverFloat.covMatrix; // 状态协方差 Q_xx
-    const Eigen::Vector3d blh = XYZToBLH(posEcef, Frame::WGS84);
+    const Eigen::Vector3d blh = Coord::XYZToBLH(posEcef, Frame::WGS84);
     computePositionDops(result, P.topLeftCorner(3, 3), 0.0, blh);
 
     int i = 0;
@@ -465,7 +451,6 @@ void RTK::addDoubleDiffEquation(EquSys &eq, const DDCache &c,
 }
 
 bool RTK::solveFloat(EquSys &eq, SolverLSQ &solver, Eigen::Vector3d &baseline) {
-    solver.setWeightBlocks(mConfig.fullCovariance ? &mDDWeightBlocks : nullptr);
     Eigen::Vector3d roverPos = mRoverApprox.norm() > 1e3 ? mRoverApprox : mBaseXyz;
     for (int iter = 0; iter < mConfig.maxIterFloat; ++iter) {
         buildEquSys(eq, roverPos, false);
@@ -510,14 +495,14 @@ void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed) {
 
         double rhoBref = 0.0, rhoRref = 0.0;
         Eigen::Vector3d losRref;
-        geometricRangeAndLos(pvtRef.p, mBaseXyz, rhoBref, losRref);
-        geometricRangeAndLos(pvtRef.p, roverPos, rhoRref, losRref);
+        Coord::geometricRangeAndLos(pvtRef.p, mBaseXyz, rhoBref, losRref);
+        Coord::geometricRangeAndLos(pvtRef.p, roverPos, rhoRref, losRref);
 
         const PVT &pvt = c.pvt;
         double rhoB = 0.0, rhoR = 0.0;
         Eigen::Vector3d losR;
-        geometricRangeAndLos(pvt.p, mBaseXyz, rhoB, losR);
-        geometricRangeAndLos(pvt.p, roverPos, rhoR, losR);
+        Coord::geometricRangeAndLos(pvt.p, mBaseXyz, rhoB, losR);
+        Coord::geometricRangeAndLos(pvt.p, roverPos, rhoR, losR);
 
         const double ddGeom = rhoR - rhoB - (rhoRref - rhoBref);
         const Eigen::Vector3d ddLos = losR - losRref;
@@ -575,7 +560,6 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
 
     EquSys eqFix;
     SolverLSQ solverFix;
-    solverFix.setWeightBlocks(mConfig.fullCovariance ? &mDDWeightBlocks : nullptr);
     Eigen::Vector3d roverPos = mBaseXyz + mBaselineFloat; // 从浮点基线起步
     mDDWeightReady = false; // 固定解重新建一次，确保 P 与方程行序严格对齐
     for (int iter = 0; iter < mConfig.maxIterFix; ++iter) {
@@ -598,9 +582,9 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
 
 void RTK::applyOptions(const SolverOptions &o) {
     // RTK 没有构造函数基线（RTK() = default），所以可以**整份覆盖**：
-    // rc 初值即 RtkConfig 默认值，未显式配置时行为与旧版一致。
+    // rc 初值即 RTKConfig 默认值，未显式配置时行为与旧版一致。
     // 只有两处需要表示转换：截止角（外层用度、Config 用 rad）、星座（文件页统一管）。
-    RtkConfig rc = o.rtk;
+    RTKConfig rc = o.rtk;
     rc.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
     rc.enabledSystems = o.systems;
     setConfig(rc);

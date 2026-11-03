@@ -1,5 +1,4 @@
 #include "LEO.h"
-#include "Const.h"
 #include "CoordStruct.h"
 #include "CoordConvert.h"
 #include <Eigen/Eigen>
@@ -15,7 +14,7 @@ bool LEO::loadAuxFile(const std::string &path) {
     std::string line;
     while (std::getline(f, line)) {
         if (line.find("r_CoG_ARP") != std::string::npos) {
-            const size_t pos = line.find('>');
+            const std::size_t pos = line.find('>');
             if (pos == std::string::npos) continue;
             std::istringstream iss(line.substr(pos + 1));
             if (double x = 0, y = 0, z = 0; iss >> x >> y >> z) {
@@ -37,9 +36,7 @@ bool LEO::loadLeoReference(const std::string &path, const SatID &sat) {
 
 Eigen::Vector3d LEO::recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const {
     if (!mHasAux) return Eigen::Vector3d::Zero();
-    // r_CoG_ARP 在轨道系(老师约定：X=速度,Y=跨轨,Z=指向地心)下给出，旋到 ECEF。
-    // ECEFToLVLHDCM 现已是正确右手旋转矩阵，直接 M^T 即可，无需额外取负。
-    const Eigen::Matrix3d M = ECEFToLVLHDCM(xyzEst, mRecvVel);
+    const Eigen::Matrix3d M = Coord::ECEFToLVLHDCM(xyzEst, mRecvVel);
     return M.transpose() * mLeoAntOffset;
 }
 

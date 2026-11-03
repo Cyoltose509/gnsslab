@@ -76,8 +76,8 @@ inline const ImuModel *findImuModel(const int type) {
 struct ImuSample {
     int gnssWeek = 0;
     double tow = 0.0;
-    int32_t gx = 0, gy = 0, gz = 0;
-    int32_t ax = 0, ay = 0, az = 0;
+    std::int32_t gx = 0, gy = 0, gz = 0;
+    std::int32_t ax = 0, ay = 0, az = 0;
 };
 
 using ImuLog = std::vector<ImuSample>;
@@ -96,7 +96,7 @@ inline double imuMedianDt(const ImuLog &log, const double fallback = 0.005) {
     if (log.size() < 3) return fallback;
     std::vector<double> d;
     d.reserve(log.size() - 1);
-    for (size_t i = 1; i < log.size(); ++i) d.push_back(log[i].tow - log[i - 1].tow);
+    for (std::size_t i = 1; i < log.size(); ++i) d.push_back(log[i].tow - log[i - 1].tow);
     std::sort(d.begin(), d.end());
     return d[d.size() / 2];
 }
@@ -117,8 +117,8 @@ inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
         return r;
     }
     double sum = 0.0, sum2 = 0.0;
-    const size_t n = std::min<size_t>(staticLog.size(), 20000);
-    for (size_t i = 0; i < n; ++i) {
+    const std::size_t n = std::min<std::size_t>(staticLog.size(), 20000);
+    for (std::size_t i = 0; i < n; ++i) {
         const auto &s = staticLog[i];
         const double m = std::sqrt(static_cast<double>(s.ax) * s.ax + static_cast<double>(s.ay) * s.ay +
                                    static_cast<double>(s.az) * s.az);

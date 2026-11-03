@@ -6,9 +6,9 @@
 
 namespace Tools::InsPanel {
     namespace {
-        using Ui::ParamPage::between;
-        using Ui::ParamPage::field;
-        using Ui::ParamPage::Group;
+        using UI::ParamPage::between;
+        using UI::ParamPage::field;
+        using UI::ParamPage::Group;
 
 
 
@@ -43,27 +43,27 @@ namespace Tools::InsPanel {
     }
 
     void renderInsParams(CalibParams &par) {
-        Ui::ParamPage::render(calibSchema(), par, CalibParams{});
+        UI::ParamPage::render(calibSchema(), par, CalibParams{});
     }
 
     void renderInsParams(AlignParams &par) {
-        Ui::ParamPage::render(alignSchema(), par, AlignParams{});
+        UI::ParamPage::render(alignSchema(), par, AlignParams{});
     }
 
     void saveInsParams(const CalibParams &par) {
-        Ui::ParamPage::save(calibSchema(), par, kInsPrefix);
+        UI::ParamPage::save(calibSchema(), par, kInsPrefix);
     }
 
     void saveInsParams(const AlignParams &par) {
-        Ui::ParamPage::save(alignSchema(), par, kInsPrefix);
+        UI::ParamPage::save(alignSchema(), par, kInsPrefix);
     }
 
     void loadInsParams(CalibParams &par) {
-        Ui::ParamPage::load(calibSchema(), par, CalibParams{}, kInsPrefix);
+        UI::ParamPage::load(calibSchema(), par, CalibParams{}, kInsPrefix);
     }
 
     void loadInsParams(AlignParams &par) {
-        Ui::ParamPage::load(alignSchema(), par, AlignParams{}, kInsPrefix);
+        UI::ParamPage::load(alignSchema(), par, AlignParams{}, kInsPrefix);
     }
 
     namespace {
@@ -318,16 +318,16 @@ namespace Tools::InsPanel {
     }
 
 
-    size_t decimateStride(const size_t n, const size_t maxPts) {
+    std::size_t decimateStride(const std::size_t n, const std::size_t maxPts) {
         return n > maxPts ? (n + maxPts - 1) / maxPts : 1;
     }
 
     void decimateImu(const ImuLog &src, ImuLog &out) {
         out.clear();
         if (src.empty()) return;
-        const size_t stride = decimateStride(src.size());
+        const std::size_t stride = decimateStride(src.size());
         out.reserve((src.size() + stride - 1) / stride);
-        for (size_t i = 0; i < src.size(); i += stride) out.push_back(src[i]);
+        for (std::size_t i = 0; i < src.size(); i += stride) out.push_back(src[i]);
     }
 
     ImPlotSpec lineSpec(const ImVec4 &c) {
@@ -437,9 +437,9 @@ namespace Tools::InsPanel {
                      double &ym, double &ysd, double &pm, double &psd, double &rm, double &rsd) {
         ym = ysd = pm = psd = rm = rsd = 0.0;
         if (s.empty()) return;
-        const size_t lo = s.size() * 2 / 3;
+        const std::size_t lo = s.size() * 2 / 3;
         double ny = 0, np = 0, nr = 0;
-        for (size_t i = lo; i < s.size(); ++i) {
+        for (std::size_t i = lo; i < s.size(); ++i) {
             ny += s[i].yaw;
             np += s[i].pitch;
             nr += s[i].roll;
@@ -450,7 +450,7 @@ namespace Tools::InsPanel {
         np /= m;
         nr /= m;
         double vy = 0, vp = 0, vr = 0;
-        for (size_t i = lo; i < s.size(); ++i) {
+        for (std::size_t i = lo; i < s.size(); ++i) {
             vy += (s[i].yaw - ny) * (s[i].yaw - ny);
             vp += (s[i].pitch - np) * (s[i].pitch - np);
             vr += (s[i].roll - nr) * (s[i].roll - nr);

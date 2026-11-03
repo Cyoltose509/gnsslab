@@ -1,7 +1,7 @@
 #pragma once
 
-#include "SppConfig.h"
-#include "RtkConfig.h"
+#include "SPPConfig.h"
+#include "RTKConfig.h"
 #include <set>
 #include <string>
 
@@ -15,8 +15,7 @@ struct SolverOptions {
     std::string baseIp, roverIp;
     int basePort = 0, roverPort = 0;
 
-    // PPP 精密产品
-    std::string sp3, clk, atx, osb, erp, tro, ionex;
+    std::string sp3, clk, atx, osb, erp, tro, ionex, vmf, gpt3, met, att;
     std::string gnssSp3, gnssClk, gnssBrdc, refSp3, aux;
     int refPrn = 49;
 
@@ -28,8 +27,8 @@ struct SolverOptions {
     double sampleInterval = 0.0;
     int kinematic = 0;
 
-    SppConfig spp;
-    RtkConfig rtk;
+    SPPConfig spp;
+    RTKConfig rtk;
 
     double posNoise = 100.0;
     double staticPosNoise = 0.0;

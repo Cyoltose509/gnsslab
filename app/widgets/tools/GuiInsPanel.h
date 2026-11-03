@@ -8,7 +8,7 @@
 #include <vector>
 
 
-#include "SolverTask.h"
+#include "solvers/common/Core.h"
 #include "core/InsStruct.h"
 #include "ins/Aligner.h"
 #include "ins/ImuCalibrator.h"
@@ -73,9 +73,9 @@ namespace Tools::InsPanel {
     template<class T>
     struct OnlineDecimator {
         std::vector<T> buf;
-        size_t stride = 1;
-        size_t counter = 0;
-        size_t maxPts = 4000;
+        std::size_t stride = 1;
+        std::size_t counter = 0;
+        std::size_t maxPts = 4000;
 
         void reset() {
             buf.clear();
@@ -86,8 +86,8 @@ namespace Tools::InsPanel {
         void push(const T &s) {
             if (counter++ % stride == 0) buf.push_back(s);
             if (buf.size() >= 2 * maxPts) {
-                size_t w = 0;
-                for (size_t i = 0; i < buf.size(); i += 2) buf[w++] = buf[i];
+                std::size_t w = 0;
+                for (std::size_t i = 0; i < buf.size(); i += 2) buf[w++] = buf[i];
                 buf.resize(w);
                 stride *= 2;
             }
@@ -102,7 +102,7 @@ namespace Tools::InsPanel {
         std::atomic<bool> runFailed{false};
     };
 
-    struct SixPosCalibTask : GnssTask::SolveTask, InsRunState {
+    struct SixPosCalibTask : Solvers::Core, InsRunState {
         std::vector<std::string> filePaths;
         CalibParams par;
         ScaleFallback scaleSf;
@@ -143,9 +143,9 @@ namespace Tools::InsPanel {
         void calibWorker();
 
 
-        void exportCalibCsv();
-        void exportDetectCsv();
-        void exportCompCsv();
+        void exportCalibCSV();
+        void exportDetectCSV();
+        void exportCompCSV();
 
         std::vector<std::string> compSegLabels();
 
@@ -156,7 +156,7 @@ namespace Tools::InsPanel {
         bool snapshotReport(CalibReport &r);
     };
 
-    struct StaticAlignTask : GnssTask::SolveTask, InsRunState {
+    struct StaticAlignTask : Solvers::Core, InsRunState {
         std::string alignPath;
         AlignParams par;
         ScaleFallback scaleSf;
@@ -194,10 +194,10 @@ namespace Tools::InsPanel {
     };
 
 
-    std::shared_ptr<GnssTask::SolverTaskBase> MakeSixPosCalibTask();
+    std::shared_ptr<Solvers::Task> MakeSixPosCalibTask();
 
-    std::shared_ptr<GnssTask::SolverTaskBase> MakeStaticAlignTask();
+    std::shared_ptr<Solvers::Task> MakeStaticAlignTask();
 
 
-    bool RenderInsResult(const std::shared_ptr<GnssTask::SolverTaskBase> &job);
+    bool RenderInsResult(const std::shared_ptr<Solvers::Task> &job);
 }

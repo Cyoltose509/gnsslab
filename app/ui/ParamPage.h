@@ -9,7 +9,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace Ui::ParamPage {
+namespace UI::ParamPage {
 
     struct Range {
         double lo = 0.0;
@@ -109,6 +109,7 @@ namespace Ui::ParamPage {
     struct Group {
         const char *title = "";
         std::vector<Field<S> > fields;
+        std::function<void(S &)> row;
     };
 
     template <Style Style_, class S, class T, class At, class Atc>
@@ -169,6 +170,7 @@ namespace Ui::ParamPage {
             firstGroup = false;
             if (group.title && *group.title) ImGui::TextUnformatted(group.title);
             for (const auto &f: group.fields) f.draw(state);
+            if (group.row) group.row(state);
         }
         ImGui::PopItemWidth();
         ImGui::Spacing();

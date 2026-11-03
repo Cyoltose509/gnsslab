@@ -7,7 +7,7 @@
 #include <set>
 
 
-struct SppConfig {
+struct SPPConfig {
     
     double cutoffElevRad = 15.0 * DEG_TO_RAD;
     std::set<char> enabledSystems{};
@@ -21,20 +21,22 @@ struct SppConfig {
     int maxIter = 10; 
     int minCheckIter = 2; 
 
-    // —— 处理开关（PPPStatic 族；SPP / RTK 不读本结构体中的这几项）——
-    bool useAR = true;           // 是否尝试 AR 固定
-    bool useCycleSlip = true;    // 是否做相位周跳探测
-    double gfSlipMult = 3.0;     // GF 周跳阈值倍数（×单周跳阶跃）
-    bool applyWindup = true;     // 相位缠绕改正
-    bool applySolidTide = true;  // 固体潮改正
-    bool useTroGrad = true;      // TRO 水平梯度固定改正（关=退化为仅 ZTD）
+    bool useAR = true;
+    bool useCycleSlip = true;
+    double gfSlipMult = 3.0;
+    bool applyWindup = true;
+    bool applySolidTide = true;
+    bool applyAtx = true;
+    bool useTroGrad = true;
+
+    bool useHealth = true;
 
     double isbProcNoise = 1.0e-3; 
     double isbInitVar = 1.0;   
     double gloIfcbProcNoise = 1.0E-8;   
     double gloIfcbInitVar = 900.0;      
 
-    TropoMap tropoMap = TropoMap::Gmf;
+    Troposphere::Map tropoMap = Troposphere::Map::GMF;
     double troZtdSigma = 0.05; 
     
     double sigmaPhase = 0.01273; 

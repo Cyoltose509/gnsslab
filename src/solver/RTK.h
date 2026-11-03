@@ -6,13 +6,11 @@
 #include "EphemerisTable.h"
 #include "Ephemeris.h"
 #include "CycleSlip.h"
-#include "Weight.h"
-#include "RtkConfig.h"
-#include "SolverOptions.h"   // 统一参数对象：applyOptions 注入
+#include "RTKConfig.h"
+#include "SolverOptions.h"
 #include <Eigen/Eigen>
 #include <map>
 #include <set>
-#include <algorithm>
 #include <vector>
 #include <optional>
 
@@ -23,17 +21,14 @@ public:
 
     ~RTK() = default;
 
-    // 解算器配置：定义在 `RtkConfig.h`（纯数据、含默认值），`SolverOptions` 直接持有它。
-    RtkConfig mConfig;
+    RTKConfig mConfig;
     void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * DEG_TO_RAD; }
 
     void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
 
 
-    void setConfig(const RtkConfig &c) { mConfig = c; }
+    void setConfig(const RTKConfig &c) { mConfig = c; }
 
-    /// 统一参数注入：把 SolverOptions 的 rtk 子对象整份写回 Config（RTK 无 ctor 基线，
-    /// 可以整份覆盖），截止角 / 星座这两个表示不同的字段另行转换。
     void applyOptions(const SolverOptions &o);
 
     /// 选参考星
@@ -47,9 +42,7 @@ public:
     Eigen::Vector3d mRoverApprox{0, 0, 0}; // 流动站
     int mGfCommonMode = 2; // GF 共模抑制阈值
 
-    // SPP 自举精化记账（基准站/流动站线性化初值）。
-    // 只要几何变好就重估，星历补全后即锁定。
-    std::size_t mBaseEphSize = 0;   // 上次自举时已有星历的卫星数
+    std::size_t mBaseEphSize = 0;
     std::size_t mRoverEphSize = 0;
 
 
@@ -70,9 +63,8 @@ public:
     };
 
     std::map<SatID, SdVar> mSdVar;
-    Eigen::MatrixXd mDDWeight; // 双差权阵 P = R⁻¹（块对角：每块 = 一个「系统+观测类型」）
+    Eigen::MatrixXd mDDWeight;
     bool mDDWeightReady = false;
-    std::vector<std::vector<int>> mDDWeightBlocks; // 上述块的行下标集合，供 SolverLSQ 逐块算 HᵀPH（等价加速）
 
     bool processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph);
 
@@ -90,7 +82,7 @@ private:
     struct DDCache {
         SatID sat, ref;
         char sys = 0;
-        PVT pvt;                         // 本星 PVT（位置，迭代内几何项重算用）
+        PVT pvt;                         // 本星 PVT
         double obsBase[4] = {0, 0, 0, 0};   // [L1,L2,C1,C2] 基准站观测值
         double obsRover[4] = {0, 0, 0, 0};  // 流动站观测值
         double refObsBase[4] = {0, 0, 0, 0};
@@ -110,8 +102,8 @@ private:
     EphemerisTable *mEph = nullptr;
     std::set<SatID> mRtkSlipExclude;
 
-    std::vector<DDCache> mDDCache;        // 本历元参与双差的非参考星缓存
-    std::map<char, PVT> mCachedRefPvt;    // 各系统参考星 PVT
+    std::vector<DDCache> mDDCache;
+    std::map<char, PVT> mCachedRefPvt;
 
     bool solveFloat(EquSys &eq, SolverLSQ &solver, Eigen::Vector3d &baseline);
 

@@ -1,8 +1,9 @@
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
-#include "GuiHelpers.h"
-#include "SolverTask.h"
+#include "view/GuiHelpers.h"
+#include "ui/FileDialog.h"
+#include "solvers/common/Core.h"
 #include "core/PathMemory.h"
 #include "ins/ImuCalibrator.h"
 #include "core/InsMath.h"
@@ -23,7 +24,7 @@
 namespace Tools::InsPanel {
 
     SixPosCalibTask::SixPosCalibTask() {
-        mode = GnssTask::SolverMode::Ins;
+        mode = Solvers::Mode::INS;
         fileName = "六位置法标定";
     }
 
@@ -32,7 +33,7 @@ namespace Tools::InsPanel {
             const auto &cfg = AppConfig::PathMemory::instance();
             saveInsParams(par);
             std::string joined;
-            for (size_t i = 0; i < filePaths.size(); ++i) {
+            for (std::size_t i = 0; i < filePaths.size(); ++i) {
                 if (i) joined += '|';
                 joined += filePaths[i];
             }
@@ -100,7 +101,7 @@ namespace Tools::InsPanel {
 
         for (const auto &path: filePaths) {
             if (stop) break;
-            const std::string name = Solvers::Helpers::baseName(path);
+            const std::string name = Str::baseName(path);
             {
                 std::lock_guard lk(resultMutex);
                 currentFile = name;
@@ -115,7 +116,7 @@ namespace Tools::InsPanel {
                 if (!stop) detSeqLines.emplace_back(name, "解析失败（内容为空或格式不符）");
                 continue;
             }
-            const std::string hash = fileContentHash(path);
+            const std::string hash = Str::fileContentHash(path);
             if (seenHash.count(hash)) {
                 ++dups;
                 detSeqLines.emplace_back(name, "重复文件，已跳过");
@@ -220,9 +221,9 @@ namespace Tools::InsPanel {
 
                             if (ImGui::Button("添加文件…", ImVec2(140, 0))) {
                                 if (std::vector<std::wstring> wpaths; ShowOpenFilesDialog(
-                                    wpaths, Solvers::Helpers::fIns, std::size(Solvers::Helpers::fIns))) {
+                                    wpaths, FileDialog::fIns, std::size(FileDialog::fIns))) {
                                     for (auto &wp: wpaths) {
-                                        std::string p = wideToAcp(wp);
+                                        std::string p = Str::wideToACP(wp);
                                         if (!p.empty() &&
                                             std::find(filePaths.begin(), filePaths.end(), p) == filePaths.end())
                                             filePaths.push_back(p);
@@ -242,7 +243,7 @@ namespace Tools::InsPanel {
                                         AppConfig::PathMemory::instance().getRecent("ins_cal_files");
                                 if (recent.empty()) ImGui::TextDisabled("（暂无记录）");
                                 for (auto &r: recent) {
-                                    if (ImGui::Selectable(Solvers::Helpers::baseName(r).c_str())) {
+                                    if (ImGui::Selectable(Str::baseName(r).c_str())) {
                                         if (std::find(filePaths.begin(), filePaths.end(), r) == filePaths.end())
                                             filePaths.push_back(r);
                                     }
@@ -256,9 +257,9 @@ namespace Tools::InsPanel {
                                 ImGui::TextDisabled("尚未添加任何文件。点击「添加文件…」选择标定日志。");
                             } else {
                                 ImGui::Text("已选 %d 个文件：", static_cast<int>(filePaths.size()));
-                                for (size_t i = 0; i < filePaths.size(); ++i) {
+                                for (std::size_t i = 0; i < filePaths.size(); ++i) {
                                     ImGui::Bullet();
-                                    ImGui::Text("%s", Solvers::Helpers::baseName(filePaths[i]).c_str());
+                                    ImGui::Text("%s", Str::baseName(filePaths[i]).c_str());
                                     ImGui::SameLine();
                                     if (ImGui::SmallButton(("x##cal" + std::to_string(i)).c_str())) {
                                         filePaths.erase(filePaths.begin() + i);
@@ -285,7 +286,7 @@ namespace Tools::InsPanel {
                         segStatic.load(), segRot.load(), dupSkipped.load(),
                         static_cast<long long>(sampleCount.load()));
         }
-        if (detReady && ImGui::Button("导出分段摘要 CSV", ImVec2(200, 0))) exportDetectCsv();
+        if (detReady && ImGui::Button("导出分段摘要 CSV", ImVec2(200, 0))) exportDetectCSV();
         if (blocked) return;
         if (running) {
             std::string label;
@@ -494,7 +495,7 @@ namespace Tools::InsPanel {
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
             ImGui::EndDisabled();
             if (!done && hovered) ImGui::SetTooltip("完成一次标定后才能导出。");
-            if (clicked) exportCalibCsv();
+            if (clicked) exportCalibCSV();
         }
 
         ImGui::SeparatorText("补偿序列");
@@ -515,7 +516,7 @@ namespace Tools::InsPanel {
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
-            if (ImGui::Button("导出该段补偿序列", ImVec2(210, 0))) exportCompCsv();
+            if (ImGui::Button("导出该段补偿序列", ImVec2(210, 0))) exportCompCSV();
 
 
             if (CalibReport r; peekReport(r)) {
@@ -574,10 +575,10 @@ namespace Tools::InsPanel {
         return false;
     }
 
-    void SixPosCalibTask::exportCalibCsv() {
+    void SixPosCalibTask::exportCalibCSV() {
         CalibReport r;
         if (!snapshotReport(r)) return;
-        exportCsvDialog(*this, "calib_result.csv", "calib_result.csv", [&](Csv::Writer &w) {
+        exportCSVDialog(*this, "calib_result.csv", "calib_result.csv", [&](CSV::Writer &w) {
             w.row("量", "X", "Y", "Z");
 
             auto qtyRow = [&](const int q) {
@@ -587,12 +588,12 @@ namespace Tools::InsPanel {
                 const std::string name = std::string(def.csv) + "(" + u.csv + ")";
                 const int d = def.csvDigits;
                 if (def.scalar) {
-                    if (def.csvSci) w.row(name, Csv::sci(v(0), d), "", "");
-                    else w.row(name, Csv::fx(v(0), d), "", "");
+                    if (def.csvSci) w.row(name, CSV::sci(v(0), d), "", "");
+                    else w.row(name, CSV::fx(v(0), d), "", "");
                 } else if (def.csvSci) {
-                    w.row(name, Csv::sci(v(0), d), Csv::sci(v(1), d), Csv::sci(v(2), d));
+                    w.row(name, CSV::sci(v(0), d), CSV::sci(v(1), d), CSV::sci(v(2), d));
                 } else {
-                    w.row(name, Csv::fx(v(0), d), Csv::fx(v(1), d), Csv::fx(v(2), d));
+                    w.row(name, CSV::fx(v(0), d), CSV::fx(v(1), d), CSV::fx(v(2), d));
                 }
             };
 
@@ -602,16 +603,16 @@ namespace Tools::InsPanel {
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "M" + std::to_string(k) + "0, M" + std::to_string(k) + "1, M" +
                                        std::to_string(k) + "2";
-                w.row(rn, Csv::fx(r.calib.accelM(k, 0), 6), Csv::fx(r.calib.accelM(k, 1), 6),
-                      Csv::fx(r.calib.accelM(k, 2), 6));
+                w.row(rn, CSV::fx(r.calib.accelM(k, 0), 6), CSV::fx(r.calib.accelM(k, 1), 6),
+                      CSV::fx(r.calib.accelM(k, 2), 6));
             }
             qtyRow(Q_ACC_KNOM);
             qtyRow(Q_ACC_DS);
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "N" + std::to_string(k) + "0, N" + std::to_string(k) + "1, N" +
                                        std::to_string(k) + "2";
-                w.row(rn, Csv::sci(r.accelCross(k, 0), 9), Csv::sci(r.accelCross(k, 1), 9),
-                      Csv::sci(r.accelCross(k, 2), 9));
+                w.row(rn, CSV::sci(r.accelCross(k, 0), 9), CSV::sci(r.accelCross(k, 1), 9),
+                      CSV::sci(r.accelCross(k, 2), 9));
             }
             qtyRow(Q_GYRO_BIAS);
             qtyRow(Q_GYRO_KEFF);
@@ -622,17 +623,17 @@ namespace Tools::InsPanel {
             for (int k = 0; k < 3; ++k) {
                 const std::string rn = "Ng" + std::to_string(k) + "0, Ng" + std::to_string(k) + "1, Ng" +
                                        std::to_string(k) + "2";
-                w.row(rn, Csv::sci(r.gyroCross(k, 0), 9), Csv::sci(r.gyroCross(k, 1), 9),
-                      Csv::sci(r.gyroCross(k, 2), 9));
+                w.row(rn, CSV::sci(r.gyroCross(k, 0), 9), CSV::sci(r.gyroCross(k, 1), 9),
+                      CSV::sci(r.gyroCross(k, 2), 9));
             }
-            w.row("dt(s)", Csv::fx(r.dt, 6));
-            w.row("六位置拟合RMS(LSB)", Csv::fx(r.accelRms, 4));
+            w.row("dt(s)", CSV::fx(r.dt, 6));
+            w.row("六位置拟合RMS(LSB)", CSV::fx(r.accelRms, 4));
             w.row("nPos(每位置历元数)", r.nPos[0], r.nPos[1], r.nPos[2], r.nPos[3], r.nPos[4], r.nPos[5]);
             w.row("nRot(每旋转历元数)", r.nRot[0], r.nRot[1], r.nRot[2], r.nRot[3], r.nRot[4], r.nRot[5]);
         });
     }
 
-    void SixPosCalibTask::exportDetectCsv() {
+    void SixPosCalibTask::exportDetectCSV() {
         std::vector<std::pair<std::string, std::string> > seq;
         {
             std::lock_guard lk(resultMutex);
@@ -642,7 +643,7 @@ namespace Tools::InsPanel {
             setError("尚无分段结果，无法导出。");
             return;
         }
-        exportCsvDialog(*this, "detect_summary.csv", "detect_summary.csv", [&](Csv::Writer &w) {
+        exportCSVDialog(*this, "detect_summary.csv", "detect_summary.csv", [&](CSV::Writer &w) {
             w.row("文件", "识别到的静置/旋转段");
             for (const auto &[fst, snd]: seq) w.row(fst, snd);
         });
@@ -673,7 +674,7 @@ namespace Tools::InsPanel {
         return std::string("calib_") + tag[static_cast<int>(r)] + "_comp.csv";
     }
 
-    void SixPosCalibTask::exportCompCsv() {
+    void SixPosCalibTask::exportCompCSV() {
         CalibReport r;
         if (!snapshotReport(r)) return;
 
@@ -704,16 +705,16 @@ namespace Tools::InsPanel {
             label = segLabels[selIdx];
 
         const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r);
-        exportCsvDialog(*this, defName, defName + "（" + label + "）", [&](Csv::Writer &w) {
+        exportCSVDialog(*this, defName, defName + "（" + label + "）", [&](CSV::Writer &w) {
             w.row("tow", "comp_fx(m/s2)", "comp_fy(m/s2)", "comp_fz(m/s2)",
                   "raw_gx", "raw_gy", "raw_gz", "comp_gx", "comp_gy", "comp_gz");
             for (const auto &s: seg) {
                 Eigen::Vector3d f, g;
                 ImuCalibrator::compensate(cm, r, s, f, g);
-                w.row(Csv::fx(s.tow, 3),
-                      Csv::fx(f(0), 5), Csv::fx(f(1), 5), Csv::fx(f(2), 5),
+                w.row(CSV::fx(s.tow, 3),
+                      CSV::fx(f(0), 5), CSV::fx(f(1), 5), CSV::fx(f(2), 5),
                       s.gx, s.gy, s.gz,
-                      Csv::fx(g(0), 4), Csv::fx(g(1), 4), Csv::fx(g(2), 4));
+                      CSV::fx(g(0), 4), CSV::fx(g(1), 4), CSV::fx(g(2), 4));
             }
         });
     }

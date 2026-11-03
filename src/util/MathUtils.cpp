@@ -1,7 +1,7 @@
 #include "MathUtils.h"
 
 namespace Math {
-    vector<double> polyFit(const vector<double> &x, const vector<double> &y, const int deg) {
+    std::vector<double> polyFit(const std::vector<double> &x, const std::vector<double> &y, const int deg) {
         const int n = static_cast<int>(x.size());
         Eigen::MatrixXd A(n, deg + 1);
         Eigen::VectorXd Y(n);
@@ -41,8 +41,8 @@ namespace Math {
         const int i3 = (i2 + 1) % 3;
 
         toReturn(i1, i1) = 1.0;
-        toReturn(i2, i2) = toReturn(i3, i3) = ::cos(angle);
-        toReturn(i3, i2) = -(toReturn(i2, i3) = ::sin(angle));
+        toReturn(i2, i2) = toReturn(i3, i3) = cos(angle);
+        toReturn(i3, i2) = -(toReturn(i2, i3) = sin(angle));
         return toReturn;
     }
 
@@ -63,21 +63,21 @@ namespace Math {
         for (auto i = 0; i < m.rows(); i++)
             for (auto j = 0; j < m.cols(); j++)
                 sum += m(i, j) * m(i, j);
-        return sqrt(sum);
+        return std::sqrt(sum);
     }
 
     double magnitude(const Eigen::VectorXd &v) {
         double mag(0);
         if (v.size() == 0) return mag;
-        mag = abs(v(0));
+        mag = std::abs(v(0));
 
         for (auto i = 1; i < v.size(); i++) {
-            if (mag > abs(v(i)))
-                mag *= sqrt(1.0 + v(i) / mag * (v(i) / mag));
-            else if (abs(v(i)) > mag)
-                mag = abs(v(i)) * sqrt(1.0 + mag / v(i) * (mag / v(i)));
+            if (mag > std::abs(v(i)))
+                mag *= std::sqrt(1.0 + v(i) / mag * (v(i) / mag));
+            else if (std::abs(v(i)) > mag)
+                mag = std::abs(v(i)) * std::sqrt(1.0 + mag / v(i) * (mag / v(i)));
             else
-                mag *= sqrt(2.0);
+                mag *= std::sqrt(2.0);
         }
         return mag;
     }
@@ -89,7 +89,7 @@ namespace Math {
         return s / static_cast<double>(x.size());
     }
 
-    double rms(const std::vector<double> &x) {
+    double stdDev(const std::vector<double> &x) {
         if (x.size() < 2) return 0.0;
         const double m = mean(x);
         double s = 0.0;
@@ -100,7 +100,8 @@ namespace Math {
     double median(std::vector<double> v) {
         if (v.empty()) return 0.0;
         std::sort(v.begin(), v.end());
-        return v[v.size() / 2];
+        const std::size_t h = v.size() / 2;
+        return v.size() % 2 == 0 ? 0.5 * (v[h - 1] + v[h]) : v[h];
     }
 
     Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {

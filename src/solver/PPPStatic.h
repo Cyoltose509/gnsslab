@@ -1,12 +1,14 @@
 #pragma once
 
-#include "Sp3OrbitReader.h"
-#include "ClkReader.h"
-#include "AntxReader.h"
-#include "OsbBias.h"
-#include "ErpReader.h"
-#include "TroReader.h"
-#include "IonexReader.h"
+#include "product/SP3OrbitReader.h"
+#include "product/CLKReader.h"
+#include "product/ATXReader.h"
+#include "product/OSBBias.h"
+#include "product/ERPReader.h"
+#include "product/TROReader.h"
+#include "product/METReader.h"
+#include "product/ATTReader.h"
+#include "product/IONEXReader.h"
 #include "SPP.h"
 #include "GnssEKF.h"
 #include "CycleSlip.h"
@@ -17,39 +19,31 @@
 
 class PPPStatic : public SPP {
 public:
-    // 测站对流层参数（每历元由 buildEquSys 算一次，所有星共享）
-    struct TropoParams {
-        double latDeg = 0.0; // 测站纬度 [deg]
-        double lonDeg = 0.0; // 测站经度 [deg]（GPT2 先验需要）
-        double hgt = 0.0; // 测站高 [m]
-        double doy = 0.0; // 年积日（NMF 湿映射需要）
-        double mjd = 0.0; // 修正儒略日（GMF 球谐展开需要）
-        int year = 2000;  // 年份（备用）
-        double zhd = 0.0; // Saastamoinen 天顶干延迟 [m]
-        double gradN = 0.0; // TRO 北向水平梯度 (m)
-        double gradE = 0.0; // TRO 东向水平梯度 (m)
-    };
-
     PPPStatic() {
         mRequirePhaseForIF = true;
     }
 
     ~PPPStatic() override;
 
-    bool loadSp3(const std::string &path);
+    bool loadSP3(const std::string &path);
 
-    bool loadClk(const std::string &path, const std::set<char> &allowedSys = {});
+    bool loadCLK(const std::string &path, const std::set<char> &allowedSys = {});
 
-    bool loadAtx(const std::string &path);
+    bool loadATX(const std::string &path);
 
-    bool loadOsb(const std::string &path);
+    bool loadOSB(const std::string &path);
 
-    bool loadErp(const std::string &path);
+    bool loadERP(const std::string &path);
 
-    bool loadTro(const std::string &path);
+    bool loadTRO(const std::string &path);
 
+    /// 气象文件（RINEX3 *_MM.rnx）
+    bool loadMET(const std::string &path);
 
-    bool loadIonex(const std::string &path);
+    /// ORBEX 姿态四元数（*.OBX）
+    bool loadATT(const std::string &path);
+
+    bool loadIONEX(const std::string &path);
 
     bool processEpoch(ObsData &obs) override;
 
@@ -84,16 +78,19 @@ public:
 
     void setPosProcNoise(const double v) { mConfig.posNoise = v; }
 
-    /// 观测中断恢复时保留跨间隙模糊度（见 SppConfig::keepAmbMaxGap 注释）。
     void setKeepAmbMaxGap(const double sec) { mConfig.keepAmbMaxGap = sec; }
 
     void setPosVarFloor(const double v) { mConfig.posVarFloor = v; }
 
-    /// 统一参数注入：逐字还原 ppp_cli 的 init lambda（截止角/系统/ISB 走 SPP::applyOptions，
-    /// 其余 PPP 专有参数在此设置），保持 CLI 与 GUI 行为一致。不碰 ekf.clockInitVar。
     void applyOptions(const SolverOptions &o) override;
 
-    void setZtdProcNoise(const double q) { mConfig.ztdProcNoise = q; }
+    void setZTDProcNoise(const double q) { mConfig.ztdProcNoise = q; }
+
+    /// ZTD 先验 sigma 旋钮
+    void setZTDPriorSigma(const double s) { mConfig.ztdPriorSigma = s; }
+
+    /// TRO 产品 ZTD 约束 sigma(m)
+    void setTROZTDSigma(const double s) { mConfig.troZtdSigma = s; }
 
     void setAmbInitVar(const double v) { mConfig.ambInitVar = v; }
 
@@ -109,10 +106,9 @@ public:
         mConfig.gloIfcbInitVar = initVar;
     }
 
-    bool osbCovers(const SatID &sat) const { return mOsbSatSet.count(sat) > 0; }
-    bool osbCoversSystem(char sys) const {
-        for (const auto &s : mOsbSatSet) if (s.system == sys) return true;
-        return false;
+    [[nodiscard]] bool osbCovers(const SatID &sat) const { return mOsbSatSet.count(sat) > 0; }
+    [[nodiscard]] bool osbCoversSystem(const char sys) const {
+        return std::any_of(mOsbSatSet.begin(), mOsbSatSet.end(), [sys](const SatID &s) { return s.system == sys; });
     }
 
 
@@ -128,7 +124,6 @@ public:
     double mGfSlipMult = 3.0; // GF 周跳阈值倍数（×单周跳阶跃）
 
     bool mHasTropo = true; // 估计 ZTD
-    // 对流层映射函数（gmf/nmf/hopfield）在 `SppConfig::tropoMap`：SPP/PPP/LEO 共用同一个选择
     bool mUseTroGrad = true; // TRO 水平梯度固定改正开关（默认开；关=退化为仅 ZTD，便于 A/B）
     double mZtdEstimate = 0.0; // 当前 ZTD 状态估计(m)
 
@@ -143,13 +138,13 @@ protected:
     // 接收机速度(逐历元有限差分)，驱动运动学风缠绕基
     Eigen::Vector3d mRecvVel = Eigen::Vector3d::Zero();
 
-    virtual Eigen::Vector3d recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const;
+    [[nodiscard]] virtual Eigen::Vector3d recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const;
 
     // 相位缠绕基准
     void recvWindupBasis(const Eigen::Vector3d &recv, Eigen::Vector3d &exr, Eigen::Vector3d &eyr) const;
 
 
-    virtual Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const;
+    [[nodiscard]] virtual Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const;
 
     bool tryFixAmbiguities(ObsData &obsData);
 
@@ -161,10 +156,10 @@ protected:
 
     virtual void buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter);
 
-    /// 首历元引导：SPP 初位 + 建方程 + EKF 首次 timeUpdate/measUpdate。设 mEkfInit / mFilterFrozen。
+    /// 首历元引导
     void initFilter(ObsData &obsData, VariableDataMap &csData);
 
-    /// 常规历元：预测 + 重锚 + EKF timeUpdate/measUpdate。设 mFilterFrozen。
+    /// 常规历元
     void updateFilter(ObsData &obsData, VariableDataMap &csData);
 
     virtual void bootstrapFirstEpoch(ObsData &obsData);
@@ -183,12 +178,12 @@ protected:
 
     void resetSlipDetectors(const ObsData &obsData);
 
-    /// 对流层 ZTD 状态 + 先验/外部产品约束方程（从 buildEquSys 抽出，缩短主函数）
-    void addZtdConstraint();
+    /// 对流层 ZTD 状态 + 先验/外部产品约束方程
+    void addZTDConstraint();
 
-    Eigen::Vector3d computeTideDisplacement(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const; // 固体潮 + 极潮
+    [[nodiscard]] Eigen::Vector3d computeTideDisplacement(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const; // 固体潮 + 极潮
 
-    double computeIfAmbiguity(const SatID &sat, const TypeValueMap &tv,
+    [[nodiscard]] double computeIfAmbiguity(const SatID &sat, const TypeValueMap &tv,
                               double map, double tropoFixed) const;
 
     void resetAmbiguity(const SatID &sat, const TypeValueMap &tv,
@@ -207,19 +202,22 @@ protected:
     std::string mRcvAntenna;
     std::map<SatID, double> mWindupPrev;
     std::map<SatID, double> mWindupAcc;
+    std::set<SatID> mFallbackWarned; // 回退广播星历的日志去重
 
     std::map<SatID, double> mNwSmooth;  // MW 宽巷平滑值(周)
     std::map<SatID, double> mNwVar;     // MW 宽巷平滑方差(周²)
 
 
-    Sp3OrbitReader mSp3;
-    ClkReader mClk;
-    AntxReader mAntx;
-    OsbBias mOsb;
+    SP3OrbitReader mSp3;
+    CLKReader mClk;
+    ATXReader mAntx;
+    OSBBias mOsb;
     std::set<SatID> mOsbSatSet; // 外部 OSB 覆盖的卫星集合
-    ErpReader mErp;
-    TroReader mTro;
-    IonexReader mIonex;
+    ERPReader mErp;
+    TROReader mTro;
+    METReader mMet;
+    ATTReader mAtt;
+    IONEXReader mIonex;
 
     GnssEKF ekf;
     EquSys mEq;
@@ -247,10 +245,10 @@ protected:
     Eigen::Vector3d mEpochXyz = Eigen::Vector3d::Zero(); // 本历元线性化点
     Eigen::Vector3d mEpochTide = Eigen::Vector3d::Zero(); // 固体潮+极潮位移(ECEF)
     Eigen::Vector3d mEpochPcoE = Eigen::Vector3d::Zero(); // 接收机 PCO（ECEF）
-    TropoParams mEpochTropo; // 测站对流层参数（含 ZHD）
+    TropoSite mEpochTropo; // 测站对流层快照（每历元一次，所有星共享）
     bool mEpochFirstIter = true; // 是否首次迭代
 
-    std::map<SatID, double> mSatMap; // 每星湿映射函数（与 satElevData 同类的 per-sat 缓存）
+    std::map<SatID, double> mSatMap; // 每星湿映射函数
     std::map<SatID, double> mSatTropoFixed; // 每星对流层固定项(m)
     std::set<char> mSysSeen; // 本历元出现过的系统
     std::set<SatID> mCurrentSatSet; // 本历元参与解算的星
@@ -276,13 +274,13 @@ protected:
 
 private:
     /// 钟差先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值。
-    double clockPrior(const char sys) const {
+    [[nodiscard]] double clockPrior(const char sys) const {
         return mEkfInit
             ? (mClkEstimate.count(sys) ? mClkEstimate.at(sys) : 0.0)
-            : (mClkBase.count(sys) ? mClkBase.at(sys) : 0.0);
+            : mClkBase.count(sys) ? mClkBase.at(sys) : 0.0;
     }
     /// ZTD 先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值/配置初值。
-    double ztdPrior() const {
-        return mEkfInit ? mZtdEstimate : (mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue);
+    [[nodiscard]] double ztdPrior() const {
+        return mEkfInit ? mZtdEstimate : mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
     }
 };

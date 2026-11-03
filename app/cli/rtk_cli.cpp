@@ -1,5 +1,3 @@
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -11,53 +9,51 @@
 
 #include "Const.h"
 #include "GnssStruct.h"
-#include "SolverTask.h"
+#include "solvers/common/Core.h"
 #include "RTK.h"
-#include "OEM7Reader.h"
-#include "ObsFormat.h"
-#include "OEM7SocketReader.h"
+#include "novatel/LogReader.h"
+#include "Observer.h"
+#include "novatel/SocketReader.h"
 #include "Log.h"
 #include "SolverOptions.h"
 #include "CliCommon.h"
-#include "SolveDriver.h"
-#include "core/DualObsPairing.h"
+#include "solvers/common/Driver.h"
+#include "solvers/rtk/Realtime.h"
+#include "solvers/rtk/Pipeline.h"
+#include "io/ObsSource.h"
+#include "DualPair.h"
 #include "core/IniFile.h"
 
 namespace {
     void runRtk(const SolverOptions &cfg) {
-        std::vector<GnssTask::EpochData> epochs;
+        std::vector<Solvers::Epoch> epochs;
 
         RTK rtk;
         rtk.applyOptions(cfg);
 
         if (cfg.basePath.empty() || cfg.roverPath.empty()) {
             std::cerr << "RTK 需要基准站与流动站 [input] base / rover\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
+            Cli::dumpEmpty(Solvers::Mode::RTK, cfg);
             return;
         }
+
+        // ini 里显式填的基准坐标优先于观测文件里的概略坐标（RINEX 表头 APPROX POSITION
+        // 常是米级单点解，直接当基准会让双差残差劣化到无法固定）。GUI 两条通路都会设，
+        // 只漏了本 CLI 文件模式，等于 ini 的 base_coord_x/y/z 长期被忽略。
+        if (Eigen::Vector3d(cfg.baseCoordX, cfg.baseCoordY, cfg.baseCoordZ).norm() > 1e3)
+            rtk.mBaseXyzUser = Eigen::Vector3d(cfg.baseCoordX, cfg.baseCoordY, cfg.baseCoordZ);
 
         EphemerisTable navTable;
-        const GnssTask::ObsFormat fmtBase = GnssTask::classifyObsPath(cfg.basePath);
-        const GnssTask::ObsFormat fmtRover = GnssTask::classifyObsPath(cfg.roverPath);
-        if (fmtBase == GnssTask::ObsFormat::Unknown || fmtRover == GnssTask::ObsFormat::Unknown) {
-            std::cerr << "RTK 无法识别观测文件格式\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
-            return;
-        }
-        const bool baseRinex = fmtBase == GnssTask::ObsFormat::Rinex;
-        const bool roverRinex = fmtRover == GnssTask::ObsFormat::Rinex;
-        const bool anyRinex = baseRinex || roverRinex;
         bool refInit = false;
         Eigen::Vector3d ref(0, 0, 0);
-
         auto processOne = [&](const ObsData &base, const ObsData &rover, EphemerisTable *eph) {
             bool ok = false;
             try { ok = rtk.processEpoch(base, rover, *eph); } catch (...) { ok = false; }
             if (!ok) return;
             if (const Result &r = rtk.result; r.numSats <= 0) return;
-            GnssTask::EpochData data;
-            SolveDriver::fillFromObs(data, rover);
-            SolveDriver::feedRtk(data, rtk);
+            Solvers::Epoch data;
+            data.getFromObs(rover);
+            data.getFromRTK(rtk);
             if (!refInit && rtk.mBaseXyz.squaredNorm() > 1e6) {
                 ref = rtk.mBaseXyz;
                 refInit = true;
@@ -65,50 +61,28 @@ namespace {
             epochs.push_back(data);
         };
 
-
-        if (anyRinex) {
-            if (cfg.navPath.empty()) {
-                std::cerr << "RTK RINEX 模式需要广播星历 [input] nav（任一观测文件为 RINEX 即需要）\n";
-                Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
-                return;
-            }
-            if (std::string navErr; !SolveDriver::loadRtkNav(cfg.navPath, navTable, navErr)) {
-                std::cerr << "RTK " << navErr << "\n";
-                Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
-                return;
-            }
-        }
-
-        SolveDriver::DualObsHandles h; //NOLINT
-        SolveDriver::DualObsPairing::Puller nextBase, nextRover;
-        std::string openErr; //NOLINT
-        if (!SolveDriver::openDualObsSources(baseRinex, roverRinex, cfg.basePath, cfg.roverPath,
-                                             h, nextBase, nextRover, openErr)) {
-            std::cerr << "RTK " << openErr << "\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
+        const EpochDecimator dec(cfg.sampleInterval);
+        std::string pipeErr;
+        const int nPair = Solvers::RTK::pairFiles(
+            cfg.basePath, cfg.roverPath, cfg.navPath, cfg.sampleInterval, navTable,
+            [] { return false; },
+            [&](const ObsData &base, const ObsData &rover,
+                const std::shared_ptr<EphemerisTable> &eph, EphemerisTable *nav) {
+                if (!dec.accept(rover.weekSecond.sow)) return;
+                processOne(base, rover, eph ? eph.get() : nav);
+            }, pipeErr);
+        if (nPair < 0) {
+            std::cerr << "RTK " << pipeErr << "\n";
+            Cli::dumpEmpty(Solvers::Mode::RTK, cfg);
             return;
         }
 
-        SolveDriver::DualObsPairing p(nextBase, nextRover);
-        p.setInterval(cfg.sampleInterval);
-        SolveDriver::EpochDecimator dec(cfg.sampleInterval);
-        SolveDriver::DualObsPairing::Pair pr;
-        while (p.next(pr)) {
-            if (!dec.accept(pr.rover.weekSecond.sow)) continue;
-            EphemerisTable *eph = pr.baseEph
-                                      ? pr.baseEph.get()
-                                      : pr.roverEph
-                                            ? pr.roverEph.get()
-                                            : &navTable;
-            processOne(pr.base, pr.rover, eph);
-        }
-
         if (cfg.hasRef) ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);
-        Cli::dumpCsv(epochs, GnssTask::SolverMode::Rtk, ref, false, cfg);
+        Cli::dumpCSV(epochs, Solvers::Mode::RTK, ref, false, cfg);
     }
 
     void runRtkRealtime(const SolverOptions &cfg) {
-        std::vector<GnssTask::EpochData> epochs;
+        std::vector<Solvers::Epoch> epochs;
 
         RTK rtk;
         rtk.applyOptions(cfg);
@@ -121,12 +95,12 @@ namespace {
         const int bport = cfg.basePort > 0 ? cfg.basePort : 7190;
         const int rport = cfg.roverPort > 0 ? cfg.roverPort : 7201;
 
-        OEM7SocketReader baseRdr, roverRdr;
+        NovAtel::SocketReader baseRdr, roverRdr;
         if (!baseRdr.connect(bip, static_cast<unsigned short>(bport)) ||
             !roverRdr.connect(rip, static_cast<unsigned short>(rport))) {
             std::cerr << "[RTK实时] 连接失败 base=" << bip << ":" << bport
                     << " rover=" << rip << ":" << rport << "\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Rtk, cfg);
+            Cli::dumpEmpty(Solvers::Mode::RTK, cfg);
             return;
         }
         std::cerr << "[RTK实时] 已连接 base=" << bip << ":" << bport
@@ -141,9 +115,9 @@ namespace {
                    std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tStart).count() >= cfg.realtimeSec;
         };
 
-        SolveDriver::DualObsPairing pairing;
+        Observer::DualPair pairing;
         pairing.setInterval(cfg.sampleInterval);
-        SolveDriver::EpochDecimator dec(cfg.sampleInterval);
+        EpochDecimator dec(cfg.sampleInterval);
         long long nProc = 0, nOk = 0, nAligned = 0;
         long long nBaseEp = 0, nRoverEp = 0, nIdle = 0;
         auto elapsedSec = [&] {
@@ -186,7 +160,7 @@ namespace {
             e = roverRdr.ephSnapshot();
             return 1;
         };
-        SolveDriver::pumpRealtimePair(
+        Solvers::RTK::pump(
             pairing, getBase, getRover, [&] { return timedOut(); },
             [&] {
                 if (cfg.maxEpochs > 0 && static_cast<int>(epochs.size()) >= cfg.maxEpochs) return false;
@@ -204,9 +178,9 @@ namespace {
                 if (ok) {
                     const Result &res = rtk.result;
                     if (res.numSats > 0) {
-                        GnssTask::EpochData data;
-                        SolveDriver::fillFromObs(data, r);
-                        SolveDriver::feedRtk(data, rtk);
+                        Solvers::Epoch data;
+                        data.getFromObs(r);
+                        data.getFromRTK(rtk);
                         epochs.push_back(data);
                         ++nOk;
                     }
@@ -226,19 +200,19 @@ namespace {
 
         Eigen::Vector3d ref(0, 0, 0);
         if (cfg.hasRef) ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);
-        else SolveDriver::firstSolvedRef(epochs, ref);
-        Cli::dumpCsv(epochs, GnssTask::SolverMode::Rtk, ref, false, cfg);
+        else Solvers::Driver::firstSolvedRef(epochs, ref);
+        Cli::dumpCSV(epochs, Solvers::Mode::RTK, ref, false, cfg);
     }
 }
 
 int main(const int argc, char **argv) {
     const std::string ini = argc > 1 ? argv[1] : "rtk.ini";
-    AppConfig::IniFile f;
+    IniFile f;
     if (!f.load(ini)) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolverOptions cfg = loadConfig(f, GnssTask::SolverMode::Rtk);
+    const SolverOptions cfg = loadConfig(f, Solvers::Mode::RTK);
     Log::init("cli_gnsslab.log");
     std::cout << "[RTK] base=" << cfg.basePath << " rover=" << cfg.roverPath
             << " nav=" << (cfg.navPath.empty() ? "(无)" : cfg.navPath) << "\n";

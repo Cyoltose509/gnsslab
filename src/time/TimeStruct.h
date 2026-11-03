@@ -26,7 +26,7 @@ struct EpochParam {
 };
 
 constexpr std::array<std::string_view,
-    static_cast<size_t>(TimeSystem::Count)>
+    static_cast<std::size_t>(TimeSystem::Count)>
 TIME_SYSTEM_STRINGS = {
     "Unknown",
     "GPS",
@@ -36,7 +36,7 @@ TIME_SYSTEM_STRINGS = {
     "TAI"
 };
 constexpr std::array<EpochParam,
-    static_cast<size_t>(TimeSystem::Count)>
+    static_cast<std::size_t>(TimeSystem::Count)>
 TIME_SYSTEM_EPOCH = {
     {
         {0, 0, 0},
@@ -50,7 +50,7 @@ TIME_SYSTEM_EPOCH = {
 
 
 inline std::ostream &operator<<(std::ostream &os, const TimeSystem ts) {
-    return os << TIME_SYSTEM_STRINGS[static_cast<size_t>(ts)];
+    return os << TIME_SYSTEM_STRINGS[static_cast<std::size_t>(ts)];
 }
 
 
@@ -123,8 +123,6 @@ public:
         return *this;
     }
 
-    // 归化：把 m_sod 折成 [0, SEC_PER_DAY) 内的当日秒，整日进位到 m_day。
-    // 用 floor 一次性处理正/负/多日，修掉旧实现在大负数下 off-by-one。
     bool normalize() {
         const double days = std::floor(m_sod / SEC_PER_DAY);
         m_day += static_cast<long>(days);
@@ -133,10 +131,10 @@ public:
     }
 
     [[nodiscard]] std::string toString() const {
-        ostringstream oss;
-        oss << setfill('0')
-                << setw(7) << m_day << " "
-                << fixed << setprecision(15) << setw(17) << m_sod
+        std::ostringstream oss;
+        oss << std::setfill('0')
+                << std::setw(7) << m_day << " "
+                << std::fixed << std::setprecision(15) << std::setw(17) << m_sod
                 << " " << m_timeSystem;
         return oss.str();
     }
@@ -144,7 +142,7 @@ public:
     bool operator==(const CommonTime &right) const {
         if (m_timeSystem != right.m_timeSystem)
             return false;
-        if (m_day == right.m_day && fabs(m_sod - right.m_sod) < std::numeric_limits<double>::epsilon())
+        if (m_day == right.m_day && std::fabs(m_sod - right.m_sod) < std::numeric_limits<double>::epsilon())
             return true;
         return false;
     }
@@ -219,17 +217,17 @@ public:
             return false;
         return year == right.year && month == right.month && day == right.day &&
                hour == right.hour && minute == right.minute &&
-               fabs(second - right.second) < std::numeric_limits<double>::epsilon();
+               std::fabs(second - right.second) < std::numeric_limits<double>::epsilon();
     }
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
-        oss << setw(4) << year << "/"
-                << setw(2) << month << "/"
-                << setw(2) << day << " "
-                << setw(2) << hour << ":"
-                << setw(2) << minute << ":"
-                << setw(2) << second << " "
+        oss << std::setw(4) << year << "/"
+                << std::setw(2) << month << "/"
+                << std::setw(2) << day << " "
+                << std::setw(2) << hour << ":"
+                << std::setw(2) << minute << ":"
+                << std::setw(2) << second << " "
                 << timeSys;
 
         return oss.str();
@@ -253,6 +251,21 @@ inline std::ostream &operator<<(std::ostream &s, const CivilTime &cit) {
     return s;
 }
 
+
+/// 年月日
+struct YearMonthDay {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+};
+
+/// 时分秒
+struct HourMinSec {
+    int hour = 0;
+    int minute = 0;
+    double second = 0.0;
+};
+
 class JulianDate {
 public:
     explicit JulianDate(const long double j = 0., const TimeSystem ts = TimeSystem::GPS)
@@ -265,7 +278,7 @@ public:
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
-        oss << fixed << setw(16) << jd << ":"
+        oss << std::fixed << std::setw(16) << jd << ":"
                 << timeSystem;
 
         return oss.str();
@@ -277,7 +290,7 @@ public:
     bool operator==(const JulianDate &right) const {
         if (timeSystem != right.timeSystem)
             return false;
-        return fabs(jd - right.jd) < std::numeric_limits<double>::epsilon();
+        return std::fabs(jd - right.jd) < std::numeric_limits<double>::epsilon();
     }
 
     bool operator!=(const JulianDate &right) const {
@@ -320,9 +333,9 @@ public:
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
-        oss << setw(4) << year << " "
-                << setw(3) << doy << " "
-                << setw(14) << sod << " "
+        oss << std::setw(4) << year << " "
+                << std::setw(3) << doy << " "
+                << std::setw(14) << sod << " "
                 << timeSystem << " ";
 
         return oss.str();
@@ -335,7 +348,7 @@ public:
         if (timeSystem != right.timeSystem)
             return false;
         return year == right.year && doy == right.doy &&
-               fabs(sod - right.sod) < std::numeric_limits<double>::epsilon();
+               std::fabs(sod - right.sod) < std::numeric_limits<double>::epsilon();
     }
 
     bool operator!=(const YDSTime &right) const {
@@ -382,7 +395,7 @@ public:
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
-        oss << setw(8) << mjd
+        oss << std::setw(8) << mjd
                 << timeSystem;
 
         return oss.str();
@@ -391,7 +404,7 @@ public:
     bool operator==(const MJD &right) const {
         if (timeSystem != right.timeSystem)
             return false;
-        return fabs(mjd - right.mjd) < 4. * std::numeric_limits<double>::epsilon();
+        return std::fabs(mjd - right.mjd) < 4. * std::numeric_limits<double>::epsilon();
     }
 
     bool operator!=(const MJD &right) const {
@@ -453,15 +466,15 @@ public:
     }
 
     [[nodiscard]] int Nbits() const {
-        return TIME_SYSTEM_EPOCH[static_cast<size_t>(timeSystem)].nBits;
+        return TIME_SYSTEM_EPOCH[static_cast<std::size_t>(timeSystem)].nBits;
     }
 
     [[nodiscard]] int bitmask() const {
-        return TIME_SYSTEM_EPOCH[static_cast<size_t>(timeSystem)].bitmask;
+        return TIME_SYSTEM_EPOCH[static_cast<std::size_t>(timeSystem)].bitmask;
     }
 
     [[nodiscard]] long MJDEpoch() const {
-        return TIME_SYSTEM_EPOCH[static_cast<size_t>(timeSystem)].mjdEpoch;
+        return TIME_SYSTEM_EPOCH[static_cast<std::size_t>(timeSystem)].mjdEpoch;
     }
 
     [[nodiscard]] int rollover() const { return bitmask() + 1; }
@@ -532,8 +545,8 @@ public:
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
-        oss << setw(4) << week
-                << setw(10) << sow
+        oss << std::setw(4) << week
+                << std::setw(10) << sow
                 << timeSystem;
 
         return oss.str();

@@ -2,10 +2,7 @@
 #include "Const.h"
 #include "Exception.h"
 #include "Log.h"
-#include "Troposphere.h"
-#include "CoordConvert.h"
 #include "CoordStruct.h"
-#include "TimeConvert.h"
 #include "SolverLSQ.h"
 #include <Eigen/Eigen>
 #include <map>
@@ -32,12 +29,8 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
         eq.varSet.insert(dx); eq.varSet.insert(dy); eq.varSet.insert(dz);
         for (const auto &[sys, v] : cdtVars) eq.varSet.insert(v);
 
-        const auto blhEst = XYZToBLH(xc, Frame::WGS84);
-        const double hgt = blhEst.H();
-        const double doy = CommonTime2YDSTime(epoch).doy;
-        MJD mjd{};
-        CommonTime2MJD(epoch, mjd);
-        const double zhd = mHasTropo ? Troposphere::tropoSaastamoinenZHD(blhEst.B(), blhEst.H()) : 0.0;
+        TropoSite site;
+        site.update(mTropoGrid, mConfig.tropoMap, xc, epoch);
         const double ztdMean = mEkfInit ? mZtdEstimate : 0.0;
         const Eigen::Vector3d recvTide = mApplySolidTide ? computeTideDisplacement(xc, epoch) : Eigen::Vector3d::Zero();
         const Eigen::Vector3d recvPCOe = recvAntennaOffsetECEF(xc, epoch);
@@ -58,16 +51,15 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
             const Eigen::Vector3d los = -(pvt.p - recvEff) / rho0;
             const double dts = pvt.clockBias * C_MPS;
             const double rel = pvt.relativityCorrection * C_MPS;
-            // codeBiasAligned：观测码(C1C/C2W)相对钟差参考码(C1W/C2W)的差，避免与 COD .CLK 的 C1W/C2W datum 双计。
-            const double P_IF = def.combineCodeFromObs(tv) - mOsb.codeBiasAligned(def, sat);
+    const double P_IF = def.combineCodeFromObs(tv) - mOsb.codeBiasAligned(def, sat);
             const double obsMinusClk = P_IF + dts + rel - clk[sat.system];
             double weight = 1.0 / (mConfig.sigIFCode * mConfig.sigIFCode);
             if (elev < PI / 6) { const double s = std::sin(elev); weight *= s * s; }
             double mW = 0.0;
-            // 与正解走同一个映射函数选择：曾经这里写死 NMF，与 mConfig.tropoMap(GMF) 不一致
-            const double mH = Troposphere::tropoMapping(mConfig.tropoMap, elev, blhEst.B(), blhEst.L(),
-                                                        hgt, doy, mjd.mjd, &mW);
-            const double tropoCorr = ztdMean * mW + mH * zhd;
+            double dry = 0.0;
+            if (mHasTropo) dry = site.dryDelay(mConfig.tropoMap, elev, &mW);
+            else mW = site.mapping(mConfig.tropoMap, elev); // 不估计 ZTD 时只要干映射值 mW
+            const double tropoCorr = dry + TropoSite::wetDelay(ztdMean, mW);
             EquData ed;
             ed.prefit = obsMinusClk - tropoCorr - rho0;
             ed.varCoeffData[dx] = los[0]; ed.varCoeffData[dy] = los[1]; ed.varCoeffData[dz] = los[2];
@@ -97,18 +89,16 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
 Eigen::Vector3d PPPKinematic::predictPosition(const double dt, const CommonTime &epoch) const {
     (void) dt;
     (void) epoch;
-    // 运动学恒为重锚定：虚分派已决定走此实现，mReanchor 运行期开关已删除，无需再判（与 LEO 一致）
     if (!mEkfInit || mReanchorEveryEpoch) {
         const Eigen::Vector3d post = mEkfInit ? currentEstimatedPosition() : Eigen::Vector3d::Zero();
         const Eigen::Vector3d seed = isSaneECEF(post)
                                   ? post
-                                  : (isSaneECEF(mRefPos)
-                                         ? mRefPos
-                                         : (mCurObs ? mCurObs->antennaPosition : Eigen::Vector3d::Zero()));
+                                  : isSaneECEF(mRefPos)
+                                        ? mRefPos
+                                        : mCurObs ? mCurObs->antennaPosition : Eigen::Vector3d::Zero();
         int n = 0;
         double rms = 1.0e9;
         const Eigen::Vector3d xc = reanchorSPP(seed, &n, &rms);
-        // 重锚定质量太差则退回 seed
         return n < 4 || rms > mConfig.sppResidualThr ? seed : xc;
     }
     return currentEstimatedPosition();
@@ -116,14 +106,7 @@ Eigen::Vector3d PPPKinematic::predictPosition(const double dt, const CommonTime 
 
 bool PPPKinematic::processEpoch(ObsData &obs) {
     try {
-    const bool ok = PPPStatic::processEpoch(obs);
-    if (!ok) return false;
-    // 注：曾在此加「间隙后把 EKF 位置状态拉回 SPP 锚点」的 #008 修复，经核对为无效改动：
-    // PPPStatic::processEpoch 第 831 行每历元都执行 ekf.setBootstrapPosition(xyzEst, 0.0)，
-    // 位置先验均值本就被强制拉到本历元 SPP 线性化点，不存在"状态沿用间隙前漂移值"。
-    // 间隙后 10–18m 瞬态的真因是 SPP 锚点自身精度（码观测+卫星少）+ 模糊度重置，
-    // 只能靠 #309 RTS 反向平滑或更好的间隙预测解决。
-    // 运动学恒为重锚定（虚分派已决定），mReanchor 运行期开关已删除，此块为 kinematic 专属逻辑
+    if (!PPPStatic::processEpoch(obs)) return false;
     bool diverged = false;
         if (mReanchorPos.squaredNorm() > 1e12 && result.xyz.squaredNorm() > 1e12) {
             if ((result.xyz - mReanchorPos).norm() > mDivergeJumpThresh) {

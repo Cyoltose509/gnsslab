@@ -1,10 +1,9 @@
 #pragma once
-#include <array>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "core/InsMath.h"
+#include "InsMath.h"
 
 
 struct CalibReport {
@@ -59,7 +58,7 @@ public:
         bool isStatic = false;
         Pos pos = XUP;
         Rot rot = XFWD;
-        size_t i0 = 0, i1 = 0;
+        std::size_t i0 = 0, i1 = 0;
     };
 
     static const char *posLabel(const Pos p) {

@@ -21,7 +21,7 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
         if (gfThres > 0.0 && gfLbuf.size() >= 6) {
             std::vector<char> slip(gfLbuf.size(), 0), artifact(gfLbuf.size(), 0);
             detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact, gfSlipMult);
-            for (size_t k = 0; k < slip.size(); ++k) {
+            for (std::size_t k = 0; k < slip.size(); ++k) {
                 if (slip[k]) gfSlipSet.insert(static_cast<int>(k));
                 if (artifact[k]) gfArtifactSet.insert(static_cast<int>(k));
             }
@@ -32,6 +32,11 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
     }
     if (lam1 <= 0 || lam2 <= 0) return Verdict::None;
 
+    // 物理上不可能的 MW 偏差阈值(米)：真实周跳跳变通常 <100m（单周跳≈0.86m），
+    // 而相位 datum 异常/数据毛刺会产生 1e7~1e8 m 的野值 MW。超过此阈值判为 Outlier
+    // （重置统计但不报周跳、不重置模糊度），避免把毛刺误判为周跳摧毁解。
+    static constexpr double kMwOutlierM = 1000.0;
+
     const double mw = fc.MW_meter(C1, C2, L1, L2, osbP1, osbP2, osbL1, osbL2); // MW (米)
 
     const double gfL = fc.GF_phase(L1, L2); // = L2 - L1 (米)
@@ -41,10 +46,20 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
     gfPbuf.push_back(gfP);
     gfObuf.push_back(1);
 
+    // 物理合理性闸门：MW 组合值正常为 O(1 m)；相位/码 datum 不匹配或数据毛刺会
+    // 产生 1e6~1e8 m 的野值，远超真实周跳(<100 m，单周跳≈0.86 m)。此类样本直接判为
+    // Outlier：重置 MW 滚动统计(避免被野值污染)，且不报周跳、不重置模糊度。
+    // GF 组合(L2-L1)抵消公共 datum，对 datum 不匹配稳健，已在上方正常缓冲，不受影响。
+    if (std::fabs(mw) > kMwOutlierM) {
+        mwMean = 0; mwVar = 0; mwCnt = 0;
+        pendActive = false;
+        return Verdict::Outlier;
+    }
+
     if (gfThres > 0.0 && gfLbuf.size() >= 6) {
         std::vector<char> slip(gfLbuf.size(), 0), artifact(gfLbuf.size(), 0);
         detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact, gfSlipMult);
-        for (size_t k = 0; k < slip.size(); ++k) {
+        for (std::size_t k = 0; k < slip.size(); ++k) {
             if (slip[k]) gfSlipSet.insert(static_cast<int>(k));
             if (artifact[k]) gfArtifactSet.insert(static_cast<int>(k));
         }
@@ -58,6 +73,12 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
         const double meanK = (mwCntB * mwMeanB + pendMw) / (mwCntB + 1.0);
         const double varK  = (mwCntB * mwVarB + pendDev * pendDev) / (mwCntB + 1.0);
         const double devNext = mw - meanK;
+        // 毛刺保护：与待定值的偏差远超物理可能 → 视为数据毛刺，取消待定并判 Outlier（不报周跳）
+        if (std::fabs(devNext) > kMwOutlierM) {
+            pendActive = false;
+            mLastMwSlip = false;
+            return Verdict::Outlier;
+        }
         const bool slip = varK > 0.0 && std::fabs(devNext) >= 4.0 * std::sqrt(varK)
                          && std::fabs(mw - pendMw) <= 1.0;
         if (slip) {
@@ -73,6 +94,12 @@ CycleSlip::Verdict CycleSlip::feed(const double L1, const double L2, const doubl
 
     {
         if (const double dev = mw - mwMean; mwCnt >= 5 && mwVar > 0.0 && std::fabs(dev) >= 4.0 * std::sqrt(mwVar)) {
+            // 毛刺保护：偏离均值远超物理可能 → 视为数据毛刺，取消待定并判 Outlier（不报周跳）
+            if (std::fabs(dev) > kMwOutlierM) {
+                pendActive = false;
+                mLastMwSlip = false;
+                return Verdict::Outlier;
+            }
             pendActive = true;
             pendMw = mw;
             pendDev = dev;

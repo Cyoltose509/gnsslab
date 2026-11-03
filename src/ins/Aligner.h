@@ -1,15 +1,8 @@
 #pragma once
 #include <vector>
-#include "core/CoordConvert.h"
-#include "core/InsMath.h"
-#include "core/InsStruct.h"
-
-
-
-
-
-
-
+#include "CoordConvert.h"
+#include "InsMath.h"
+#include "InsStruct.h"
 
 struct AlignQuality {
     Eigen::Vector3d axisX = Eigen::Vector3d::UnitX();
@@ -44,16 +37,16 @@ class Aligner {
 public:
 
     static Attitude solve(const ImuLog &log,
-                          size_t begin, size_t end,
+                          std::size_t begin, std::size_t end,
                           const SiteParams &sp);
 
-    static AttQuat solveQuat(const ImuLog &log,
-                             size_t begin, size_t end,
+    static ATTQuat solveQuat(const ImuLog &log,
+                             std::size_t begin, std::size_t end,
                              const SiteParams &sp);
 
 
     static AlignQuality diagnose(const ImuLog &log,
-                                 size_t begin, size_t end,
+                                 std::size_t begin, std::size_t end,
                                  const SiteParams &sp,
                                  const ImuScale &sen = {});
 
@@ -71,7 +64,7 @@ public:
         SiteParams sp{};
         Eigen::Vector3d acc = Eigen::Vector3d::Zero();
         Eigen::Vector3d gyr = Eigen::Vector3d::Zero();
-        size_t count = 0;
+        std::size_t count = 0;
 
         void init(int window, const SiteParams &site);
 

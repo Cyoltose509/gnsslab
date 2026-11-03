@@ -13,45 +13,65 @@ set(LIB_SOURCES
         time/TimeStruct.h
         core/CoordConvert.h
         core/CoordConvert.cpp
-        io/OEM7Reader.h
-        io/OEM7Reader.cpp
-        io/AsciiLogReader.h
-        io/AsciiLogReader.cpp
+        core/Troposphere.h
+        core/Troposphere.cpp
+        io/Observer.h
+        io/novatel/LogReader.h
+        io/novatel/LogReader.cpp
+        io/novatel/BinaryReader.h
+        io/novatel/BinaryReader.cpp
+        io/novatel/AsciiReader.h
+        io/novatel/AsciiReader.cpp
         core/InsStruct.h
         core/InsMath.h
         ins/Aligner.h
         ins/Aligner.cpp
         ins/ImuCalibrator.h
         ins/ImuCalibrator.cpp
-        io/OEM7SocketReader.h
-        io/OEM7SocketReader.cpp
-        io/SocketClient.h
-        io/SocketClient.cpp
-        io/RinexObsReader.h
-        io/RinexObsReader.cpp
-        io/RinexNavStore.h
-        io/RinexNavStore.cpp
-        io/Sp3OrbitReader.h
-        io/Sp3OrbitReader.cpp
-        io/ClkReader.h
-        io/ClkReader.cpp
-        io/ErpReader.h
-        io/ErpReader.cpp
-        io/TroReader.h
-        io/TroReader.cpp
-        io/IonexReader.h
-        io/IonexReader.cpp
-        io/OsbBias.h
-        io/OsbBias.cpp
-        io/AntxReader.h
-        io/AntxReader.cpp
+        io/novatel/SocketReader.h
+        io/novatel/SocketReader.cpp
+        client/SocketClient.h
+        client/SocketClient.cpp
+        io/rinex/RINEXObsReader.h
+        io/rinex/RINEXObsReader.cpp
+        io/rinex/RINEX2ObsReader.cpp
+        io/rinex/RINEX3ObsReader.cpp
+        io/rinex/RINEXNavStore.h
+        io/rinex/RINEXNavStore.cpp
+        io/product/SP3OrbitReader.h
+        io/product/SP3OrbitReader.cpp
+        io/product/CLKReader.h
+        io/product/CLKReader.cpp
+        io/product/ERPReader.h
+        io/product/ERPReader.cpp
+        io/product/TROReader.h
+        io/product/TROReader.cpp
+        io/product/METReader.h
+        io/product/METReader.cpp
+        io/product/ATTReader.h
+        io/product/ATTReader.cpp
+        io/product/VMF3Reader.h
+        io/product/VMF3Reader.cpp
+        io/product/GPT3Reader.h
+        io/product/GPT3Reader.cpp
+        io/product/IONEXReader.h
+        io/product/IONEXReader.cpp
+        io/product/OSBBias.h
+        io/product/OSBBias.cpp
+        io/product/ATXReader.h
+        io/product/ATXReader.cpp
         core/FreqCombo.h
         core/FreqCombo.cpp
         core/CycleSlip.h
         core/CycleSlip.cpp
         solver/SolverOptions.h
+        solver/DualPair.h
+        solver/DualPair.cpp
+        solver/TropoGrid.h
         solver/SPP.h
         solver/SPP.cpp
+        solver/TropoSite.h
+        solver/TropoSite.cpp
         solver/PPPStatic.h
         solver/PPPStatic.cpp
         solver/PPPKinematic.h
@@ -71,19 +91,23 @@ set(LIB_SOURCES
         qc/QCProcessor.h
         qc/QCProcessor.cpp
         util/StringUtils.h
+        util/StringUtils.cpp
         util/Exception.h
         util/MathUtils.h
         util/MathUtils.cpp
         util/Log.h
         util/Log.cpp
+        util/CSV.h
+        util/CSV.cpp
 )
 
 add_library(gnss STATIC ${LIB_SOURCES})
 
+target_compile_definitions(gnss PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 set_source_files_properties(core/CycleSlip.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 set_source_files_properties(solver/PPPStatic.cpp PROPERTIES COMPILE_FLAGS /bigobj)
-# BDCSVD 实例化后节数超 obj 上限（与上面几个同样原因），单独给 /bigobj
 set_source_files_properties(util/MathUtils.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 
 target_include_directories(gnss PUBLIC
@@ -91,6 +115,10 @@ target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/core
         ${CMAKE_CURRENT_SOURCE_DIR}/time
         ${CMAKE_CURRENT_SOURCE_DIR}/io
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/novatel
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/rinex
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/product
+        ${CMAKE_CURRENT_SOURCE_DIR}/client
         ${CMAKE_CURRENT_SOURCE_DIR}/solver
         ${CMAKE_CURRENT_SOURCE_DIR}/qc
         ${CMAKE_CURRENT_SOURCE_DIR}/util

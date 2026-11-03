@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PPPKinematic.h"
-#include "Sp3OrbitReader.h"
+#include "SP3OrbitReader.h"
 #include <cstdlib>
 #include <Eigen/Eigen>
 
@@ -49,7 +49,7 @@ protected:
 private:
     Eigen::Vector3d mLeoAntOffset = Eigen::Vector3d::Zero(); // 机体杠杆臂
     bool mHasAux = false;
-    Sp3OrbitReader mRefRdr; // 参考轨道
+    SP3OrbitReader mRefRdr; // 参考轨道
     SatID mRefSat; // 参考卫星
     bool mHasRef = false; // 是否加载了参考轨道
 

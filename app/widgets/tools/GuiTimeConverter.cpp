@@ -38,13 +38,13 @@ namespace Tools::TimeConverter {
             const CivilTime src(s_Civil[source][0], s_Civil[source][1], s_Civil[source][2],
                                 s_Civil[source][3], s_Civil[source][4], s_Civil[source][5],
                                 SYS_TYPES[source]);
-            const CommonTime base = CivilTime2CommonTime(src);
+            const CommonTime base = Time::CivilToCommon(src);
 
             for (int i = 0; i < SYS_COUNT; i++) {
                 if (i == source) continue;
                 CommonTime target = base;
-                convertTimeSystem(target, SYS_TYPES[i]);
-                const CivilTime civ = CommonTime2CivilTime(target);
+                Time::convertSystem(target, SYS_TYPES[i]);
+                const CivilTime civ = Time::CommonToCivil(target);
                 s_Civil[i][0] = civ.year;
                 s_Civil[i][1] = civ.month;
                 s_Civil[i][2] = civ.day;
@@ -152,13 +152,12 @@ namespace Tools::TimeConverter {
             const CivilTime utcCiv(s_Civil[0][0], s_Civil[0][1], s_Civil[0][2],
                                    s_Civil[0][3], s_Civil[0][4], s_Civil[0][5],
                                    TimeSystem::UTC);
-            const CommonTime utc = CivilTime2CommonTime(utcCiv);
+            const CommonTime utc = Time::CivilToCommon(utcCiv);
             CommonTime gps = utc;
-            convertTimeSystem(gps, TimeSystem::GPS);
+            Time::convertSystem(gps, TimeSystem::GPS);
 
-            const double leap = getLeapSeconds(gps);
-            MJD mjd;
-            CommonTime2MJD(gps, mjd);
+            const double leap = Time::getLeapSeconds(gps);
+            const MJD mjd = Time::CommonToMJD(gps);
             ImGui::Text("跳秒: %.0f    MJD (GPS): %.6f", leap, static_cast<double>(mjd.mjd));
         } catch (...) {
         }

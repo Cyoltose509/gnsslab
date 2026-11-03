@@ -3,10 +3,6 @@
 #include <string>
 #include <iostream>
 #include <string_view>
-
-
-using namespace std;
-/// Baarda w 检验阈值 (α=0.001)
 static constexpr double W_THRESHOLD = 3.29;
 ///  PI
 constexpr double PI = 3.141592653589793238462643383280;
@@ -159,7 +155,7 @@ inline double getGlonassFreq(const char band, const int channel) {
 
 constexpr double getWavelength(const char sys, const int &n) {
     if (n == 0) {
-        std::cerr << "getWavelength():frequency no must be positive integer!" << endl;
+        std::cerr << "getWavelength():frequency no must be positive integer!" << std::endl;
         exit(-1);
     }
 
@@ -181,7 +177,7 @@ constexpr double getWavelength(const char sys, const int &n) {
         if (n == 6) return L6_WAVELENGTH_GAL;
         if (n == 8) return L8_WAVELENGTH_GAL;
     } else {
-        std::cerr << "don't support system except GPS, Beidou and Galileo" << endl;
+        std::cerr << "don't support system except GPS, Beidou and Galileo" << std::endl;
     }
 
     return 0.0;
@@ -206,7 +202,7 @@ constexpr double getFreq(const char sys, const int &n) {
         if (n == 6) return L6_FREQ_GAL;
         if (n == 8) return L8_FREQ_GAL;
     } else {
-        std::cerr << "don't support system except GPS, Beidou and Galileo" << endl;
+        std::cerr << "don't support system except GPS, Beidou and Galileo" << std::endl;
     }
     return 0.0;
 }
@@ -429,6 +425,6 @@ constexpr void iau1980Nutation(const double t, const double f[5], double &dpsi, 
         dpsi += (i[6] + i[7] * t) * std::sin(ang);
         deps += (i[8] + i[9] * t) * std::cos(ang);
     }
-    dpsi *= 1e-4 * ARCSEC_TO_RAD; // 0.1 mas -> rad
+    dpsi *= 1e-4 * ARCSEC_TO_RAD;
     deps *= 1e-4 * ARCSEC_TO_RAD;
 }

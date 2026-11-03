@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "CliCommon.h"
-#include "SolverTask.h"
-#include "SolveDriver.h"
+#include "solvers/common/Core.h"
+#include "solvers/common/Driver.h"
 #include "core/IniFile.h"
 
 static std::set<char> parseSystems(const std::string &s) {
@@ -17,8 +17,8 @@ static std::set<char> parseSystems(const std::string &s) {
     return out;
 }
 
-SolverOptions loadConfig(const AppConfig::IniFile &ini, const GnssTask::SolverMode mode) {
-    SolverOptions c = GnssTask::defaultSolverOptions(mode);
+SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
+    SolverOptions c = Solvers::defaultSolverOptions(mode);
 
     c.source = ini.get("input", "source", c.source);
     c.obsPath = ini.get("input", "obs", "");
@@ -39,6 +39,10 @@ SolverOptions loadConfig(const AppConfig::IniFile &ini, const GnssTask::SolverMo
     c.erp = ini.get("input", "erp", "");
     c.tro = ini.get("input", "tro", "");
     c.ionex = ini.get("input", "ionex", "");
+    c.vmf = ini.get("input", "vmf", "");   // 分号分隔的一串 VMF3 时次文件
+    c.gpt3 = ini.get("input", "gpt3", "");
+    c.met = ini.get("input", "met", "");
+    c.att = ini.get("input", "att", "");
 
     c.gnssSp3 = ini.get("input", "gnss_sp3", "");
     c.gnssClk = ini.get("input", "gnss_clk", "");
@@ -75,6 +79,7 @@ SolverOptions loadConfig(const AppConfig::IniFile &ini, const GnssTask::SolverMo
     c.rtk.fullCovariance = ini.getInt("solver", "full_covariance", c.rtk.fullCovariance ? 1 : 0) != 0;
     c.spp.applySolidTide = ini.getInt("solver", "solid_tide", c.spp.applySolidTide ? 1 : 0) != 0;
     c.spp.applyWindup = ini.getInt("solver", "windup", c.spp.applyWindup ? 1 : 0) != 0;
+    c.spp.useHealth = ini.getInt("solver", "use_health", c.spp.useHealth ? 1 : 0) != 0;
     c.kinematic = ini.getInt("solver", "kinematic", c.kinematic);
     c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
     c.staticPosNoise = ini.getD("solver", "static_pos_noise", c.staticPosNoise);
@@ -84,8 +89,8 @@ SolverOptions loadConfig(const AppConfig::IniFile &ini, const GnssTask::SolverMo
     if (ini.getInt("solver", "use_tro_ztd", 1) == 0) c.spp.troZtdSigma = 0.0;
     c.spp.useTroGrad = ini.getInt("solver", "use_tro_grad", c.spp.useTroGrad ? 1 : 0) != 0;
 
-    c.spp.tropoMap = Troposphere::tropoMapFromName(
-        ini.get("solver", "tropo_map", Troposphere::tropoMapName(c.spp.tropoMap)));
+    c.spp.tropoMap = Troposphere::fromKey(
+        ini.get("solver", "tropo_map", Troposphere::keyOf(c.spp.tropoMap)));
 
     c.spp.ztdPriorSigma = ini.getD("solver", "ztd_prior", c.spp.ztdPriorSigma);
     c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
@@ -132,29 +137,55 @@ SolverOptions loadConfig(const AppConfig::IniFile &ini, const GnssTask::SolverMo
 }
 
 namespace Cli {
-    std::string defaultCsvName(const GnssTask::SolverMode m) {
+    Observer::Source *openObsSource(const std::string &path, const char *tag,
+                                    Observer::RINEXFile &rinex,
+                                    Observer::NovAtelFile &oem) {
+        if (path.empty()) {
+            std::cerr << tag << " 需要观测文件 [input] obs\n";
+            return nullptr;
+        }
+        const auto fmt = Observer::classifyObsPath(path);
+        if (fmt == Observer::Format::NovAtel) {
+            if (!oem.open(path)) {
+                std::cerr << tag << " 无法打开 NovAtel 日志: " << path << "\n";
+                return nullptr;
+            }
+            return &oem;
+        }
+        if (Observer::isRINEX(fmt)) {
+            if (!rinex.open(path)) {
+                std::cerr << tag << " 无法打开 RINEX: " << path << "\n";
+                return nullptr;
+            }
+            return &rinex;
+        }
+        std::cerr << tag << " 无法识别观测文件格式: " << path << "\n";
+        return nullptr;
+    }
+
+    std::string defaultCSVName(const Solvers::Mode m) {
         switch (m) {
-            case GnssTask::SolverMode::Leo: return "gnss_leo.csv";
-            case GnssTask::SolverMode::Rtk: return "gnss_rtk.csv";
-            case GnssTask::SolverMode::Ppp: return "gnss_ppp.csv";
+            case Solvers::Mode::LEO: return "gnss_leo.csv";
+            case Solvers::Mode::RTK: return "gnss_rtk.csv";
+            case Solvers::Mode::PPP: return "gnss_ppp.csv";
             default: return "gnss_spp.csv";
         }
     }
 
-    void dumpCsv(const std::vector<GnssTask::EpochData> &epochs,
-                 const GnssTask::SolverMode mode, const Eigen::Vector3d &ref,
+    void dumpCSV(const std::vector<Solvers::Epoch> &epochs,
+                 const Solvers::Mode mode, const Eigen::Vector3d &ref,
                  const bool hasRefOrbit, const SolverOptions &cfg) {
-        const std::string path = cfg.csvPath.empty() ? defaultCsvName(mode) : cfg.csvPath;
+        const std::string path = cfg.csvPath.empty() ? defaultCSVName(mode) : cfg.csvPath;
         std::ofstream out(path);
         if (!out) {
             std::cerr << "无法打开输出文件: " << path << "\n";
             return;
         }
-        GnssTask::exportCsv(out, epochs, mode, ref, hasRefOrbit);
+        Solvers::exportCSV(out, epochs, mode, ref, hasRefOrbit);
         std::cout << "已写出 " << epochs.size() << " 历元 -> " << path << "\n";
     }
 
-    void dumpEmpty(const GnssTask::SolverMode mode, const SolverOptions &cfg) {
-        dumpCsv({}, mode, Eigen::Vector3d(0, 0, 0), false, cfg);
+    void dumpEmpty(const Solvers::Mode mode, const SolverOptions &cfg) {
+        dumpCSV({}, mode, Eigen::Vector3d(0, 0, 0), false, cfg);
     }
 }

@@ -1,5 +1,6 @@
 #include "GuiLsqSolver.h"
 #include "imgui.h"
+#include "ui/GuiColors.h"
 #include "SolverLSQ.h"
 #include <vector>
 #include <string>
@@ -97,7 +98,7 @@ namespace Tools::LsqSolver {
             std::vector<Variable> varList;
             varList.assign(sys.varSet.begin(), sys.varSet.end());
 
-            if (varList.size() != static_cast<size_t>(s_NumUnk)) {
+            if (varList.size() != static_cast<std::size_t>(s_NumUnk)) {
                 s_Error = "内部错误: 变量生成失败";
                 return;
             }
@@ -241,7 +242,7 @@ namespace Tools::LsqSolver {
         ImGui::SeparatorText("解算结果");
 
         if (!s_Error.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "状态: %s", s_Error.c_str());
+            ImGui::TextColored(UI::kColFail, "状态: %s", s_Error.c_str());
         } else {
             ImGui::Text("单位权中误差 (Sigma0): %.6f", s_Sigma0);
             if (ImGui::BeginTabBar("##ResultTabs")) {

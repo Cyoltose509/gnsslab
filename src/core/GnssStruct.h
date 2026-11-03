@@ -32,7 +32,7 @@ struct SatID {
     SatID(const char sys, const int satID, const int channel) : system(sys), id(satID), chan(channel) {
     }
 
-    explicit SatID(const string &substr) {
+    explicit SatID(const std::string &substr) {
         if (substr.length() != 3)
             throw StringException("SatID 由 3 个字符组成（系统 + 两位 PRN），收到 \"" + substr + "\"");
         system = substr[0];
@@ -63,23 +63,23 @@ struct SatID {
 
 typedef std::set<SatID> SatIDSet;
 
-inline ostream &operator<<(ostream &os, const SatID &sat_id) {
+inline std::ostream &operator<<(std::ostream &os, const SatID &sat_id) {
     os << sat_id.system << std::setw(2) << std::setfill('0') << sat_id.id;
     return os;
 }
 
 
-struct RinexHeader {
-    string station;
+struct RINEXHeader {
+    std::string station;
     double version;
-    string antType;
+    std::string antType;
     XYZ antennaPosition;
     Eigen::Vector3d antDeltaENU{0, 0, 0};
-    std::map<char, std::vector<string> > mapObsTypes;
+    std::map<char, std::vector<std::string> > mapObsTypes;
 
     std::map<std::string, double> phaseShift;
 
-    RinexHeader() : version(0) {
+    RINEXHeader() : version(0) {
     }
 };
 
@@ -108,9 +108,9 @@ inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap
 typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
 
 inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satTypeValueMap) {
-    for (const auto &[sat, map]: satTypeValueMap) {
+    for (const auto &[sat, tv]: satTypeValueMap) {
         os << "Satellite ID: " << sat << "\n";
-        os << map;
+        os << tv;
     }
     return os;
 }
@@ -119,9 +119,9 @@ struct ObsData {
 
     Eigen::Vector3d antennaPosition{0, 0, 0};
 
-    string antType;
+    std::string antType;
 
-    string station;
+    std::string station;
 
     CommonTime epoch;
 
@@ -130,7 +130,7 @@ struct ObsData {
 };
 
 inline std::ostream &operator<<(std::ostream &os, const ObsData &data) {
-    os << "Epoch: " << CommonTime2CivilTime(data.epoch) << "\n";
+    os << "Epoch: " << Time::CommonToCivil(data.epoch) << "\n";
 
     if (!data.satTypeValueData.empty()) {
         os << "Satellite Data:\n";
@@ -447,7 +447,7 @@ inline void computePositionDops(Result &result, const Eigen::Matrix3d &Qpos, dou
     result.pdop = std::sqrt(Qpos(0, 0) + Qpos(1, 1) + Qpos(2, 2));
     result.gdop = std::sqrt(result.pdop * result.pdop + clockVar);
     result.tdop = clockVar > 0.0 ? std::sqrt(clockVar) : 0.0;
-    const Eigen::Matrix3d R = ECEFToENUDCM(blh[0], blh[1]);
+    const Eigen::Matrix3d R = Coord::ECEFToENUDCM(blh[0], blh[1]);
     const Eigen::Matrix3d C_enu = R * Qpos * R.transpose();
     result.hdop = std::sqrt(C_enu(0, 0) + C_enu(1, 1));
     result.vdop = std::sqrt(C_enu(2, 2));

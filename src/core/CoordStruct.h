@@ -2,9 +2,6 @@
 
 #include <Eigen/Eigen>
 #include "Const.h"
-
-using namespace std;
-
 struct FrameInfo {
     double a; // 长半轴
     double f; // 扁率

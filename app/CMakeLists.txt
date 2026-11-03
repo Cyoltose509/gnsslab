@@ -31,9 +31,10 @@ add_executable(GnssLab WIN32
     main.cpp
     core/Application.cpp
     core/PathMemory.cpp
+    core/Products.cpp
+    io/ProductPicker.cpp
+    io/ObsSource.cpp
     core/IniFile.cpp
-    core/Csv.cpp
-    core/DualObsPairing.cpp
     ui/Gui.cpp
         widgets/tools/GuiTimeConverter.cpp
         widgets/tools/GuiCoordConverter.cpp
@@ -42,30 +43,44 @@ add_executable(GnssLab WIN32
         widgets/tools/GuiInsCommon.cpp
         widgets/tools/GuiInsCalib.cpp
         widgets/tools/GuiInsAlign.cpp
-        widgets/solvers/GuiSolverPanel.cpp
-        widgets/solvers/GuiSppProcessor.cpp
-        widgets/solvers/SolverTask.cpp
-        widgets/solvers/GuiPppProcessor.cpp
-        widgets/solvers/GuiLeoProcessor.cpp
-        widgets/solvers/GuiRtkProcessor.cpp
-        widgets/solvers/GuiCharts.cpp
-        widgets/solvers/GuiHelpers.cpp
-        widgets/solvers/GuiRealtime.cpp
-        widgets/solvers/QualityControl.cpp
+        solvers/view/GuiSolverPanel.cpp
+        solvers/common/Task.cpp
+        solvers/common/Core.cpp
+        solvers/common/Epoch.cpp
+        solvers/common/Session.cpp
+        solvers/GuiSPPProcessor.cpp
+        solvers/GuiPPPProcessor.cpp
+        solvers/GuiLEOProcessor.cpp
+        solvers/GuiRTKProcessor.cpp
+        solvers/view/GuiCharts.cpp
+        solvers/view/GuiPosTab.cpp
+        solvers/view/GuiHelpers.cpp
+        solvers/view/GuiProductSection.cpp
+        solvers/view/GuiParamPage.cpp
+        solvers/spp/Realtime.cpp
+        solvers/rtk/Realtime.cpp
+        solvers/rtk/Pipeline.cpp
+        solvers/view/QualityControl.cpp
         widgets/tools/GuiFtpDownload.cpp
+        client/RemoteClient.cpp
         download/ProductMeta.cpp
         download/DownloadStore.cpp
-        download/FtpClient.cpp
-    ${GNSSLAB_RESOURCES}
+        download/ProductCatalog.cpp
+        download/ProductStore.cpp
+        download/AutoSync.cpp
+        ${GNSSLAB_RESOURCES}
 )
+
+target_compile_definitions(GnssLab PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 target_include_directories(GnssLab PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/core   # SolveDriver.h（CLI 与 GUI 共享编排层）所在地
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/client
     ${CMAKE_CURRENT_BINARY_DIR}
     ${PROJECT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/widgets/tools
-    ${CMAKE_CURRENT_SOURCE_DIR}/widgets/solvers
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers
     ${PROJECT_SOURCE_DIR}/thirdparty/curl/include
     ${PROJECT_SOURCE_DIR}/thirdparty/zlib
     ${PROJECT_BINARY_DIR}/thirdparty/zlib
@@ -99,10 +114,6 @@ set(CLI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cli)
 set(CLI_COMMON
     ${CMAKE_CURRENT_SOURCE_DIR}/core/IniFile.h
     ${CMAKE_CURRENT_SOURCE_DIR}/core/IniFile.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/Csv.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/Csv.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/DualObsPairing.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/DualObsPairing.cpp
     ${CLI_DIR}/CliCommon.h
     ${CLI_DIR}/CliCommon.cpp
 )
@@ -111,9 +122,7 @@ set(CLI_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CLI_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/widgets/solvers
-    # CLI 头文件链会经 widgets/solvers 摸到 QualityControl.h（含 imgui.h），
-    # 只需 include 路径可解析头文件即可；模板不实例化则不引入任何 imgui 符号。
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers
     ${PROJECT_SOURCE_DIR}/thirdparty/imgui
     ${PROJECT_SOURCE_DIR}/thirdparty/imgui/backends
     ${PROJECT_SOURCE_DIR}/thirdparty/implot
@@ -124,6 +133,12 @@ set(CLI_INIS spp ppp rtk leo)
 
 foreach(_cli spp ppp rtk leo)
     add_executable(${_cli}_cli ${CLI_DIR}/${_cli}_cli.cpp ${CLI_COMMON})
+    if(_cli STREQUAL rtk)
+        target_sources(${_cli}_cli PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/ObsSource.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Pipeline.cpp)
+    endif()
+    target_compile_definitions(${_cli}_cli PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_include_directories(${_cli}_cli PRIVATE ${CLI_INCLUDES})
     target_link_libraries(${_cli}_cli PRIVATE gnss ws2_32)
     target_compile_options(${_cli}_cli PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)

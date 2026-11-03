@@ -48,7 +48,7 @@ namespace Tools::CoordConverter {
 
     static void SyncXYZToBLH() {
         try {
-            const BLH blh = XYZToBLH({s_X, s_Y, s_Z}, CurFrame());
+            const BLH blh = Coord::XYZToBLH({s_X, s_Y, s_Z}, CurFrame());
             s_B_deg = blh.B() * RAD_TO_DEG;
             s_L_deg = blh.L() * RAD_TO_DEG;
             s_H = blh.H();
@@ -58,7 +58,7 @@ namespace Tools::CoordConverter {
 
     static void SyncBLHToXYZ() {
         try {
-            XYZ xyz = BLHToXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
+            XYZ xyz = Coord::BLHToXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
             s_X = xyz.X();
             s_Y = xyz.Y();
             s_Z = xyz.Z();
@@ -68,8 +68,8 @@ namespace Tools::CoordConverter {
 
     static void SyncXYZToENU() {
         try {
-            const XYZ refXYZ = BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
-            const ENU enu = XYZToENU({s_TgtX, s_TgtY, s_TgtZ}, refXYZ, CurFrame());
+            const XYZ refXYZ = Coord::BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
+            const ENU enu = Coord::XYZToENU({s_TgtX, s_TgtY, s_TgtZ}, refXYZ, CurFrame());
             s_E = enu.E();
             s_N = enu.N();
             s_U = enu.U();
@@ -79,8 +79,8 @@ namespace Tools::CoordConverter {
 
     static void SyncENUToXYZ() {
         try {
-            const XYZ refXYZ = BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
-            const XYZ xyz = ENUToXYZ({s_E, s_N, s_U}, refXYZ, CurFrame());
+            const XYZ refXYZ = Coord::BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
+            const XYZ xyz = Coord::ENUToXYZ({s_E, s_N, s_U}, refXYZ, CurFrame());
             s_TgtX = xyz.X();
             s_TgtY = xyz.Y();
             s_TgtZ = xyz.Z();

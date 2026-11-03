@@ -1,11 +1,8 @@
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 #include "core/PathMemory.h"
-#include "Log.h"
+#include "StringUtils.h"
 
 #include <algorithm>
-#include <cstdio>
 
 namespace AppConfig {
     PathMemory &PathMemory::instance() {
@@ -24,7 +21,7 @@ namespace AppConfig {
 
     namespace {
         bool isBlank(const std::string &s) {
-            return s.find_first_not_of(" \t\r\n") == std::string::npos;
+            return Str::strip(s).empty();
         }
     }
 
@@ -63,7 +60,7 @@ namespace AppConfig {
         const std::string s = get(key);
         if (s.empty()) return def;
         try {
-            size_t pos = 0;
+            std::size_t pos = 0;
             const double v = std::stod(s, &pos);
             if (pos != s.size()) return def;
             return v >= lo && v <= hi ? v : def;
@@ -76,7 +73,7 @@ namespace AppConfig {
         const std::string s = get(key);
         if (s.empty()) return def;
         try {
-            size_t pos = 0;
+            std::size_t pos = 0;
             const int v = std::stoi(s, &pos);
             if (pos != s.size()) return def;
             return v >= lo && v <= hi ? v : def;
@@ -86,9 +83,7 @@ namespace AppConfig {
     }
 
     void PathMemory::setNum(const std::string &key, const double v) const {
-        char b[32];
-        std::snprintf(b, sizeof(b), "%.12g", v);
-        set(key, b);
+        set(key, Str::fmtG(v)); // %.12g
     }
 
     void PathMemory::setInt(const std::string &key, const int v) const {

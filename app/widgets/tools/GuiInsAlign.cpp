@@ -1,10 +1,12 @@
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
-#include "GuiHelpers.h"
-#include "SolverTask.h"
-#include "io/AsciiLogReader.h"
-#include "io/OEM7Reader.h"
+#include "view/GuiHelpers.h"
+#include "view/GuiProductSection.h"
+#include "ui/FileDialog.h"
+#include "solvers/common/Core.h"
+#include "io/novatel/AsciiReader.h"
+#include "io/novatel/LogReader.h"
 #include "ins/Aligner.h"
 #include "core/InsMath.h"
 #include "Const.h"
@@ -25,7 +27,7 @@
 namespace Tools::InsPanel {
 
     StaticAlignTask::StaticAlignTask() {
-        mode = GnssTask::SolverMode::Ins;
+        mode = Solvers::Mode::INS;
         fileName = "静态解析粗对准";
     }
 
@@ -70,7 +72,7 @@ namespace Tools::InsPanel {
             sumGyr += Eigen::Vector3d(s.gx, s.gy, s.gz);
             sen.probeSample(s);
             ++count;
-            if (st.count < static_cast<size_t>(par.win)) return;
+            if (st.count < static_cast<std::size_t>(par.win)) return;
             seriesLocal.push_back(a);
             dec.push(a);
         };
@@ -83,7 +85,7 @@ namespace Tools::InsPanel {
                 const Eigen::Vector3d accm = sumAcc / static_cast<double>(count);
                 const Eigen::Vector3d gyrm = sumGyr / static_cast<double>(count);
                 const Eigen::Matrix3d C = alignDCM(-accm, gyrm, sp);
-                DCMToEuler(C, att.roll, att.pitch, att.yaw);
+                Coord::DCMToEuler(C, att.roll, att.pitch, att.yaw);
                 alignQ = Aligner::diagnoseMeans(accm, gyrm, sp, sen.currentScale());
                 alignQValid = true;
             }
@@ -121,7 +123,7 @@ namespace Tools::InsPanel {
             const Eigen::Vector3d acc = sumAcc / static_cast<double>(count);
             const Eigen::Vector3d gyr = sumGyr / static_cast<double>(count);
             const Eigen::Matrix3d C = alignDCM(-acc, gyr, sp);
-            DCMToEuler(C, a.roll, a.pitch, a.yaw);
+            Coord::DCMToEuler(C, a.roll, a.pitch, a.yaw);
             aq = Aligner::diagnoseMeans(acc, gyr, sp, sen.scale());
         }
         double ym, ysd, pm, psd, rm, rsd;
@@ -154,8 +156,8 @@ namespace Tools::InsPanel {
     void StaticAlignTask::renderConfigPanel() {
         renderInsConfig("静态解析粗对准配置###cfg_", *this, "开始对准",
                         [&] {
-                            Solvers::Helpers::fileRow("对准段日志", &alignPath, "ins_align", Solvers::Helpers::fIns,
-                                                      std::size(Solvers::Helpers::fIns), nullptr);
+                            Solvers::Helpers::fileRow("对准段日志", &alignPath, "ins_align", FileDialog::fIns,
+                                                      std::size(FileDialog::fIns), nullptr);
                         },
                         [&] {
                             renderInsParams(par);
@@ -360,7 +362,7 @@ namespace Tools::InsPanel {
         std::vector<double> pt;
         toElapsed(px, pt);
         const bool chartNew = chartDirty.exchange(false);
-        auto drawAtt = [&](const char *title, const std::vector<double> &y, const ImVec4 &col) {
+        auto drawATT = [&](const char *title, const std::vector<double> &y, const ImVec4 &col) {
             if (pt.empty()) {
                 ImGui::TextDisabled("（无数据）");
                 return;
@@ -374,9 +376,9 @@ namespace Tools::InsPanel {
                 ImPlot::EndPlot();
             }
         };
-        drawAtt("yaw 随时间", py, kColX);
-        drawAtt("pitch 随时间", pp, kColY);
-        drawAtt("roll 随时间", pr, kColZ);
+        drawATT("yaw 随时间", py, kColX);
+        drawATT("pitch 随时间", pp, kColY);
+        drawATT("roll 随时间", pr, kColZ);
 
         if (running) {
             if (ImGui::Button("停止")) stop = true;
@@ -389,11 +391,11 @@ namespace Tools::InsPanel {
     void StaticAlignTask::exportAlignSeries() {
         const auto s = snapshotSeries();
         if (s.empty()) return;
-        exportCsvDialog(*this, "align_series.csv", "align_series.csv", [&](Csv::Writer &w) {
+        exportCSVDialog(*this, "align_series.csv", "align_series.csv", [&](CSV::Writer &w) {
             w.row("tow", "yaw(deg)", "pitch(deg)", "roll(deg)");
             for (const auto &[tow, roll, pitch, yaw]: s)
-                w.row(Csv::fx(tow, 3), Csv::fx(yaw * RAD_TO_DEG, 6), Csv::fx(pitch * RAD_TO_DEG, 6),
-                      Csv::fx(roll * RAD_TO_DEG, 6));
+                w.row(CSV::fx(tow, 3), CSV::fx(yaw * RAD_TO_DEG, 6), CSV::fx(pitch * RAD_TO_DEG, 6),
+                      CSV::fx(roll * RAD_TO_DEG, 6));
         });
     }
 
@@ -431,31 +433,31 @@ namespace Tools::InsPanel {
         }
         const double ys = std::sqrt(yv / n), ps = std::sqrt(pv / n), rs = std::sqrt(rv / n);
 
-        exportCsvDialog(*this, "align_summary.csv", "align_summary.csv", [&](Csv::Writer &w) {
+        exportCSVDialog(*this, "align_summary.csv", "align_summary.csv", [&](CSV::Writer &w) {
             w.row("量", "yaw(deg)", "pitch(deg)", "roll(deg)");
-            w.row("整段均值", Csv::fx(a.yaw * RAD_TO_DEG, 4), Csv::fx(a.pitch * RAD_TO_DEG, 4),
-                  Csv::fx(a.roll * RAD_TO_DEG, 4));
-            w.row("每历元全段均值", Csv::fx(ya * RAD_TO_DEG, 4), Csv::fx(pa * RAD_TO_DEG, 4),
-                  Csv::fx(ra * RAD_TO_DEG, 4));
-            w.row("每历元全段标准差", Csv::fx(ys * RAD_TO_DEG, 4), Csv::fx(ps * RAD_TO_DEG, 4),
-                  Csv::fx(rs * RAD_TO_DEG, 4));
-            w.row("每历元稳态(后1/3)均值", Csv::fx(ym, 4), Csv::fx(pm, 4), Csv::fx(rm, 4));
+            w.row("整段均值", CSV::fx(a.yaw * RAD_TO_DEG, 4), CSV::fx(a.pitch * RAD_TO_DEG, 4),
+                  CSV::fx(a.roll * RAD_TO_DEG, 4));
+            w.row("每历元全段均值", CSV::fx(ya * RAD_TO_DEG, 4), CSV::fx(pa * RAD_TO_DEG, 4),
+                  CSV::fx(ra * RAD_TO_DEG, 4));
+            w.row("每历元全段标准差", CSV::fx(ys * RAD_TO_DEG, 4), CSV::fx(ps * RAD_TO_DEG, 4),
+                  CSV::fx(rs * RAD_TO_DEG, 4));
+            w.row("每历元稳态(后1/3)均值", CSV::fx(ym, 4), CSV::fx(pm, 4), CSV::fx(rm, 4));
 
             w.endRow();
             w.row("对准质量", "实测", "参考", "判定/偏差");
             const bool orthoOk = std::fabs(aq.dcmDet - 1.0) < 1e-9 && aq.dcmOrthoErr < 1e-9;
-            w.row("姿态矩阵 det(C)", Csv::fx(aq.dcmDet, 12), "+1", orthoOk ? "单位正交" : "非单位正交");
-            w.row("正交误差 max|C^T C-I|", Csv::sci(aq.dcmOrthoErr, 3), "0",
+            w.row("姿态矩阵 det(C)", CSV::fx(aq.dcmDet, 12), "+1", orthoOk ? "单位正交" : "非单位正交");
+            w.row("正交误差 max|C^T C-I|", CSV::sci(aq.dcmOrthoErr, 3), "0",
                   orthoOk ? "已正交化" : "未正交化");
-            w.row("ω 与 ω_ie^n 夹角 (deg)", Csv::fx(aq.earthRateErrDeg, 4), "0", "");
+            w.row("ω 与 ω_ie^n 夹角 (deg)", CSV::fx(aq.earthRateErrDeg, 4), "0", "");
             if (aq.hasScale) {
                 char ref1[64], dev1[64], ref2[64], dev2[64];
                 std::snprintf(ref1, sizeof ref1, "g = %.6f", aq.gravityRef);
                 std::snprintf(dev1, sizeof dev1, "%+.3f %%", 100.0 * (aq.accelNorm / aq.gravityRef - 1.0));
                 std::snprintf(ref2, sizeof ref2, "Ω = %.9f", aq.gyroRef);
                 std::snprintf(dev2, sizeof dev2, "%+.3f %%", 100.0 * (aq.gyroNorm / aq.gyroRef - 1.0));
-                w.row("|f| (m/s²)", Csv::fx(aq.accelNorm, 6), ref1, dev1);
-                w.row("|ω| (rad/s)", Csv::fx(aq.gyroNorm, 9), ref2, dev2);
+                w.row("|f| (m/s²)", CSV::fx(aq.accelNorm, 6), ref1, dev1);
+                w.row("|ω| (rad/s)", CSV::fx(aq.gyroNorm, 9), ref2, dev2);
             } else {
                 w.row("|f| (m/s²)", "-", "g", "-");
                 w.row("|ω| (rad/s)", "-", "Ω", "-");
@@ -464,7 +466,7 @@ namespace Tools::InsPanel {
                 char ref3[64], dev3[64];
                 std::snprintf(ref3, sizeof ref3, "φ = %.4f", par.latDeg);
                 std::snprintf(dev3, sizeof dev3, "%+.4f °", aq.latDerivedDeg - par.latDeg);
-                w.row("反解纬度 φ̂ (deg)", Csv::fx(aq.latDerivedDeg, 4), ref3, dev3);
+                w.row("反解纬度 φ̂ (deg)", CSV::fx(aq.latDerivedDeg, 4), ref3, dev3);
             } else {
                 w.row("反解纬度 φ̂ (deg)", "不可用", "φ", "重力矢量退化");
             }
@@ -475,15 +477,15 @@ namespace Tools::InsPanel {
     void StaticAlignTask::exportAlignPerSec() {
         const auto s = snapshotSeries();
         if (s.empty()) return;
-        exportCsvDialog(*this, "align_persec.csv", "align_persec.csv", [&](Csv::Writer &w) {
+        exportCSVDialog(*this, "align_persec.csv", "align_persec.csv", [&](CSV::Writer &w) {
             w.row("sec", "yaw(deg)", "pitch(deg)", "roll(deg)", "n");
             long long sec = 0;
             double sy = 0, sp = 0, sr = 0;
             int n = 0;
             auto flush = [&] {
                 if (n <= 0) return;
-                w.row(static_cast<long>(sec), Csv::fx(sy / n * RAD_TO_DEG, 6), Csv::fx(sp / n * RAD_TO_DEG, 6),
-                      Csv::fx(sr / n * RAD_TO_DEG, 6), n);
+                w.row(static_cast<long>(sec), CSV::fx(sy / n * RAD_TO_DEG, 6), CSV::fx(sp / n * RAD_TO_DEG, 6),
+                      CSV::fx(sr / n * RAD_TO_DEG, 6), n);
                 sy = sp = sr = 0;
                 n = 0;
             };

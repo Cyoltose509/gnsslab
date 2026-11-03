@@ -6,11 +6,10 @@
 #include <Eigen/Eigen>
 
 
-class Geodesy {
-public:
+namespace Geodesy {
 
-    static void sunMoonECEF(const CommonTime &t, Eigen::Vector3d &rsunEcef, Eigen::Vector3d &rmoonEcef, double &gmstOut) {
-        const JulianDate jd = CommonTime2JulianDate(t);
+    inline void sunMoonECEF(const CommonTime &t, Eigen::Vector3d &rsunEcef, Eigen::Vector3d &rmoonEcef, double &gmstOut) {
+        const JulianDate jd = Time::CommonToJulian(t);
         const double D = static_cast<double>(jd.jd) - 2451545.0;
         const double T = D / 36525.0;
         double f[5];
@@ -41,19 +40,22 @@ public:
         const Eigen::Vector3d moonEci(rm * cp * clm, rm * (cose * cp * slm - sine * sp), rm * (sine * cp * slm + cose * sp));
 
 
-        const Eigen::Matrix3d U = ECIToECEFDCM(t, gmstOut);
+        const Eigen::Matrix3d U = Coord::ECIToECEFDCM(t, gmstOut);
         rsunEcef = U * sunEci;
         rmoonEcef = U * moonEci;
     }
 
 
-    static Eigen::Vector3d solidTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t) {
+    // 前向声明：函数体见下方 tidePotential（定义晚于本函数，需前置声明）
+    inline void tidePotential(const double *eu, const double *rp, const double gm_p, const double *pos, double *dr);
+
+    inline Eigen::Vector3d solidTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t) {
         Eigen::Vector3d rsun, rmoon;
         double gmst;
         sunMoonECEF(t, rsun, rmoon, gmst);
-        auto blh = XYZToBLH(recvEcef, Frame::WGS84);
+        auto blh = Coord::XYZToBLH(recvEcef, Frame::WGS84);
         const double pos[2] = {blh[0], blh[1]};
-        Eigen::Matrix3d E = ECEFToENUDCM(blh[0], blh[1]);
+        Eigen::Matrix3d E = Coord::ECEFToENUDCM(blh[0], blh[1]);
         const Eigen::Vector3d eu = E.row(2).transpose();
         double dr1[3], dr2[3];
         tidePotential(eu.data(), rsun.data(), SUN_GM, pos, dr1);
@@ -70,30 +72,30 @@ public:
 
 
 
-    static double meridianRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
+    inline double meridianRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
         const double s = std::sin(B);
         const double w2 = 1.0 - frame.e2 * s * s;
         return frame.a * (1.0 - frame.e2) / (w2 * std::sqrt(w2));
     }
 
-    static double primeVerticalRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
+    inline double primeVerticalRadius(const double B, const FrameInfo &frame = Frame::WGS84) {
         const double s = std::sin(B);
         return frame.a / std::sqrt(1.0 - frame.e2 * s * s);
     }
 
 
-    static double normalGravity(const double latDeg, const FrameInfo &frame = Frame::WGS84, const double h = 0.0) {
+    inline double normalGravity(const double latDeg, const FrameInfo &frame = Frame::WGS84, const double h = 0.0) {
         const double s = std::sin(latDeg * DEG_TO_RAD);
         const double s2 = s * s;
         const double g0 = 9.7803267715 * (1.0 + 0.00193185138639 * s2) / std::sqrt(1.0 - frame.e2 * s2);
         return g0 - 3.0877e-6 * h;
     }
 
-    static Eigen::Vector3d earthRateInECEF(const double omega = OMEGA_EARTH) {
+    inline Eigen::Vector3d earthRateInECEF(const double omega = OMEGA_EARTH) {
         return {0.0, 0.0, omega};
     }
 
-    static Eigen::Vector3d transportRateInNav(const double latDeg, const double vNorth, const double vEast,
+    inline Eigen::Vector3d transportRateInNav(const double latDeg, const double vNorth, const double vEast,
                                               const double height = 0.0,
                                               const FrameInfo &frame = Frame::WGS84) {
         const double B = latDeg * DEG_TO_RAD;
@@ -102,13 +104,19 @@ public:
         return {vEast / Rn, -vNorth / Rm, -vEast * std::tan(B) / Rn};
     }
 
-    static double phaseWindupCorrection(const Eigen::Vector3d &pTx,
+    inline double phaseWindupCorrection(const Eigen::Vector3d &pTx,
                                         const Eigen::Vector3d &recv, const CommonTime &epoch,
-                                        const Eigen::Vector3d &exr, const Eigen::Vector3d &eyr) {
-        Eigen::Vector3d rsun, rmoon;
-        double gmst;
-        sunMoonECEF(epoch, rsun, rmoon, gmst);
-        const Eigen::Matrix3d bodyM = ECEFToSVBodyDCM(pTx, rsun);
+                                        const Eigen::Vector3d &exr, const Eigen::Vector3d &eyr,
+                                        const Eigen::Matrix3d *satBody) {
+        Eigen::Matrix3d bodyM;
+        if (satBody) {
+            bodyM = *satBody;
+        } else {
+            Eigen::Vector3d rsun, rmoon;
+            double gmst;
+            sunMoonECEF(epoch, rsun, rmoon, gmst);
+            bodyM = Coord::ECEFToSVBodyDCM(pTx, rsun);
+        }
         const Eigen::Vector3d exs = bodyM.row(0).transpose();
         const Eigen::Vector3d eys = bodyM.row(1).transpose();
 
@@ -126,23 +134,29 @@ public:
         return ph;
     }
 
-    static double phaseWindupCorrection(const Eigen::Vector3d &pTx,
-                                        const Eigen::Vector3d &recv, const CommonTime &epoch) {
-        auto blh = XYZToBLH(recv, Frame::WGS84);
-        Eigen::Matrix3d E = ECEFToENUDCM(blh[0], blh[1]);
-        const Eigen::Vector3d exr = E.row(1).transpose();
-        const Eigen::Vector3d eyr = -E.row(0).transpose();
-        return phaseWindupCorrection(pTx, recv, epoch, exr, eyr);
+    inline double phaseWindupCorrection(const Eigen::Vector3d &pTx,
+                                        const Eigen::Vector3d &recv, const CommonTime &epoch,
+                                        const Eigen::Vector3d &exr, const Eigen::Vector3d &eyr) {
+        return phaseWindupCorrection(pTx, recv, epoch, exr, eyr, nullptr);
     }
 
-    static Eigen::Vector3d poleTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t,
+    inline double phaseWindupCorrection(const Eigen::Vector3d &pTx,
+                                        const Eigen::Vector3d &recv, const CommonTime &epoch) {
+        auto blh = Coord::XYZToBLH(recv, Frame::WGS84);
+        Eigen::Matrix3d E = Coord::ECEFToENUDCM(blh[0], blh[1]);
+        const Eigen::Vector3d exr = E.row(1).transpose();
+        const Eigen::Vector3d eyr = -E.row(0).transpose();
+        return phaseWindupCorrection(pTx, recv, epoch, exr, eyr, nullptr);
+    }
+
+    inline Eigen::Vector3d poleTideDisplacement(const Eigen::Vector3d &recvEcef, const CommonTime &t,
                                          const double xp, const double yp) {
-        const auto blh = XYZToBLH(recvEcef, Frame::WGS84);
+        const auto blh = Coord::XYZToBLH(recvEcef, Frame::WGS84);
         const double phi = blh[0], lam = blh[1];
         const double th = PI / 2.0 - phi;
 
 
-        const auto yds = CommonTime2YDSTime(t);
+        const auto yds = Time::CommonToYDS(t);
         const double year = static_cast<double>(yds.year) + static_cast<double>(yds.doy) / 365.25;
         const double xbar = 0.054 + 0.00083 * (year - 2000.0);
         const double ybar = 0.357 + 0.00395 * (year - 2000.0);
@@ -169,7 +183,7 @@ public:
     }
 
     // 单天体固体潮位移(度2+度3)
-    static void tidePotential(const double *eu, const double *rp, const double gm_p, const double *pos, double *dr) {
+    inline void tidePotential(const double *eu, const double *rp, const double gm_p, const double *pos, double *dr) {
         constexpr double H3 = 0.292, L3 = 0.015;
         const double r = std::sqrt(rp[0] * rp[0] + rp[1] * rp[1] + rp[2] * rp[2]);
         dr[0] = dr[1] = dr[2] = 0.0;
@@ -199,4 +213,4 @@ public:
         dr[2] = dp * ep[2] + du * eu[2];
     }
 
-};
+}

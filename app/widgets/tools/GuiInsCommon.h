@@ -2,14 +2,16 @@
 
 
 #include "GuiInsPanel.h"
-#include "GuiHelpers.h"
+#include "view/GuiHelpers.h"
+#include "ui/FileDialog.h"
+#include "ui/GuiColors.h"
 
 #include <Eigen/Eigen>
 
 #include "Const.h"
-#include "core/Csv.h"
-#include "io/AsciiLogReader.h"
-#include "io/OEM7Reader.h"
+#include "CSV.h"
+#include "Observer.h" // makeNovAtelReader：二进制 / ASC 由内容挑
+#include "io/novatel/LogReader.h"
 #include "util/StringUtils.h"
 
 #include "implot.h"
@@ -24,11 +26,11 @@ namespace Tools::InsPanel {
     template<class Reader, class ReadFn, class OnSample, class OnBatch>
     void pumpImu(Reader &r, ReadFn readOne, const std::atomic<bool> &stop,
                  OnSample onSample, OnBatch onBatch) {
-        size_t last = 0, batchMark = 0;
+        std::size_t last = 0, batchMark = 0;
         while (!stop) {
             const bool more = readOne();
             const ImuLog &L = r.getImuLog();
-            for (size_t i = last; i < L.size(); ++i) onSample(L[i]);
+            for (std::size_t i = last; i < L.size(); ++i) onSample(L[i]);
             last = L.size();
             if (!more) break;
             if (L.size() - batchMark >= 2048) {
@@ -54,12 +56,9 @@ namespace Tools::InsPanel {
             pumpImuReader(r, stop, onSample, onBatch);
             return true;
         };
-        if (endsWithIC(path, ".asc")) {
-            AsciiLogReader r;
-            return run(r);
-        }
-        OEM7Reader r;
-        return run(r);
+        // 二进制日志与 ASC 文本日志由内容决定用哪个读取器，后缀不作数
+        const auto reader = Observer::makeNovAtelReader(path);
+        return reader && run(*reader);
     }
 
 
@@ -108,13 +107,13 @@ namespace Tools::InsPanel {
     template<class Task, class Fn>
     void launchWorker(Task &task, Fn fn) {
         auto self = task.shared_from_this();
-        task.worker = std::thread([self, fn] { fn(); });
+        task.worker = std::thread([fn] { fn(); });
     }
 
-    constexpr ImVec4 kColPass(0.35f, 0.85f, 0.45f, 1.00f);
-    constexpr ImVec4 kColFail(0.95f, 0.40f, 0.35f, 1.00f);
-    constexpr ImVec4 kColWarn(0.98f, 0.76f, 0.32f, 1.00f);
-    constexpr ImVec4 kColInfo(0.55f, 0.72f, 1.00f, 1.00f);
+    using UI::kColPass;
+    using UI::kColFail;
+    using UI::kColWarn;
+    using UI::kColInfo;
     void drawAlert(AlertLevel lv, const char *text);
 
     template<class Task>
@@ -222,7 +221,7 @@ namespace Tools::InsPanel {
         bool tryGuess(const ImuLog &staticSeg, double g);
     };
 
-    constexpr size_t kScaleProbeSamples = 4000;
+    constexpr std::size_t kScaleProbeSamples = 4000;
     struct ScaleIdentifier {
         explicit ScaleIdentifier(ScaleFallback &fallback) : sf(fallback) {}
 
@@ -280,13 +279,13 @@ namespace Tools::InsPanel {
     constexpr float kChartHeight = 360.0f;
     constexpr float kFileChartH = 220.0f;
 
-    size_t decimateStride(size_t n, size_t maxPts = 4000);
+    std::size_t decimateStride(std::size_t n, std::size_t maxPts = 4000);
 
     void decimateImu(const ImuLog &src, ImuLog &out);
 
-    constexpr ImVec4 kColX(0.90f, 0.30f, 0.30f, 1.00f);
-    constexpr ImVec4 kColY(0.30f, 0.90f, 0.30f, 1.00f);
-    constexpr ImVec4 kColZ(0.30f, 0.50f, 1.00f, 1.00f);
+    using UI::kColX;
+    using UI::kColY;
+    using UI::kColZ;
 
     ImPlotSpec lineSpec(const ImVec4 &c);
 
@@ -295,11 +294,11 @@ namespace Tools::InsPanel {
     void fitXToLatest(bool newData, double xmax);
 
     template<class Task, class BuildFn>
-    void exportCsvDialog(Task &task, const std::string &defaultName, const std::string &displayName,
+    void exportCSVDialog(Task &task, const std::string &defaultName, const std::string &displayName,
                          BuildFn build) {
         std::wstring out;
-        if (!Solvers::Helpers::saveCSVDialog(defaultName, out)) return;
-        Csv::Writer w;
+        if (!FileDialog::saveCsv(defaultName, out)) return;
+        CSV::Writer w;
         build(w);
         if (!w.save(out, true)) {
             task.setError(displayName +

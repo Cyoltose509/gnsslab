@@ -6,9 +6,9 @@
 #include <vector>
 #include <memory>
 
-namespace GnssTask {
-    struct SolveTask;
-    struct SolverTaskBase;
+namespace Solvers {
+    struct Core;
+    struct Task;
 }
 
 class Application {
@@ -34,13 +34,14 @@ private:
     void OpenInsAlign();
 
     Gui   m_ui;
+    bool  m_quitRequested      = false;
     bool  m_showTimeConverter  = false;
     bool  m_showCoordConverter = false;
     bool  m_showLsqSolver      = false;
     bool  m_showAbout          = false;
 
-    std::vector<std::shared_ptr<GnssTask::SolverTaskBase>> m_tasks;
-    std::vector<std::shared_ptr<GnssTask::SolverTaskBase>> m_closingTasks;
+    std::vector<std::shared_ptr<Solvers::Task>> m_tasks;
+    std::vector<std::shared_ptr<Solvers::Task>> m_closingTasks;
     int m_activeTask   = -1;
     int m_taskToFocus  = -1;
 };

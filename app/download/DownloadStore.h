@@ -30,9 +30,6 @@ public:
     static std::string localPath(ProductType t, int year, int doy, const std::string &filename);
 
 
-    static std::vector<std::string> findLocal(ProductType t, int year, int doy);
-
-
     static std::string localNameFor(const std::string &remoteName);
 
 

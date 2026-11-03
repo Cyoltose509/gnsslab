@@ -1,18 +1,20 @@
 #include "SPP.h"
-#include "RinexNavStore.h"
+#include "rinex/RINEXNavStore.h"
 #include "CoordConvert.h"
 #include "FreqCombo.h"
 #include <Eigen/Eigen>
+#include <array>
 #include <vector>
 #include <algorithm>
-#include <cmath>
 #include <set>
 
 #include "Log.h"
 #include "CoordStruct.h"
-#include "Troposphere.h"
-#include "TimeConvert.h"
 #include "Weight.h"
+
+namespace {
+    constexpr double kMinValidXyz = 6.0e6;
+}
 
 bool SPP::processEpoch(ObsData &obsData) {
     try {
@@ -29,8 +31,8 @@ void SPP::preprocess(ObsData &obsData) {
     satRejected.clear();
 }
 
-bool SPP::loadBrdc(const std::string &path) {
-    RinexNavStore store;
+bool SPP::loadBRDC(const std::string &path) {
+    RINEXNavStore store;
     store.loadFile(path, ephTable);
     return !ephTable.gps.empty() || !ephTable.bds.empty();
 }
@@ -48,8 +50,15 @@ void SPP::solve(ObsData &obsData) {
     rClockDrift = 0.0;
     xyz = obsData.antennaPosition;
 
-    // 每历元就地探测 IF 组合（SPP/PPP/LEO 统一入口：收集各系统码 → 统一探测）
     detectIFCombinations(obsData);
+
+    // 观测源没给近似坐标
+    // 先用上一历元解，首历元再按卫星方向估一个量级正确的初值
+    if (xyz.norm() < kMinValidXyz) xyz = mLastXyz;
+    if (xyz.norm() < kMinValidXyz) {
+        computeSatPos(obsData);
+        xyz = roughInitialXyz(obsData);
+    }
 
     int iter(0);
     while (iter < mConfig.maxIter) {
@@ -58,7 +67,7 @@ void SPP::solve(ObsData &obsData) {
 
         if (obsData.satTypeValueData.size() < 4) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
-                                 + to_string(satPVTRecTime.size()) + ")");
+                                 + std::to_string(satPVTRecTime.size()) + ")");
         }
         satElevData.clear();
         satAzimData.clear();
@@ -98,7 +107,6 @@ void SPP::solve(ObsData &obsData) {
             LOG_WARN << "速度解算失败";
         }
 
-        // 收敛判据：位置修正量 < 0.1mm 即停
         if (iter >= mConfig.minCheckIter && dxyz.norm() < mConfig.convEps) {
             break;
         }
@@ -111,12 +119,58 @@ void SPP::solve(ObsData &obsData) {
         throw InvalidSolver("too many iterations without convergence");
     }
     if (isbAnyOn) {
-        mPrevClockBias = rClockBias;  // 记录本历元终值，供下一历元常数 ISB 先验
+        mPrevClockBias = rClockBias;
     }
+    if (xyz.norm() > kMinValidXyz) mLastXyz = xyz; // 供下一历元当初值
     readback(obsData);
 }
 
-void SPP::readback(const ObsData &/*obsData*/) {
+/// 观测源没给近似坐标且还没有上一历元解时，给一个「方位正确、量级正确」的起点。
+/// ① 各卫星地心方向单位矢量求和、归一化后乘地球半径。参考：
+///    [1] u-blox AG, US 8,125,381 B2, 2002-10-04（Doppler 方案第 3 步）
+///    [2] 谢钢. GPS 原理与接收机设计. 第 5 章「首历元初值」法之二
+///    与 [1][2] 的差别：此处先单位化再平均，避免北斗 GEO/MEO 混布时高轨星权重偏大。
+/// ② 再用 IF 伪距做两轮等权 Gauss-Newton（钟差当未知、不估 ISB）。
+Eigen::Vector3d SPP::roughInitialXyz(const ObsData &obsData) const {
+    Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+    for (const auto &[sat, pvt]: satPVTTransTime) {
+        if (pvt.p.norm() > 1.0) mean += pvt.p.normalized();
+    }
+    if (mean.norm() < 1e-9) return {0, 0, 0};
+    Eigen::Vector3d x = 6371000.0 * mean.normalized();
+
+    for (int iter = 0; iter < 2; ++iter) {
+        Eigen::MatrixXd A(0, 4);
+        Eigen::VectorXd b(0);
+        std::vector<std::array<double, 5> > rows;
+        rows.reserve(satPVTTransTime.size());
+        for (const auto &[sat, pvt]: satPVTTransTime) {
+            const FreqCombo *def = freqComboFor(sat);
+            if (!def) continue;
+            const auto it = obsData.satTypeValueData.find(sat);
+            if (it == obsData.satTypeValueData.end()) continue;
+            const TypeValueMap &tv = it->second;
+            if (!tv.count(def->code1) || !tv.count(def->code2)) continue;
+            const double rho = (pvt.p - x).norm();
+            if (rho < 1.0) continue;
+            const Eigen::Vector3d u = (pvt.p - x) / rho;
+            rows.push_back({-u[0], -u[1], -u[2], 1.0, def->combineCodeFromObs(tv) - rho});
+        }
+        if (rows.size() < 4) break;
+        A.resize(static_cast<Eigen::Index>(rows.size()), 4);
+        b.resize(static_cast<Eigen::Index>(rows.size()));
+        for (Eigen::Index i = 0; i < A.rows(); ++i)
+            for (int c = 0; c < 4; ++c) A(i, c) = rows[static_cast<std::size_t>(i)][static_cast<std::size_t>(c)];
+        for (Eigen::Index i = 0; i < A.rows(); ++i) b(i) = rows[static_cast<std::size_t>(i)][4];
+        const Eigen::Vector4d d = A.colPivHouseholderQr().solve(b);
+        if (!d.allFinite()) break;
+        x += d.head<3>();
+        if (d.head<3>().norm() < 1.0) break;
+    }
+    return x;
+}
+
+void SPP::readback([[maybe_unused]] const ObsData &obsData) {
     auto &pD = posSolver.covMatrix;
     auto &vD = velSolver.covMatrix;
     double clockVar = 0.0;
@@ -127,21 +181,21 @@ void SPP::readback(const ObsData &/*obsData*/) {
         }
         idx++;
     }
-    result.blh = XYZToBLH(xyz, frame);
+    result.blh = Coord::XYZToBLH(xyz, frame);
     computePositionDops(result, pD.topLeftCorner(3, 3), clockVar, result.blh);
 
     result.sigmaP = result.pdop * posSolver.sigma0;
     result.sigmaXYZ = {
-        sqrt(pD(0, 0)) * posSolver.sigma0,
-        sqrt(pD(1, 1)) * posSolver.sigma0,
-        sqrt(pD(2, 2)) * posSolver.sigma0
+        std::sqrt(pD(0, 0)) * posSolver.sigma0,
+        std::sqrt(pD(1, 1)) * posSolver.sigma0,
+        std::sqrt(pD(2, 2)) * posSolver.sigma0
     };
     if (vD.rows() >= 3) {
-        result.sigmaV = sqrt(vD(0, 0) + vD(1, 1) + vD(2, 2)) * velSolver.sigma0;
+        result.sigmaV = std::sqrt(vD(0, 0) + vD(1, 1) + vD(2, 2)) * velSolver.sigma0;
         result.sigmaVel = {
-            sqrt(vD(0, 0)) * velSolver.sigma0,
-            sqrt(vD(1, 1)) * velSolver.sigma0,
-            sqrt(vD(2, 2)) * velSolver.sigma0
+            std::sqrt(vD(0, 0)) * velSolver.sigma0,
+            std::sqrt(vD(1, 1)) * velSolver.sigma0,
+            std::sqrt(vD(2, 2)) * velSolver.sigma0
         };
     } else {
         result.sigmaV = 0.0;
@@ -181,30 +235,15 @@ void SPP::buildResidualMap() {
 }
 
 void SPP::updateTropoSite(const Eigen::Vector3d &xyzEcef, const CommonTime &epoch) {
-    mTropoSite = TropoSite{};
-    if (!(xyzEcef.norm() > 1000.0)) return; // 首个线性化点还是原点：本历元不改正对流层
-    const auto blh = XYZToBLH(xyzEcef, frame);
-    if (!(blh.H() > 0.0)) return;           // 与历史行为一致：高程非正不改正
-    mTropoSite.valid = true;
-    mTropoSite.latRad = blh.B();
-    mTropoSite.lonRad = blh.L();
-    mTropoSite.hgt = blh.H();
-    mTropoSite.doy = static_cast<double>(CommonTime2YDSTime(epoch).doy);
-    MJD mjd{};
-    CommonTime2MJD(epoch, mjd);
-    mTropoSite.mjd = mjd.mjd;
+    mTropoSite.update(mTropoGrid, mConfig.tropoMap, xyzEcef, epoch, nullptr, frame);
+    if (!(mTropoSite.hgt > 0.0)) mTropoSite = TropoSite{};
 }
 
 double SPP::tropoDelay(const double elevRad) const {
     if (!mTropoSite.valid) return 0.0;
-    // 天顶延迟：Hopfield 干/湿（SPP 的历史模型，不受映射函数选择影响）
-    const double zhd = Troposphere::tropoHopfieldDry(mTropoSite.hgt);
-    const double zwd = Troposphere::tropoHopfieldWet(mTropoSite.hgt);
     double mW = 0.0;
-    const double mH = Troposphere::tropoMapping(mConfig.tropoMap, elevRad, mTropoSite.latRad,
-                                                mTropoSite.lonRad, mTropoSite.hgt,
-                                                mTropoSite.doy, mTropoSite.mjd, &mW);
-    const double tropo = zhd * mH + zwd * mW;
+    const double dry = mTropoSite.dryDelay(mConfig.tropoMap, elevRad, &mW);
+    const double tropo = dry + TropoSite::wetDelay(mTropoSite.zwdResolved(), mW);
     if (!std::isfinite(tropo) || tropo < 0.0 || tropo > 100.0) return 0.0;
     return tropo;
 }
@@ -225,8 +264,6 @@ void SPP::linearize(ObsData &obsData, const int iter) {
     const bool rejectOutlier = worstW > W_THRESHOLD;
 
     if (!mWeightInit) {
-        // 高度角随机模型：a=b=σ/√2（等价于 σ²/2·(1+1/sin²el)）。sin(el) 下限见
-        // SppConfig::sinElevFloor（0 = 跟随截止角）。
         const double a = mConfig.sigIFCode / std::sqrt(2.0);
         mWeight = Weight(a, a, mConfig.sinElevFloor());
         mWeightInit = true;
@@ -306,15 +343,13 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         if (mTropoSite.valid)
             trop = tropoDelay(elev);
 
-        // 位置方程权：高度角随机模型（Weight 类）
         double weight = mWeight.weight(elev);
 
         // ---- 逐卫星构建方程 ----
         buildPosEquation(sat, pvt, los, rho, trop,
                          def.code1 + "+" + def.code2, obsVal, weight, dx, dy, dz, cdtVars[sat.system]);
         // 速度方程与位置方程共用同一个 LOS（接收机→卫星方向）
-        buildVelEquation(sat, codeList, pvt, los,  weight,
-                         dvx, dvy, dvz, dcdt);
+        buildVelEquation(sat, codeList, pvt, los, weight, dvx, dvy, dvz, dcdt);
 
         activeSystems.insert(sat.system);
         nPass++;
@@ -326,18 +361,18 @@ void SPP::linearize(ObsData &obsData, const int iter) {
         if (auto it = cdtVars.find(sys); it != cdtVars.end())
             posEquations.varSet.insert(it->second);
     }
-    // ISB 先验（SPP 侧）：非参考系统的接收机钟差作为"常数/随机游走"伪观测，
-    // 把上一历元终值 rClockBias[sys] 当作先验（约束本历元增量≈0），与 EKF 里常数 ISB 等价。
-    // 参考系统(GPS)不施加——SPP 每历元重解主钟。GPS-only 无此伪观测 → 行为不变。
-    if (mConfig.isbInitVar > 0.0) {
+    if (mConfig.isbInitVar > 0.0 && activeSystems.count('G')) {
         for (char sys: activeSystems) {
-            if (sysCdtParam.at(sys) == Parameter::cdt) continue; // 参考系统跳过
-            if (!rClockBias.count(sys)) continue;                // 首历元无先验则跳过
+            if (sysCdtParam.at(sys) == Parameter::cdt) continue;
+            if (!mPrevClockBias.count(sys) || !mPrevClockBias.count('G')) continue;
+            const double prevIsb = mPrevClockBias.at(sys) - mPrevClockBias.at('G');
             const Variable &vclk = cdtVars.at(sys);
+            const Variable &vref = cdtVars.at('G');
             EquData ed;
-            ed.prefit = 0.0;                                    // 增量 delta≈0 → 绝对钟差保持上一历元值
+            ed.prefit = prevIsb - (rClockBias[sys] - rClockBias['G']);
             ed.varCoeffData[vclk] = 1.0;
-            const double var = mConfig.isbInitVar + mConfig.isbProcNoise; // 常数(isbProcNoise=0)或随机游走
+            ed.varCoeffData[vref] = -1.0;
+            const double var = mConfig.isbInitVar + mConfig.isbProcNoise;
             ed.weight = 1.0 / var;
             posEquations.obsEquData[EquID(SatID('I', 0), "ISB_" + std::string(1, sys))] = ed;
         }
@@ -350,10 +385,10 @@ void SPP::linearize(ObsData &obsData, const int iter) {
 
 
 void SPP::buildPosEquation(const SatID &sat, const PVT &pvt, const Eigen::Vector3d &los,
-    const double rho, const double trop,
-    const std::string &obsType, const double obsVal, const double weight,
-    const Variable &dx, const Variable &dy, const Variable &dz,
-    const Variable &cdtVar) {
+                           const double rho, const double trop,
+                           const std::string &obsType, const double obsVal, const double weight,
+                           const Variable &dx, const Variable &dy, const Variable &dz,
+                           const Variable &cdtVar) {
     const double dts = pvt.clockBias * C_MPS;
     const double rel = pvt.relativityCorrection * C_MPS;
 
@@ -385,11 +420,11 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
         }
     }
     if (!found) {
-       // LOG_WARN << "No doppler code found for " << sat;
+        // LOG_WARN << "No doppler code found for " << sat;
         return;
     }
 
-    // GLONASS 频率随通道号变化（FDMA），必须用逐星频率；其余系统用 (sys, band) 固定频率。
+    // GLONASS 频率随通道号变化（FDMA），必须用逐星频率
     const double f = sat.system == 'R' ? getGlonassFreq('1', sat.chan) : getFreq(sat.system, "L1");
     if (f <= 0.0) return;
     const double lambda = C_MPS / f;
@@ -412,6 +447,13 @@ void SPP::buildVelEquation(const SatID &sat, const TypeValueMap &codeList,
     velEquations.obsEquData[eidVel] = ed;
 }
 
+bool SPP::ephUnhealthy(const SatID &sat, const Ephemeris *eph) {
+    if (!mConfig.useHealth || !eph || eph->health == 0u) return false;
+    if (mHealthWarned.insert(sat).second)
+        LOG_WARN << "[健康] 剔除广播电文标记不可用的卫星 " << sat << " (health=" << eph->health << ")";
+    return true;
+}
+
 void SPP::computeSatPos(ObsData &obsData) {
     satPVTTransTime.clear();
     for (auto const &[sat, codeList]: obsData.satTypeValueData) {
@@ -420,6 +462,7 @@ void SPP::computeSatPos(ObsData &obsData) {
 
         Ephemeris *eph = ephTable.find(sat, obsData.epoch);
         if (!eph) continue;
+        if (ephUnhealthy(sat, eph)) continue; // 广播电文自报不可用
 
         const FreqCombo &def = *defp;
         if (!codeList.count(def.code1) || !codeList.count(def.code2)) continue;
@@ -461,7 +504,7 @@ void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaul
                     mGloCombo[sat] = def;
             }
         } else if (FreqCombo def = FreqCombo::detect(sys, obsData, mRequirePhaseForIF);
-                   !def.code1.empty() && !def.code2.empty()) {
+            !def.code1.empty() && !def.code2.empty()) {
             detected[sys] = def;
         }
     }
@@ -484,17 +527,14 @@ void SPP::earthRotation() {
 
 void SPP::computeElevAzim() {
     for (auto const &[sat, pvt]: satPVTRecTime) {
-        const double e = elevation(xyz, pvt.p, frame);
-        const double a = azimuth(xyz, pvt.p, frame);
+        const double e = Coord::elevation(xyz, pvt.p, frame);
+        const double a = Coord::azimuth(xyz, pvt.p, frame);
         satElevData[sat] = e;
         satAzimData[sat] = a;
     }
 }
 
 void SPP::applyOptions(const SolverOptions &o) {
-    // 稀疏覆盖：只搬「SPP 该由用户配」的项。派生类（LEO/PPPKinematic）构造函数里
-    // 设的基线（firstEpochPosVar / ambNoise / minSatsForUpdate …）必须保留，
-    // 所以这里绝不能用 mConfig = o.spp 整份覆盖。
     setCutoffElevDeg(o.cutoffDeg);
     setEnabledSystems(o.systems);
     mConfig.sigIFCode = o.spp.sigIFCode;
@@ -503,6 +543,7 @@ void SPP::applyOptions(const SolverOptions &o) {
     mConfig.convEps = o.spp.convEps;
     mConfig.maxIter = o.spp.maxIter;
     mConfig.minCheckIter = o.spp.minCheckIter;
-    setIsbProcNoise(o.spp.isbProcNoise, o.spp.isbInitVar);
-    mWeightInit = false; // 噪声/截止角/下限变了 → 高度角随机模型必须重建
+    mConfig.useHealth = o.spp.useHealth; // 广播电文健康标志剔除
+    setISBProcNoise(o.spp.isbProcNoise, o.spp.isbInitVar);
+    mWeightInit = false;
 }

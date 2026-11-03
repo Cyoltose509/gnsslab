@@ -1,26 +1,25 @@
 #include "core/Application.h"
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 #include "widgets/tools/GuiTimeConverter.h"
 #include "widgets/tools/GuiCoordConverter.h"
 #include "widgets/tools/GuiLsqSolver.h"
 #include "widgets/tools/GuiInsPanel.h"
 #include "widgets/tools/GuiFtpDownload.h"
-#include "widgets/solvers/GuiSolverPanel.h"
-#include "widgets/solvers/GuiSppProcessor.h"
-#include "widgets/solvers/GuiPppProcessor.h"
-#include "widgets/solvers/GuiLeoProcessor.h"
-#include "widgets/solvers/GuiRtkProcessor.h"
-#include "widgets/solvers/GuiHelpers.h"
+#include "solvers/view/GuiSolverPanel.h"
+#include "solvers/GuiSPPProcessor.h"
+#include "solvers/GuiPPPProcessor.h"
+#include "solvers/GuiLEOProcessor.h"
+#include "solvers/GuiRTKProcessor.h"
+#include "solvers/view/GuiHelpers.h"
 #include "core/PathMemory.h"
+#include "download/AutoSync.h"
 #include "version.h"
 #include "Log.h"
 
 #include "imgui.h"
 
 namespace {
-    using TaskList = std::vector<std::shared_ptr<GnssTask::SolverTaskBase> >;
+    using TaskList = std::vector<std::shared_ptr<Solvers::Task> >;
 
     void stopAndJoinTasks(TaskList &tasks) {
         for (const auto &task: tasks) {
@@ -55,10 +54,33 @@ void Application::Initialize() {
     LOG_INFO << "GnssLab v" PROJECT_VERSION " 启动";
 
     const std::string title = "GnssLab v" PROJECT_VERSION;
-    m_ui.Initialize(title.c_str(), 1280, 720);
+
+    // 窗口分辨率与最大化状态持久化到 ini：默认 1280×720 普通窗口，
+    // 可在 gnsslab.ini 的 [paths] 改 win_w / win_h / win_max。
+    const auto &pm0 = AppConfig::PathMemory::instance();
+    const int winW = pm0.getInt("win_w", 1280, 320, 7680);
+    const int winH = pm0.getInt("win_h", 720, 240, 4320);
+    const bool winMax = pm0.getInt("win_max", 0, 0, 1) != 0;
+    m_ui.Initialize(title.c_str(), static_cast<float>(winW), static_cast<float>(winH), winMax);
+
+    Download::AutoSync::setEnabled(AppConfig::PathMemory::instance().get("prod_autosync") != "0");
+    Download::AutoSync::start();
 }
 
 void Application::Shutdown() {
+    Download::AutoSync::stop();
+
+    {
+        int w = 0, h = 0;
+        m_ui.GetRestoredSize(w, h);
+        const auto &pm = AppConfig::PathMemory::instance();
+        if (w > 0 && h > 0) {
+            pm.setInt("win_w", w);
+            pm.setInt("win_h", h);
+        }
+        pm.setInt("win_max", m_ui.IsMaximized() ? 1 : 0);
+    }
+
     AppConfig::PathMemory::instance().flush();
     LOG_INFO << "GnssLab 退出";
     stopAndJoinTasks(m_tasks);
@@ -84,7 +106,7 @@ void Application::RenderMenuBar() {
                 OpenRtkSolve();
             ImGui::Separator();
             if (ImGui::MenuItem("退出", "Alt+F4"))
-                m_ui.Shutdown();
+                m_quitRequested = true;
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("工具")) {
@@ -132,19 +154,19 @@ void Application::RenderTaskTabList() {
     for (int i = 0; i < static_cast<int>(tasks.size()); ++i) {
         auto &task = tasks[i];
         const auto res = task->solveResult();
-        const char *tag = GnssTask::modeLabel(res->mode);
+        const char *tag = Solvers::modeLabel(res->mode);
         const bool isRealtime = task->isRealtime;
         const std::string defaultName = std::string(tag) + "解算";
 
         std::string label;
-        if (task->state == GnssTask::SolverTaskBase::State::Config)
+        if (task->state == Solvers::Task::State::Config)
             label = std::string("[配置][") + tag + "] " + (res->fileName.empty() ? defaultName : res->fileName);
         else if (isRealtime)
             label = std::string("[实时][") + tag + "] " + res->fileName;
         else
             label = std::string("[") + tag + "] " + res->fileName;
 
-        if (task->state != GnssTask::SolverTaskBase::State::Config && !isRealtime) {
+        if (task->state != Solvers::Task::State::Config && !isRealtime) {
             if (task->loading.load())
                 label += " [加载中]";
             else if (task->errorFlag())
@@ -163,7 +185,7 @@ void Application::RenderTaskTabList() {
         if (ImGui::BeginTabItem(label.c_str(), &open, tabFlags)) {
             activeTask = i;
             if (taskToFocus == i) taskToFocus = -1;
-            Solvers::SolverPanel::RenderTask(task);
+            Solvers::SolverPanel::renderTask(task);
             ImGui::EndTabItem();
         }
 
@@ -183,7 +205,6 @@ void Application::RenderTaskTabList() {
 
 void Application::RenderTasks() {
     if (m_tasks.empty()) {
-
         const ImGuiViewport *viewport = ImGui::GetMainViewport();
         const auto center = ImVec2(
             viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -233,7 +254,7 @@ void Application::RenderTasks() {
 }
 
 void Application::OpenSppSolve() {
-    const auto task = std::make_shared<Solvers::SppProcessor::SppTask>();
+    const auto task = std::make_shared<Solvers::SPP::Task>();
     auto &core = *task->core;
 
     core.obsPathBuf = AppConfig::PathMemory::instance().get("spp_obs");
@@ -245,7 +266,7 @@ void Application::OpenSppSolve() {
 
     LOG_INFO << "[任务] 新建 SPP 配置：观测=" << core.obsPathBuf;
 
-    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
 
@@ -255,22 +276,17 @@ void Application::OpenSppSolve() {
 }
 
 void Application::OpenPppSolve() {
-    const auto task = std::make_shared<Solvers::PppProcessor::PppTask>();
+    const auto task = std::make_shared<Solvers::PPP::Task>();
 
     const auto &cfg = AppConfig::PathMemory::instance();
     task->obsPathBuf = cfg.get("ppp_obs");
-    task->sp3PathBuf = cfg.get("ppp_sp3");
-    task->brdcPathBuf = cfg.get("ppp_brdc");
-    task->clkPathBuf = cfg.get("ppp_clk");
-    task->osbPathBuf = cfg.get("ppp_osb");
-    task->atxPathBuf = cfg.get("ppp_atx");
     task->kinematic = cfg.get("ppp_kinematic") == "1";
     LOG_INFO << "[任务] 新建 PPP 配置：观测=" << task->obsPathBuf
-             << ", 动态=" << (task->kinematic ? "是" : "否");
+            << ", 动态=" << (task->kinematic ? "是" : "否");
 
-    task->core->mode = GnssTask::SolverMode::Ppp;
+    task->core->mode = Solvers::Mode::PPP;
 
-    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
 
@@ -280,21 +296,16 @@ void Application::OpenPppSolve() {
 }
 
 void Application::OpenLeoSolve() {
-    const auto task = std::make_shared<Solvers::LeoProcessor::LeoTask>();
+    const auto task = std::make_shared<Solvers::LEO::Task>();
 
 
     const auto &cfg = AppConfig::PathMemory::instance();
     task->leoObsPathBuf = cfg.get("leo_obs");
-    task->gnssSp3PathBuf = cfg.get("leo_gnss_sp3");
-    task->gnssBrdcPathBuf = cfg.get("leo_gnss_brdc");
-    task->gnssClkPathBuf = cfg.get("leo_gnss_clk");
-    task->osbPathBuf = cfg.get("leo_osb");
-    task->atxPathBuf = cfg.get("leo_atx");
     task->refSp3PathBuf = cfg.get("leo_ref_sp3");
     LOG_INFO << "[任务] 新建 LEO 配置：观测=" << task->leoObsPathBuf;
-    task->core->mode = GnssTask::SolverMode::Leo;
+    task->core->mode = Solvers::Mode::LEO;
 
-    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
 
@@ -304,7 +315,7 @@ void Application::OpenLeoSolve() {
 }
 
 void Application::OpenRtkSolve() {
-    const auto task = std::make_shared<Solvers::RtkProcessor::RtkTask>();
+    const auto task = std::make_shared<Solvers::RTK::Task>();
 
 
     const auto &cfg = AppConfig::PathMemory::instance();
@@ -312,10 +323,10 @@ void Application::OpenRtkSolve() {
     task->roverObsPathBuf = cfg.get("rtk_rover");
     task->navPathBuf = cfg.get("rtk_nav");
     LOG_INFO << "[任务] 新建 RTK 配置：基准=" << task->baseObsPathBuf
-             << ", 流动站=" << task->roverObsPathBuf;
-    task->core->mode = GnssTask::SolverMode::Rtk;
+            << ", 流动站=" << task->roverObsPathBuf;
+    task->core->mode = Solvers::Mode::RTK;
 
-    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
 
@@ -327,7 +338,7 @@ void Application::OpenRtkSolve() {
 void Application::OpenInsCalib() {
     const auto task = Tools::InsPanel::MakeSixPosCalibTask();
     LOG_INFO << "[任务] 新建 六位置法标定 配置";
-    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
     m_tasks.push_back(task);
@@ -338,7 +349,7 @@ void Application::OpenInsCalib() {
 void Application::OpenInsAlign() {
     const auto task = Tools::InsPanel::MakeStaticAlignTask();
     LOG_INFO << "[任务] 新建 静态解析粗对准 配置";
-    task->state = GnssTask::SolverTaskBase::State::Config;
+    task->state = Solvers::Task::State::Config;
     task->loading = false;
     task->done = false;
     m_tasks.push_back(task);
@@ -358,8 +369,6 @@ void Application::Render() {
         Tools::LsqSolver::Render(&m_showLsqSolver);
     if (Tools::FtpDownload::s_open)
         Tools::FtpDownload::Render(&Tools::FtpDownload::s_open);
-
-
     RenderTasks();
 }
 
@@ -367,7 +376,7 @@ void Application::Run() {
     Initialize();
 
     bool ready = true;
-    while (m_ui.BeginFrame(&ready)) {
+    while (!m_quitRequested && m_ui.BeginFrame(&ready)) {
         if (!ready) continue;
         Update();
         Render();

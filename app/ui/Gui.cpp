@@ -125,6 +125,14 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if ((wParam & 0xfff0) == SC_KEYMENU)
                 return 0;
             break;
+        case WM_CLOSE:
+            // 只申请退出，**不在这里销毁窗口**：DefWindowProc 的默认处理会立刻
+            // DestroyWindow，等主循环退出、Application::Shutdown() 去读窗口尺寸时
+            // 句柄已经失效，GetWindowPlacement 失败、IsZoomed 恒 false ——
+            // 结果是尺寸写不进去、最大化状态每次都被存成 0。
+            // 窗口留到 Gui::Shutdown() 里销毁，退出前那次读取才拿得到真值。
+            PostQuitMessage(0);
+            return 0;
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -135,7 +143,7 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 // ========== Gui implementation ==========
 
-void Gui::Initialize(const char *title, const float width, const float height) {
+void Gui::Initialize(const char *title, const float width, const float height, const bool maximized) {
     if (m_initialized) return;
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -143,6 +151,7 @@ void Gui::Initialize(const char *title, const float width, const float height) {
     ImGui_ImplWin32_EnableDpiAwareness();
     const float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(
         MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
+    m_mainScale = main_scale;
 
     // Window class
     m_wndClass = {
@@ -176,7 +185,8 @@ void Gui::Initialize(const char *title, const float width, const float height) {
         return;
     }
 
-    ShowWindow(m_hwnd, SW_SHOWDEFAULT);
+    // 上次退出时是最大化就直接最大化显示；否则按 ini 里记的尺寸普通显示。
+    ShowWindow(m_hwnd, maximized ? SW_SHOWMAXIMIZED : SW_SHOWDEFAULT);
     UpdateWindow(m_hwnd);
 
     // ImGui context
@@ -208,8 +218,62 @@ void Gui::Initialize(const char *title, const float width, const float height) {
     m_initialized = true;
 }
 
+/// 读「还原态」尺寸并折算回逻辑像素；窗口已销毁或还没建好时返回 false。
+static bool queryRestoredSize(const HWND hwnd, const float scale, int &w, int &h) {
+    w = 0;
+    h = 0;
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    if (!GetWindowPlacement(hwnd, &wp)) return false;
+    const RECT &rc = wp.rcNormalPosition;
+    w = static_cast<int>(static_cast<double>(rc.right - rc.left) / scale + 0.5);
+    h = static_cast<int>(static_cast<double>(rc.bottom - rc.top) / scale + 0.5);
+    return w > 0 && h > 0;
+}
+
+/// 是否最大化。最小化的窗口 IsZoomed 恒为 false，此时要看 WINDOWPLACEMENT：
+/// 「从最大化状态最小化」的窗口靠 showCmd / WPF_RESTORETOMAXIMIZED 记住还原意图，
+/// 否则最小化后退出会把最大化状态存丢。
+static bool queryMaximized(const HWND hwnd, bool &out) {
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    if (IsZoomed(hwnd)) {
+        out = true;
+        return true;
+    }
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    if (!GetWindowPlacement(hwnd, &wp)) return false;
+    out = wp.showCmd == SW_SHOWMAXIMIZED || (wp.flags & WPF_RESTORETOMAXIMIZED) != 0;
+    return true;
+}
+
+void Gui::captureWindowState() {
+    int w = 0, h = 0;
+    if (queryRestoredSize(m_hwnd, m_mainScale, w, h)) {
+        m_restoredW = w;
+        m_restoredH = h;
+    }
+    if (bool maximized = false; queryMaximized(m_hwnd, maximized)) m_wasMaximized = maximized;
+}
+
+void Gui::GetRestoredSize(int &w, int &h) const {
+    if (queryRestoredSize(m_hwnd, m_mainScale, w, h)) return;
+    w = m_restoredW;
+    h = m_restoredH;
+}
+
+bool Gui::IsMaximized() const {
+    bool maximized = false;
+    if (queryMaximized(m_hwnd, maximized)) return maximized;
+    return m_wasMaximized;
+}
+
 void Gui::Shutdown() {
     if (!m_initialized) return;
+
+    // 销毁之前先留一份：窗口一旦没了就再也读不到还原尺寸与最大化状态。
+    captureWindowState();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -220,6 +284,10 @@ void Gui::Shutdown() {
     CleanupDeviceD3D();
     DestroyWindow(m_hwnd);
     UnregisterClassW(m_wndClass.lpszClassName, m_wndClass.hInstance);
+
+    // 不置空的话，退出后再问尺寸会拿一个已销毁的句柄去查（本项目的持久化就这么错过一次）。
+    m_hwnd = nullptr;
+    g_mainHwnd = nullptr;
 
     CoUninitialize();
 
@@ -312,10 +380,10 @@ static bool SavePixelsToPNG(const wchar_t *path, int x0, int y0, int w, int h,
     frame->SetSize((UINT)w, (UINT)h);
     WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppRGBA;
     frame->SetPixelFormat(&fmt);
-    std::vector<BYTE> rgba((size_t)w * h * 4);
+    std::vector<BYTE> rgba((std::size_t)w * h * 4);
     for (int y = 0; y < h; y++) {
-        const BYTE *s = srcBGRA + (size_t)(y0 + y) * srcPitch + (size_t)x0 * 4;
-        BYTE *d = rgba.data() + (size_t)y * (w * 4);
+        const BYTE *s = srcBGRA + (std::size_t)(y0 + y) * srcPitch + (std::size_t)x0 * 4;
+        BYTE *d = rgba.data() + (std::size_t)y * (w * 4);
         for (int x = 0; x < w; x++) {
             d[x * 4 + 0] = s[x * 4 + 2];
             d[x * 4 + 1] = s[x * 4 + 1];
@@ -393,9 +461,6 @@ void RequestCaptureRegionPNG(const std::wstring &path, int x, int y, int w, int 
 
 HWND GetMainWindowHwnd() { return g_mainHwnd; }
 
-// ========== 现代 Explorer 风格文件对话框（IFileDialog，高 DPI 清晰）==========
-// 旧版 comdlg32 的 GetOpenFileName/GetSaveFileName 在进程 DPI 感知开启后会被系统
-// 位图拉伸而发虚；IFileDialog(Common Item Dialog) 为 Vista+ 原生 DPI 清晰对话框。
 static bool ShowFileDialogImpl(bool save, std::wstring &out,
                                const GuiFileFilter *filters, int nFilters,
                                const wchar_t *defName, const wchar_t *defExt) {

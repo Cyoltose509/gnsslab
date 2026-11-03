@@ -77,6 +77,10 @@ set(CURL_USE_LIBPSL   OFF CACHE BOOL   "" FORCE)   # 默认 ON 且 REQUIRED ← 
 set(CURL_USE_LIBSSH2  OFF CACHE BOOL   "" FORCE)
 set(USE_NGHTTP2       OFF CACHE BOOL   "" FORCE)
 set(USE_LIBIDN2       OFF CACHE BOOL   "" FORCE)
+# 必须显式选 TLS 后端：Windows 上 curl 的 CMake 不会自己挑，三者全 OFF 会编出一个
+# 没有 SSL 的 libcurl，任何 https:// 都直接报「Protocol "https" not supported」。
+# Schannel 用系统证书库，零外部依赖（crypt32/secur32 由 curl 目标自带）。
+set(CURL_USE_SCHANNEL ON  CACHE BOOL   "" FORCE)
 set(CURL_ZLIB         OFF CACHE STRING "" FORCE)   # 不借系统的 zlib：.gz 由我们直接链 zlibstatic 解
 set(CURL_BROTLI       OFF CACHE STRING "" FORCE)
 set(CURL_ZSTD         OFF CACHE STRING "" FORCE)

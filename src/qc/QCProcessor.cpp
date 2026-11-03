@@ -48,8 +48,8 @@ namespace QC {
         if (cand.size() < 2) return {};
         BandsInfo r;
         double bestDiff = -1.0;
-        for (size_t i = 0; i < cand.size(); ++i) {
-            for (size_t j = i + 1; j < cand.size(); ++j) {
+        for (std::size_t i = 0; i < cand.size(); ++i) {
+            for (std::size_t j = i + 1; j < cand.size(); ++j) {
                 const double fi = getFreq(sys, cand[i].second);
                 const double fj = getFreq(sys, cand[j].second);
                 if (fi <= 0.0 || fj <= 0.0) continue;
@@ -275,7 +275,7 @@ namespace QC {
 
         for (int k = 0; k < static_cast<int>(epochs.size()); k++) {
             const auto &ep = epochs[k];
-            for (size_t j = 0; j < ep.satIds.size(); j++) {
+            for (std::size_t j = 0; j < ep.satIds.size(); j++) {
                 const SatID &sat = ep.satIds[j];
                 const TypeValueMap &m = ep.allObs[j];
                 BandsInfo b;

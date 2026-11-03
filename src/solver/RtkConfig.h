@@ -4,7 +4,7 @@
 #include "Weight.h"
 #include <set>
 
-struct RtkConfig {
+struct RTKConfig {
     double cutoffElevRad = 10.0 * DEG_TO_RAD;
     std::set<char> enabledSystems = {'G', 'R', 'E', 'C'};
     double arThreshold = 3.0;

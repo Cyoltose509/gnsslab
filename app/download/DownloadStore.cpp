@@ -1,12 +1,9 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include "DownloadStore.h"
 #include "ProductMeta.h"
 
 #include "Log.h"
+#include "StringUtils.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 
 #include <filesystem>
@@ -14,6 +11,7 @@
 #include <sstream>
 #include <cstdio>
 #include <algorithm>
+#include <mutex>
 
 #include <zlib.h>
 
@@ -38,24 +36,8 @@ std::string DownloadStore::localPath(const ProductType t, const int year, const 
     return dirFor(t, year, doy) + filename;
 }
 
-std::vector<std::string> DownloadStore::findLocal(const ProductType t, const int year, const int doy) {
-    std::vector<std::string> out;
-    std::error_code ec;
-    const auto dir = dirFor(t, year, doy);
-    if (!fs::exists(dir, ec)) return out;
-    for (const auto &ent: fs::directory_iterator(dir, ec)) {
-        if (ent.is_regular_file(ec))
-            out.push_back(ent.path().filename().string());
-    }
-    return out;
-}
-
 std::string DownloadStore::localNameFor(const std::string &remoteName) {
-    std::string l = remoteName;
-    for (auto &c: l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (l.size() > 3 && l.compare(l.size() - 3, 3, ".gz") == 0)
-        return remoteName.substr(0, remoteName.size() - 3);
-    return remoteName;
+    return Str::stripSuffixIC(remoteName, ".gz");
 }
 
 std::string DownloadStore::findLocalFile(const ProductType t, const int year, const int doy, const std::string &remoteName) {
@@ -64,27 +46,14 @@ std::string DownloadStore::findLocalFile(const ProductType t, const int year, co
     return fs::exists(p, ec) ? p : std::string();
 }
 
-bool DownloadStore::removeFile(const std::string &path) {
-    std::error_code ec;
-    fs::remove(path, ec);
-
-
-    auto all = readManifest();
-    const auto before = all.size();
-    all.erase(std::remove_if(all.begin(), all.end(),
-                             [&path](const DownloadEntry &e) { return e.path == path; }),
-              all.end());
-    if (all.size() != before) writeManifest(all);
-
-    std::error_code ec2;
-    const bool gone = !fs::exists(path, ec2);
-    LOG_INFO << (gone ? "[下载] 已删除本地文件: " : "[下载] 删除失败(文件被占用?): ") << path;
-    return gone;
-}
-
 
 static std::string manifestPath() {
-    return DownloadStore::root() + "/manifest.json";
+    return DownloadStore::root() + "/manifest.jsonl";
+}
+
+static std::mutex &manifestMutex() {
+    static std::mutex m;
+    return m;
 }
 
 static std::string escapeJson(const std::string &s) {
@@ -100,14 +69,20 @@ static std::string escapeJson(const std::string &s) {
 }
 
 static std::string extractField(const std::string &line, const std::string &key) {
-
     const std::string pat = "\"" + key + "\":\"";
-    auto p = line.find(pat);
+    const auto p = line.find(pat);
     if (p == std::string::npos) return "";
-    p += pat.size();
-    const auto q = line.find('"', p);
-    if (q == std::string::npos) return "";
-    return line.substr(p, q - p);
+    std::string o;
+    for (std::size_t i = p + pat.size(); i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '\\' && i + 1 < line.size()) {
+            o += line[++i];
+            continue;
+        }
+        if (c == '"') return o;
+        o += c;
+    }
+    return "";
 }
 
 static long long extractNum(const std::string &line, const std::string &key) {
@@ -119,7 +94,19 @@ static long long extractNum(const std::string &line, const std::string &key) {
     return std::strtoll(b, nullptr, 10);
 }
 
-std::vector<DownloadEntry> DownloadStore::readManifest() {
+static void writeEntry(std::ostream &os, const DownloadEntry &e) {
+    os << "{"
+            << R"("type":")" << escapeJson(e.type) << "\","
+            << "\"year\":" << e.year << ","
+            << "\"doy\":" << e.doy << ","
+            << R"("datacenter":")" << escapeJson(e.datacenter) << "\","
+            << R"("file":")" << escapeJson(e.file) << "\","
+            << R"("path":")" << escapeJson(e.path) << "\","
+            << "\"size\":" << e.size
+            << "}\n";
+}
+
+static std::vector<DownloadEntry> readManifestLocked() {
     std::vector<DownloadEntry> out;
     std::ifstream f(manifestPath());
     if (!f) return out;
@@ -139,53 +126,73 @@ std::vector<DownloadEntry> DownloadStore::readManifest() {
     return out;
 }
 
-void DownloadStore::writeManifest(const std::vector<DownloadEntry> &all) {
+std::vector<DownloadEntry> DownloadStore::readManifest() {
+    const std::lock_guard lk(manifestMutex());
+    return readManifestLocked();
+}
+
+static void writeManifestLocked(const std::vector<DownloadEntry> &all) {
     std::error_code ec;
-    fs::create_directories(root(), ec);
-    std::ofstream f(manifestPath(), std::ios::trunc);
-    if (!f) return;
-    for (const auto &[type, year, doy, datacenter, file, path, size]: all) {
-        f << "{"
-                << R"("type":")" << escapeJson(type) << "\","
-                << "\"year\":" << year << ","
-                << "\"doy\":" << doy << ","
-                << R"("datacenter":")" << escapeJson(datacenter) << "\","
-                << R"("file":")" << escapeJson(file) << "\","
-                << R"("path":")" << escapeJson(path) << "\","
-                << "\"size\":" << size
-                << "}\n";
+    fs::create_directories(DownloadStore::root(), ec);
+    const std::string tmp = manifestPath() + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        if (!f) return;
+        for (const auto &e: all) writeEntry(f, e);
+        if (!f) return; // 写失败就不 rename，宁可留旧文件
+    }
+    fs::rename(tmp, manifestPath(), ec);
+    if (ec) {
+        LOG_WARN << "[下载] 写索引失败: " << ec.message();
     }
 }
 
+void DownloadStore::writeManifest(const std::vector<DownloadEntry> &all) {
+    const std::lock_guard lk(manifestMutex());
+    writeManifestLocked(all);
+}
+
 void DownloadStore::record(const DownloadEntry &e) {
-    for (const auto &x: readManifest())
+    const std::lock_guard lk(manifestMutex());
+    std::error_code ec;
+
+    for (const auto &x: readManifestLocked())
         if (x.path == e.path) return;
 
-    std::error_code ec;
     fs::create_directories(root(), ec);
     std::ofstream f(manifestPath(), std::ios::app);
     if (!f) return;
-    f << "{"
-            << R"("type":")" << escapeJson(e.type) << "\","
-            << "\"year\":" << e.year << ","
-            << "\"doy\":" << e.doy << ","
-            << R"("datacenter":")" << escapeJson(e.datacenter) << "\","
-            << R"("file":")" << escapeJson(e.file) << "\","
-            << R"("path":")" << escapeJson(e.path) << "\","
-            << "\"size\":" << e.size
-            << "}\n";
+    writeEntry(f, e);
+}
+
+bool DownloadStore::removeFile(const std::string &path) {
+    std::error_code ec;
+    fs::remove(path, ec);
+
+    {
+        const std::lock_guard lk(manifestMutex());
+        auto all = readManifestLocked();
+        const auto before = all.size();
+        all.erase(std::remove_if(all.begin(), all.end(),
+                                 [&path](const DownloadEntry &e) { return e.path == path; }),
+                  all.end());
+        if (all.size() != before) writeManifestLocked(all);
+    }
+
+    std::error_code ec2;
+    const bool gone = !fs::exists(path, ec2);
+    LOG_INFO << (gone ? "[下载] 已删除本地文件: " : "[下载] 删除失败(文件被占用?): ") << path;
+    return gone;
 }
 
 std::string DownloadStore::decompressIfNeeded(const std::string &localPath) {
-    std::string l = localPath;
-    for (auto &c: l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (l.size() < 3 || l.compare(l.size() - 3, 3, ".gz") != 0) return localPath;
+    if (!Str::endsWithIC(localPath, ".gz")) return localPath;
 
-    gzFile in = gzopen(localPath.c_str(), "rb");
+    gzFile in = gzopen(localPath.c_str(), "rb"); //NOLINT
     if (!in) return localPath;
 
-    std::string out = localPath.substr(0, localPath.size() - 3);
-    FILE *fo = std::fopen(out.c_str(), "wb");
+    std::string out = Str::stripSuffixIC(localPath, ".gz");
+    std::ofstream fo(out, std::ios::binary);
     if (!fo) {
         gzclose(in);
         return localPath;
@@ -195,13 +202,18 @@ std::string DownloadStore::decompressIfNeeded(const std::string &localPath) {
     int n;
     bool ok = true;
     while ((n = gzread(in, buf, sizeof(buf))) > 0) {
-        if (std::fwrite(buf, 1, static_cast<size_t>(n), fo) != static_cast<size_t>(n)) {
+        fo.write(buf, n);
+        if (!fo) {
             ok = false;
             break;
         }
     }
     if (n < 0) ok = false;
-    std::fclose(fo);
+    int errNum = Z_OK;
+    gzerror(in, &errNum);
+    if (errNum != Z_OK && errNum != Z_STREAM_END) ok = false;
+    fo.close();
+    if (fo.fail()) ok = false;
     gzclose(in);
 
     std::error_code ec;

@@ -5,53 +5,33 @@
 #include "Exception.h"
 #include "GnssStruct.h"
 #include "CoordConvert.h"
-#include "SolverTask.h"
+#include "solvers/common/Core.h"
 #include "SPP.h"
 #include "LEO.h"
-#include "ObsFormat.h"
+#include "Observer.h"
 
-#include "Sp3OrbitReader.h"
+#include "product/SP3OrbitReader.h"
 #include "Log.h"
 #include "SolverOptions.h"
 #include "CliCommon.h"
-#include "SolveDriver.h"
+#include "solvers/common/Driver.h"
+#include "io/ProductLoad.h"
 #include "core/IniFile.h"
 
 namespace {
     void runLeo(const SolverOptions &cfg) {
-        std::vector<GnssTask::EpochData> epochs;
+        std::vector<Solvers::Epoch> epochs;
 
-        if (cfg.obsPath.empty()) {
-            std::cerr << "LEO 需要观测文件 [input] obs\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Leo, cfg);
-            return;
-        }
-        SolveDriver::RinexFileSource rsrc;
-        SolveDriver::Oem7FileSource osrc;
-        SolveDriver::ObsSource *src = nullptr;
-        if (const auto fmt = GnssTask::classifyObsPath(cfg.obsPath); fmt == GnssTask::ObsFormat::Oem7) {
-            if (!osrc.open(cfg.obsPath)) {
-                std::cerr << "LEO 无法打开 OEM7: " << cfg.obsPath << "\n";
-                Cli::dumpEmpty(GnssTask::SolverMode::Leo, cfg);
-                return;
-            }
-            src = &osrc;
-        } else if (fmt == GnssTask::ObsFormat::Rinex) {
-            if (!rsrc.open(cfg.obsPath)) {
-                std::cerr << "LEO 无法打开 RINEX: " << cfg.obsPath << "\n";
-                Cli::dumpEmpty(GnssTask::SolverMode::Leo, cfg);
-                return;
-            }
-            src = &rsrc;
-        } else {
-            std::cerr << "LEO 无法识别观测文件格式: "
-                    << cfg.obsPath << "\n";
-            Cli::dumpEmpty(GnssTask::SolverMode::Leo, cfg);
+        Observer::RINEXFile rsrc;
+        Observer::NovAtelFile osrc;
+        Observer::Source *src = Cli::openObsSource(cfg.obsPath, "LEO", rsrc, osrc);
+        if (!src) {
+            Cli::dumpEmpty(Solvers::Mode::LEO, cfg);
             return;
         }
 
 
-        Sp3OrbitReader refRdr;
+        SP3OrbitReader refRdr;
         bool hasRefOrbit = false;
         SatID refSat('L', cfg.refPrn);
         int refPrn = cfg.refPrn;
@@ -72,11 +52,21 @@ namespace {
         LEO leo;
         leo.applyOptions(cfg);
 
-        if (!cfg.gnssSp3.empty()) leo.loadSp3(cfg.gnssSp3);
-        if (!cfg.gnssClk.empty()) leo.loadClk(cfg.gnssClk, cfg.systems);
-        if (!cfg.osb.empty()) leo.loadOsb(cfg.osb);
-        if (!cfg.atx.empty()) leo.loadAtx(cfg.atx);
-        if (!cfg.gnssBrdc.empty()) leo.loadBrdc(cfg.gnssBrdc);
+        if (!ProductLoad::requireSatellite("LEO", cfg.gnssSp3, cfg.gnssBrdc)) {
+            Cli::dumpEmpty(Solvers::Mode::LEO, cfg);
+            return;
+        }
+        std::vector<std::future<bool> > jobs;
+        const ProductLoad::Paths paths{cfg.gnssSp3, cfg.gnssClk, cfg.gnssBrdc, cfg.osb, cfg.att, cfg.erp, cfg.atx};
+        ProductLoad::core(leo, jobs, "LEO", paths, cfg.systems);
+        bool loadOk = true;
+        for (auto &j: jobs)
+            if (!j.get()) loadOk = false;
+        if (!loadOk) {
+            std::cerr << "LEO 产品加载失败\n";
+            Cli::dumpEmpty(Solvers::Mode::LEO, cfg);
+            return;
+        }
         if (hasRefOrbit) {
             if (!leo.loadLeoReference(cfg.refSp3, refSat)) {
                 std::cerr << "LEO loadLeoReference 失败\n";
@@ -90,8 +80,8 @@ namespace {
         bool leoRefInit = false;
         Eigen::Vector3d leoRef(0, 0, 0);
 
-        SolveDriver::solveStationStream(*src, leo,
-                                        [&](LEO &, const GnssTask::ObsItem &item, GnssTask::EpochData &data) {
+        Solvers::Driver::solveStationStream(*src, leo,
+                                        [&](LEO &, const Observer::Item &item, Solvers::Epoch &data) {
                                             const Eigen::Vector3d leoPos = data.sppResult.xyz;
                                             if (!data.solved || leoPos.squaredNorm() <= 1e12) {
                                                 data.solved = false;
@@ -101,7 +91,7 @@ namespace {
                                             if (hasRefOrbit) {
                                                 const PVT refPVT = refRdr.getPVT(refSat, item.obs.epoch);
                                                 const Eigen::Vector3d refPos = refPVT.p.squaredNorm() > 1e12 ? refPVT.p : leoPos;
-                                                const Eigen::Vector3d rtn = XYZToRTN(leoPos, refPos, refPVT.v);
+                                                const Eigen::Vector3d rtn = Coord::XYZToRTN(leoPos, refPos, refPVT.v);
                                                 data.refECEF = refPos;
                                                 data.rtnR = rtn(0);
                                                 data.rtnT = rtn(1);
@@ -123,18 +113,18 @@ namespace {
             ref = Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ);
             leoRef = ref;
         }
-        Cli::dumpCsv(epochs, GnssTask::SolverMode::Leo, hasRefOrbit ? leoRef : ref, hasRefOrbit, cfg);
+        Cli::dumpCSV(epochs, Solvers::Mode::LEO, hasRefOrbit ? leoRef : ref, hasRefOrbit, cfg);
     }
 }
 
 int main(const int argc, char **argv) {
     const std::string ini = argc > 1 ? argv[1] : "leo.ini";
-    AppConfig::IniFile f;
+    IniFile f;
     if (!f.load(ini)) {
         std::cerr << "无法读取 ini: " << ini << "\n";
         return 1;
     }
-    const SolverOptions cfg = loadConfig(f, GnssTask::SolverMode::Leo);
+    const SolverOptions cfg = loadConfig(f, Solvers::Mode::LEO);
     Log::init("cli_gnsslab.log");
     std::cout << "[LEO] obs=" << cfg.obsPath
             << " 参考轨道=" << (cfg.refSp3.empty() ? "(无)" : cfg.refSp3) << "\n";

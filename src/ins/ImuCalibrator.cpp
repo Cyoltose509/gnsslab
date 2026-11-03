@@ -1,14 +1,11 @@
 #include "ImuCalibrator.h"
-#include "solver/SolverLSQ.h"
+#include "SolverLSQ.h"
 
 #include <algorithm>
 
-#include <cmath>
 #include <cstdint>
-#include <cstdio>
 
 namespace {
-
     int axisKey(const double a, const double b, const double c) {
         int ax = 0;
         double m = std::fabs(a);
@@ -59,7 +56,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
     b.setZero();
     rmsResid = 0.0;
     if (scaleSigma) scaleSigma->setZero();
-    const size_t n = raw.size();
+    const std::size_t n = raw.size();
     if (n == 0 || f.size() != n || w.size() != n) return;
 
     static const std::string kStation = "imu_calib";
@@ -70,7 +67,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
         EquSys equ;
         equ.station = kStation;
         equ.varSet = {vSx, vSy, vSz, vB};
-        for (size_t i = 0; i < n; ++i) {
+        for (std::size_t i = 0; i < n; ++i) {
             if (w[i] <= 0.0) continue;
             EquData d;
             d.prefit = raw[i](k);
@@ -90,9 +87,9 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
     }
     double ss = 0.0;
     double wtot = 0.0;
-    for (size_t i = 0; i < n; ++i) wtot += w[i];
+    for (std::size_t i = 0; i < n; ++i) wtot += w[i];
     for (int k = 0; k < 3; ++k) {
-        for (size_t i = 0; i < n; ++i) {
+        for (std::size_t i = 0; i < n; ++i) {
             if (w[i] <= 0.0) continue;
             const double pred = f[i](0) * M(k, 0) + f[i](1) * M(k, 1) + f[i](2) * M(k, 2) + b(k);
             ss += w[i] * (raw[i](k) - pred) * (raw[i](k) - pred);
@@ -100,7 +97,6 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
     }
     rmsResid = std::sqrt(ss / (3.0 * wtot));
 }
-
 
 
 CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle, double g) {
@@ -184,7 +180,7 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
             if (rr != 2 * ax && rr != 2 * ax + 1) continue;
             ++nSeg;
             for (const auto &s: samples) {
-                const int32_t v[3] = {s.gx, s.gy, s.gz};
+                const std::int32_t v[3] = {s.gx, s.gy, s.gz};
                 for (int i = 0; i < 3; ++i) {
                     const double val = static_cast<double>(v[i]) - gyroBias(i);
                     if (rr == 2 * ax) s1[i] += val;
@@ -199,7 +195,6 @@ CalibReport ImuCalibrator::calibrate(const CalibSegments &seg, double turnAngle,
     r.gyroM = gyroM;
     r.gyroKeff = gyroM.diagonal();
     {
-
         if (const double gnorm = r.gyroKeff.mean(); gnorm != 0.0) {
             r.gyroCross = gyroM / gnorm;
             r.gyroCross.diagonal().setZero();
@@ -239,10 +234,10 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
     constexpr DetectParams p{};
     std::vector<CalibSegment> segs;
     if (log.empty()) return segs;
-    const size_t N = log.size();
+    const std::size_t N = log.size();
 
     std::vector<double> m(N), am(N);
-    for (size_t i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         const auto &s = log[i];
         m[i] = std::max({
             std::fabs(static_cast<double>(s.gx)),
@@ -259,7 +254,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
     auto pctOf = [](const std::vector<double> &v, const double q) {
         std::vector<double> c = v;
         std::sort(c.begin(), c.end());
-        const size_t idx = std::min<size_t>(c.size() - 1, static_cast<size_t>(q * (c.size() - 1)));
+        const std::size_t idx = std::min<std::size_t>(c.size() - 1, static_cast<std::size_t>(q * (c.size() - 1)));
         return c[idx];
     };
     const double aMed = pctOf(am, 0.50);
@@ -269,7 +264,7 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
 
 
     std::vector<int> key(N);
-    for (size_t i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         const auto &s = log[i];
         if (m[i] > thr)
             key[i] = 6 + axisKey(s.gx, s.gy, s.gz);
@@ -279,14 +274,14 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
 
 
     struct Run {
-        size_t i0, i1;
+        std::size_t i0, i1;
         int key;
     };
     std::vector<Run> runs;
-    size_t i = 0;
+    std::size_t i = 0;
     while (i < N) {
         const int k = key[i];
-        size_t j = i;
+        std::size_t j = i;
         while (j < N && key[j] == k) ++j;
         runs.push_back({i, j, k});
         i = j;
@@ -297,32 +292,32 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
         if (_log.size() < 8) return 0.0;
         std::vector<double> d;
         d.reserve(_log.size() - 1);
-        for (size_t j = 1; j < _log.size(); ++j) {
+        for (std::size_t j = 1; j < _log.size(); ++j) {
             if (const double v = _log[j].tow - _log[j - 1].tow; v > 0.0) d.push_back(v);
         }
         if (d.size() < _log.size() / 2) return 0.0;
-        const size_t mid = d.size() / 2;
+        const std::size_t mid = d.size() / 2;
         std::nth_element(d.begin(), d.begin() + static_cast<long>(mid), d.end());
         return d[mid];
     };
     const double dtEst = estimateDt(log);
-    const size_t minLen = dtEst > 0.0
-                              ? std::max<size_t>(1, static_cast<size_t>(std::llround(p.minSegSeconds / dtEst)))
-                              : static_cast<size_t>(p.minSegSamples);
+    const std::size_t minLen = dtEst > 0.0
+                                   ? std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(p.minSegSeconds / dtEst)))
+                                   : static_cast<std::size_t>(p.minSegSamples);
 
 
     bool changed = true;
     while (changed) {
         changed = false;
-        for (size_t k = 0; k < runs.size(); ++k) {
+        for (std::size_t k = 0; k < runs.size(); ++k) {
             if (runs[k].i1 - runs[k].i0 >= minLen) continue;
             const bool hasL = k > 0;
             const bool hasR = k + 1 < runs.size();
             if (!hasL && !hasR) break;
-            const size_t lenL = hasL ? runs[k - 1].i1 - runs[k - 1].i0 : 0;
-            const size_t lenR = hasR ? runs[k + 1].i1 - runs[k + 1].i0 : 0;
+            const std::size_t lenL = hasL ? runs[k - 1].i1 - runs[k - 1].i0 : 0;
+            const std::size_t lenR = hasR ? runs[k + 1].i1 - runs[k + 1].i0 : 0;
             const bool toLeft = !hasR || (hasL && lenL >= lenR);
-            const size_t seg = toLeft ? k - 1 : k + 1;
+            const std::size_t seg = toLeft ? k - 1 : k + 1;
             runs[seg] = {std::min(runs[k].i0, runs[seg].i0), std::max(runs[k].i1, runs[seg].i1), runs[seg].key};
             runs.erase(runs.begin() + static_cast<long>(k));
             changed = true;
@@ -332,11 +327,11 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
 
 
     for (const auto &[i0, i1, _key]: runs) {
-        const size_t n = i1 - i0;
+        const std::size_t n = i1 - i0;
         if (n == 0) continue;
         const double inv = 1.0 / static_cast<double>(n);
         double ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
-        for (size_t k = i0; k < i1; ++k) {
+        for (std::size_t k = i0; k < i1; ++k) {
             const auto &s = log[k];
             ax += s.ax;
             ay += s.ay;
@@ -349,11 +344,9 @@ std::vector<ImuCalibrator::CalibSegment> ImuCalibrator::detect(const ImuLog &log
         seg.i0 = i0;
         seg.i1 = i1;
         if (_key >= 6) {
-
             seg.isStatic = false;
             seg.rot = static_cast<Rot>(axisKey(gx * inv, gy * inv, gz * inv));
         } else {
-
             seg.isStatic = true;
             seg.pos = static_cast<Pos>(axisKey(ax * inv, ay * inv, az * inv));
         }

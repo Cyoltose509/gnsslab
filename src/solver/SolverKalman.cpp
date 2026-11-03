@@ -1,8 +1,5 @@
 #include "Exception.h"
 #include "SolverKalman.h"
-
-using namespace std;
-
 #define debug 0
 
 void SolverKalman::reset(const Eigen::VectorXd &initialState, const Eigen::MatrixXd &initialErrorCovariance) {
