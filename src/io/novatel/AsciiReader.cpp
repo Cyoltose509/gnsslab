@@ -328,18 +328,12 @@ namespace NovAtel {
         mInsLayout = InsRecordLayout();
         mImuType = -1;
 
-        probeRangeKind();
         return true;
     }
 
     void AsciiReader::close() {
         if (mIn.is_open()) mIn.close();
         LogReader::close();
-    }
-
-    void AsciiReader::restartStream() {
-        mIn.clear();
-        if (mIn.is_open()) mIn.seekg(0);
     }
 
     bool AsciiReader::getNextMessage(std::vector<std::uint8_t> &message, [[maybe_unused]] bool block) {
@@ -370,11 +364,9 @@ namespace NovAtel {
         std::vector<std::uint8_t> body;
 
         if (name == "RANGEA") {
-            if (mRangeKind == RangeKind::Compressed) return false; // 有全量版时压缩版是重复历元
             buildRangeBody(f, body);
             id = LogID::RANGE;
         } else if (name == "RANGECMPA") {
-            if (mRangeKind == RangeKind::Full) return false;
             if (!buildRangeCmpBody(f, body)) return false;
             id = LogID::RANGECMP;
         } else if (name == "GPSEPHEMA") {

@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace Tools::InsPanel {
+namespace Tools::Ins {
     namespace {
         using UI::ParamPage::between;
         using UI::ParamPage::field;

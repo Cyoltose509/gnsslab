@@ -1,5 +1,7 @@
 #include "ui/Gui.h"
 
+#include "StringUtils.h"
+
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -166,14 +168,11 @@ void Gui::Initialize(const char *title, const float width, const float height, c
     const int w = static_cast<int>(width * main_scale);
     const int h = static_cast<int>(height * main_scale);
 
-    // Convert char* title to WCHAR* for CreateWindowW
-    int len = MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
-    std::vector<wchar_t> wTitle(len);
-    MultiByteToWideChar(CP_UTF8, 0, title, -1, wTitle.data(), len);
+    const std::wstring wTitle = Str::UTF8ToWide(title);
 
     m_hwnd = ::CreateWindowW(
         m_wndClass.lpszClassName,
-        wTitle.data(),
+        wTitle.c_str(),
         WS_OVERLAPPEDWINDOW, 100, 100, w, h,
         nullptr, nullptr, m_wndClass.hInstance, nullptr);
     g_mainHwnd = m_hwnd;   // 供文件对话框归属使用

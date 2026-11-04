@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -10,10 +9,9 @@
 #include <string>
 #include <vector>
 
-#include "CSV.h"
 #include "Config.h"
 #include "Task.h"
-#include "view/View.h"
+#include "View.h"
 
 namespace Solvers {
     /// 一次解算的配置与结果：CLI 与 GUI 共用，呈现状态另存于 View。
@@ -60,10 +58,6 @@ namespace Solvers {
         Mode mode{Mode::SPP};
 
         std::shared_ptr<Core> solveResult() override { return std::static_pointer_cast<Core>(shared_from_this()); }
-
-        void exportCSV(std::ostream &out) const {
-            Solvers::exportCSV(out, epochs, mode, refECEF, hasRefOrbit);
-        }
     };
 
     int readRINEXObsToQueue(const std::shared_ptr<Core> &core, const std::atomic<bool> &stopFlag);

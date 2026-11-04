@@ -9,6 +9,7 @@
 
 #include "implot.h"
 #include "implot3d.h"
+#include "ui/GuiColors.h"
 
 namespace Solvers::Charts {
     ImU32 getSatCol(const char s) {
@@ -300,8 +301,8 @@ namespace Solvers::Charts {
         newed = false;
     }
 
-    void renderSkyplot(const std::map<SatID, std::vector<Solvers::SkyPoint> > &tracks,
-                       const std::vector<std::pair<SatID, Solvers::SkyPoint> > &curPts,
+    void renderSkyplot(const std::map<SatID, std::vector<SkyPoint> > &tracks,
+                       const std::vector<std::pair<SatID, SkyPoint> > &curPts,
                        const float sizePx) {
         const float availW = ImGui::GetContentRegionAvail().x;
         const float availH = ImGui::GetContentRegionAvail().y;
@@ -385,14 +386,14 @@ namespace Solvers::Charts {
 
 
     static void renderLeo3DImpl(const Eigen::Vector3d &leoPos,
-                                const std::vector<Solvers::TrajPoint> &leoTraj,
-                                const std::vector<Solvers::TrajPoint> &refTraj,
+                                const std::vector<TrajPoint> &leoTraj,
+                                const std::vector<TrajPoint> &refTraj,
                                 const float sizePx) {
         if (leoTraj.size() < 2) {
             ImGui::TextDisabled("(轨迹点不足，无法绘制 3D)");
             return;
         }
-        auto fillXYZ = [&](const std::vector<Solvers::TrajPoint> &traj,
+        auto fillXYZ = [&](const std::vector<TrajPoint> &traj,
                            std::vector<double> &xs, std::vector<double> &ys, std::vector<double> &zs) {
             xs.clear();
             ys.clear();
@@ -432,8 +433,8 @@ namespace Solvers::Charts {
 
 
     void renderLeo3D(const Eigen::Vector3d &leoPos,
-                     const std::vector<Solvers::TrajPoint> &leoTraj,
-                     const std::vector<Solvers::TrajPoint> &refTraj,
+                     const std::vector<TrajPoint> &leoTraj,
+                     const std::vector<TrajPoint> &refTraj,
                      const float sizePx) {
         __try {
             renderLeo3DImpl(leoPos, leoTraj, refTraj, sizePx);

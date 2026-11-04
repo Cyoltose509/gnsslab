@@ -2,7 +2,6 @@
 
 #include "CoordConvert.h"
 #include "StringUtils.h"
-#include <cmath>
 #include <algorithm>
 #include <cstdio>
 #include <cfloat>
@@ -10,6 +9,7 @@
 #include <set>
 
 #include "implot.h"
+#include "ui/GuiColors.h"
 
 namespace Solvers::Charts {
     namespace {
@@ -107,7 +107,7 @@ namespace Solvers::Charts {
                         if (cnt >= 1) (*v.refECEF)[0] = val[0];
                         if (cnt >= 2) (*v.refECEF)[1] = val[1];
                         if (cnt >= 3) (*v.refECEF)[2] = val[2];
-                        changed = (cnt >= 1);
+                        changed = cnt >= 1;
                     }
                 }
                 ImGui::SameLine();
@@ -345,11 +345,11 @@ namespace Solvers::Charts {
                                     ImGui::BeginChild("##restbl", ImVec2(0, -52), ImGuiChildFlags_Borders);
                                     renderPosTables(v);
                                     ImGui::EndChild();
-                                    if (v.onExportCsv) {
+                                    if (v.onExportCSV) {
                                         const bool canExport = v.epochCount > 0;
                                         if (!canExport) ImGui::BeginDisabled();
                                         if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) {
-                                            v.onExportCsv();
+                                            v.onExportCSV();
                                         }
                                         if (!canExport) ImGui::EndDisabled();
                                     }

@@ -80,7 +80,7 @@ void SPP::solve(ObsData &obsData) {
         }
         if (!isRover) break;
 
-        posSolver.solve(posEquations);
+        posSolver.solve(posEquations, posEquations.weightVector().asDiagonal().toDenseMatrix());
 
         const Eigen::Vector3d dxyz = {
             posSolver.getSolution(Parameter::dX),
@@ -94,7 +94,7 @@ void SPP::solve(ObsData &obsData) {
         }
 
         if (velEquations.obsEquData.size() >= 4) {
-            velSolver.solve(velEquations);
+            velSolver.solve(velEquations, velEquations.weightVector().asDiagonal().toDenseMatrix());
             const Eigen::Vector3d dvel = {
                 velSolver.getSolution(Parameter::dVX),
                 velSolver.getSolution(Parameter::dVY),
@@ -472,7 +472,7 @@ void SPP::computeSatPos(ObsData &obsData) {
         CommonTime t_emit = obsData.epoch;
         t_emit.m_sod -= tau_total;
 
-        satPVTTransTime[sat] = eph->getPVT(t_emit);
+        satPVTTransTime[sat] = eph->getPVT(t_emit, &def);
     }
 }
 

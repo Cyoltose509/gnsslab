@@ -7,6 +7,7 @@
 
 #include "imgui.h"
 #include "GuiCharts.h"
+#include "ui/GuiColors.h"
 
 namespace Solvers::Charts {
 
@@ -77,8 +78,8 @@ namespace Solvers::Charts {
         bool hasFloatSeries = false;
         std::vector<double> float_e, float_n, float_u;
 
-        std::map<SatID, std::vector<Solvers::SkyPoint>> skyTracks;
-        std::vector<std::pair<SatID, Solvers::SkyPoint>> curSkyPts;
+        std::map<SatID, std::vector<SkyPoint>> skyTracks;
+        std::vector<std::pair<SatID, SkyPoint>> curSkyPts;
         std::map<SatID, std::vector<double>> resT, resV;
 
 
@@ -113,10 +114,10 @@ namespace Solvers::Charts {
         ChartVisibility *renderToggles = nullptr;
         Eigen::Vector3d leoPos3d{0, 0, 0};
         Eigen::Vector3d leoRef3d{0, 0, 0};
-        std::vector<Solvers::SatVis> gnssVis;
-        std::vector<Solvers::TrajPoint> leoTraj;
-        std::vector<Solvers::TrajPoint> leoRefTraj;
-        std::map<SatID, std::vector<Solvers::TrajPoint>> gnssTraj;
+        std::vector<SatVis> gnssVis;
+        std::vector<TrajPoint> leoTraj;
+        std::vector<TrajPoint> leoRefTraj;
+        std::map<SatID, std::vector<TrajPoint>> gnssTraj;
 
 
         bool hasFixedDistinction = false;
@@ -145,7 +146,7 @@ namespace Solvers::Charts {
         double solRatio = 0;
 
         bool isDone = false;
-        std::function<void()> onExportCsv;
+        std::function<void()> onExportCSV;
     };
 
     void renderPositioningTab(const PosTabView &v);

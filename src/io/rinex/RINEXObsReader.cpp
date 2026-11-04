@@ -94,8 +94,9 @@ ObsData RINEXObsReader::parseRINEXObs() {
     currEpoch.setTimeSystem(TimeSystem::GPS);
 
     SatTypeValueMap stvData;
+    SatTypeLLIMap lliData;
     if (epochFlag == 0 || epochFlag == 1 || epochFlag == 6) {
-        readSatObs(stvData, numSats);
+        readSatObs(stvData, numSats, lliData);
     }
 
     ObsData obsData;
@@ -103,6 +104,7 @@ ObsData RINEXObsReader::parseRINEXObs() {
     obsData.epoch = currEpoch;
     obsData.weekSecond = Time::CommonToWeekSecond(currEpoch);
     obsData.satTypeValueData = std::move(stvData);
+    obsData.satTypeLLI = std::move(lliData);
     obsData.antennaPosition = rinexHeader.antennaPosition;
     obsData.antType = rinexHeader.antType;
 
@@ -110,7 +112,8 @@ ObsData RINEXObsReader::parseRINEXObs() {
     return obsData;
 }
 
-void RINEXObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats) {
+void RINEXObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats,
+                                SatTypeLLIMap &lliOut) {
     std::string line;
     for (int isv = 0; isv < numSats; ++isv) {
         if (!nextLine(line)) throw EndOfFile("EOF encountered!");
@@ -142,17 +145,18 @@ void RINEXObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats) {
             itTypes != rinexHeader.mapObsTypes.end()) {
             buf.resize(16 * itTypes->second.size(), ' ');
         }
-        decodeObsBlock(sat, buf, stvData);
+        decodeObsBlock(sat, buf, stvData, lliOut);
     }
 }
 
 void RINEXObsReader::decodeObsBlock(const SatID &sat, const std::string &buf,
-                                    SatTypeValueMap &out) const {
+                                    SatTypeValueMap &out, SatTypeLLIMap &lliOut) const {
     const auto itTypes = rinexHeader.mapObsTypes.find(sat.system);
     if (itTypes == rinexHeader.mapObsTypes.end()) return;
     const auto &types = itTypes->second;
 
     TypeValueMap typeObs;
+    std::map<std::string, int> typeLLI;
     for (int i = 0; i < static_cast<int>(types.size()); ++i) {
         const std::size_t pos = 16 * i;
         if (pos >= buf.size()) break;
@@ -163,6 +167,12 @@ void RINEXObsReader::decodeObsBlock(const SatID &sat, const std::string &buf,
         double data = Str::toDouble(tmpStr);
 
         if (obsTypeStr[0] == 'L') {
+            // 第 15 个字符是 LLI：bit0 失锁、bit1 半周跳。空格＝未标注，0＝明确无标记。
+            if (pos + 14 < buf.size()) {
+                if (const char lliCh = buf[pos + 14]; lliCh >= '1' && lliCh <= '7')
+                    typeLLI[obsTypeStr] = lliCh - '0';
+            }
+
             const double freq = sat.system == 'R'
                                     ? getGlonassFreq(obsTypeStr[1], sat.chan)
                                     : getFreq(sat.system, obsTypeStr);
@@ -179,6 +189,7 @@ void RINEXObsReader::decodeObsBlock(const SatID &sat, const std::string &buf,
         typeObs[obsTypeStr] = data;
     }
     out[sat] = typeObs;
+    if (!typeLLI.empty()) lliOut[sat] = std::move(typeLLI);
 }
 
 // 线性扫描到第一个不早于 target 的历元。只做定位，不解码数据。

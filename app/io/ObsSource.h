@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cctype>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -12,8 +13,6 @@
 #include "Observer.h"
 #include "DualPair.h"
 
-// 观测源接入：按路径打开 RINEX / NovAtel 观测，统一成 Observer::DualPair::Puller，
-// 并在双站 RINEX 间做起始历元对齐。仅做 IO，不涉及解算编排（逐历元引擎见 solvers/common/Driver.h）。
 namespace ObsSource {
     using Puller = Observer::DualPair::Puller;
 
@@ -45,13 +44,33 @@ namespace ObsSource {
 
     bool loadNav(const std::string &navPath, EphemerisTable &navTable, std::string &err);
 
-    /// 扫描观测路径的伴生广播星历（同主干换星历扩展名）。
     inline std::vector<std::string> scanNavFiles(const std::string &obsPath) {
         std::vector<std::string> result;
         if (obsPath.size() < 4) return result;
-        const std::string base = obsPath.substr(0, obsPath.size() - 1);
-        for (auto &ext: {"N", "G", "C", "F", "E", "J", "I", "L"}) {
-            std::string np = base + ext;
+
+        auto sameNoCase = [](const std::string &a, const std::string &b) {
+            if (a.size() != b.size()) return false;
+            for (std::size_t i = 0; i < a.size(); ++i) {
+                if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                    std::tolower(static_cast<unsigned char>(b[i]))) return false;
+            }
+            return true;
+        };
+
+        std::vector<std::string> cands;
+        if (const char tail = obsPath.back(); tail == 'O' || tail == 'o') {
+            const std::string base = obsPath.substr(0, obsPath.size() - 1);
+            for (auto &ext: {"N", "G", "C", "F", "E", "J", "I", "L"}) cands.push_back(base + ext);
+        } else {
+            const auto slash = obsPath.find_last_of("/\\");
+            const auto dot = obsPath.find_last_of('.');
+            if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return result;
+            const std::string stem = obsPath.substr(0, dot);
+            for (auto &ext: {".nav", ".21N", ".21C"}) cands.push_back(stem + ext);
+        }
+
+        for (const auto &np: cands) {
+            if (sameNoCase(np, obsPath)) continue;
             if (std::ifstream t(np); t.good()) {
                 t.close();
                 result.push_back(np);

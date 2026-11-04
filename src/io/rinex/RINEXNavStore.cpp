@@ -6,23 +6,14 @@
 
 #include <vector>
 #include <cctype>
-#include <cmath>
 namespace {
 
-    // 解析导航首行：卫星号、历元、钟差 a0/a1/a2。
-    // 首行在 RINEX2 与 RINEX3 的字段顺序、个数完全一致，差异仅「年」2 位 vs 4 位、
-    // 以及 GPS 卫星号在 v2 无系统前缀（仅 2 位数字）。
     struct NavHeader {
         int prn = 0;
         CommonTime ct;
         double a0 = 0, a1 = 0, a2 = 0;
     };
 
-    // 按「数值模式」逐个抽取浮点数，不依赖分隔符。
-    // 首行的历元与钟差都是定宽字段（v3 历元 23 列、v2 22 列，其后 3×D19.12），
-    // 某个值恰好填满 19 列时相邻字段之间没有空格——如
-    // "...2.332665026188e-04-9.777068044059e-12..."，空白分词会把两个值粘成一个，
-    // 导致字段数不足而整份星历读不出。故这里识别 [+-]?数字[.数字]([eE][+-]?数字) 的形态。
     std::vector<double> extractNumbers(const std::string &s) {
         std::vector<double> out;
         const std::size_t n = s.size();
@@ -36,8 +27,7 @@ namespace {
             if (s[i] == '+' || s[i] == '-') ++i;
             bool seenExp = false, hasDigit = false;
             while (i < n) {
-                const char c = s[i];
-                if (c >= '0' && c <= '9') {
+                if (const char c = s[i]; c >= '0' && c <= '9') {
                     hasDigit = true;
                     ++i;
                 } else if (c == '.') {
@@ -56,23 +46,17 @@ namespace {
         return out;
     }
 
-    NavHeader parseNavHeader(const std::string &line, double ver, const TimeSystem &ts) {
+    NavHeader parseNavHeader(const std::string &line, const double ver, const TimeSystem &ts) {
         NavHeader h;
-
-        // RINEX 导航首行的钟差/轨道字段用 Fortran 风格 D 指数；MSVC 的 std::stod 不识 'D'，
-        // 数据块各行已统一调 fortranExponent(D->e)，首行也要同样处理，否则 a0/a1/a2 会被截断成无指数值。
         std::string convLine = line;
         std::replace(convLine.begin(), convLine.end(), 'D', 'e');
 
-        // 卫星号（首字段）：v3 形如 "G01"（系统前缀 + 2 位 PRN）；v2 GPS 仅 2 位数字无前缀，
-        // GLONASS 在两种版本都带 "R" 前缀。
         const std::size_t p0 = convLine.find_first_not_of(" \t\r");
         if (p0 == std::string::npos)
             throw FFStreamError("导航首行为空");
         std::size_t p1 = convLine.find_first_of(" \t\r", p0);
         if (p1 == std::string::npos) p1 = convLine.size();
-        const std::string sat = convLine.substr(p0, p1 - p0);
-        if (sat.size() >= 3 && std::isalpha(static_cast<unsigned char>(sat[0])))
+        if (const std::string sat = convLine.substr(p0, p1 - p0); sat.size() >= 3 && std::isalpha(static_cast<unsigned char>(sat[0])))
             h.prn = SatID(sat).id;
         else
             h.prn = Str::toInt(sat);
@@ -110,16 +94,16 @@ namespace {
 }
 
 void RINEXNavStore::loadGPSEph(GPSEphem &eph, std::string &line) const {
-    const NavHeader h = parseNavHeader(line, version, TimeSystem::GPS);
-    eph.prn = h.prn;
+    const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::GPS);
+    eph.prn = prn;
 
-    const WeekSecond ws = Time::CommonToWeekSecond(h.ct);
+    const WeekSecond ws = Time::CommonToWeekSecond(ct);
     eph.toc = ws.sow;
     eph.week = ws.week;
 
-    eph.a0 = h.a0;
-    eph.a1 = h.a1;
-    eph.a2 = h.a2;
+    eph.a0 = a0;
+    eph.a1 = a1;
+    eph.a2 = a2;
 
 
     double IODE, Crs, Delta_n, M0;
@@ -233,19 +217,16 @@ void RINEXNavStore::loadGPSEph(GPSEphem &eph, std::string &line) const {
 }
 
 void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
-    const NavHeader h = parseNavHeader(line, version, TimeSystem::BDT);
-    eph.prn = h.prn;
+    const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::BDT);
+    eph.prn = prn;
 
-    // 周数必须按**本系统**纪元折算：BDSEphem::timeSystem = BDT，getCommonTime 会用
-    // BDT 纪元（MJD 53736）去还原，这里若按 GPS 纪元（44244）取周，会得到 GPS 周 2442，
-    // 再由 BDT 纪元展开 → 时间整整多出 1356 周（9492 天），星历全程匹配不上。
-    const WeekSecond ws = Time::CommonToWeekSecond(h.ct, TimeSystem::BDT);
+    const WeekSecond ws = Time::CommonToWeekSecond(ct, TimeSystem::BDT);
     eph.toc = ws.sow;
     eph.week = ws.week;
 
-    eph.a0 = h.a0;
-    eph.a1 = h.a1;
-    eph.a2 = h.a2;
+    eph.a0 = a0;
+    eph.a1 = a1;
+    eph.a2 = a2;
 
 
     double IODE, Crs, Delta_n, M0;
@@ -295,28 +276,39 @@ void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
     }
 
 
-    std::string l5;
-    if (!nextLine(l5)) throw EndOfFile("nav data truncated");
-    Str::stripTrailing(l5);
-    fortranExponent(l5);
-    double IDOT = Str::toDouble(l5.substr(4, 19));
-
-
-
     std::string l6;
     if (!nextLine(l6)) throw EndOfFile("nav data truncated");
     Str::stripTrailing(l6);
     fortranExponent(l6);
-    double SatH1 = Str::toDouble(l6.substr(4, 19));
-    double TGD1 = Str::toDouble(l6.substr(23, 19));
-    double TGD2 = Str::toDouble(l6.substr(42, 19));
-    double TGD3 = Str::toDouble(l6.substr(61, 19));
-    bool shifted = std::fabs(TGD1) < 1e-12 && (std::fabs(TGD2) > 1e-12 || std::fabs(TGD3) > 1e-12);
-    double tgdB1 = shifted ? TGD2 : TGD1;
-    double tgdB2 = shifted ? TGD3 : TGD2;
+    const double IDOT = Str::toDouble(l6.substr(4, 19));
 
-    std::string _discard;
-    nextLine(_discard);
+    std::string l7;
+    if (!nextLine(l7)) throw EndOfFile("nav data truncated");
+    Str::stripTrailing(l7);
+    fortranExponent(l7);
+    const double URA = Str::toDouble(l7.substr(4, 19));
+    const double SatH1 = Str::toDouble(l7.substr(23, 19));
+    double tgdB1 = Str::toDouble(l7.substr(42, 19));
+    double tgdB2 = Str::toDouble(l7.substr(61, 19));
+    // 规范写秒；个别生产商用 1e-10 s 单位，按量级区分
+    if (std::fabs(tgdB1) > 1e-4 || std::fabs(tgdB2) > 1e-4) {
+        tgdB1 *= 1e-10;
+        tgdB2 *= 1e-10;
+    }
+
+    std::string l8;
+    if (!nextLine(l8)) throw EndOfFile("nav data truncated");
+    Str::stripTrailing(l8);
+    fortranExponent(l8);
+    const double AODC = Str::toDouble(l8.substr(23, 19));
+
+    std::string extra;
+    while (nextLine(extra)) {
+        if (!extra.empty() && !std::isspace(static_cast<unsigned char>(extra[0]))) {
+            pushBack(extra);
+            break;
+        }
+    }
 
     eph.toe = Toe;
     eph.m0 = M0;
@@ -335,26 +327,24 @@ void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
     eph.cic = Cic;
     eph.cis = Cis;
     eph.health = static_cast<unsigned int>(SatH1);
-    eph.ura = 2.0;
+    eph.ura = URA;
     eph.AODE = static_cast<unsigned int>(IODE);
-    eph.AODC = static_cast<unsigned int>(IODE);
+    eph.AODC = static_cast<unsigned int>(AODC);
     eph.tgd1 = tgdB1;
     eph.tgd2 = tgdB2;
 }
 
 void RINEXNavStore::loadGalEph(GalileoEphem &eph, std::string &line) const {
-    const NavHeader h = parseNavHeader(line, version, TimeSystem::GAL);
-    eph.prn = h.prn;
+    const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::GAL);
+    eph.prn = prn;
 
-    // 同 loadBDSEph：GalileoEphem::timeSystem = GAL，周数要用 GAL 纪元（MJD 51412）折算，
-    // 用默认的 GPS 纪元会多出 1024 周（7168 天）。
-    const WeekSecond ws = Time::CommonToWeekSecond(h.ct, TimeSystem::GAL);
+    const WeekSecond ws = Time::CommonToWeekSecond(ct, TimeSystem::GAL);
     eph.toc = ws.sow;
     eph.week = ws.week;
 
-    eph.a0 = h.a0;
-    eph.a1 = h.a1;
-    eph.a2 = h.a2;
+    eph.a0 = a0;
+    eph.a1 = a1;
+    eph.a2 = a2;
 
 
     double IODE, Crs, Delta_n, M0;
@@ -461,14 +451,14 @@ void RINEXNavStore::loadGalEph(GalileoEphem &eph, std::string &line) const {
 }
 
 void RINEXNavStore::loadGloEph(GlonassEphem &eph, const std::string &line) const {
-    const NavHeader h = parseNavHeader(line, version, TimeSystem::UTC);
-    eph.prn = h.prn;
+    const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::UTC);
+    eph.prn = prn;
 
-    eph.toeCommon = h.ct;
+    eph.toeCommon = ct;
 
-    eph.tauN = -h.a0;
-    eph.gamma = h.a1; // RINEX 列 "SV relative frequency bias" = γ，与 NovAtel 的 H+116 同义
-    eph.tk = h.a2;
+    eph.tauN = -a0;
+    eph.gamma = a1;
+    eph.tk = a2;
 
     {
         std::string l;
@@ -530,8 +520,6 @@ void RINEXNavStore::loadFile(const std::string &file, EphemerisTable &ephTable) 
             version = tVer;
             fileType = tType;
 
-            // RINEX2 与 RINEX3 的导航记录差异仅在首行（2 位 PRN + 2 位年 vs 3 字符卫星号 + 4 位年），
-            // 数据块列位置一致；首行统一用空白分词解析，故 v2/v3 均可读。
             if (const char c = fileType.empty() ? ' ' : fileType[0];
                 c != 'N' && c != 'n' && c != 'G' && c != 'g' &&
                 c != 'E' && c != 'e' && c != 'M' && c != 'm') {
@@ -574,11 +562,8 @@ void RINEXNavStore::loadFile(const std::string &file, EphemerisTable &ephTable) 
     while (nextLine(line)) {
         fortranExponent(line);
 
-        // 跳过空行或纯空白行；注意 RINEX2 GPS 记录首字符可能是空格（PRN 左补位），不能据此跳过。
         if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
 
-        // RINEX3 每条记录自带系统前缀（G/C/E/R）；RINEX2 单系统文件的 GPS 记录以数字
-        // 开头，故遇到 v2 且首字符非字母时按 GPS 处理（GLONASS 仍带 R 前缀）。
         char sys = line[0];
         if (version < 3.0 && !std::isalpha(static_cast<unsigned char>(sys))) sys = 'G';
 

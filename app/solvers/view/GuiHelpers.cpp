@@ -3,15 +3,14 @@
 #include "GuiHelpers.h"
 
 #include <algorithm>
-#include <cstring>
 #include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
 
-void Solvers::Helpers::renderRealtimeConfig(Solvers::Task *task,
-                                            std::vector<Solvers::RealtimeEndpoint> *endpoints,
+void Solvers::Helpers::renderRealtimeConfig(Task *task,
+                                            std::vector<RealtimeEndpoint> *endpoints,
                                             const std::vector<std::string> &labels,
                                             double *cutoffDeg, std::set<char> *systems,
                                             double *sampleInterval,
@@ -113,7 +112,7 @@ void Solvers::Helpers::renderSimpleConfig(double *cutoffDeg, std::set<char> *sys
 }
 
 
-void Solvers::Helpers::beginConfigBody(const std::string &idBase, const Solvers::Task &task) {
+void Solvers::Helpers::beginConfigBody(const std::string &idBase, const Task &task) {
     const std::string id = idBase + std::to_string(task.cfgIndex);
     ImGui::BeginChild(id.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
 }

@@ -7,7 +7,6 @@
 
 #include "CliCommon.h"
 #include "solvers/common/Core.h"
-#include "solvers/common/Driver.h"
 #include "core/IniFile.h"
 
 static std::set<char> parseSystems(const std::string &s) {
@@ -162,7 +161,7 @@ namespace Cli {
             std::lock_guard lk(core->mutex);
             n = core->epochs.size();
         }
-        task.writeCsv(out);
+        task.exportCSV(out);
         std::cout << "已写出 " << n << " 历元 -> " << path << "\n";
     }
 

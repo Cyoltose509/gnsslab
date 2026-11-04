@@ -98,7 +98,8 @@ void RINEX2ObsReader::readEpochHead(std::string &line, int &flag, int &numSats) 
     }
 }
 
-void RINEX2ObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats) {
+void RINEX2ObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats,
+                                SatTypeLLIMap &lliOut) {
     const auto nobs = static_cast<int>(mTypes2.size());
     if (nobs <= 0 || numSats <= 0) return;
     const int rowsPerSat = (nobs + 4) / 5;
@@ -143,7 +144,7 @@ void RINEX2ObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats) {
         if (sat.system != 'G' && sat.system != 'C' && sat.system != 'R' && sat.system != 'E') {
             continue;
         }
-        decodeObsBlock(sat, buf, stvData);
+        decodeObsBlock(sat, buf, stvData, lliOut);
     }
 }
 

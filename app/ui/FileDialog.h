@@ -95,7 +95,7 @@ namespace FileDialog {
         return ShowSaveFileDialog(outPath, filters, nFilters, wDef.c_str(), defExt);
     }
 
-    inline bool saveCsv(const std::string &defaultName, std::wstring &outPath) {
+    inline bool saveCSV(const std::string &defaultName, std::wstring &outPath) {
         return save(defaultName, outPath, fCsv, 2, L"csv");
     }
 }

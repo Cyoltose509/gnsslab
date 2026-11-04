@@ -36,6 +36,8 @@ namespace Solvers::LEO {
         bool afterSolveEpoch(void *solver, Solvers::Epoch *data,
                              Observer::Item *item, int index) override;
 
+        void exportCSV(std::ostream &out) const override;
+
         Task() {
             core = std::make_shared<Solvers::Core>();
             core->mode = Mode::LEO;

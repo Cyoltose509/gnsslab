@@ -6,7 +6,7 @@
 class ARLambda {
 public:
     ARLambda() : squaredRatio(0) {}
-    virtual ~ARLambda() {}
+    virtual ~ARLambda() = default;
 
     Eigen::VectorXd resolve(Eigen::VectorXd &ambFloat, const Eigen::MatrixXd &ambCov);
 

@@ -43,11 +43,9 @@ int SolverKalman::correct(const Eigen::VectorXd &mVector, const Eigen::MatrixXd 
     const int n = static_cast<int>(hMatrix.cols()); // 状态维数
     const int q = static_cast<int>(hMatrix.rows()); // 观测维数
 
-    Eigen::MatrixXd R = Eigen::MatrixXd::Zero(q, q);
-    for (int i = 0; i < q; ++i) {
-        const double w = wMatrix(i, i);
-        R(i, i) = w > 0.0 ? 1.0 / w : 1.0; // R = W⁻¹（W 为对角权阵）
-    }
+    if (wMatrix.rows() != q || wMatrix.cols() != q) return -1;
+    const Eigen::MatrixXd R = wMatrix.inverse();
+    if (!R.allFinite()) return -1;
 
     const Eigen::MatrixXd PHt = Pminus * hMatrix.transpose();
     const Eigen::MatrixXd S = hMatrix * PHt + R;

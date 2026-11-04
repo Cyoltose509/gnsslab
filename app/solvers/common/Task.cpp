@@ -5,10 +5,9 @@
 #include <limits>
 #include <string>
 
-#include "CSV.h"
+#include "EpochDecimator.h"
 #include "Log.h"
 #include "SPP.h"
-#include "solvers/common/Driver.h"
 #include "solvers/common/Session.h"
 
 namespace Solvers {
@@ -115,6 +114,26 @@ namespace Solvers {
     }
 
     namespace {
+        /// 单站解算器的逐历元循环：SPP / PPPStatic / PPPKinematic / LEO 共用。
+        /// RTK 是双站配对，走 rtk/Task.cpp 自己的管线。
+        template<typename Solver, typename OnEpoch, typename BeforeSolve>
+        void solveStream(Observer::Source &src, Solver &solver, OnEpoch onEpoch,
+                         BeforeSolve beforeSolve, const double sampleInterval = 0.0) {
+            Observer::Item item;
+            const EpochDecimator dec(sampleInterval);
+            while (src.next(item)) {
+                if (!dec.accept(item.obs.weekSecond.sow)) continue;
+                Epoch data;
+                data.getFromObs(item.obs);
+                beforeSolve(solver, item);
+                bool ok = false;
+                try { ok = solver.processEpoch(item.obs); } catch (...) { ok = false; }
+                if (ok) data.getFromSPP(solver);
+                else data.solved = false;
+                if (!onEpoch(solver, item, data)) data.solved = false;
+            }
+        }
+
         struct TaskQueueSource : Observer::Source {
             std::shared_ptr<Core> core;
             const Task *owner = nullptr;
@@ -168,29 +187,29 @@ namespace Solvers {
             }
 
             TaskQueueSource src(core, this);
-            Driver::solveStream(src, *solver,
-                                     [this, core](::SPP &s, Observer::Item &item, Epoch &data) {
-                                         int idx = 0;
-                                         {
-                                             std::lock_guard lk(core->mutex);
-                                             idx = static_cast<int>(core->epochs.size());
-                                         }
-                                         bool ok = false;
-                                         try {
-                                             ok = afterSolveEpoch(&s, &data, &item, idx);
-                                         } catch (const std::exception &e) {
-                                             LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
-                                         } catch (...) {
-                                             LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
-                                         }
-                                         if (!ok) data.solved = false;
-                                         commitEpoch(core, std::move(data));
-                                         return true;
-                                     },
-                                     [this, core](::SPP &s, Observer::Item &item) {
-                                         beforeSolveEpoch(&s, &item);
-                                     },
-                                     core->sampleInterval);
+            solveStream(src, *solver,
+                        [this, core](::SPP &s, Observer::Item &item, Epoch &data) {
+                            int idx = 0;
+                            {
+                                std::lock_guard lk(core->mutex);
+                                idx = static_cast<int>(core->epochs.size());
+                            }
+                            bool ok = false;
+                            try {
+                                ok = afterSolveEpoch(&s, &data, &item, idx);
+                            } catch (const std::exception &e) {
+                                LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
+                            } catch (...) {
+                                LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
+                            }
+                            if (!ok) data.solved = false;
+                            commitEpoch(core, std::move(data));
+                            return true;
+                        },
+                        [this, core](::SPP &s, Observer::Item &item) {
+                            beforeSolveEpoch(&s, &item);
+                        },
+                        core->sampleInterval);
         } catch (const std::exception &e) {
             LOG_ERROR << "[解算] 解算线程异常: " << e.what();
             core->setError(e.what());
@@ -234,9 +253,7 @@ namespace Solvers {
         });
     }
 
-    void Task::writeCsv(std::ostream &out) {
-        if (const auto core = solveResult())
-            exportCSV(out, core->epochs, core->mode, core->refECEF, core->hasRefOrbit);
+    void Task::exportCSV(std::ostream &) const {
     }
 
     void syncTaskStatus(const std::shared_ptr<Task> &task, const std::shared_ptr<Core> &core) {

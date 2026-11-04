@@ -1,6 +1,7 @@
 #include "Task.h"
 
 #include <future>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "SPP.h"
 #include "StringUtils.h"
 #include "io/ProductLoad.h"
+#include "solvers/common/CSV.h"
 
 namespace Solvers::LEO {
     void Task::applyConfig(const SolverOptions &cfg) {
@@ -24,7 +26,7 @@ namespace Solvers::LEO {
         core->isRINEX = Observer::isRINEX(Observer::classifyObsPath(cfg.obsPath));
         leoObsPathBuf = cfg.obsPath;
         refSp3PathBuf = cfg.refSp3;
-        auxFiles = Str::split(cfg.aux, ';', false);
+        auxFiles = Str::split(cfg.aux, kIniListSep, false);
         // LEO 的 GNSS 产品与观测分属两套路径，统一收进 opts 供 ProductLoad 取用
         core->opts.sp3 = cfg.gnssSp3;
         core->opts.clk = cfg.gnssClk;
@@ -40,7 +42,7 @@ namespace Solvers::LEO {
 
         {
             std::vector<std::future<bool> > jobs;
-            ProductLoad::core(*this, leo, jobs, "LEO");
+            ProductLoad::core(*this, leo, jobs, "LEO", modeKey(Mode::LEO));
             for (auto &j: jobs) {
                 if (!j.get()) loadOk = false;
             }
@@ -73,7 +75,7 @@ namespace Solvers::LEO {
             LOG_INFO << "LEO: 未加载辅助文件(.HDR 杠杆臂)，CoG→ARP 偏移为 0";
         }
 
-        const auto products = ProductLoad::resolve(core->opts);
+        const auto products = ProductLoad::resolve(core->opts, modeKey(Mode::LEO));
         const bool srcOk = ProductLoad::requireSatellite("LEO", products.paths.sp3, products.paths.brdc);
         return (loadOk && srcOk) ? true : ProductLoad::fail(core.get());
     }
@@ -126,6 +128,51 @@ namespace Solvers::LEO {
 
     ::SPP *Task::makeSolver() {
         return new ::LEO;
+    }
+
+    void Task::exportCSV(std::ostream &out) const {
+        const Eigen::Vector3d &ref = core->refECEF;
+        const bool withRefOrbit = core->hasRefOrbit;
+        CSV::Writer w;
+        if (withRefOrbit)
+            w.row("Wk", "SOW", "Status",
+                  "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m",
+                  "Float-3dRMS/m", "Float-SigmaP/m",
+                  "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m",
+                  "Fix-3dRMS/m", "Fix-SigmaP/m",
+                  "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "SatCount",
+                  "REF-X/m", "REF-Y/m", "REF-Z/m", "R/m", "T/m", "N/m",
+                  "Vel-X/m", "Vel-Y/m", "Vel-Z/m").endRow();
+        else
+            w.row("Wk", "SOW", "Status",
+                  "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m",
+                  "Float-3dRMS/m", "Float-SigmaP/m",
+                  "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m",
+                  "Fix-3dRMS/m", "Fix-SigmaP/m",
+                  "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "SatCount",
+                  "REF-X/m", "REF-Y/m", "REF-Z/m", "Vel-X/m", "Vel-Y/m", "Vel-Z/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: core->epochs) {
+            if (!r.solved) {
+                csvInvalidRow(w, r, cols);
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const bool fixed = res.stat == 1;
+            const Eigen::Vector3d fixE = fixed ? res.xyzFixed : Eigen::Vector3d::Zero();
+            const Eigen::Vector3d &refRow =
+                    withRefOrbit && r.refECEF.squaredNorm() > 1.0 ? r.refECEF : ref;
+            w.cell(r.week).cell(CSV::fx(r.sow, 3)).cell(csvStatStr(res.stat));
+            csvWriteSolBlock(w, res.xyzFloat, refRow, res.sigmaPFloat, false);
+            csvWriteSolBlock(w, fixE, refRow, res.sigmaPFixed, !fixed);
+            csvDopCells(w, res).cell(res.ratio).cell(r.numSatsResult);
+            w.cell(CSV::f(refRow.x(), 11)).cell(CSV::f(refRow.y(), 11)).cell(CSV::f(refRow.z(), 11));
+            if (withRefOrbit)
+                w.cell(CSV::f(r.rtnR, 6)).cell(CSV::f(r.rtnT, 6)).cell(CSV::f(r.rtnN, 6));
+            w.cell(CSV::f(res.vel[0], 6)).cell(CSV::f(res.vel[1], 6)).cell(CSV::f(res.vel[2], 6));
+            w.endRow();
+        }
+        out << w.str();
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

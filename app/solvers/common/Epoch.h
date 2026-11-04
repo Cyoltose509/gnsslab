@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -77,7 +78,10 @@ namespace Solvers {
             if (const bool posValid = r > 6.35e6 && r < 8.0e6; result.numSats > 0 && posValid) {
                 solved = true;
                 sppResult = result;
-                fillSatFields(spp.satElevData, spp.satAzimData, spp.satPVTTransTime, spp.satRejected);
+                std::set<SatID> used;
+                for (const auto &[sat, pvt]: spp.satPVTTransTime)
+                    if (!spp.satRejected.count(sat)) used.insert(sat);
+                fillSatFields(spp.satElevData, spp.satAzimData, spp.satPVTTransTime, used);
             } else {
                 solved = false;
                 sppResult.reset();
@@ -97,16 +101,14 @@ namespace Solvers {
             rtkBaseFloat = rtk.mBaselineFloat;
             if (r.stat == 1) rtkFixedBaseline = rtk.mBaselineFixed;
             rtkFloatXyz = rtk.mBaseXyz + rtk.mBaselineFloat;
-            fillSatFields(rtk.satElevData, rtk.satAzimData, rtk.satPVTRecTime, rtk.mUsedSats, true);
+            fillSatFields(rtk.satElevData, rtk.satAzimData, rtk.satPVTTransTime, rtk.mUsedSats);
         }
 
     private:
-        /// 按 satIds 的顺序回填各星的仰角/方位角/PVT，并据此定出 rejected 与 numSatsResult。
-        /// SPP 与 RTK 的差别只在 PVT 取发射时刻还是接收时刻、以及「被剔除」的判定依据，
-        /// 故用 invertRejected 区分：SPP 给的是被拒集合，RTK 给的是使用集合。
-        template<typename ElevMap, typename AzimMap, typename PVTMap, typename SatSet>
-        void fillSatFields(const ElevMap &elev, const AzimMap &azim, const PVTMap &pvts,
-                           const SatSet &satFlag, const bool invertRejected = false) {
+        /// 按 satIds 的顺序回填仰角/方位角/PVT，只认「本历元实际使用」的卫星集合；
+        /// 各模式在自己入口把求解器的剔除状态折算成该集合。
+        void fillSatFields(const SatValueMap &elev, const SatValueMap &azim,
+                           const std::map<SatID, PVT> &pvts, const std::set<SatID> &usedSats) {
             const int n = static_cast<int>(satIds.size());
             for (int i = 0; i < n; i++) {
                 if (auto it = elev.find(satIds[i]); it != elev.end()) elevations[i] = it->second;
@@ -115,8 +117,7 @@ namespace Solvers {
             }
             numSatsResult = 0;
             for (int i = 0; i < n; i++) {
-                const bool flagged = satFlag.count(satIds[i]) > 0;
-                const bool ok = (invertRejected ? flagged : !flagged) && satPVTs[i].p.squaredNorm() > 1.0;
+                const bool ok = usedSats.count(satIds[i]) > 0 && satPVTs[i].p.squaredNorm() > 1.0;
                 rejected[i] = !ok;
                 if (ok) ++numSatsResult;
             }

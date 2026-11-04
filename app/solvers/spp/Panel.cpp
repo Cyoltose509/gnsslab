@@ -15,15 +15,16 @@
 #include "ui/FileDialog.h"
 
 namespace Solvers::SPP {
-    void Task::loadFromMemory() {
+    void Task::loadFromMemory() const {
         const auto &pm = AppConfig::PathMemory::instance();
         core->view.obsPathBuf = pm.get("spp_obs");
         core->brdcPathBuf = pm.get("spp_brdc");
         core->rtEndpoints.resize(1);
-        core->rtEndpoints[0].ip = pm.get("rt_ip", "47.114.134.129");
-        core->rtEndpoints[0].port = pm.get("rt_port", "7190");
+        core->rtEndpoints[0].ip = pm.get("spp_rt_ip", pm.get("rt_ip", "47.114.134.129"));
+        core->rtEndpoints[0].port = pm.get("spp_rt_port", pm.get("rt_port", "7190"));
         Helpers::loadCommonCfg("spp", Mode::SPP, &core->opts,
                                &core->cutoffDeg, &core->sampleInterval, &core->enabledSystems);
+        AppConfig::Products::of(modeKey(Mode::SPP)).load();
     }
 
     void Task::renderConfigPanel() {
@@ -69,8 +70,8 @@ namespace Solvers::SPP {
                         isRealtime = true;
                         core->fileName = ip + ":" + port;
                         LOG_INFO << "[SPP] 开始实时解算: " << ip << ":" << port;
-                        pm.set("rt_ip", ip);
-                        pm.set("rt_port", port);
+                        pm.set("spp_rt_ip", ip);
+                        pm.set("spp_rt_port", port);
                         Helpers::saveCommonCfg("spp", Mode::SPP, core->opts,
                                                core->cutoffDeg, core->sampleInterval, core->enabledSystems);
                         this->startRealtime();

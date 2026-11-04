@@ -44,7 +44,7 @@ FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, int
             for (char b: {'2', '5', '7'}) if (code2.empty()) code2 = findCode('C', b);
     } else if (sys == 'C') {
         for (char b: {'2', '1'}) if (code1.empty()) code1 = findCode('C', b);
-        for (char b: {'6', '7'}) if (code2.empty()) code2 = findCode('C', b);
+        for (char b: {'6', '7', '5'}) if (code2.empty()) code2 = findCode('C', b);
     } else if (sys == 'R') {
         // GLONASS FDMA：每星频率由通道号 k 决定，但"频段"与 GPS 同构（'1'=G1, '2'=G2）
         for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);

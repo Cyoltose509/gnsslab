@@ -52,9 +52,14 @@ namespace Solvers::RTK {
 
         void applyConfig(const SolverOptions &cfg);
 
+        /// 把当前历元的 RTK 结果提交进 core；首解时用基准站坐标设 ENU 基准。
+        void commitRtkEpoch(const ObsData &rover);
+
         void loadFromMemory();
 
         void renderConfigPanel();
+
+        void exportCSV(std::ostream &out) const override;
 
         Task() {
             core = std::make_shared<Solvers::Core>();

@@ -7,46 +7,47 @@
 
 #include "Log.h"
 #include "SolverOptions.h"
+#include "core/IniFile.h"
 #include "StringUtils.h"
 #include "Troposphere.h"
 
-/// 精密产品的读取与派发。路径来源有两层：调用方显式给（CLI 的 ini），
-/// 或 GUI 启动时注册的默认值（Products + 下载目录）。引擎本身不认识 GUI 配置。
+/// 精密产品的读取与派发
 namespace ProductLoad {
     struct Paths {
         std::string sp3, clk, brdc, osb, att, erp, atx;
     };
 
-    /// GUI 注册的默认产品路径；CLI 不注册，缺项即视为未提供。
     struct Defaults {
         Paths paths;
         std::string tro, ionex, met, vmf, gpt3;
     };
 
-    inline std::function<Defaults()> &defaultsProvider() {
-        static std::function<Defaults()> provider;
+    inline std::function<Defaults(const std::string &scope)> &defaultsProvider() {
+        static std::function<Defaults(const std::string &scope)> provider;
         return provider;
     }
 
-    /// 显式优先、缺项回落默认。
-    inline Defaults resolve(const SolverOptions &opts) {
-        const Defaults fallback = defaultsProvider() ? defaultsProvider()() : Defaults{};
+    /// 显式优先、缺项回落该模式的默认。
+    inline Defaults resolve(const SolverOptions &opts, const std::string &scope) {
+        const auto [paths, tro, ionex, met, vmf, gpt3] = defaultsProvider() && !scope.empty()
+                                                             ? defaultsProvider()(scope)
+                                                             : Defaults{};
         const auto pick = [](const std::string &explicitPath, const std::string &dflt) {
             return explicitPath.empty() ? dflt : explicitPath;
         };
         Defaults r;
-        r.paths.sp3 = pick(opts.sp3, fallback.paths.sp3);
-        r.paths.clk = pick(opts.clk, fallback.paths.clk);
-        r.paths.brdc = pick(opts.navPath, fallback.paths.brdc);
-        r.paths.osb = pick(opts.osb, fallback.paths.osb);
-        r.paths.att = pick(opts.att, fallback.paths.att);
-        r.paths.erp = pick(opts.erp, fallback.paths.erp);
-        r.paths.atx = pick(opts.atx, fallback.paths.atx);
-        r.tro = pick(opts.tro, fallback.tro);
-        r.ionex = pick(opts.ionex, fallback.ionex);
-        r.met = pick(opts.met, fallback.met);
-        r.vmf = pick(opts.vmf, fallback.vmf);
-        r.gpt3 = pick(opts.gpt3, fallback.gpt3);
+        r.paths.sp3 = pick(opts.sp3, paths.sp3);
+        r.paths.clk = pick(opts.clk, paths.clk);
+        r.paths.brdc = pick(opts.navPath, paths.brdc);
+        r.paths.osb = pick(opts.osb, paths.osb);
+        r.paths.att = pick(opts.att, paths.att);
+        r.paths.erp = pick(opts.erp, paths.erp);
+        r.paths.atx = pick(opts.atx, paths.atx);
+        r.tro = pick(opts.tro, tro);
+        r.ionex = pick(opts.ionex, ionex);
+        r.met = pick(opts.met, met);
+        r.vmf = pick(opts.vmf, vmf);
+        r.gpt3 = pick(opts.gpt3, gpt3);
         return r;
     }
 
@@ -81,10 +82,10 @@ namespace ProductLoad {
                 << " 但格网未就位，映射回落 GMF";
     }
 
-    /// SPP 对流层格网（VMF3 分号分隔多文件 + GPT3），空路径跳过；任一加载失败返回 false
+    /// SPP 对流层格网（VMF3 可多文件，kIniListSep 分隔 + GPT3），空路径跳过；任一加载失败返回 false
     inline bool loadSPPGrids(SPP &spp, const std::string &vmf, const std::string &gpt3) {
         bool ok = true;
-        if (!vmf.empty() && !spp.loadVMF3(Str::split(vmf, ';', false))) {
+        if (!vmf.empty() && !spp.loadVMF3(Str::split(vmf, kIniListSep, false))) {
             LOG_WARN << "[SPP] 读取 VMF3 格网失败: " << vmf;
             ok = false;
         }
@@ -102,7 +103,7 @@ namespace ProductLoad {
         launch(jobs, "PPP", "电离层 IONEX", d.ionex, solver, &Solver::loadIONEX);
         launch(jobs, "PPP", "气象文件 MET", d.met, solver, &Solver::loadMET);
         launch(jobs, "PPP", "映射函数格网 VMF3", d.vmf,
-                [&solver, paths = Str::split(d.vmf, ';', false)] { return solver.loadVMF3(paths); });
+                [&solver, paths = Str::split(d.vmf, kIniListSep, false)] { return solver.loadVMF3(paths); });
         launch(jobs, "PPP", "对流层格网 GPT3", d.gpt3, solver, &Solver::loadGPT3);
     }
 
@@ -132,8 +133,9 @@ namespace ProductLoad {
     }
 
     template<class Task, class Solver>
-    void core(Task &task, Solver &solver, std::vector<std::future<bool> > &jobs, const char *tag) {
-        const Defaults d = resolve(task.core->opts);
+    void core(Task &task, Solver &solver, std::vector<std::future<bool> > &jobs, const char *tag,
+              const std::string &scope) {
+        const Defaults d = resolve(task.core->opts, scope);
         if (task.core->opts.spp.applyAtx && d.paths.atx.empty())
             LOG_WARN << "[" << tag << "] 未检测到 ATX 天线文件，本次按无 PCO/PCV 处理（参数页「天线改正」可点获取）";
         core(solver, jobs, tag, d.paths, task.core->enabledSystems);

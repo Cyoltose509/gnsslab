@@ -8,10 +8,9 @@
 #include "io/ProductPicker.h"
 #include "io/ObsSource.h"
 #include "ui/FileDialog.h"
-#include "Log.h"
 
 #include "download/ProductMeta.h"
-#include "GuiFtpDownload.h"
+#include "download/GuiFtpDownload.h"
 
 #include "StringUtils.h"
 #include <algorithm>
@@ -26,7 +25,7 @@ namespace {
     void adoptPath(const char *iniKey, const std::string &p,
                    const std::function<void(const std::string &)> &onSelect,
                    std::string *autoNavBuf) {
-        auto &pm = AppConfig::PathMemory::instance();
+        const auto &pm = AppConfig::PathMemory::instance();
         pm.set(iniKey, p);
         pm.addRecent(iniKey, p);
         if (onSelect) onSelect(p);
@@ -79,9 +78,9 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
     }
 
     if (obsIniKey && std::string(iniKey) == obsIniKey) {
-        static std::map<const void *, Tools::FtpDownload::AcquirePanel> panels;
+        static std::map<const void *, Download::Panel::AcquirePanel> panels;
         auto &panel = panels[buf];
-        panel.kind = Tools::FtpDownload::AcquirePanel::Kind::Obs;
+        panel.kind = Download::Panel::AcquirePanel::Kind::Obs;
         panel.obsKey = iniKey;
         panel.obsOut = buf;
 
@@ -93,13 +92,13 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
             panel.doy = yd->second;
             panel.open = true;
         }
-        if (panel.open) Tools::FtpDownload::renderAcquirePanel(panel, iniKey);
+        if (panel.open) Download::Panel::renderAcquirePanel(panel, iniKey);
     }
 
     if (const ProductType ptype = ProductMeta::typeFromIniKey(iniKey); ptype != ProductType::Unknown) {
-        static std::map<const void *, Tools::FtpDownload::AcquirePanel> singlePanels;
+        static std::map<const void *, Download::Panel::AcquirePanel> singlePanels;
         auto &panel = singlePanels[buf];
-        panel.kind = Tools::FtpDownload::AcquirePanel::Kind::Single;
+        panel.kind = Download::Panel::AcquirePanel::Kind::Single;
         panel.singleType = ptype;
         panel.singleOut = buf;
         if (!panel.onPick)
@@ -112,40 +111,25 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
                                         ? AppConfig::PathMemory::instance().get(obsIniKey)
                                         : "";
         const auto yd = ProductMeta::parseObsDate(obsPath);
-        if (panel.open) {
-            if (yd) {
-                panel.year = yd->first;
-                panel.doy = yd->second;
-            } else {
-                panel.open = false;
-            }
-        }
 
         ImGui::SameLine();
         if (ImGui::Button(("获取##" + std::string(label)).c_str())) {
-            if (!yd) {
-                LOG_WARN << "[获取] 无法从观测文件名推断日期（" << label << "），请先填观测文件路径";
-                ImGui::OpenPopup(("##getfail_" + std::string(label)).c_str());
-            } else {
-                panel.year = yd->first;
-                panel.doy = yd->second;
-                panel.open = !panel.open;
-            }
+            const auto [y, d] = yd.value_or(ProductMeta::defaultObsDate());
+            panel.year = y;
+            panel.doy = d;
+            panel.open = true;
         }
-        if (ImGui::BeginPopup(("##getfail_" + std::string(label)).c_str())) {
-            ImGui::TextUnformatted("无法从观测文件名推断日期。");
-            if (ImGui::Button("知道了")) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-        if (panel.open) Tools::FtpDownload::renderAcquirePanel(panel, iniKey);
+        if (panel.open) Download::Panel::renderAcquirePanel(panel, iniKey);
     }
 }
 
-void Solvers::Helpers::renderProductSection(const char *obsIniKey) {
-    auto &p = AppConfig::Products::instance();
-
-    static std::string s_msg;
-    static bool s_ok = true;
+void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *obsIniKey) {
+    struct SectionMsg {
+        std::string msg;
+        bool ok = true;
+    };
+    static std::map<const void *, SectionMsg> msgs;
+    auto &[msg, ok] = msgs[&p];
 
     const auto resync = [&] {
         p.syncFromFiles();
@@ -153,8 +137,8 @@ void Solvers::Helpers::renderProductSection(const char *obsIniKey) {
     };
 
     const auto typeLabel = [](const ProductType t) -> const char * {
-        if (const int i = static_cast<int>(t); i >= 0 && i < Tools::FtpDownload::kDateTypeCount)
-            return Tools::FtpDownload::TYPE_LABELS[i];
+        if (const int i = static_cast<int>(t); i >= 0 && i < Download::Panel::kDateTypeCount)
+            return Download::Panel::TYPE_LABELS[i];
         if (t == ProductType::OBS) return "观测文件";
         return "未识别";
     };
@@ -184,12 +168,13 @@ void Solvers::Helpers::renderProductSection(const char *obsIniKey) {
         return;
     }
 
-    ImGui::Indent(12.0f);
-    if (!yd) {
-        ImGui::TextDisabled("（填好观测文件后，日期由文件名推断，即可从 downloads/ 获取）");
-    } else {
-        ImGui::TextDisabled("观测日期 %s", ProductMeta::doyToDateStr(yd->first, yd->second).c_str());
-    }
+    // ImGui::Indent(12.0f);
+    // if (!yd) {
+    //     ImGui::TextDisabled("（未填观测文件，日期默认取昨日，可在「获取」面板里改）");
+    // } else {
+    //     ImGui::TextDisabled("观测日期 %s（「获取」默认取该日，可改）",
+    //                         ProductMeta::doyToDateStr(yd->first, yd->second).c_str());
+    // }
 
     if (ImGui::SmallButton("添加文件…##prod")) {
         if (std::vector<std::wstring> ws; ShowOpenFilesDialog(ws, FileDialog::fProd, 2)) {
@@ -199,20 +184,20 @@ void Solvers::Helpers::renderProductSection(const char *obsIniKey) {
                 const std::string path = Str::wideToACP(w);
                 if (std::find(p.files.begin(), p.files.end(), path) != p.files.end()) continue;
                 p.files.push_back(path);
-                AppConfig::PathMemory::instance().addRecent("prod_files", path);
+                p.addRecent(path);
                 if (!ProductMeta::parse(Str::baseName(path))) bad += Str::baseName(path) + " ";
                 ++added;
             }
             resync();
-            s_ok = bad.empty();
-            s_msg = "已添加 " + std::to_string(added) + " 个文件";
-            if (!bad.empty()) s_msg += "；认不出类型（不会用于解算）：" + bad;
+            ok = bad.empty();
+            msg = "已添加 " + std::to_string(added) + " 个文件";
+            if (!bad.empty()) msg += "；认不出类型（不会用于解算）：" + bad;
         }
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("从记录添加##prod")) ImGui::OpenPopup("##prod_hist_pop");
     if (ImGui::BeginPopup("##prod_hist_pop")) {
-        const auto rec = AppConfig::PathMemory::instance().getRecent("prod_files");
+        const auto rec = p.recent();
         if (rec.empty()) ImGui::TextDisabled("（暂无记录）");
         for (auto &r: rec)
             if (ImGui::Selectable(Str::baseName(r).c_str())) {
@@ -224,31 +209,28 @@ void Solvers::Helpers::renderProductSection(const char *obsIniKey) {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    static std::map<std::string, Tools::FtpDownload::AcquirePanel> acqPanels;
+    static std::map<std::string, Download::Panel::AcquirePanel> acqPanels;
     auto &acq = acqPanels[obsIniKey ? obsIniKey : ""];
-    acq.kind = Tools::FtpDownload::AcquirePanel::Kind::Products;
+    acq.kind = Download::Panel::AcquirePanel::Kind::Products;
     acq.target = &p.files;
+    acq.owner = &p;
     if (ImGui::SmallButton("获取##prod")) {
-        if (!yd) {
-            s_ok = false;
-            s_msg = "无法从观测文件名推断日期，请先在文件页填好观测文件";
-        } else {
-            acq.year = yd->first;
-            acq.doy = yd->second;
-            acq.open = !acq.open; // 再点一次收起
-            s_ok = true;
-            s_msg = acq.open ? "点已下载文件加入/移出解算，未下载文件点击开始下载" : "";
-        }
+        const auto [y, d] = yd.value_or(ProductMeta::defaultObsDate());
+        acq.year = y;
+        acq.doy = d;
+        acq.open = true;
+        ok = true;
+        msg = "点已下载文件加入/移出解算，未下载文件点击开始下载";
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("清空##prod")) {
         p.files.clear();
         resync();
-        s_msg.clear();
+        msg.clear();
     }
 
     // 内联展开的产品清单（按钮下方），页面整体往下推
-    if (acq.open) Tools::FtpDownload::renderAcquirePanel(acq, "prod");
+    if (acq.open) Download::Panel::renderAcquirePanel(acq, obsIniKey ? obsIniKey : "prod");
 
     ImGui::Spacing();
     if (p.files.empty()) {
@@ -285,8 +267,8 @@ void Solvers::Helpers::renderProductSection(const char *obsIniKey) {
         }
     }
 
-    if (!s_msg.empty())
-        ImGui::TextColored(s_ok ? UI::kColPass : UI::kColFail,
-                           "%s", s_msg.c_str());
+    if (!msg.empty())
+        ImGui::TextColored(ok ? UI::kColPass : UI::kColFail,
+                           "%s", msg.c_str());
     ImGui::Unindent(12.0f);
 }

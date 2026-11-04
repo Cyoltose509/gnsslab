@@ -27,9 +27,6 @@ namespace NovAtel {
     protected:
         bool getNextMessage(std::vector<std::uint8_t> &message, bool block) override;
 
-        void restartStream() override {
-        }
-
     private:
         SocketClient socketClient;
         std::vector<unsigned char> buffer;

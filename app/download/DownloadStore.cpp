@@ -5,11 +5,11 @@
 #include "StringUtils.h"
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <cstdio>
 #include <algorithm>
 #include <mutex>
 
@@ -44,6 +44,50 @@ std::string DownloadStore::findLocalFile(const ProductType t, const int year, co
     const std::string p = dirFor(t, year, doy) + localNameFor(remoteName);
     std::error_code ec;
     return fs::exists(p, ec) ? p : std::string();
+}
+
+
+std::vector<LocalFile> DownloadStore::listLocal(const ProductType t, const int year, const int doy) {
+    std::vector<LocalFile> out;
+    const std::string dir = dirFor(t, year, doy);
+
+    std::error_code ec;
+    fs::directory_iterator it(dir, ec);
+    if (ec) return out;
+
+    for (const auto &e: it) {
+        std::error_code ec2;
+        if (!e.is_regular_file(ec2) || ec2) continue;
+        const std::string name = e.path().filename().string();
+        if (name.empty() || name[0] == '.') continue;
+        if (Str::endsWithIC(name, ".part") || Str::endsWithIC(name, ".tmp")) continue;
+
+        LocalFile lf;
+        lf.name = name;
+        lf.path = e.path().string();
+        std::replace(lf.path.begin(), lf.path.end(), '\\', '/');
+        lf.size = static_cast<long long>(e.file_size(ec2));
+        if (ec2) lf.size = 0;
+        out.push_back(std::move(lf));
+    }
+
+    std::sort(out.begin(), out.end(),
+              [](const LocalFile &a, const LocalFile &b) { return a.name < b.name; });
+    return out;
+}
+
+
+bool DownloadStore::revealFile(const std::string &path) {
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return false;
+
+    const std::wstring w = Str::ACPToWide(path);
+    if (w.empty()) return false;
+
+    const std::wstring args = L"/select,\"" + w + L"\"";
+    const auto r = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL));
+    return r > 32;
 }
 
 

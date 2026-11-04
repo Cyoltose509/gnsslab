@@ -1,7 +1,7 @@
 #include "GuiInsPanel.h"
 
 #include "GuiInsCommon.h"
-#include "view/GuiHelpers.h"
+#include "solvers/view/GuiHelpers.h"
 #include "solvers/common/Core.h"
 #include "core/PathMemory.h"
 #include "Const.h"
@@ -9,7 +9,7 @@
 #include <sstream>
 #include <string>
 
-namespace Tools::InsPanel {
+namespace Tools::Ins {
     std::shared_ptr<Solvers::Task> MakeSixPosCalibTask() {
         auto t = std::make_shared<SixPosCalibTask>();
         const auto &pm = AppConfig::PathMemory::instance();
@@ -34,25 +34,16 @@ namespace Tools::InsPanel {
         return t;
     }
 
-    void RenderInsConfig(Solvers::Task &job) {
+    void Render(Solvers::Task &job) {
+        const bool config = job.state == Solvers::Task::State::Config;
         if (auto *c = dynamic_cast<SixPosCalibTask *>(&job)) {
-            c->renderConfigPanel();
+            if (config) c->renderConfigPanel();
+            else c->renderResult();
             return;
         }
         if (auto *a = dynamic_cast<StaticAlignTask *>(&job)) {
-            a->renderConfigPanel();
+            if (config) a->renderConfigPanel();
+            else a->renderResult();
         }
-    }
-
-    bool RenderInsResult(const std::shared_ptr<Solvers::Task> &job) {
-        if (auto *c = dynamic_cast<SixPosCalibTask *>(job.get())) {
-            c->renderResult();
-            return true;
-        }
-        if (auto *a = dynamic_cast<StaticAlignTask *>(job.get())) {
-            a->renderResult();
-            return true;
-        }
-        return false;
     }
 }

@@ -18,9 +18,6 @@ namespace Solvers::SPP {
 }
 
 namespace Solvers::SPP {
-    /// SPP 实时内层泵：逐历元取数、更新星历快照并做前置处理。onEpoch 对每个收到的历元回调
-    /// （accepted = 通过抽稀，obs 可被求解器就地改写）。返回 false 表示流断开或长时间无数据（5s），
-    /// 由调用方决定重连或退出。
     template<class ShouldStop, class OnEpoch>
     bool pump(NovAtel::SocketReader &reader, ::SPP &spp, const EpochDecimator &dec,
               ShouldStop &&shouldStop, OnEpoch &&onEpoch) {
@@ -76,7 +73,7 @@ namespace Solvers::Realtime {
 
     private:
         std::shared_ptr<SPP::Task> task;
-        Solvers::RealtimeEndpoint endpoint;
+        RealtimeEndpoint endpoint;
         std::unique_ptr<NovAtel::SocketReader> reader;
         ::SPP spp;
         std::chrono::steady_clock::time_point lastQcTime{};

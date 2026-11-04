@@ -28,5 +28,14 @@ bool Variable::operator!=(const Variable &right) const {
     return !(*this == right);
 }
 
+Eigen::VectorXd EquSys::weightVector() const {
+    Eigen::VectorXd w(static_cast<Eigen::Index>(obsEquData.size()));
+    Eigen::Index i = 0;
+    for (const auto &[eid, ed]: obsEquData) {
+        w[i++] = ed.weight;
+    }
+    return w;
+}
+
 
 

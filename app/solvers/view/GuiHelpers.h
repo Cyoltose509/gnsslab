@@ -10,13 +10,11 @@
 
 #include <utility>
 #include "imgui.h"
-#include "ui/Gui.h"
 #include "ui/GuiColors.h"
 #include "Observer.h"
 #include "GnssStruct.h"
 #include "StringUtils.h"
 #include "Log.h"
-#include "SolverOptions.h"
 #include "solvers/common/Core.h"
 
 namespace Solvers::Helpers {

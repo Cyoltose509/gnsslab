@@ -6,14 +6,21 @@
 
 class CycleSlip {
 public:
-    enum class Verdict { None, Slip, Outlier, Gap };
+    struct Result {
+        bool gap = false;      // 本历元无有效观测，弧段中断
+        bool slip = false;     // 重设模糊度 / 剔除该星
+        bool gf = false;       // GF 判跳，交 CycleSlipEpoch 裁决
+        bool artifact = false; // 上述 GF 跳判为伪影（码相跳不一致）
+    };
 
-    void configure(const FreqCombo &fcIn);
+    void configure(const FreqCombo &fcIn, double gfThresh = 0.0, double gfMult = 3.0);
 
     void reset();
 
-    Verdict feed(double L1, double L2, double C1, double C2, bool valid,
-                 double osbP1 = 0, double osbP2 = 0, double osbL1 = 0, double osbL2 = 0);
+    Result feed(const SatID &sat, const TypeValueMap &tv, const ObsData *obs,
+                double osbP1 = 0, double osbP2 = 0, double osbL1 = 0, double osbL2 = 0);
+
+    Result feedGap();
 
     static void detectMW(const std::vector<double> &MW, const std::vector<char> &ok,
                          std::vector<char> &slip, std::vector<char> &outlier);
@@ -21,20 +28,13 @@ public:
     static void detectGF(const std::vector<double> &LGF, const std::vector<double> &PGF,
                          const std::vector<char> &ok, double lam1, double lam2,
                          std::vector<char> &slip, std::vector<char> &artifact,
-                         const double mult = 3.0);
-
-    void setGfThreshold(const double thr) { gfThres = thr; }
-
-
-
-    void setGfSlipMult(const double m) { gfSlipMult = m > 0.0 ? m : 3.0; }
+                         double mult = 3.0);
 
     bool gfWideLaneSlip(double L1, double L2, double thr = 0.12);
 
-    bool mLastMwSlip = false;
-    bool mLastGfSlip = false;
-    bool mLastGfArtifact = false;
 private:
+    void flushGf();
+
     FreqCombo fc;
     double lam1 = 0, lam2 = 0;
 
@@ -70,13 +70,16 @@ public:
         (isArtifact ? gfArtifact : gfSats).insert(sat);
     }
 
+    void record(const SatID &sat, const CycleSlip::Result &r) {
+        if (r.gf) record(sat, r.artifact);
+    }
 
     SatIDSet decide(const int kCommonMode, SatIDSet &excludeOut) {
         excludeOut.clear();
         if (const int total = static_cast<int>(gfSats.size() + gfArtifact.size()); kCommonMode > 0 && total >= kCommonMode) {
             excludeOut = gfSats;
             excludeOut.insert(gfArtifact.begin(), gfArtifact.end());
-            return SatIDSet();
+            return {};
         }
 
         excludeOut = gfArtifact;

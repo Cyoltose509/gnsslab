@@ -28,25 +28,24 @@ namespace NovAtel {
     void LogReader::close() {
         mEphSnap.reset();
         mInsLayout = InsRecordLayout();
-        mRangeKind = RangeKind::Unknown;
+        mPending.reset();
+        mEpochWeek = -1;
+        mEpochMs = 0;
+        mSeenFullRange = false;
+        mSeenCmpRange = false;
+        mPrevLock.clear();
+        mCurLock.clear();
     }
 
-    void LogReader::probeRangeKind() {
-        mRangeKind = RangeKind::Unknown;
-        restartStream();
-
-        bool full = false, cmp = false;
-        std::vector<std::uint8_t> message;
-        for (int scanned = 0; scanned < 200 && getNextMessage(message, false); ++scanned) {
-            if (message.size() < 6) continue;
-            if (const int id = Math::U2(&message[4]); id == LogID::RANGE) full = true;
-            else if (id == LogID::RANGECMP) cmp = true;
+    void LogReader::noteRangeFormat(const bool full) {
+        if (full) {
+            if (mSeenFullRange.exchange(true)) return;
+            LOG_INFO << "观测格式：RANGE（未量化）"
+                    << (mSeenCmpRange ? "；与 RANGECMP 并存时以 RANGE 为准" : "");
+            return;
         }
-
-        if (full) mRangeKind = RangeKind::Full;
-        else if (cmp) mRangeKind = RangeKind::Compressed;
-
-        restartStream();
+        if (mSeenCmpRange.exchange(true)) return;
+        LOG_INFO << "观测格式：RANGECMP（伪距 1/128 m、相位 1/256 周量化）";
     }
 
     bool LogReader::crcExam(const std::vector<std::uint8_t> &message) {
@@ -67,9 +66,11 @@ namespace NovAtel {
 
         switch (currentHeader.type) {
             case LogID::RANGE:
-                return mRangeKind != RangeKind::Compressed && parseRange(message);
+                noteRangeFormat(true);
+                return parseRange(message);
             case LogID::RANGECMP:
-                return mRangeKind != RangeKind::Full && parseRangeCmp(message);
+                noteRangeFormat(false);
+                return parseRangeCmp(message);
             case LogID::GPSEPHEM:
                 return parseGpsEphem(message);
             case LogID::BDSEPHEMERIS:
@@ -150,10 +151,15 @@ namespace NovAtel {
                 case 4:
                     out.sys = 'C';
                     switch (sigType) {
-                        case 0:
+                        case 0: // B1I
                         case 4: out.freqIdx = 2;
                             break;
-                        case 2:
+                        case 1: // B2I (BDS-2) / B2b (BDS-3)
+                        case 11: out.freqIdx = 7;
+                            break;
+                        case 9: out.freqIdx = 5; // B2a
+                            break;
+                        case 2: // B3I
                         case 6: out.freqIdx = 6;
                             break;
                         default: return false;
@@ -184,12 +190,8 @@ namespace NovAtel {
             return adr - maxValue * rolls;
         }
 
-        constexpr int kGpsToBdtWeek = static_cast<int>((BDT_EPOCH_MJD - GPS_EPOCH_MJD) / 7);
         constexpr int kGpsToGalWeek = static_cast<int>((GAL_EPOCH_MJD - GPS_EPOCH_MJD) / 7);
 
-        int toSystemWeek(const int week, const int gpsWeek, const int offset) {
-            return std::abs(week - gpsWeek) > 512 ? week - offset : week;
-        }
 
         GalileoEphem makeGalEph(const GalEphFields &g, const int gpsWeek) {
             GalileoEphem eph;
@@ -226,14 +228,34 @@ namespace NovAtel {
     }
 
     void LogReader::beginEpoch() {
-        currentObs.satTypeValueData.clear();
+        // RANGE 与 RANGECMP 是同一批观测的两种编码，时间戳相同就必须并进一个历元，
+        // 否则下游会收到两个同时间的历元。
+        if (currentHeader.week == mEpochWeek && currentHeader.ms == mEpochMs) return;
+
+        if (!currentObs.satTypeValueData.empty()) {
+            ObsData done;
+            done.antennaPosition = currentObs.antennaPosition;
+            done.antType = currentObs.antType;
+            done.station = currentObs.station;
+            done.epoch = currentObs.epoch;
+            done.weekSecond = currentObs.weekSecond;
+            done.satTypeValueData.swap(currentObs.satTypeValueData);
+            done.satTypeLLI.swap(currentObs.satTypeLLI);
+            mPending = std::move(done);
+        }
+
+        mEpochWeek = currentHeader.week;
+        mEpochMs = currentHeader.ms;
+        mPrevLock.swap(mCurLock);
+        mCurLock.clear();
         const WeekSecond ws(currentHeader.week, currentHeader.ms * 0.001, TimeSystem::GPS);
         currentObs.epoch = Time::WeekSecondToCommon(ws);
         currentObs.weekSecond = ws;
     }
 
     void LogReader::emitObs(const int prnRaw, const int gfrq, const double psr, const double adr,
-                            const double doppler, const double cn0, const std::uint32_t status) {
+                            const double doppler, const double cn0, const double lockTime,
+                            const std::uint32_t status, const bool fromFull) {
         SignalRef sig;
         if (!decodeSignal(status, prnRaw, gfrq, sig)) return;
 
@@ -245,13 +267,44 @@ namespace NovAtel {
 
         const bool codeLocked = static_cast<int>(status >> 12) & 1;
         const bool phaseLocked = static_cast<int>(status >> 10) & 1;
+        const bool parityKnown = static_cast<int>(status >> 11) & 1;
 
         const SatID sat(sys, sig.prn, sig.chan);
-        if (codeLocked) currentObs.satTypeValueData[sat][ctype] = psr;
+        // 同一历元里 RANGE 与 RANGECMP 可能都到：RANGE 是未量化的，任何类型它都覆盖；
+        // RANGECMP 只补 RANGE 没给的类型。
+        auto &values = currentObs.satTypeValueData[sat];
+        const auto put = [&](const std::string &type, const double v) {
+            if (fromFull || values.find(type) == values.end()) values[type] = v;
+        };
+        if (codeLocked) put(ctype, psr);
         const double lam = sig.freqHz > 0.0 ? C_MPS / sig.freqHz : 0.0;
-        currentObs.satTypeValueData[sat]["L" + s_f] = phaseLocked && lam > 0.0 ? -adr * lam : 0.0;
-        currentObs.satTypeValueData[sat]["D" + s_f] = doppler;
-        currentObs.satTypeValueData[sat]["S" + s_f] = cn0;
+        put("L" + s_f, phaseLocked && lam > 0.0 ? -adr * lam : 0.0);
+        put("D" + s_f, doppler);
+        put("S" + s_f, cn0);
+
+        // RINEX 的 LLI 在这台接收机上没有独立字段，但 phase lock / parity known /
+        // lock time 三样合起来正好对应：lock time 回退＝重新捕获（bit0），
+        // parity 未知＝可能差半周（bit1）。同一频点可能有多条码（如 L1CA 与 L1P），
+        // lock time 取最小值，任一信号断就按断算。
+        const int fi = sig.freqIdx;
+        if (fi >= 0 && fi < 9) {
+            bool regress = false;
+            if (const auto it = mPrevLock.find(sat); it != mPrevLock.end() && it->second[fi] >= 0.0f)
+                regress = lockTime + 0.05 < it->second[fi];
+
+            const auto cur = mCurLock.find(sat);
+            if (cur == mCurLock.end()) mCurLock[sat].fill(-1.0f);
+            float &lock = mCurLock[sat][fi];
+            lock = lock < 0.0f ? static_cast<float>(lockTime)
+                               : std::min(lock, static_cast<float>(lockTime));
+
+            if (phaseLocked) {
+                int lli = 0;
+                if (regress) lli |= 1;
+                if (!parityKnown) lli |= 2;
+                if (lli != 0) currentObs.satTypeLLI[sat]["L" + s_f] = lli;
+            }
+        }
     }
 
     bool LogReader::parseRange(const std::vector<std::uint8_t> &message) {
@@ -266,7 +319,7 @@ namespace NovAtel {
             emitObs(Math::U2(&message[off + 0]), Math::U2(&message[off + 2]),
                     Math::R8(&message[off + 4]), Math::R8(&message[off + 16]),
                     Math::R4(&message[off + 28]), Math::R4(&message[off + 32]),
-                    Math::U4(&message[off + 40]));
+                    Math::R4(&message[off + 36]), Math::U4(&message[off + 40]), true);
             off += 44;
         }
         return !currentObs.satTypeValueData.empty();
@@ -289,12 +342,13 @@ namespace NovAtel {
             const int prnRaw = static_cast<int>(extractBits(rec, 136, 8));
             const double cn0 = 20.0 + static_cast<double>(extractBits(rec, 165, 5));
             const int gfrq = static_cast<int>(extractBits(rec, 170, 6));
+            const double lockTime = static_cast<double>(extractBits(rec, 144, 21)) / 32.0;
 
             double adr = adrRaw;
             if (SignalRef sig; decodeSignal(status, prnRaw, gfrq, sig))
                 adr = unwrapCompressedAdr(adrRaw, psr, sig.freqHz > 0.0 ? C_MPS / sig.freqHz : 0.0);
 
-            emitObs(prnRaw, gfrq, psr, adr, static_cast<double>(dopplerRaw) / 256.0, cn0, status);
+            emitObs(prnRaw, gfrq, psr, adr, static_cast<double>(dopplerRaw) / 256.0, cn0, lockTime, status, false);
             off += 24;
         }
         return !currentObs.satTypeValueData.empty();
@@ -365,7 +419,7 @@ namespace NovAtel {
         int off = currentHeader.hLen;
         eph.prn = static_cast<int>(Math::U4(&message[off])) & 0xFF;
         off += 4;
-        eph.week = toSystemWeek(static_cast<int>(Math::U4(&message[off])), currentHeader.week, kGpsToBdtWeek);
+        eph.week = static_cast<int>(Math::U4(&message[off]));
         off += 4;
         eph.ura = Math::R8(&message[off]);
         off += 8;
@@ -676,18 +730,21 @@ namespace NovAtel {
 
     bool LogReader::getNextEpoch(ObsData &obs, const bool block) {
         while (true) {
+            if (mPending) {
+                obs = std::move(*mPending);
+                mPending.reset();
+                return true;
+            }
             std::vector<std::uint8_t> message;
             if (!getNextMessage(message, block)) {
-                return false;
+                if (currentObs.satTypeValueData.empty()) return false;
+                obs = std::move(currentObs);
+                currentObs.satTypeValueData.clear();
+                currentObs.satTypeLLI.clear();
+                return true;
             }
             parseImu(message);
-            if (parseGNSSMessage(message)) {
-                if (!currentObs.satTypeValueData.empty()) {
-                    obs = std::move(currentObs);
-                    currentObs.satTypeValueData.clear();
-                    return true;
-                }
-            }
+            parseGNSSMessage(message);
         }
     }
 

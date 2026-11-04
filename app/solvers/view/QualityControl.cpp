@@ -42,7 +42,7 @@ namespace QualityControl {
     void exportCSV(const QualityReport &rep, const std::string &taskLabel) {
         std::wstring path;
 
-        if (!FileDialog::saveCsv(Str::stripExt(taskLabel) + "_qc.csv", path)) return;
+        if (!FileDialog::saveCSV(Str::stripExt(taskLabel) + "_qc.csv", path)) return;
 
 
         CSV::Writer w;

@@ -1,10 +1,10 @@
 #include "core/Application.h"
 #include <windows.h>
-#include "widgets/tools/GuiTimeConverter.h"
-#include "widgets/tools/GuiCoordConverter.h"
-#include "widgets/tools/GuiLsqSolver.h"
-#include "widgets/tools/GuiInsPanel.h"
-#include "widgets/tools/GuiFtpDownload.h"
+#include "tools/GuiTimeConverter.h"
+#include "tools/GuiCoordConverter.h"
+#include "tools/GuiLsqSolver.h"
+#include "tools/ins/GuiInsPanel.h"
+#include "download/GuiFtpDownload.h"
 #include "solvers/view/GuiSolverPanel.h"
 #include "solvers/spp/Task.h"
 #include "solvers/ppp/Task.h"
@@ -52,10 +52,10 @@ namespace {
 }
 
 namespace {
-    /// GUI 提供的产品默认路径：引擎解析缺失项时回落到这里（CLI 不注册，只认 ini）。
+    /// GUI 提供的产品默认路径：按模式取各自的 Products，引擎解析缺失项时回落到这里（CLI 不注册，只认 ini）。
     void registerProductDefaults() {
-        ProductLoad::defaultsProvider() = [] {
-            const auto &p = AppConfig::Products::instance();
+        ProductLoad::defaultsProvider() = [](const std::string &scope) {
+            const auto &p = AppConfig::Products::of(scope);
             ProductLoad::Defaults d;
             d.paths = {p.sp3, p.clk, p.brdc, p.osb, p.att, p.erp,
                        Download::Store::activeFile(Download::Catalog::atx())};
@@ -79,15 +79,13 @@ void Application::Initialize() {
 
     const std::string title = "GnssLab v" PROJECT_VERSION;
 
-    // 窗口分辨率与最大化状态持久化到 ini：默认 1280×720 普通窗口，
-    // 可在 gnsslab.ini 的 [paths] 改 win_w / win_h / win_max。
-    const auto &pm0 = AppConfig::PathMemory::instance();
-    const int winW = pm0.getInt("win_w", 1280, 320, 7680);
-    const int winH = pm0.getInt("win_h", 720, 240, 4320);
-    const bool winMax = pm0.getInt("win_max", 0, 0, 1) != 0;
+    const auto &pm = AppConfig::PathMemory::instance();
+    const int winW = pm.getInt("win_w", 1280, 320, 7680);
+    const int winH = pm.getInt("win_h", 720, 240, 4320);
+    const bool winMax = pm.getInt("win_max", 0, 0, 1) != 0;
     m_ui.Initialize(title.c_str(), static_cast<float>(winW), static_cast<float>(winH), winMax);
 
-    Download::AutoSync::setEnabled(AppConfig::PathMemory::instance().get("prod_autosync") != "0");
+    Download::AutoSync::setEnabled(pm.get("dl_autosync", pm.get("prod_autosync")) != "0");
     Download::AutoSync::start();
 }
 
@@ -109,7 +107,7 @@ void Application::Shutdown() {
     LOG_INFO << "GnssLab 退出";
     stopAndJoinTasks(m_tasks);
     stopAndJoinTasks(m_closingTasks);
-    Tools::FtpDownload::Shutdown();
+    Download::Panel::Shutdown();
     m_ui.Shutdown();
 }
 
@@ -144,7 +142,7 @@ void Application::RenderMenuBar() {
             }
             ImGui::EndMenu();
         }
-        ImGui::MenuItem("下载", nullptr, &Tools::FtpDownload::s_open);
+        ImGui::MenuItem("下载", nullptr, &Download::Panel::s_open);
         if (ImGui::BeginMenu("帮助")) {
             if (ImGui::MenuItem("关于", nullptr))
                 m_showAbout = true;
@@ -178,17 +176,19 @@ void Application::RenderTaskTabList() {
     for (int i = 0; i < static_cast<int>(tasks.size()); ++i) {
         auto &task = tasks[i];
         const auto res = task->solveResult();
-        const char *tag = Solvers::modeLabel(res->mode);
+        const bool isTool = res->kind() == Solvers::Task::Kind::Tool;
+        const std::string tag = isTool ? std::string() : std::string(Solvers::modeLabel(res->mode));
+        const std::string cat = isTool ? std::string() : "[" + tag + "] ";
         const bool isRealtime = task->isRealtime;
-        const std::string defaultName = std::string(tag) + "解算";
+        const std::string defaultName = isTool ? std::string("未命名任务") : tag + "解算";
 
         std::string label;
         if (task->state == Solvers::Task::State::Config)
-            label = std::string("[配置][") + tag + "] " + (res->fileName.empty() ? defaultName : res->fileName);
+            label = "[配置]" + cat + (res->fileName.empty() ? defaultName : res->fileName);
         else if (isRealtime)
-            label = std::string("[实时][") + tag + "] " + res->fileName;
+            label = "[实时]" + cat + res->fileName;
         else
-            label = std::string("[") + tag + "] " + res->fileName;
+            label = cat + res->fileName;
 
         if (task->state != Solvers::Task::State::Config && !isRealtime) {
             if (task->loading.load())
@@ -321,13 +321,13 @@ void Application::OpenRtkSolve() {
 }
 
 void Application::OpenInsCalib() {
-    const auto task = Tools::InsPanel::MakeSixPosCalibTask();
+    const auto task = Tools::Ins::MakeSixPosCalibTask();
     LOG_INFO << "[任务] 新建 六位置法标定 配置";
     attachTask(task);
 }
 
 void Application::OpenInsAlign() {
-    const auto task = Tools::InsPanel::MakeStaticAlignTask();
+    const auto task = Tools::Ins::MakeStaticAlignTask();
     LOG_INFO << "[任务] 新建 静态解析粗对准 配置";
     attachTask(task);
 }
@@ -342,8 +342,8 @@ void Application::Render() {
         Tools::CoordConverter::Render(&m_showCoordConverter);
     if (m_showLsqSolver)
         Tools::LsqSolver::Render(&m_showLsqSolver);
-    if (Tools::FtpDownload::s_open)
-        Tools::FtpDownload::Render(&Tools::FtpDownload::s_open);
+    if (Download::Panel::s_open)
+        Download::Panel::Render(&Download::Panel::s_open);
     RenderTasks();
 }
 

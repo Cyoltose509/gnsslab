@@ -145,7 +145,7 @@ namespace {
         return g;
     }
 
-    SolverGroup tropoGroup(const bool withGrad, const bool withZtd = false) {
+    SolverGroup tropoGroup(const Solvers::Mode mode, const bool withGrad, const bool withZtd = false) {
         SolverGroup g{"对流层", {}};
         if (withGrad)
             g.fields.push_back(flag("对流层梯度", "useTroGrad", &SPPConfig::useTroGrad, &SolverOptions::spp));
@@ -159,15 +159,16 @@ namespace {
                                      &SolverOptions::spp));
             g.fields.push_back(field("ZTD sigma0 (m)", "troZtdSigma", &SPPConfig::troZtdSigma, &SolverOptions::spp));
         }
-        g.row = [](const SolverOptions &o) {
+        g.row = [mode](const SolverOptions &o) {
             constexpr ImVec4 kGreen(0.35f, 0.85f, 0.45f, 1.0f);
             constexpr ImVec4 kAmber(0.95f, 0.75f, 0.25f, 1.0f);
             if (o.spp.tropoMap == Troposphere::Map::VMF3) {
-                if (const auto &vmf = AppConfig::Products::instance().vmf; vmf.empty()) {
+                const auto &prod = AppConfig::Products::of(Solvers::modeKey(mode));
+                if (const auto &vmf = prod.vmf; vmf.empty()) {
                     ImGui::TextColored(kAmber, "已选 VMF3 但缺 VMF3 格网文件，将回落 GMF");
                     return;
                 }
-                const int n = static_cast<int>(AppConfig::Products::instance().VMF3Paths().size());
+                const int n = static_cast<int>(prod.VMF3Paths().size());
                 ImGui::TextColored(kGreen, "已加载 VMF3 格网（%d 个文件）", n);
                 if (n < 4)
                     ImGui::TextColored(kAmber, "仅 %d/4 时次：时间向线性插值退化为单历元", n);
@@ -279,7 +280,7 @@ namespace {
     const std::vector<SolverGroup> &schemaFor(const Solvers::Mode mode) {
         static const std::vector spp = {
             obsGroup(false),
-            tropoGroup(false),
+            tropoGroup(Solvers::Mode::SPP, false),
             lsqIterGroup(),
             isbGroup(),
             healthGroup(),
@@ -290,7 +291,7 @@ namespace {
             atxGroup(),
             filterIterGroup(false),
             arGroup(),
-            tropoGroup(true, true),
+            tropoGroup(Solvers::Mode::PPP, true, true),
             codeBiasGroup(),
             posGroup(false),
             slipGroup(),
@@ -359,14 +360,14 @@ namespace {
     }
 }
 
-void Solvers::Helpers::renderAdvancedParams(SolverOptions &opts, const Solvers::Mode mode) {
-    UI::ParamPage::render(schemaFor(mode), opts, Solvers::defaultSolverOptions(mode));
+void Solvers::Helpers::renderAdvancedParams(SolverOptions &opts, const Mode mode) {
+    UI::ParamPage::render(schemaFor(mode), opts, defaultSolverOptions(mode));
 }
 
-void Solvers::Helpers::saveSolverParams(const Solvers::Mode mode, const SolverOptions &opts) {
+void Solvers::Helpers::saveSolverParams(const Mode mode, const SolverOptions &opts) {
     UI::ParamPage::save(schemaFor(mode), opts, spPrefix(mode));
 }
 
-void Solvers::Helpers::loadSolverParams(const Solvers::Mode mode, SolverOptions &opts) {
-    UI::ParamPage::load(schemaFor(mode), opts, Solvers::defaultSolverOptions(mode), spPrefix(mode));
+void Solvers::Helpers::loadSolverParams(const Mode mode, SolverOptions &opts) {
+    UI::ParamPage::load(schemaFor(mode), opts, defaultSolverOptions(mode), spPrefix(mode));
 }

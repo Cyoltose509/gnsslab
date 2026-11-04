@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <iosfwd>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,6 +25,11 @@ namespace Solvers {
     /// 文件解算 startFile()（readBody/solveBody 双线程），实时 startRealtime()（makeSession 会话）。
     struct Task : std::enable_shared_from_this<Task> {
         enum class State { Config, Running, Done };
+
+        /// 任务种类：求解任务走 Mode 体系；工具任务（标定/对准）没有求解模式，自备配置面板与结果页。
+        enum class Kind { Solver, Tool };
+
+        virtual Kind kind() const { return Kind::Solver; }
 
         std::atomic<State> state{State::Config};
 
@@ -53,7 +59,8 @@ namespace Solvers {
 
         void startRealtime();
 
-        void writeCsv(std::ostream &out);
+        /// 结果表格的表头与列顺序由各模式自己定；基类不导出（工具任务没有 CSV）。
+        virtual void exportCSV(std::ostream &out) const;
 
         /// 等解算线程收尾（CLI 与 GUI 的 join 语义合一）。
         void waitDone();

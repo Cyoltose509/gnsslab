@@ -70,7 +70,7 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
         }
         if (nObs < 4) break;
         lastN = nObs;
-        try { solver.solve(eq); }
+        try { solver.solve(eq, eq.weightVector().asDiagonal().toDenseMatrix()); }
         catch (...) { break; }
         const Eigen::Vector3d dpos(solver.getSolution(Parameter::dX),
                             solver.getSolution(Parameter::dY),

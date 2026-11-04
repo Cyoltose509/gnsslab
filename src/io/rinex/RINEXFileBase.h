@@ -34,18 +34,35 @@ public:
         ownedStream.open(path, std::ios::in);
         if (!ownedStream) throw FFStreamError("can't open file: " + path);
         pStream = &ownedStream;
+        pushedBack = false;
     }
 
-    void attach(std::fstream &fs) { pStream = &fs; }
+    void attach(std::fstream &fs) {
+        pStream = &fs;
+        pushedBack = false;
+    }
 
 protected:
     std::fstream *pStream = nullptr;
 
     bool nextLine(std::string &line) const {
+        if (pushedBack) {
+            line = pendingLine;
+            pushedBack = false;
+            return true;
+        }
         if (!pStream || !std::getline(*pStream, line)) return false;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         return true;
     }
+
+    void pushBack(const std::string &line) const {
+        pendingLine = line;
+        pushedBack = true;
+    }
+
+    mutable std::string pendingLine;
+    mutable bool pushedBack = false;
 
     static void fortranExponent(std::string &line) {
         std::replace(line.begin(), line.end(), 'D', 'e');

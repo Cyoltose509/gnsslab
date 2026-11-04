@@ -4,8 +4,8 @@
 #include "rinex/RINEXNavStore.h"
 #include "ARLambda.h"
 #include "SPP.h"
+#include "CoordStruct.h"
 #include "Log.h"
-
 
 
 Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph,
@@ -63,7 +63,7 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
     mRtkBase = &base;
     mRtkRover = &rover;
     mEph = &eph;
-    mDDWeightReady = false; // 随机模型按本历元卫星集合重算
+    mWeightReady = false; // 随机模型按本历元卫星集合重算
 
     detectFreqCombinations();
     detectSlips();
@@ -132,6 +132,7 @@ bool RTK::buildGeometry() {
     satElevData.clear();
     satAzimData.clear();
     satRoverElevData.clear();
+    satPVTTransTime.clear();
     satPVTRecTime.clear();
     mSdVar.clear();
     mRtkPartSats.clear();
@@ -158,17 +159,20 @@ bool RTK::buildGeometry() {
 
             CommonTime t_emit = mRtkBase->epoch;
             t_emit.m_sod -= Pb / C_MPS;
-            PVT pvt = e->getPVT(t_emit);
+            const PVT pvt = e->getPVT(t_emit, &sc.base);
+            PVT pvtRec = pvt;
+            applyEarthRotation(pvtRec.p, pvtRec.v, mBaseXyz);
 
-            const double elev = Coord::elevation(mBaseXyz, pvt.p, Frame::WGS84);
-            const double azim = Coord::azimuth(mBaseXyz, pvt.p, Frame::WGS84);
+            const double elev = Coord::elevation(mBaseXyz, pvtRec.p, Frame::WGS84);
+            const double azim = Coord::azimuth(mBaseXyz, pvtRec.p, Frame::WGS84);
             if (elev < mConfig.cutoffElevRad) continue;
 
             // 缓存 PVT/仰角/方位
-            satPVTRecTime[sat] = pvt;
+            satPVTTransTime[sat] = pvt;
+            satPVTRecTime[sat] = pvtRec;
             satElevData[sat] = elev;
             satAzimData[sat] = azim;
-            const double elevRover = Coord::elevation(mRoverApprox, pvt.p, Frame::WGS84);
+            const double elevRover = Coord::elevation(mRoverApprox, pvtRec.p, Frame::WGS84);
             //const double azimRover = Coord::azimuth(mRoverApprox, pvt.p, Frame::WGS84);
             satRoverElevData[sat] = elevRover;
             sysPart.push_back(sat);
@@ -280,7 +284,7 @@ std::optional<SatID> RTK::selectRtkRefSat(const std::vector<SatID> &candidates,
 
 void RTK::buildStochasticModel(const EquSys &eq) {
     const int m = static_cast<int>(eq.obsEquData.size());
-    mDDWeight = Eigen::MatrixXd::Zero(m, m);
+    mWeightMatrix = Eigen::MatrixXd::Zero(m, m);
     if (m == 0) return;
 
     std::vector<EquID> rows(m);
@@ -309,21 +313,19 @@ void RTK::buildStochasticModel(const EquSys &eq) {
                 R(idx[a], idx[c]) = a == c ? va + b : b;
         }
     }
-    mDDWeight = R.inverse();
+    mWeightMatrix = R.inverse();
 }
 
-void RTK::setupFullWeight(EquSys &eq) {
-    if (!mConfig.fullCovariance) return;
-    if (!mDDWeightReady) {
-        computeSdVariance();
-        buildStochasticModel(eq);
-        mDDWeightReady = true;
-    }
-    int i = 0;
-    for (auto &[eid, ed]: eq.obsEquData) {
-        ed.weight = mDDWeight(i, i);
-        ++i;
-    }
+void RTK::buildWeightMatrix(const EquSys &eq) {
+    if (!mConfig.fullCovariance || mWeightReady) return;
+    computeSdVariance();
+    buildStochasticModel(eq);
+    mWeightReady = true;
+}
+
+void RTK::solveIteration(SolverLSQ &solver, EquSys &eq) {
+    if (mConfig.fullCovariance) solver.solve(eq, mWeightMatrix, false);
+    else solver.solve(eq, eq.weightVector().asDiagonal().toDenseMatrix(), false);
 }
 
 // 后处理回填
@@ -357,6 +359,17 @@ void RTK::detectSlips() {
     const double gfThr = mConfig.useGfCycleSlip ? 1.0 : 0.0; // >0 开启 GF
     const double gfMult = mConfig.gfSlipMult; // GF 周跳阈值倍数
 
+    // 配检测器、喂数、GF 簿记：基站与流动站走同一条。
+    // sat 走形参而不是捕获：它是结构化绑定，C++17 的 lambda 捕获不了。
+    const auto feedSlot = [&](std::map<SatID, CycleSlip> &dets, const FreqCombo &combo,
+                              const SatID &sat, const TypeValueMap &tv, const ObsData *obs) {
+        CycleSlip &det = dets[sat];
+        det.configure(combo, gfThr, gfMult);
+        const CycleSlip::Result r = det.feed(sat, tv, obs);
+        gfEpoch.record(sat, r);
+        return r.slip;
+    };
+
     for (char sys: mConfig.enabledSystems) {
         auto itc = mRtkCombos.find(sys);
         if (itc == mRtkCombos.end() || !itc->second.ok) continue;
@@ -371,36 +384,11 @@ void RTK::detectSlips() {
 
             bool slip = false;
             if (baseOk) {
-                CycleSlip &dB = mSlipDetBase[sat];
-                dB.configure(sc.base);
-                dB.setGfThreshold(gfThr);
-                dB.setGfSlipMult(gfMult);
-                const double L1 = tvb.at(sc.base.phase1), L2 = tvb.at(sc.base.phase2);
-
-                const double C1 = tvb.at(sc.base.code1), C2 = tvb.at(sc.base.code2);
-
-                dB.feed(L1, L2, C1, C2, true);
-                if (dB.mLastGfSlip)
-                    gfEpoch.record(sat, dB.mLastGfArtifact);
-                // MW 周跳即时剔除(与 PPP 一致)；GF 跳留待 gfEpoch.decide 统一裁决(共模/伪影抑制)
-                if (dB.mLastMwSlip) slip = true;
+                if (feedSlot(mSlipDetBase, sc.base, sat, tvb, mRtkBase)) slip = true;
                 fedBase.insert(sat);
             }
             if (roverOk) {
-                CycleSlip &dR = mSlipDetRover[sat];
-                dR.configure(sc.rover);
-                dR.setGfThreshold(gfThr);
-                dR.setGfSlipMult(gfMult);
-                const TypeValueMap &tvr = itr->second;
-                const double L1 = tvr.at(sc.rover.phase1), L2 = tvr.at(sc.rover.phase2);
-
-                const double C1 = tvr.at(sc.rover.code1), C2 = tvr.at(sc.rover.code2);
-
-                dR.feed(L1, L2, C1, C2, true);
-                if (dR.mLastGfSlip)
-                    gfEpoch.record(sat, dR.mLastGfArtifact);
-                // MW 周跳即时剔除(与 PPP 一致)；GF 跳留待 gfEpoch.decide 统一裁决(共模/伪影抑制)
-                if (dR.mLastMwSlip) slip = true;
+                if (feedSlot(mSlipDetRover, sc.rover, sat, itr->second, mRtkRover)) slip = true;
                 fedRover.insert(sat);
             }
             if (baseOk && roverOk && slip) mRtkSlipExclude.insert(sat);
@@ -410,7 +398,7 @@ void RTK::detectSlips() {
     // 弧段中断（本历元未喂有效观测）的卫星：喂入 valid=false 断开 GF 弧段，避免重现时误报
     auto feedGap = [&](std::map<SatID, CycleSlip> &m, const std::set<SatID> &fed) {
         for (auto &[sat, det]: m)
-            if (!fed.count(sat)) det.feed(0, 0, 0, 0, false);
+            if (!fed.count(sat)) det.feedGap();
     };
     feedGap(mSlipDetBase, fedBase);
     feedGap(mSlipDetRover, fedRover);
@@ -436,7 +424,7 @@ void RTK::addDoubleDiffEquation(EquSys &eq, const DDCache &c,
     EquData ed;
     ed.prefit = dd - ddGeom;
     const double var = isPhase ? c.refPhaseVar + c.phaseVar : c.refCodeVar + c.codeVar;
-    ed.weight = mConfig.fullCovariance ? 0.0 : 1.0 / var; // 满阵模式下随后被 P 的对角元覆盖
+    ed.weight = 1.0 / var;
     const Variable dx("rover", Parameter::dX);
     const Variable dy("rover", Parameter::dY);
     const Variable dz("rover", Parameter::dZ);
@@ -456,7 +444,7 @@ bool RTK::solveFloat(EquSys &eq, SolverLSQ &solver, Eigen::Vector3d &baseline) {
         buildEquSys(eq, roverPos, false);
         if (eq.obsEquData.size() < 4) return false;
         // 中间迭代跳过协方差 O(n³)，仅最终解后补算一次（等价、提速）
-        solver.solve(eq, mConfig.fullCovariance ? &mDDWeight : static_cast<Eigen::MatrixXd *>(nullptr), false);
+        solveIteration(solver, eq);
         auto dx = Eigen::Vector3d(solver.getSolution(Parameter::dX),
                                   solver.getSolution(Parameter::dY),
                                   solver.getSolution(Parameter::dZ));
@@ -507,13 +495,13 @@ void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed) {
         const double ddGeom = rhoR - rhoB - (rhoRref - rhoBref);
         const Eigen::Vector3d ddLos = losR - losRref;
 
-        // 四条双差观测：L1/L2 相位 + C1/C2 伪距（观测/方差/变量均来自 mDDCache，迭代内无 map 查找）
+        // 四条双差观测
         addDoubleDiffEquation(eq, c, ddLos, ddGeom, 1, true, fixed);
         addDoubleDiffEquation(eq, c, ddLos, ddGeom, 2, true, fixed);
         addDoubleDiffEquation(eq, c, ddLos, ddGeom, 1, false, fixed);
         addDoubleDiffEquation(eq, c, ddLos, ddGeom, 2, false, fixed);
     }
-    setupFullWeight(eq); // 随机模型只依赖卫星集合与仰角，迭代内复用
+    buildWeightMatrix(eq); // 随机模型只依赖卫星集合与仰角，迭代内复用
 }
 
 
@@ -561,11 +549,11 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
     EquSys eqFix;
     SolverLSQ solverFix;
     Eigen::Vector3d roverPos = mBaseXyz + mBaselineFloat; // 从浮点基线起步
-    mDDWeightReady = false; // 固定解重新建一次，确保 P 与方程行序严格对齐
+    mWeightReady = false; // 固定解重新建一次，确保 P 与方程行序严格对齐
     for (int iter = 0; iter < mConfig.maxIterFix; ++iter) {
         buildEquSys(eqFix, roverPos, true);
         // 中间迭代跳过协方差 O(n³)，仅最终解后补算一次（等价、提速）
-        solverFix.solve(eqFix, mConfig.fullCovariance ? &mDDWeight : static_cast<Eigen::MatrixXd *>(nullptr), false);
+        solveIteration(solverFix, eqFix);
         auto dx = Eigen::Vector3d(solverFix.getSolution(Parameter::dX),
                                   solverFix.getSolution(Parameter::dY),
                                   solverFix.getSolution(Parameter::dZ));
@@ -581,9 +569,6 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
 }
 
 void RTK::applyOptions(const SolverOptions &o) {
-    // RTK 没有构造函数基线（RTK() = default），所以可以**整份覆盖**：
-    // rc 初值即 RTKConfig 默认值，未显式配置时行为与旧版一致。
-    // 只有两处需要表示转换：截止角（外层用度、Config 用 rad）、星座（文件页统一管）。
     RTKConfig rc = o.rtk;
     rc.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
     rc.enabledSystems = o.systems;

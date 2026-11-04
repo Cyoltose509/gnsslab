@@ -4,9 +4,12 @@
 #include <vector>
 
 namespace AppConfig {
+    /// 精密产品清单，每个求解模式各一份：ini 键 = <scope>_files / <scope>_sp3 …
     class Products {
     public:
-        static Products &instance();
+        explicit Products(std::string scope);
+
+        static Products &of(const std::string &scope);
 
         std::vector<std::string> files;
 
@@ -24,17 +27,19 @@ namespace AppConfig {
 
         void load();
 
-
-
-        [[nodiscard]] std::vector<std::string> VMF3Paths() const;
-
         void save() const;
-
-
 
         void syncFromFiles();
 
+        [[nodiscard]] std::vector<std::string> VMF3Paths() const;
+
+        [[nodiscard]] std::vector<std::string> recent() const;
+
+        void addRecent(const std::string &path) const; //NOLINT
+
     private:
-        Products() = default;
+        [[nodiscard]] std::string key(const char *name) const;
+
+        std::string scopeName;
     };
 }

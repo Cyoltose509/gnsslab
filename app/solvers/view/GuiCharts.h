@@ -1,17 +1,12 @@
 #pragma once
 
-#include <string>
 #include <vector>
 #include <map>
 #include <limits>
-#include <cmath>
 #include <utility>
-#include <functional>
 
 #include "Const.h"
 #include "solvers/common/Core.h"
-#include "ui/GuiColors.h"
-#include "imgui.h"
 #include "implot.h"
 
 namespace Solvers::Charts {
@@ -112,25 +107,25 @@ namespace Solvers::Charts {
     }
 
   template<typename Proj>
-    std::vector<std::pair<SatID, Solvers::SkyPoint> > buildCurSkyPoints(const int epIdx, const std::size_t n, Proj &&proj, const double minElevDeg = -1.0) {
-        std::vector<std::pair<SatID, Solvers::SkyPoint> > pts;
+    std::vector<std::pair<SatID, SkyPoint> > buildCurSkyPoints(const int epIdx, const std::size_t n, Proj &&proj, const double minElevDeg = -1.0) {
+        std::vector<std::pair<SatID, SkyPoint> > pts;
         for (std::size_t i = 0; i < n; ++i) {
             SkyView v = proj(i);
             const double elDeg = v.elevRad * RAD_TO_DEG;
             if (elDeg <= minElevDeg) continue;
             pts.emplace_back(v.sat,
-                Solvers::SkyPoint{epIdx, static_cast<float>(v.azimRad * RAD_TO_DEG), static_cast<float>(elDeg), v.used});
+                SkyPoint{epIdx, static_cast<float>(v.azimRad * RAD_TO_DEG), static_cast<float>(elDeg), v.used});
         }
         return pts;
     }
 
-    void renderSkyplot(const std::map<SatID, std::vector<Solvers::SkyPoint>> &tracks,
-                       const std::vector<std::pair<SatID, Solvers::SkyPoint>> &curPts,
+    void renderSkyplot(const std::map<SatID, std::vector<SkyPoint>> &tracks,
+                       const std::vector<std::pair<SatID, SkyPoint>> &curPts,
                        float sizePx = 360.0f);
 
     void renderLeo3D(const Eigen::Vector3d &leoPos,
-                     const std::vector<Solvers::TrajPoint> &leoTraj,
-                     const std::vector<Solvers::TrajPoint> &refTraj,
+                     const std::vector<TrajPoint> &leoTraj,
+                     const std::vector<TrajPoint> &refTraj,
                      float sizePx = 460.0f);
 
 }

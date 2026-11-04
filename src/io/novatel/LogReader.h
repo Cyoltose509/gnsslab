@@ -2,8 +2,10 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <optional>
 #include "GnssStruct.h"
 #include "EphemerisTable.h"
 #include "core/InsStruct.h"
@@ -49,12 +51,6 @@ namespace NovAtel {
 
     class LogReader {
     public:
-        enum class RangeKind {
-            Unknown,
-            Full,
-            Compressed
-        };
-
         struct InsRecordLayout {
             bool valid = false;
             int recLen = 56;
@@ -131,6 +127,14 @@ namespace NovAtel {
         } currentHeader = {};
 
         ObsData currentObs;
+        // 已经收完、但还没交出的一整个历元：同一时刻可能既有 RANGE 又有 RANGECMP，
+        // 两条消息要合到同一历元里（RANGE 优先），所以不能读一条就交一条。
+        std::optional<ObsData> mPending;
+        int mEpochWeek = -1;
+        int mEpochMs = 0;
+        // 上一历元/本历元各 (卫星,频点) 的 lock time（连续无周跳跟踪秒数）。
+        // 回退即重新捕获，是这个接收机唯一直接给出的周跳先验。
+        std::map<SatID, std::array<float, 9> > mPrevLock, mCurLock;
         ImuLog mImuLog;
         Eigen::Vector3d antennaPosition{0, 0, 0};
 
@@ -138,17 +142,17 @@ namespace NovAtel {
         int mImuType = -1;
         std::string mInsDiag;
         std::atomic<bool> mInsDiagLogged{false};
-        RangeKind mRangeKind = RangeKind::Unknown;
+        std::atomic<bool> mSeenFullRange{false};
+        std::atomic<bool> mSeenCmpRange{false};
 
         virtual bool getNextMessage(std::vector<std::uint8_t> &message, bool block) = 0;
 
-        virtual void restartStream() = 0;
-
-        void probeRangeKind();
+        void noteRangeFormat(bool full);
 
         void beginEpoch();
 
-        void emitObs(int prnRaw, int gfrq, double psr, double adr, double doppler, double cn0, std::uint32_t status);
+        void emitObs(int prnRaw, int gfrq, double psr, double adr, double doppler, double cn0,
+                     double lockTime, std::uint32_t status, bool fromFull);
 
         bool parseGNSSMessage(const std::vector<std::uint8_t> &message);
 

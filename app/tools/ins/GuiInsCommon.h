@@ -2,7 +2,7 @@
 
 
 #include "GuiInsPanel.h"
-#include "view/GuiHelpers.h"
+#include "solvers/view/GuiHelpers.h"
 #include "ui/FileDialog.h"
 #include "ui/GuiColors.h"
 
@@ -22,7 +22,7 @@
 #include <thread>
 #include <vector>
 
-namespace Tools::InsPanel {
+namespace Tools::Ins {
     template<class Reader, class ReadFn, class OnSample, class OnBatch>
     void pumpImu(Reader &r, ReadFn readOne, const std::atomic<bool> &stop,
                  OnSample onSample, OnBatch onBatch) {
@@ -297,7 +297,7 @@ namespace Tools::InsPanel {
     void exportCSVDialog(Task &task, const std::string &defaultName, const std::string &displayName,
                          BuildFn build) {
         std::wstring out;
-        if (!FileDialog::saveCsv(defaultName, out)) return;
+        if (!FileDialog::saveCSV(defaultName, out)) return;
         CSV::Writer w;
         build(w);
         if (!w.save(out, true)) {

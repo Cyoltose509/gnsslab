@@ -13,7 +13,11 @@
 #include <condition_variable>
 #include "download/ProductMeta.h"
 
-namespace Tools::FtpDownload {
+namespace AppConfig {
+    class Products;
+}
+
+namespace Download::Panel {
     extern bool s_open;
 
     static constexpr int kDateTypeCount = 10;
@@ -77,6 +81,9 @@ namespace Tools::FtpDownload {
     static Pending s_pending;
     static bool s_pendingOpen = false;
 
+    static std::string s_confirmDelPath;
+    static bool s_confirmDelOpen = false;
+
     void Render(bool *p_open);
 
     struct AcquirePanel {
@@ -86,6 +93,7 @@ namespace Tools::FtpDownload {
         bool open = false;
         int year = 0, doy = 0;
         std::vector<std::string> *target = nullptr; // Products：解算产品清单
+        AppConfig::Products *owner = nullptr;       // Products：清单所属的模式产品池
         std::string obsKey;                         // Obs：PathMemory 键
         std::string *obsOut = nullptr;              // Obs：回填到该填写框
         ProductType singleType = ProductType::Unknown;

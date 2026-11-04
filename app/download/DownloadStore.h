@@ -17,6 +17,13 @@ struct DownloadEntry {
 };
 
 
+struct LocalFile {
+    std::string name;
+    std::string path;
+    long long   size = 0;
+};
+
+
 
 class DownloadStore {
 public:
@@ -34,6 +41,12 @@ public:
 
 
     static std::string findLocalFile(ProductType t, int year, int doy, const std::string &remoteName);
+
+
+    static std::vector<LocalFile> listLocal(ProductType t, int year, int doy);
+
+
+    static bool revealFile(const std::string &path);
 
 
     static bool removeFile(const std::string &path);

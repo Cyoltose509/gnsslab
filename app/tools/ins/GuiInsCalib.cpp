@@ -1,7 +1,7 @@
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
-#include "view/GuiHelpers.h"
+#include "solvers/view/GuiHelpers.h"
 #include "ui/FileDialog.h"
 #include "solvers/common/Core.h"
 #include "core/PathMemory.h"
@@ -21,10 +21,9 @@
 #include <utility>
 #include <vector>
 
-namespace Tools::InsPanel {
+namespace Tools::Ins {
 
     SixPosCalibTask::SixPosCalibTask() {
-        mode = Solvers::Mode::INS;
         fileName = "六位置法标定";
     }
 

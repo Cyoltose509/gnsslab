@@ -75,7 +75,7 @@ void ImuCalibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const s
             d.varCoeffData = {{vSx, f[i](0)}, {vSy, f[i](1)}, {vSz, f[i](2)}, {vB, 1.0}};
             equ.obsEquData[EquID(SatID('P', static_cast<int>(i)), "acc")] = d;
         }
-        lsq.solve(equ);
+        lsq.solve(equ, equ.weightVector().asDiagonal().toDenseMatrix());
         M(k, 0) = lsq.getSolution(Parameter::dX);
         M(k, 1) = lsq.getSolution(Parameter::dY);
         M(k, 2) = lsq.getSolution(Parameter::dZ);

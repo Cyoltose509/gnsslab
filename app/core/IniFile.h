@@ -2,6 +2,8 @@
 #include <string>
 #include <map>
 
+inline constexpr char kIniListSep = '|';
+
 struct IniFile {
     std::map<std::string, std::map<std::string, std::string> > sections;
 

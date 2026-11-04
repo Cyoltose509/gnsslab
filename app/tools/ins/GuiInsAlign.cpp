@@ -1,8 +1,8 @@
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
-#include "view/GuiHelpers.h"
-#include "view/GuiProductSection.h"
+#include "solvers/view/GuiHelpers.h"
+#include "solvers/view/GuiProductSection.h"
 #include "ui/FileDialog.h"
 #include "solvers/common/Core.h"
 #include "io/novatel/AsciiReader.h"
@@ -24,10 +24,9 @@
 #include <utility>
 #include <vector>
 
-namespace Tools::InsPanel {
+namespace Tools::Ins {
 
     StaticAlignTask::StaticAlignTask() {
-        mode = Solvers::Mode::INS;
         fileName = "静态解析粗对准";
     }
 

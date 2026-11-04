@@ -37,7 +37,6 @@ namespace NovAtel {
         probeInsLayout();
         if (mImuType < 0) probeImuTypeFromShortHeader();
         if (mImuType >= 0) mInsDiag.clear();
-        probeRangeKind();
         return !buffer.empty();
     }
 

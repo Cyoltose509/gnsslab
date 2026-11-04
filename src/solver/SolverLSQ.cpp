@@ -1,11 +1,7 @@
 #include "SolverLSQ.h"
-void SolverLSQ::computeCovariance() {
-    if (!mHasDecomp) return;  // 尚未求解过，无分解可复用
-    const int n = static_cast<int>(mLastDecomp.rows());
-    covMatrix = mLastDecomp.solve(Eigen::MatrixXd::Identity(n, n));
-}
+#include <cmath>
 
-void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd *fullWeight, const bool computeCov) {
+void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const bool computeCov) {
     // 仅在变量集合内容变化时重建索引缓存，避免每次求解 O(n) 线性扫描
     if (m_varSetCache != equSys.varSet) {
         m_varSetCache = equSys.varSet;
@@ -20,14 +16,12 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd *fullWeight, const b
     // ---- 矩阵预分配：只在维度变化时 resize，平时 setZero 复用内存 ----
     if (prefit.size() != numObs) {
         prefit.resize(numObs);
-        weights.resize(numObs);
     }
     if (hMatrix.rows() != numObs || hMatrix.cols() != numUnk) {
         hMatrix.resize(numObs, numUnk);
     }
     prefit.setZero();
     hMatrix.setZero();
-    weights.setZero();
 
     // ---- 组装设计矩阵 H 和观测值向量 prefit ----
     int iobs = 0;
@@ -35,31 +29,20 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd *fullWeight, const b
         prefit(iobs) = data.prefit;
 
         for (const auto &[var, value]: data.varCoeffData) {
-            const int indexUnk = getIndex(var);
-            hMatrix(iobs, indexUnk) = value;
+            hMatrix(iobs, getIndex(var)) = value;
         }
-        weights(iobs) = data.weight;
-
         iobs++;
     }
 
     if (prefit.size() != hMatrix.rows()) {
         throw InvalidSolver("prefit size don't equal with rows of hMatrix");
     }
-
-    if (fullWeight && fullWeight->rows() != numObs) {
-        throw InvalidSolver("fullWeight rows mismatch hMatrix rows");
+    if (weightMatrix.rows() != numObs || weightMatrix.cols() != numObs) {
+        throw InvalidSolver("weightMatrix size mismatch hMatrix rows");
     }
 
-    Eigen::MatrixXd N;
-    Eigen::VectorXd b;
-    if (fullWeight) {
-        N = hMatrix.transpose() * *fullWeight * hMatrix;
-        b = hMatrix.transpose() * *fullWeight * prefit;
-    } else {
-        N = hMatrix.transpose() * weights.asDiagonal() * hMatrix;
-        b = hMatrix.transpose() * weights.asDiagonal() * prefit;
-    }
+    const Eigen::MatrixXd N = hMatrix.transpose() * weightMatrix * hMatrix;
+    const Eigen::VectorXd b = hMatrix.transpose() * weightMatrix * prefit;
 
     try {
         // 缓存分解供 computeCovariance() 复用；computeCov=false 时跳过协方差阵 O(n³) 计算。
@@ -74,12 +57,17 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd *fullWeight, const b
 
     v = prefit - hMatrix * state;
     if (const int dof = numObs - numUnk; dof > 0) {
-        // 后验方差因子：满阵时后验二次型用 P，否则用 diag(weights)
-        sigma0 = fullWeight ? std::sqrt(v.dot(*fullWeight * v) / dof)
-                            : std::sqrt((v.array() * weights.array() * v.array()).sum() / dof);
+        const Eigen::VectorXd Wv = weightMatrix * v;
+        sigma0 = std::sqrt((v.array() * Wv.array()).sum() / dof);
     } else {
         sigma0 = 1.0; // 方程数刚好等于未知数，无法估计 sigma0
     }
+}
+
+void SolverLSQ::computeCovariance() {
+    if (!mHasDecomp) return;  // 尚未求解过，无分解可复用
+    const int n = static_cast<int>(mLastDecomp.rows());
+    covMatrix = mLastDecomp.solve(Eigen::MatrixXd::Identity(n, n));
 }
 
 double SolverLSQ::getSolution(const Parameter &type,

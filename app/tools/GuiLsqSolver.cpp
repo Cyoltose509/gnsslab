@@ -103,10 +103,15 @@ namespace Tools::LsqSolver {
                 return;
             }
 
+            Eigen::MatrixXd W(s_NumObs, s_NumObs);
+            for (int i = 0; i < s_NumObs; ++i)
+                for (int j = 0; j < s_NumObs; ++j)
+                    W(i, j) = s_W[i * s_NumObs + j];
+
             for (int i = 0; i < s_NumObs; ++i) {
                 EquData data;
                 data.prefit = s_L[i];
-                data.weight = s_W[i * s_NumObs + i];
+                data.weight = W(i, i);
                 for (int j = 0; j < s_NumUnk; ++j) {
                     data.varCoeffData[varList[j]] = s_H[i * s_NumUnk + j];
                 }
@@ -114,7 +119,7 @@ namespace Tools::LsqSolver {
             }
 
             SolverLSQ solver;
-            solver.solve(sys);
+            solver.solve(sys, W);
 
             s_X = solver.state;
             s_Q = solver.covMatrix;

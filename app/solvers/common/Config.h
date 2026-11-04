@@ -1,14 +1,12 @@
 #pragma once
 
-#include <fstream>
 #include <set>
 #include <string>
-#include <vector>
 
 #include "SolverOptions.h"
 
 namespace Solvers {
-    enum class Mode { SPP, PPP, LEO, RTK, INS };
+    enum class Mode { SPP, PPP, LEO, RTK };
 
     inline const char *modeLabel(const Mode m) {
         switch (m) {
@@ -16,9 +14,19 @@ namespace Solvers {
             case Mode::PPP: return "PPP";
             case Mode::LEO: return "LEO";
             case Mode::RTK: return "RTK";
-            case Mode::INS: return "INS";
         }
         return "SPP";
+    }
+
+    /// ini 键前缀 / 产品池归属，与 modeLabel 同序但小写
+    inline const char *modeKey(const Mode m) {
+        switch (m) {
+            case Mode::SPP: return "spp";
+            case Mode::PPP: return "ppp";
+            case Mode::LEO: return "leo";
+            case Mode::RTK: return "rtk";
+        }
+        return "spp";
     }
 
     inline std::string sysSetToString(const std::set<char> &s) {

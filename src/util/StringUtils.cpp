@@ -76,6 +76,15 @@ namespace Str {
         return out;
     }
 
+    std::string join(const std::vector<std::string> &v, const char sep) {
+        std::string s;
+        for (const auto &x: v) {
+            if (!s.empty()) s += sep;
+            s += x;
+        }
+        return s;
+    }
+
     std::string &stripTrailing(std::string &line) {
         if (const std::size_t end = line.find_last_not_of(" \t\n\r\v\f"); end != std::string::npos) {
             line.resize(end + 1);

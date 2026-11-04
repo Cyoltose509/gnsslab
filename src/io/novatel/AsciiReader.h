@@ -20,8 +20,6 @@ namespace NovAtel {
     protected:
         bool getNextMessage(std::vector<std::uint8_t> &message, bool block) override;
 
-        void restartStream() override;
-
     private:
 
         bool buildMessage(const std::string &line, std::vector<std::uint8_t> &message) const;

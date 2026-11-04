@@ -5,6 +5,10 @@
 
 #include "ui/Gui.h"
 
+namespace AppConfig {
+    class Products;
+}
+
 namespace Solvers::Helpers {
     void fileRow(const char *label, std::string *buf, const char *iniKey,
                  const GuiFileFilter *filters, int nFilters,
@@ -12,5 +16,5 @@ namespace Solvers::Helpers {
                  const char *obsIniKey = nullptr,
                  std::string *autoNavBuf = nullptr);
 
-    void renderProductSection(const char *obsIniKey);
+    void renderProductSection(AppConfig::Products &p, const char *obsIniKey);
 }

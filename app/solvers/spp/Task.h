@@ -15,7 +15,7 @@ namespace Solvers::SPP {
         void applyConfig(const SolverOptions &cfg);
 
         /// 从 PathMemory 恢复上次界面配置（仅 GUI）。
-        void loadFromMemory();
+        void loadFromMemory() const;
 
         /// 配置面板（仅 GUI，定义在 Panel.cpp）。
         void renderConfigPanel();
@@ -23,6 +23,8 @@ namespace Solvers::SPP {
         bool initSolver(void *solver) override;
 
         void beforeSolveEpoch(void *solver, Observer::Item *item) override;
+
+        void exportCSV(std::ostream &out) const override;
 
         Task() {
             core = std::make_shared<Solvers::Core>();

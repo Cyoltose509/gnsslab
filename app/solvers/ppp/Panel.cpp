@@ -18,10 +18,11 @@ namespace Solvers::PPP {
         kinematic = pm.get("ppp_kinematic") == "1";
         Helpers::loadCommonCfg("ppp", Mode::PPP, &core->opts,
                                &core->cutoffDeg, &core->sampleInterval, &core->enabledSystems);
-        AppConfig::Products::instance().load();
+        AppConfig::Products::of(modeKey(Mode::PPP)).load();
     }
 
     void Task::renderConfigPanel() {
+        auto &prod = AppConfig::Products::of(modeKey(Mode::PPP));
         Helpers::beginConfigBody("PPP 处理配置###ppp_cfg_", *this);
 
         if (ImGui::BeginTabBar("##ppp_cfg_tabs")) {
@@ -29,8 +30,8 @@ namespace Solvers::PPP {
                 ImGui::Spacing();
 
                 Helpers::fileRow("观测文件", &core->view.obsPathBuf, "ppp_obs", FileDialog::fObs, 3,
-                                 {}, "ppp_obs", &AppConfig::Products::instance().brdc);
-                Helpers::renderProductSection("ppp_obs");
+                                 {}, "ppp_obs", &prod.brdc);
+                Helpers::renderProductSection(prod, "ppp_obs");
                 ImGui::Separator();
                 Helpers::renderSimpleConfig(&core->cutoffDeg, &core->enabledSystems, &core->sampleInterval);
                 ImGui::Separator();
@@ -43,7 +44,7 @@ namespace Solvers::PPP {
 
                         const auto &cfg = AppConfig::PathMemory::instance();
                         cfg.set("ppp_obs", path);
-                        AppConfig::Products::instance().save();
+                        prod.save();
                         cfg.set("ppp_kinematic", kinematic ? "1" : "0");
                         Helpers::saveCommonCfg("ppp", Mode::PPP, core->opts,
                                                core->cutoffDeg, core->sampleInterval, core->enabledSystems);

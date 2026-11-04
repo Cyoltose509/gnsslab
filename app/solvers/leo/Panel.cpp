@@ -30,11 +30,12 @@ namespace Solvers::LEO {
         }
         Helpers::loadCommonCfg("leo", Mode::LEO, &core->opts,
                                &core->cutoffDeg, &core->sampleInterval, &core->enabledSystems);
-        AppConfig::Products::instance().load();
+        AppConfig::Products::of(modeKey(Mode::LEO)).load();
         refSat = SatID('L', refPrn);
     }
 
     void Task::renderConfigPanel() {
+        auto &prod = AppConfig::Products::of(modeKey(Mode::LEO));
         Helpers::beginConfigBody("LEO 处理配置###leo_cfg_", *this);
 
         if (ImGui::BeginTabBar("##leo_cfg_tabs")) {
@@ -42,9 +43,8 @@ namespace Solvers::LEO {
                 ImGui::Spacing();
 
                 Helpers::fileRow("观测文件", &leoObsPathBuf, "leo_obs", FileDialog::fObs, 3,
-                                 {}, "leo_obs", &AppConfig::Products::instance().brdc);
-                // 精密产品共用一份路径（折叠栏），不再在本模式重复填写
-                Helpers::renderProductSection("leo_obs");
+                                 {}, "leo_obs", &prod.brdc);
+                Helpers::renderProductSection(prod, "leo_obs");
                 Helpers::fileRow("参考轨道 SP3 (可选)", &refSp3PathBuf, "leo_ref_sp3", FileDialog::fSp3, 2, {}, "leo_obs");
                 ImGui::Text("辅助文件:");
                 if (!auxFiles.empty()) {
@@ -89,7 +89,7 @@ namespace Solvers::LEO {
                         const std::string &path = leoObsPathBuf;
                         const auto &cfg = AppConfig::PathMemory::instance();
                         cfg.set("leo_obs", path);
-                        AppConfig::Products::instance().save();
+                        prod.save();
                         cfg.set("leo_ref_sp3", refSp3PathBuf);
                         cfg.set("leo_ref_prn", std::to_string(refPrn));
                         Helpers::saveCommonCfg("leo", Mode::LEO, core->opts,

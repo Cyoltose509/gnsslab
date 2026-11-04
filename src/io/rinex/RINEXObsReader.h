@@ -58,9 +58,10 @@ protected:
     virtual void afterHeader() {
     }
 
-    virtual void readSatObs(SatTypeValueMap &stvData, int numSats);
+    virtual void readSatObs(SatTypeValueMap &stvData, int numSats, SatTypeLLIMap &lliOut);
 
-    void decodeObsBlock(const SatID &sat, const std::string &buf, SatTypeValueMap &out) const;
+    void decodeObsBlock(const SatID &sat, const std::string &buf, SatTypeValueMap &out,
+                        SatTypeLLIMap &lliOut) const;
 };
 
 class RINEX2ObsReader : public RINEXObsReader {
@@ -76,7 +77,7 @@ protected:
 
     void readEpochHead(std::string &line, int &flag, int &numSats) override;
 
-    void readSatObs(SatTypeValueMap &stvData, int numSats) override;
+    void readSatObs(SatTypeValueMap &stvData, int numSats, SatTypeLLIMap &lliOut) override;
 
     void afterHeader() override;
 

@@ -1,6 +1,8 @@
 #pragma once
 #include "TimeConvert.h"
 #include "CoordStruct.h"
+#include "Const.h"
+#include "FreqCombo.h"
 
 
 /// ECEF position, velocity, clock bias and drift
@@ -114,20 +116,16 @@ struct Ephemeris {
         return s;
     }
 
-    virtual PVT getPVT(CommonTime t);
+    virtual PVT getPVT(CommonTime t, const FreqCombo *combo);
 
     FrameInfo refFrame{};
     TimeSystem timeSystem{};
 
     virtual ~Ephemeris() = default;
 
-    // 群时延（TGD / BGD）修正：广播钟差 a0/a1/a2 参考的是「双频无电离层组合」，
-    // 只有单频用户才需要扣掉 TGD 换成单频钟。本项目 SPP/PPP 的观测模型全部走 IF 组合
-    // （SPP 由 FreqCombo::detect 强制 code1+code2 双频），此时广播钟差已含群时延，
-    // 再扣一次等于重复改正。实测（HKWS 2026-183 全天 30 s，GREC）：
-    //   扣 TGD → 均值偏差 1.43 m、3D 散布 6.24 m；不扣 → 1.14 m、5.19 m。
-    // 故基类保持空实现；将来加单频通路时在对应派生类里覆盖。
-    virtual void fixTGD(PVT &pvt) {
+    virtual void fixTGD(PVT &pvt, const FreqCombo *combo) {
+        (void) pvt;
+        (void) combo;
     }
 
 private:
@@ -173,7 +171,7 @@ struct GPSEphem : Ephemeris {
 
     unsigned int IODE{};
     unsigned int IODC{};
-    double tgd{}; // GPS 群时延（仅单频使用；见基类 fixTGD 说明，IF 模型下不扣）
+    double tgd{}; // GPS 群时延
 };
 
 struct BDSEphem : Ephemeris {
@@ -185,16 +183,30 @@ struct BDSEphem : Ephemeris {
 
     unsigned int AODE{};
     unsigned int AODC{};
-    double tgd1{}; // B1/B1C 群时延
-    double tgd2{}; // B2/B2a 群时延
-    void fixTGD(PVT &pvt) override {
-        // 早期 BDS 单频通路的遗留（把 IF 参考钟换成 B1I 单频钟）。按基类说明，IF 模型下同样
-        // 不该扣；本轮实测中开/关这一项对 SPP 结果零差别，故暂按原样保留，待确认真实 BDS
-        // 样本里 tgd1 非零时的表现再决定去留。
-        constexpr double f1 = getFreq('C', 2);
-        constexpr double f2 = getFreq('C', 6);
-        constexpr double alpha = f1 * f1 / (f1 * f1 - f2 * f2);
-        pvt.clockBias -= alpha * tgd1;
+    double tgd1{}; // B1I 相对 B3I 的群时延
+    double tgd2{}; // B2I/B2b 相对 B3I 的群时延
+
+    /// 北斗广播钟差以 B3I 单频为参考（ICD 5.2.4.12）
+    void fixTGD(PVT &pvt, const FreqCombo *combo) override {
+        const double f1 = combo && combo->f1 > 0.0 ? combo->f1 : L2_FREQ_BDS; // 默认 B1I
+        const double f2 = combo && combo->f2 > 0.0 ? combo->f2 : L6_FREQ_BDS; // 默认 B3I
+        const double s1 = f1 * f1, s2 = f2 * f2;
+        if (s1 == s2) return;
+        pvt.clockBias -= (s1 * tgdOf(f1) - s2 * tgdOf(f2)) / (s1 - s2);
+    }
+
+    /// 频点相对 B3I 的群时延。B1C/B2a 的独立群时延（TGD_B1Cp/TGD_B2ap）只由 B-CNAV
+    /// 播发、只出现在 RINEX 4 的 CNV 记录里，D1 记录取不到，这里按邻近频点近似：
+    /// B1C 用 TGD1（与真值差 ±4 ns 量级）；B2a 直接取 0（真值约 −10 ns，比错用 B1 的 TGD 好）；
+    /// B2I/B2b 用 TGD2，但 BDS-3 的 TGD2 是 TGD1 的副本、不含 B2 信息，故 C19 起同样取 0。
+    [[nodiscard]] double tgdOf(const double f) const {
+        constexpr double kBand = 1.0e6;
+        constexpr int kBds3FirstPrn = 19;
+        if (std::abs(f - L6_FREQ_BDS) < kBand) return 0.0;
+        if (std::abs(f - L2_FREQ_BDS) < kBand || std::abs(f - L1_FREQ_BDS) < kBand) return tgd1;
+        if (std::abs(f - L5_FREQ_BDS) < kBand) return 0.0;
+        if (std::abs(f - L7_FREQ_BDS) < kBand) return prn >= kBds3FirstPrn ? 0.0 : tgd2;
+        return 0.0;
     }
 };
 
@@ -205,7 +217,7 @@ struct GalileoEphem : Ephemeris {
         refFrame = Frame::GPS;
     }
 
-    double tgd{}; // Galileo BGD：RINEX 取 BGD(E5a,E1)；NovAtel 取报文自带的（I/NAV=E5b、F/NAV=E5a）；仅单频使用
+    double tgd{};
 };
 
 struct GlonassEphem : Ephemeris {
@@ -217,18 +229,16 @@ struct GlonassEphem : Ephemeris {
 
     double X{}, Y{}, Z{};
     double vX{}, vY{}, vZ{};
-    double aX{}, aY{}, aZ{};   // 日月引力加速度
-    double tauN{};             // 卫星钟相对 GLONASS 时的改正 τ_n (s)
-    /// 频率改正 γ (s/s)，即钟漂率：clockBias(t) = -τ_n + γ·(t-tb)。
-    /// 别写成 τ_d ——δτ_n(L2−L1 时延) 是另一个量，见下。
+    double aX{}, aY{}, aZ{};
+    double tauN{};
     double gamma{};
-    double deltaTauN{};        // L2 与 L1 信号时延差 Δτ_n (s)，仅单频 L2 改正用，当前不使用
-    double tk{};               // 信息帧时间 tk (UTC(SU) 周内秒，可选)
-    int freqNum{};             // 频率通道号（FDMA 用）
-    unsigned int health{};     // 健康/可用标志
+    double deltaTauN{};
+    double tk{};
+    int freqNum{};
+    unsigned int health{};
 
     CommonTime toeCommon{};
 
-    PVT getPVT(CommonTime t) override;
+    PVT getPVT(CommonTime t, const FreqCombo *combo) override;
     const CommonTime &getCommonTime() const override { return toeCommon; }
 };

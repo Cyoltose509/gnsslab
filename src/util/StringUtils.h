@@ -59,6 +59,8 @@ namespace Str {
 
     std::vector<std::string> split(std::string_view s, char sep, bool keepEmpty = true);
 
+    std::string join(const std::vector<std::string> &v, char sep);
+
     std::string &stripTrailing(std::string &line);
 
     std::string sub(const std::string &str, std::size_t pos, std::size_t len);

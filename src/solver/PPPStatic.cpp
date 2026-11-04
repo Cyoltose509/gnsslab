@@ -101,17 +101,17 @@ void PPPStatic::computeSatPos(ObsData &obsData) {
                 if (mFallbackWarned.insert(sat).second)
                     LOG_WARN << "[回退] " << sat << " 精密钟差未覆盖本历元，改用广播钟差（轨道仍取 SP3）";
                 CommonTime te = t_emit;
-                te.m_sod -= eph->getPVT(t0).clockBias;
+                te.m_sod -= eph->getPVT(t0, &def).clockBias;
                 pvt = mSp3.getPVT(sat, te);
-                pvt.clockBias = eph->getPVT(te).clockBias;
+                pvt.clockBias = eph->getPVT(te, &def).clockBias;
                 t_emit = te;
             }
         } else {
             if (!eph) continue;
             if (mFallbackWarned.insert(sat).second)
                 LOG_WARN << "[回退] " << sat << " 精密轨道未覆盖本历元，整颗回退广播星历";
-            if (!clkOk) t_emit.m_sod -= eph->getPVT(t0).clockBias;
-            pvt = eph->getPVT(t_emit);
+            if (!clkOk) t_emit.m_sod -= eph->getPVT(t0, &def).clockBias;
+            pvt = eph->getPVT(t_emit, &def);
         }
         mAntx.applySatPCO(sat, pvt.p, t_emit, def);
         satPVTTransTime[sat] = pvt;
@@ -223,7 +223,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsDat
         if (nRealSat < 4) return {mRefPos, false};
         mEq.varSet = mVarSet;
         try {
-            solver.solve(mEq);
+            solver.solve(mEq, mEq.weightVector().asDiagonal().toDenseMatrix());
         } catch (...) {
             return {mRefPos, false};
         }
@@ -458,26 +458,18 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     slipReset = false;
     if (!mEpochFirstIter) return;
     CycleSlip &det = mSlipDetectors[sat];
-    det.configure(def);
-    det.setGfThreshold(0.0); // PPP 默认仅用 MW（GF 关闭）
-    det.setGfSlipMult(mGfSlipMult); // 若开启 GF，使用可调阈值倍数
+    det.configure(def, 0.0, mGfSlipMult); // PPP 默认仅用 MW（GF 关闭）
     double osbP1 = 0.0, osbP2 = 0.0, osbL1 = 0.0, osbL2 = 0.0;
     mOsb.biases(def, sat, osbP1, osbP2, osbL1, osbL2);
     osbP1 = -osbP1;
     osbP2 = -osbP2;
-    const double L1m = tv.at(def.phase1), L2m = tv.at(def.phase2);
-    const double C1m = tv.at(def.code1), C2m = tv.at(def.code2);
 
-    const CycleSlip::Verdict verdict = det.feed(L1m, L2m, C1m, C2m, true, osbP1, osbP2, osbL1, osbL2);
+    const CycleSlip::Result r = det.feed(sat, tv, mCurObs, osbP1, osbP2, osbL1, osbL2);
+    mGfEpoch.record(sat, r);
     const bool newArc = mPrevSatSet.find(sat) == mPrevSatSet.end();
-    const bool mwSlip = det.mLastMwSlip;
-    const bool gfSlip = det.mLastGfSlip;
-    const bool gfArtifact = det.mLastGfArtifact;
-    if (gfSlip) mGfEpoch.record(sat, gfArtifact);
-    resetAmb = verdict == CycleSlip::Verdict::Gap || newArc || (mUseCycleSlip && mwSlip);
-    slipReset = mUseCycleSlip && mwSlip;
-    if (mwSlip) ++slipVerdicts;
-    if (gfSlip) mGfSlipSats.insert(sat);
+    resetAmb = r.gap || newArc || (mUseCycleSlip && r.slip);
+    slipReset = mUseCycleSlip && r.slip;
+    if (r.slip) ++slipVerdicts;
 }
 
 void PPPStatic::processSatellite(const SatID &sat, const TypeValueMap &tv) {
@@ -558,7 +550,6 @@ void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Var
     mCommonClockActive = wantCommonClock(obsData);
     mCsData = &csData;
     mGfEpoch = CycleSlipEpoch{};
-    mGfSlipSats.clear();
 
     mEpochTropo.update(mTropoGrid, mConfig.tropoMap, xyzEst, obsData.epoch, &mMet);
     if (!mTro.empty()) {

@@ -55,7 +55,8 @@ public:
     std::map<SatID, double> satElevData;
     std::map<SatID, double> satAzimData;
     std::map<SatID, double> satRoverElevData; // 流动站仰角：参考星按流动站高度角最大选取
-    std::map<SatID, PVT> satPVTRecTime;
+    std::map<SatID, PVT> satPVTTransTime;
+    std::map<SatID, PVT> satPVTRecTime; // 旋转到接收时刻 ECEF 框架，供仰角与双差几何使用
 
     // 站间单差方差
     struct SdVar {
@@ -63,8 +64,8 @@ public:
     };
 
     std::map<SatID, SdVar> mSdVar;
-    Eigen::MatrixXd mDDWeight;
-    bool mDDWeightReady = false;
+    Eigen::MatrixXd mWeightMatrix;
+    bool mWeightReady = false;
 
     bool processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph);
 
@@ -113,8 +114,10 @@ private:
     /// 构造双差随机模型
     void buildStochasticModel(const EquSys &eq);
 
-    /// 首次组装方程时构建满阵权并回填 ed.weight = P 的对角元。
-    void setupFullWeight(EquSys &eq);
+    /// 构造本历元满阵权：仅完整协方差模式需要，对角模式直接用方程标量权。
+    void buildWeightMatrix(const EquSys &eq);
+
+    void solveIteration(SolverLSQ &solver, EquSys &eq);
 
     bool tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat);
 

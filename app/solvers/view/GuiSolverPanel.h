@@ -8,10 +8,9 @@
 #include "solvers/common/Core.h"
 
 namespace Solvers::SolverPanel {
-    // 模板必须留在头文件（项目"定义出头规则"），即便当前仅本 TU 使用
     template<typename T>
-    inline void copySampled(const std::vector<T> &src, std::vector<T> &dst,
-                            const std::size_t maxPts = 3000) {
+    void copySampled(const std::vector<T> &src, std::vector<T> &dst,
+                     const std::size_t maxPts = 3000) {
         if (src.size() <= maxPts) {
             dst = src;
             return;
@@ -26,7 +25,7 @@ namespace Solvers::SolverPanel {
             dst.push_back(src.back());
     }
 
-    void renderTask(const std::shared_ptr<Solvers::Task> &job);
-    void launchQC(const std::shared_ptr<Solvers::Core> &task);
-    void exportCSV(const std::shared_ptr<Solvers::Core> &task);
+    void renderTask(const std::shared_ptr<Task> &job);
+    void launchQC(const std::shared_ptr<Core> &task);
+    void exportCSV(const std::shared_ptr<Task> &task);
 }

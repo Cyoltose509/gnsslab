@@ -13,7 +13,7 @@
 #include "ins/Aligner.h"
 #include "ins/ImuCalibrator.h"
 
-namespace Tools::InsPanel {
+namespace Tools::Ins {
 
 
 
@@ -132,6 +132,8 @@ namespace Tools::InsPanel {
 
         SixPosCalibTask();
 
+        Solvers::Task::Kind kind() const override { return Solvers::Task::Kind::Tool; }
+
         void renderConfigPanel();
 
         void renderResult();
@@ -176,6 +178,8 @@ namespace Tools::InsPanel {
 
         StaticAlignTask();
 
+        Solvers::Task::Kind kind() const override { return Solvers::Task::Kind::Tool; }
+
         void renderConfigPanel();
 
         void renderResult();
@@ -198,8 +202,6 @@ namespace Tools::InsPanel {
 
     std::shared_ptr<Solvers::Task> MakeStaticAlignTask();
 
-
-    bool RenderInsResult(const std::shared_ptr<Solvers::Task> &job);
-
-    void RenderInsConfig(Solvers::Task &job);
+    /// 配置页与结果页的唯一入口，内部按 state 分派。
+    void Render(Solvers::Task &job);
 }

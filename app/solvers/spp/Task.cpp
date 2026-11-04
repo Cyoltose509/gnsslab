@@ -1,5 +1,6 @@
 #include "Task.h"
 
+#include <ostream>
 #include <string>
 
 #include "Log.h"
@@ -8,6 +9,7 @@
 #include "StringUtils.h"
 #include "io/ObsSource.h"
 #include "io/ProductLoad.h"
+#include "solvers/common/CSV.h"
 #include "solvers/spp/Realtime.h"
 
 namespace Solvers::SPP {
@@ -41,7 +43,7 @@ namespace Solvers::SPP {
                 LOG_ERROR << "SPP 读取广播星历失败 " << nav << ": " << e.what();
             }
         }
-        const auto products = ProductLoad::resolve(core->opts);
+        const auto products = ProductLoad::resolve(core->opts, modeKey(Mode::SPP));
         ProductLoad::loadSPPGrids(spp, products.vmf, products.gpt3);
         ProductLoad::warnTropoFallback("SPP", core->opts.spp.tropoMap, spp.tropoGridReady());
         return true;
@@ -62,6 +64,38 @@ namespace Solvers::SPP {
     std::unique_ptr<Realtime::Session> Task::makeSession() {
         return std::make_unique<Realtime::SPPSession>(
             std::static_pointer_cast<Task>(shared_from_this()), core->rtEndpoints[0]);
+    }
+
+    void Task::exportCSV(std::ostream &out) const {
+        CSV::Writer w;
+        w.row("Wk", "SOW", "ECEF-X/m", "ECEF-Y/m", "ECEF-Z/m",
+              "REF-X/m", "REF-Y/m", "REF-Z/m", "EAST/m", "NORTH/m", "UP/m",
+              "B/deg", "L/deg", "H/m", "VX/m", "VY/m", "VZ/m",
+              "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "SigmaP", "SigmaV",
+              "SatCount", "3dRMS/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: core->epochs) {
+            if (!r.solved) {
+                csvInvalidRow(w, r, cols);
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const ENU enu = Coord::XYZToENU(res.xyz, core->refECEF);
+            const double rms3d = std::sqrt(enu.E() * enu.E() + enu.N() * enu.N() + enu.U() * enu.U());
+            w.row(r.week, CSV::fx(r.sow, 3),
+                  CSV::f(res.xyz[0], 11), CSV::f(res.xyz[1], 11), CSV::f(res.xyz[2], 11),
+                  CSV::f(core->refECEF.x(), 11), CSV::f(core->refECEF.y(), 11), CSV::f(core->refECEF.z(), 11),
+                  CSV::f(enu.E(), 6), CSV::f(enu.N(), 6), CSV::f(enu.U(), 6),
+                  CSV::f(res.blh[0] * RAD_TO_DEG, 10), CSV::f(res.blh[1] * RAD_TO_DEG, 10),
+                  CSV::f(res.blh[2], 4),
+                  CSV::f(res.vel[0], 6), CSV::f(res.vel[1], 6), CSV::f(res.vel[2], 6),
+                  CSV::f(res.pdop, 4), CSV::f(res.gdop, 4), CSV::f(res.hdop, 4),
+                  CSV::f(res.vdop, 4), CSV::f(res.tdop, 4),
+                  CSV::f(res.sigmaP, 4), CSV::f(res.sigmaV, 4),
+                  r.numSatsResult,
+                  CSV::f(rms3d, 6));
+        }
+        out << w.str();
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

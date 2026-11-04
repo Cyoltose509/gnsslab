@@ -9,18 +9,18 @@
 #include <thread>
 #include <utility>
 
+#include "EpochDecimator.h"
 #include "Log.h"
 #include "novatel/SocketReader.h"
 #include "RTK.h"
 #include "SolverOptions.h"
-#include "solvers/common/Driver.h"
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
 #include "Task.h"
 
 namespace Solvers::Realtime {
     RTKSession::RTKSession(std::shared_ptr<RTK::Task> task,
-                           Solvers::RealtimeEndpoint base, Solvers::RealtimeEndpoint rover)
+                           RealtimeEndpoint base, RealtimeEndpoint rover)
         : task(std::move(task)), baseEp(std::move(base)), roverEp(std::move(rover)) {
         SolverOptions opts = this->task->core->opts;
         opts.cutoffDeg = this->task->cutoffDeg;
@@ -36,8 +36,8 @@ namespace Solvers::Realtime {
             this->task->core->view.qcInput.clear();
         }
         this->task->core->view.qcTabLabel = "质量分析[流动站]";
-        baseQc = std::make_shared<Solvers::Core>();
-        baseQc->mode = Solvers::Mode::RTK;
+        baseQc = std::make_shared<Core>();
+        baseQc->mode = Mode::RTK;
         baseQc->isRealtime = true;
         baseQc->filePath = this->task->core->rtEndpoints[0].ip;
         baseQc->fileName = Str::baseName(this->task->core->rtEndpoints[0].ip);
@@ -180,7 +180,7 @@ namespace Solvers::Realtime {
 
                              if (ok) {
                                  if (const Result &res = task->rtk.result; res.numSats > 0) {
-                                     Solvers::Driver::commitRtk(task->core, task->rtk, r);
+                                     task->commitRtkEpoch(r);
                                      lastCommit = std::chrono::steady_clock::now();
                                      lastCommitSow = static_cast<long long>(r.weekSecond.sow);
                                      if (stallWarned) {

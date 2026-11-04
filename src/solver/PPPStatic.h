@@ -259,7 +259,6 @@ protected:
     [[nodiscard]] bool wantCommonClock(const ObsData &obs) const;
     VariableDataMap *mCsData = nullptr; // 本历元待写入的状态量（由 solve 传入）
     CycleSlipEpoch mGfEpoch; // GF 周跳共模裁决簿记
-    std::set<SatID> mGfSlipSats; // 本历元 GF 判跳的星
 
     std::map<SatID, CycleSlip> mSlipDetectors;
     std::set<SatID> mPrevSatSet;

@@ -17,18 +17,18 @@
 #include "Const.h"
 #include "QCProcessor.h"
 #include "ui/FileDialog.h"
-#include "view/GuiCharts.h"
-#include "view/GuiHelpers.h"
-#include "view/GuiPosTab.h"
-#include "view/QualityControl.h"
-#include "widgets/tools/GuiInsPanel.h"
+#include "solvers/view/GuiCharts.h"
+#include "solvers/view/GuiHelpers.h"
+#include "solvers/view/GuiPosTab.h"
+#include "solvers/view/QualityControl.h"
+#include "tools/ins/GuiInsPanel.h"
 #include "solvers/spp/Task.h"
 #include "solvers/ppp/Task.h"
 #include "solvers/leo/Task.h"
 #include "solvers/rtk/Task.h"
 
 namespace Solvers::SolverPanel {
-    static QualityReport buildReport(Solvers::Core &task) {
+    static QualityReport buildReport(Core &task) {
         std::vector<QC::QCObsEpoch> qcEpochs;
         {
             std::lock_guard lk(task.view.qcInputMutex);
@@ -39,7 +39,7 @@ namespace Solvers::SolverPanel {
         return rep;
     }
 
-    void launchQC(const std::shared_ptr<Solvers::Core> &task) {
+    void launchQC(const std::shared_ptr<Core> &task) {
         static std::mutex launchMutex;
         std::lock_guard lk(launchMutex);
         if (task->view.qcComputing.load()) return;
@@ -50,7 +50,7 @@ namespace Solvers::SolverPanel {
             try {
                 {
                     QualityReport rep = buildReport(*task);
-                    std::lock_guard lk(task->view.qcMutex);
+                    std::lock_guard lk1(task->view.qcMutex);
                     task->view.qcReport = std::make_shared<QualityReport>(std::move(rep));
                 }
                 task->view.qcReady = true;
@@ -62,7 +62,7 @@ namespace Solvers::SolverPanel {
         });
     }
 
-    using StatusLine = void (*)(std::string &, ImVec4 &, const Solvers::Epoch &);
+    using StatusLine = void (*)(std::string &, ImVec4 &, const Epoch &);
 
     static const char *solveStatLabel(const unsigned char stat) {
         return stat == 1 ? "固定(Fixed)" : "浮点(Float)";
@@ -72,10 +72,10 @@ namespace Solvers::SolverPanel {
         return stat == 1 ? UI::kColPass : UI::kColWarn;
     }
 
-    static void statusNone(std::string &, ImVec4 &, const Solvers::Epoch &) {
+    static void statusNone(std::string &, ImVec4 &, const Epoch &) {
     }
 
-    static void statusRtk(std::string &text, ImVec4 &color, const Solvers::Epoch &cur) {
+    static void statusRTK(std::string &text, ImVec4 &color, const Epoch &cur) {
         char buf[200];
         std::snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
                  solveStatLabel(cur.rtkStat), cur.rtkRatio, cur.numSatsResult);
@@ -83,7 +83,7 @@ namespace Solvers::SolverPanel {
         color = solveStatColor(cur.rtkStat);
     }
 
-    static void statusAmbig(std::string &text, ImVec4 &color, const Solvers::Epoch &cur) {
+    static void statusAmbig(std::string &text, ImVec4 &color, const Epoch &cur) {
         unsigned char st = cur.sppResult.stat;
         if (st == 0) st = 2;
         char buf[200];
@@ -93,19 +93,19 @@ namespace Solvers::SolverPanel {
         color = solveStatColor(st);
     }
 
-    static StatusLine statusLineFor(const Solvers::Mode m) {
+    static StatusLine statusLineFor(const Mode m) {
         switch (m) {
-            case Solvers::Mode::LEO:
-            case Solvers::Mode::PPP:
+            case Mode::LEO:
+            case Mode::PPP:
                 return &statusAmbig;
-            case Solvers::Mode::RTK:
-                return &statusRtk;
+            case Mode::RTK:
+                return &statusRTK;
             default:
                 return &statusNone;
         }
     }
 
-    static void ensureSkyTracks(Solvers::Core &task) {
+    static void ensureSkyTracks(Core &task) {
         std::lock_guard lk(task.mutex);
         const int totalEp = static_cast<int>(task.epochs.size());
         for (int e = task.view.skyTracksBuilt; e < totalEp; ++e) {
@@ -120,8 +120,8 @@ namespace Solvers::SolverPanel {
         task.view.skyTracksBuilt = totalEp;
     }
 
-    static std::vector<std::pair<SatID, Solvers::SkyPoint>> currentSkyPoints(
-        Solvers::Core &task, const int sel) {
+    static std::vector<std::pair<SatID, SkyPoint>> currentSkyPoints(
+        Core &task, const int sel) {
         std::lock_guard lk(task.mutex);
         if (sel < 0 || sel >= static_cast<int>(task.epochs.size())) return {};
         auto &ep = task.epochs[sel];
@@ -136,7 +136,7 @@ namespace Solvers::SolverPanel {
                                          }, 0.0);
     }
 
-    static void fillStatusLine(Charts::PosTabView &v, Solvers::Core &task,
+    static void fillStatusLine(Charts::PosTabView &v, const Core &task,
                                const bool hasError, const bool busy, const int epochCount) {
         if (hasError) {
             v.statusText = std::string("状态: ") + task.errorMessage();
@@ -153,7 +153,7 @@ namespace Solvers::SolverPanel {
         }
     }
 
-    static void fillCurrentEpoch(Charts::PosTabView &v, Solvers::Core &task, const int selectedIdx) {
+    static void fillCurrentEpoch(Charts::PosTabView &v, Core &task, const int selectedIdx) {
         std::lock_guard lk(task.mutex);
         auto &cur = task.epochs[selectedIdx];
 
@@ -177,10 +177,8 @@ namespace Solvers::SolverPanel {
                                                  _v.y = cur.satPVTs[oi].p[1];
                                                  _v.z = cur.satPVTs[oi].p[2];
                                              }
-                                             const auto itC = cur.sppResult.postRes.find(cur.satIds[oi]);
-                                             if (itC != cur.sppResult.postRes.end()) _v.codeRes = itC->second;
-                                             const auto itP = cur.sppResult.postResPhase.find(cur.satIds[oi]);
-                                             if (itP != cur.sppResult.postResPhase.end()) _v.phaseRes = itP->second;
+                                             if (const auto itC = cur.sppResult.postRes.find(cur.satIds[oi]); itC != cur.sppResult.postRes.end()) _v.codeRes = itC->second;
+                                             if (const auto itP = cur.sppResult.postResPhase.find(cur.satIds[oi]); itP != cur.sppResult.postResPhase.end()) _v.phaseRes = itP->second;
                                              return _v;
                                          });
         v.hasSatRows = true;
@@ -210,10 +208,10 @@ namespace Solvers::SolverPanel {
             v.numSatsResult = cur.numSatsResult;
             v.numObs = cur.numObs;
 
-            const bool isRtkMode = task.mode == Solvers::Mode::RTK;
-            const bool isLeoMode = task.mode == Solvers::Mode::LEO;
+            const bool isRtkMode = task.mode == Mode::RTK;
+            const bool isLeoMode = task.mode == Mode::LEO;
             const bool canFixed = isRtkMode || isLeoMode ||
-                                  task.mode == Solvers::Mode::PPP;
+                                  task.mode == Mode::PPP;
             const bool isFixed = isRtkMode ? cur.rtkStat == 1 : r.stat == 1;
             v.hasFixedDistinction = canFixed;
             v.hasFixed = isFixed;
@@ -272,7 +270,7 @@ namespace Solvers::SolverPanel {
         v.epochInfo = buf;
     }
 
-    static void fillPlots(Charts::PosTabView &v, Solvers::Core &task,
+    static void fillPlots(Charts::PosTabView &v, Core &task,
                           const int selectedIdx, const int epochCount, const bool isDone) {
         bool sigmaVNonZero = false;
         {
@@ -332,12 +330,12 @@ namespace Solvers::SolverPanel {
             v.float_e = pp.float_e;
             v.float_n = pp.float_n;
             v.float_u = pp.float_u;
-            v.showRatio = task.mode == Solvers::Mode::RTK ||
-                          task.mode == Solvers::Mode::PPP ||
-                          task.mode == Solvers::Mode::LEO;
+            v.showRatio = task.mode == Mode::RTK ||
+                          task.mode == Mode::PPP ||
+                          task.mode == Mode::LEO;
             v.hasFloatSeries = v.showRatio;
-            v.showBaseXyz = task.mode == Solvers::Mode::RTK;
-            v.isRtk = task.mode == Solvers::Mode::RTK;
+            v.showBaseXyz = task.mode == Mode::RTK;
+            v.isRtk = task.mode == Mode::RTK;
             v.baseXyz = &task.refECEF;
         }
         {
@@ -362,7 +360,7 @@ namespace Solvers::SolverPanel {
                 for (const auto &ep: task.epochs) {
                     if (!ep.solved) continue;
                     ++totalCnt;
-                    const bool isFixed = task.mode == Solvers::Mode::RTK
+                    const bool isFixed = task.mode == Mode::RTK
                                              ? ep.rtkStat == 1
                                              : ep.sppResult.stat == 1;
                     if (isFixed) ++fixedCnt;
@@ -378,7 +376,7 @@ namespace Solvers::SolverPanel {
         }
     }
 
-    static void fillLeo3d(Charts::PosTabView &v, Solvers::Core &task) {
+    static void fillLEO3D(Charts::PosTabView &v, Core &task) {
         std::lock_guard lk(task.mutex);
         if (!task.view.hasLeo) return;
         v.show3d = true;
@@ -399,7 +397,7 @@ namespace Solvers::SolverPanel {
         copySampled(task.view.rtnTimes, v.rtnTimes);
     }
 
-    static void fillSolveStatus(Charts::PosTabView &v, Solvers::Core &task, const int selectedIdx) {
+    static void fillSolveStatus(Charts::PosTabView &v, Core &task, const int selectedIdx) {
         std::lock_guard lk(task.mutex);
         const StatusLine solveStatusLine = statusLineFor(task.mode);
         std::string line;
@@ -407,12 +405,12 @@ namespace Solvers::SolverPanel {
         solveStatusLine(line, col, task.epochs[selectedIdx]);
         if (!line.empty()) {
             v.showSolveStatus = true;
-            v.solveStatusText = std::string(Solvers::modeLabel(task.mode)) + ": " + line;
+            v.solveStatusText = std::string(modeLabel(task.mode)) + ": " + line;
             v.solveStatusColor = col;
         }
     }
 
-    static void renderTaskImpl(const std::shared_ptr<Solvers::Core> &task) {
+    static void renderTaskImpl(const std::shared_ptr<Core> &task, const std::shared_ptr<Task> &job) {
         const bool isRealtime = task->isRealtime;
 
         if (isRealtime) {
@@ -451,7 +449,7 @@ namespace Solvers::SolverPanel {
                     std::lock_guard plk(task->view.plotMutex);
                     task->view.plotData.refreshENU(task->epochs, task->refECEF);
                 };
-                v.showEnPlan = task->mode != Solvers::Mode::LEO;
+                v.showEnPlan = task->mode != Mode::LEO;
 
                 fillStatusLine(v, *task, hasError, busy, epochCount);
                 v.busy = busy;
@@ -459,13 +457,13 @@ namespace Solvers::SolverPanel {
                 if (epochCount > 0) ensureSkyTracks(*task);
                 if (epochCount > 0 && selectedIdx >= 0) fillCurrentEpoch(v, *task, selectedIdx);
                 if (epochCount > 0 && selectedIdx >= 0) fillPlots(v, *task, selectedIdx, epochCount, isDone);
-                fillLeo3d(v, *task);
+                fillLEO3D(v, *task);
                 if (epochCount > 0 && selectedIdx >= 0 && v.solved)
                     fillSolveStatus(v, *task, selectedIdx);
 
                 v.isDone = isDone || isRealtime;
-                v.onExportCsv = [&] {
-                    exportCSV(task);
+                v.onExportCSV = [&] {
+                    exportCSV(job);
                 };
 
                 try {
@@ -509,39 +507,44 @@ namespace Solvers::SolverPanel {
         }
     }
 
-    static void renderConfigPanel(Solvers::Task &job) {
+    static void renderConfigPanel(Task &job) {
         switch (job.mode()) {
-            case Solvers::Mode::SPP: static_cast<Solvers::SPP::Task &>(job).renderConfigPanel(); break;
-            case Solvers::Mode::PPP: static_cast<Solvers::PPP::Task &>(job).renderConfigPanel(); break;
-            case Solvers::Mode::LEO: static_cast<Solvers::LEO::Task &>(job).renderConfigPanel(); break;
-            case Solvers::Mode::RTK: static_cast<Solvers::RTK::Task &>(job).renderConfigPanel(); break;
-            case Solvers::Mode::INS: Tools::InsPanel::RenderInsConfig(job); break;
-            default: break;
+            case Mode::SPP: dynamic_cast<SPP::Task &>(job).renderConfigPanel(); break;
+            case Mode::PPP: dynamic_cast<PPP::Task &>(job).renderConfigPanel(); break;
+            case Mode::LEO: dynamic_cast<LEO::Task &>(job).renderConfigPanel(); break;
+            case Mode::RTK: dynamic_cast<RTK::Task &>(job).renderConfigPanel(); break;
         }
     }
 
-    void renderTask(const std::shared_ptr<Solvers::Task> &job) {
-        if (job->state == Solvers::Task::State::Config) {
+    void renderTask(const std::shared_ptr<Task> &job) {
+        if (job->kind() == Task::Kind::Tool) {
+            Tools::Ins::Render(*job);
+            return;
+        }
+
+        if (job->state == Task::State::Config) {
             renderConfigPanel(*job);
             return;
         }
 
-        if (Tools::InsPanel::RenderInsResult(job)) return;
-        renderTaskImpl(job->solveResult());
+        renderTaskImpl(job->solveResult(), job);
     }
 
-    void exportCSV(const std::shared_ptr<Solvers::Core> &task) {
+    void exportCSV(const std::shared_ptr<Task> &task) {
+        const std::string tag = task->kind() == Task::Kind::Tool
+                                    ? std::string("tool")
+                                    : std::string(modeLabel(task->mode()));
         std::string dn = Str::stripExt(Str::baseName(task->fileName));
-        dn += "_" + std::string(Solvers::modeLabel(task->mode)) + "_result.csv";
-        if (dn.size() >= MAX_PATH) dn = std::string(Solvers::modeLabel(task->mode)) + "_result.csv";
+        dn += "_" + tag + "_result.csv";
+        if (dn.size() >= MAX_PATH) dn = tag + "_result.csv";
         std::wstring path;
-        if (!FileDialog::saveCsv(dn, path)) return;
-        LOG_INFO << "[导出] CSV (" << Solvers::modeLabel(task->mode) << ") → "
+        if (!FileDialog::saveCSV(dn, path)) return;
+        LOG_INFO << "[导出] CSV (" << tag << ") → "
                 << std::filesystem::path(path).string();
 
         std::string csvText;
-        {
-            std::lock_guard lk(task->mutex);
+        if (const auto core = task->solveResult()) {
+            std::lock_guard lk(core->mutex);
             std::ostringstream oss;
             task->exportCSV(oss);
             csvText = oss.str();

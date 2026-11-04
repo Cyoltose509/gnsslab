@@ -17,7 +17,6 @@ public:
 protected:
     bool getNextMessage(std::vector<std::uint8_t> &message, bool block) override;
 
-    void restartStream() override { bufferIndex = 0; }
 
 private:
     bool acceptInsRecord(std::size_t start, const InsRecordLayout &layout) const;

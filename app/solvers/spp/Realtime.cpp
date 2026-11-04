@@ -8,10 +8,10 @@
 #include <thread>
 #include <utility>
 
+#include "EpochDecimator.h"
 #include "Log.h"
 #include "novatel/SocketReader.h"
 #include "SolverOptions.h"
-#include "solvers/common/Driver.h"
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
 #include "Task.h"

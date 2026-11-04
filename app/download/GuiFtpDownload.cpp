@@ -23,9 +23,10 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
-namespace Tools::FtpDownload {
+namespace Download::Panel {
     bool s_open = false;
 
     static int s_obsYear = 0, s_obsMonth = 0, s_obsDay = 0;
@@ -293,6 +294,7 @@ namespace Tools::FtpDownload {
     struct Match {
         ProductMeta m;
         std::string dirUrl;
+        std::string localPath;   // 仅「本地独有」项填：真实路径（远端名对不上时靠它）
     };
 
     static std::vector<Match> filterMatches(const std::vector<std::string> &dirs,
@@ -318,6 +320,87 @@ namespace Tools::FtpDownload {
         std::sort(out.begin(), out.end(),
                   [](const Match &a, const Match &b) { return a.m.filename < b.m.filename; });
         return out;
+    }
+
+    static const std::vector<LocalFile> &cachedLocal(const ProductType t, const int year, const int doy) {
+        using Stamp = std::filesystem::file_time_type;
+        static const std::vector<LocalFile> empty;
+        static std::map<std::string, std::pair<Stamp, std::vector<LocalFile> > > cache;
+
+        const std::string dir = DownloadStore::dirFor(t, year, doy);
+        std::error_code ec;
+        const Stamp mt = std::filesystem::last_write_time(dir, ec);
+        if (ec) return empty;
+
+        if (const auto it = cache.find(dir); it != cache.end() && it->second.first == mt)
+            return it->second.second;
+
+        auto &[fst, snd] = cache[dir];
+        fst = mt;
+        snd = DownloadStore::listLocal(t, year, doy);
+        return snd;
+    }
+
+    static void appendLocalOnly(std::vector<Match> &list, const ProductType t,
+                                const int year, const int doy) {
+        std::set<std::string> have;
+        for (const auto &mt: list) have.insert(DownloadStore::localNameFor(mt.m.filename));
+
+        for (const auto &lf: cachedLocal(t, year, doy)) {
+            if (!have.insert(DownloadStore::localNameFor(lf.name)).second) continue;
+            Match mt;
+            mt.m.type = t;
+            mt.m.year = year;
+            mt.m.doy = doy;
+            mt.m.filename = lf.name;
+            mt.localPath = lf.path;
+            list.push_back(std::move(mt));
+        }
+    }
+
+    enum class FileAction { None, Reveal, Delete };
+
+    static FileAction fileContextMenu(const std::string &localPath) {
+        auto act = FileAction::None;
+        if (ImGui::BeginPopupContextItem("##fileCtx")) {
+            if (ImGui::MenuItem("从资源管理器打开")) act = FileAction::Reveal;
+            if (ImGui::MenuItem("删除该文件")) act = FileAction::Delete;
+            ImGui::EndPopup();
+        }
+        if (act == FileAction::Delete) {
+            s_confirmDelPath = localPath;
+            s_confirmDelOpen = true;
+        } else if (act == FileAction::Reveal) {
+            DownloadStore::revealFile(localPath);
+        }
+        return act;
+    }
+
+    static void renderDeleteConfirm() {
+        if (s_confirmDelOpen) {
+            ImGui::OpenPopup("##confirmDel");
+            s_confirmDelOpen = false;
+        }
+        if (ImGui::BeginPopupModal("##confirmDel", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("是否删除该文件？");
+            ImGui::TextDisabled("%s", s_confirmDelPath.c_str());
+            ImGui::Spacing();
+            if (ImGui::Button("删除", ImVec2(90, 0))) {
+                {
+                    const bool gone = DownloadStore::removeFile(s_confirmDelPath);
+                    std::lock_guard lk(s_mtx);
+                    s_status = gone ? "已删除本地文件" : "删除失败（文件可能被占用）";
+                }
+                s_confirmDelPath.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("取消", ImVec2(90, 0))) {
+                s_confirmDelPath.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
     }
 
     void renderDateTab() {
@@ -440,12 +523,15 @@ namespace Tools::FtpDownload {
             }
         }
 
+        for (const auto t: types) appendLocalOnly(matches, t, s_year, doy);
+
         int nAllMatches = static_cast<int>(matches.size());
         if (s_dlStateFilter != 0) {
             std::vector<Match> keep;
             keep.reserve(matches.size());
             for (const auto &mt: matches) {
-                const bool has = !DownloadStore::findLocalFile(mt.m.type, mt.m.year, mt.m.doy,
+                const bool has = !mt.localPath.empty() ||
+                                 !DownloadStore::findLocalFile(mt.m.type, mt.m.year, mt.m.doy,
                                                                mt.m.filename).empty();
                 if (passStateFilter(s_dlStateFilter, has)) keep.push_back(mt);
             }
@@ -455,10 +541,10 @@ namespace Tools::FtpDownload {
         ImGui::BeginChild("##files", ImVec2(0, -30), ImGuiChildFlags_Borders);
         if (types.empty()) {
             ImGui::TextDisabled("先勾选上面的产品类型。");
-        } else if (dirs.empty()) {
-            ImGui::TextDisabled("所选类型在该镜像上没有对应的产品目录。");
         } else if (matches.empty()) {
-            if (nAllMatches > 0)
+            if (dirs.empty())
+                ImGui::TextDisabled("所选类型在该镜像上没有对应的产品目录。");
+            else if (nAllMatches > 0)
                 ImGui::TextDisabled("该日期的 %d 个文件都被「本地状态」筛掉了（换「全部」看看）。",
                                     nAllMatches);
             else if (nMissing > 0) {
@@ -486,10 +572,14 @@ namespace Tools::FtpDownload {
 
                 float x = 0.0f;
                 for (const Match *pmt: byType[t]) {
-                    const auto &[m, dirUrl] = *pmt;
-                    const std::string local =
-                            DownloadStore::findLocalFile(m.type, m.year, m.doy, m.filename);
-                    const std::string label = m.filename;
+                    const ProductMeta &m = pmt->m;
+                    const std::string &dirUrl = pmt->dirUrl;
+                    const std::string local = !pmt->localPath.empty()
+                                                  ? pmt->localPath
+                                                  : DownloadStore::findLocalFile(m.type, m.year, m.doy,
+                                                                                 m.filename);
+                    const std::string label = DownloadStore::localNameFor(m.filename);
+                    const bool remoteKnown = !dirUrl.empty();
 
                     float frac;
                     bool downloading = false;
@@ -522,16 +612,26 @@ namespace Tools::FtpDownload {
                         if (dl) ImGui::PopStyleColor();
                         else popRemoteChipStyle();
                         if (ImGui::IsItemHovered()) {
-                            const std::string tip =
-                                    label + "\n覆盖 " + std::to_string(m.spanDays) + " 天（起始 " +
-                                    ProductMeta::doyToDateStr(m.year, m.doy) + "）  采样 " +
-                                    (m.interval.empty() ? "-" : m.interval) +
-                                    (dl
-                                         ? "\n本地：" + local + "\n（点击可重新下载 / 删除）"
-                                         : "\n本地：无（点击下载）");
+                            std::string tip = label;
+                            if (!dl) {
+                                tip += "\n覆盖 " + std::to_string(m.spanDays) + " 天（起始 " +
+                                       ProductMeta::doyToDateStr(m.year, m.doy) + "）  采样 " +
+                                       (m.interval.empty() ? "-" : m.interval) +
+                                       "\n本地：无（点击下载）";
+                            } else if (remoteKnown) {
+                                tip += "\n覆盖 " + std::to_string(m.spanDays) + " 天（起始 " +
+                                       ProductMeta::doyToDateStr(m.year, m.doy) + "）  采样 " +
+                                       (m.interval.empty() ? "-" : m.interval) +
+                                       "\n本地：" + local + "\n（点击可重新下载 · 右键管理）";
+                            } else {
+                                tip += "\n本地：" + local +
+                                       "\n远端列表未列出（仅本地）\n（右键可打开 / 删除）";
+                            }
                             ImGui::SetTooltip("%s", tip.c_str());
                         }
-                        if (pressed) {
+                        if (dl) fileContextMenu(local);
+
+                        if (pressed && remoteKnown) {
                             s_pending = Pending{
                                 m.filename, dirUrl, m.type, m.year, m.doy,
                                 m.spanDays, local
@@ -571,7 +671,9 @@ namespace Tools::FtpDownload {
                                            ? "下载列出的全部##dlAll"
                                            : "下载全部匹配##dlAll")) {
                     for (const auto &mt: matches) {
-                        const auto &[m, dirUrl] = mt;
+                        const ProductMeta &m = mt.m;
+                        const std::string &dirUrl = mt.dirUrl;
+                        if (dirUrl.empty()) continue;   // 仅本地的项没有下载地址
                         if (!DownloadStore::findLocalFile(m.type, m.year, m.doy, m.filename).empty())
                             continue; // 已下过就跳过
                         Pending p{m.filename, dirUrl, m.type, m.year, m.doy, m.spanDays, ""};
@@ -587,7 +689,7 @@ namespace Tools::FtpDownload {
             s_pendingOpen = false;
         }
         if (ImGui::BeginPopupModal("##fileAction", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("%s", s_pending.remoteName.c_str());
+            ImGui::TextWrapped("%s", DownloadStore::localNameFor(s_pending.remoteName).c_str());
             if (s_pending.localPath.empty()) {
                 ImGui::TextDisabled("本地尚无此文件，是否下载？");
                 if (ImGui::Button("下载")) {
@@ -602,12 +704,9 @@ namespace Tools::FtpDownload {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("删除本地")) {
-                    {
-                        const bool gone = DownloadStore::removeFile(s_pending.localPath);
-                        std::lock_guard lk(s_mtx);
-                        s_status = gone ? "已删除本地文件" : "删除失败（文件可能被占用）";
-                    }
                     ImGui::CloseCurrentPopup();
+                    s_confirmDelPath = s_pending.localPath;
+                    s_confirmDelOpen = true;
                 }
             }
             ImGui::SameLine();
@@ -685,11 +784,12 @@ namespace Tools::FtpDownload {
                 }
             }
         }
+        appendLocalOnly(all, ProductType::OBS, s_obsYear, doy);
         std::sort(all.begin(), all.end(),
                   [](const Match &a, const Match &b) { return a.m.filename < b.m.filename; });
 
         std::set<std::string> sites;
-        for (const auto &[m, _]: all) sites.insert(obsStationOf(m.filename));
+        for (const auto &mt: all) sites.insert(obsStationOf(mt.m.filename));
 
         ImGui::TextUnformatted("站点");
         ImGui::SameLine();
@@ -738,7 +838,8 @@ namespace Tools::FtpDownload {
             std::vector<Match> keep;
             keep.reserve(matches.size());
             for (const auto &mt: matches) {
-                const bool has = !DownloadStore::findLocalFile(ProductType::OBS, mt.m.year, mt.m.doy,
+                const bool has = !mt.localPath.empty() ||
+                                 !DownloadStore::findLocalFile(ProductType::OBS, mt.m.year, mt.m.doy,
                                                                mt.m.filename).empty();
                 if (passStateFilter(s_dlStateFilter, has)) keep.push_back(mt);
             }
@@ -748,10 +849,10 @@ namespace Tools::FtpDownload {
         ImGui::Separator();
 
         ImGui::BeginChild("##obsFiles", ImVec2(0, -30), ImGuiChildFlags_Borders);
-        if (dirs.empty()) {
-            ImGui::TextDisabled("所选日期没有观测目录。");
-        } else if (matches.empty()) {
-            if (s_scanning)
+        if (matches.empty()) {
+            if (dirs.empty())
+                ImGui::TextDisabled("所选日期没有观测目录。");
+            else if (s_scanning)
                 ImGui::TextDisabled("扫描中…");
             else
                 ImGui::TextDisabled("该日期目录下没有匹配的观测文件。");
@@ -759,11 +860,13 @@ namespace Tools::FtpDownload {
             const float avail = ImGui::GetContentRegionAvail().x;
             const float gap = ImGui::GetStyle().ItemSpacing.x;
             float x = 0.0f;
-            for (const auto &mt: matches) {
-                const auto &[m, dirUrl] = mt;
-                const std::string local =
-                        DownloadStore::findLocalFile(ProductType::OBS, m.year, m.doy, m.filename);
-                const std::string label = m.filename;
+            for (const auto &[m, dirUrl, localPath]: matches) {
+                const std::string local = !localPath.empty()
+                                              ? localPath
+                                              : DownloadStore::findLocalFile(ProductType::OBS, m.year, m.doy,
+                                                                             m.filename);
+                const std::string label = DownloadStore::localNameFor(m.filename);
+                const bool remoteKnown = !dirUrl.empty();
                 float frac;
                 bool downloading = false;
                 {
@@ -792,16 +895,14 @@ namespace Tools::FtpDownload {
                     else popRemoteChipStyle();
                     if (ImGui::IsItemHovered()) {
                         std::string tip = label;
-                        if (dl) {
-                            tip += "\n本地：";
-                            tip += local;
-                            tip += "\n（点击可重新下载）";
-                        } else {
-                            tip += "\n本地：无（点击下载）";
-                        }
+                        if (!dl) tip += "\n本地：无（点击下载）";
+                        else if (remoteKnown) tip += "\n本地：" + local + "\n（点击可重新下载 · 右键管理）";
+                        else tip += "\n本地：" + local + "\n远端列表未列出（仅本地）\n（右键可打开 / 删除）";
                         ImGui::SetTooltip("%s", tip.c_str());
                     }
-                    if (pressed)
+                    if (dl) fileContextMenu(local);
+
+                    if (pressed && remoteKnown)
                         enqueueDownload(Pending{
                             m.filename, dirUrl, ProductType::OBS, m.year, m.doy,
                             m.spanDays, local
@@ -829,7 +930,7 @@ namespace Tools::FtpDownload {
     }
 
     // 选本地文件 → 校验 → 入库
-    static void openImportDialog(const Download::VersionedProduct &p) {
+    static void openImportDialog(const VersionedProduct &p) {
         const std::wstring desc = Str::ACPToWide(std::string(p.label) + " (" + p.exts + ")");
         const std::wstring pat = Str::ACPToWide(p.exts);
         const GuiFileFilter filters[2] = {{desc.c_str(), pat.c_str()}, {L"所有文件 (*.*)", L"*.*"}};
@@ -838,25 +939,25 @@ namespace Tools::FtpDownload {
         if (!ShowOpenFileDialog(wpath, filters, 2)) return;
 
         const std::string path = Str::wideToACP(wpath);
-        const auto [ok, file, version, detail] = Download::Catalog::importLocal(p, path);
+        const auto [ok, file, version, detail] = Catalog::importLocal(p, path);
         s_importOk = ok;
         s_importMsg = ok
                           ? Str::baseName(path) + " → " + version + "/" + file + "（" + detail + "）"
                           : "导入失败：" + detail + "　（" + Str::baseName(path) + "）";
         if (ok)
-            Download::AutoSync::noteImported(p.id, version, file, "已导入本地文件");
+            AutoSync::noteImported(p.id, version, file, "已导入本地文件");
     }
 
     void renderAuxTab() {
         const auto &cfg = AppConfig::PathMemory::instance();
-        bool autoOn = Download::AutoSync::enabled();
+        bool autoOn = AutoSync::enabled();
         if (ImGui::Checkbox("启动时自动检查并更新", &autoOn)) {
-            Download::AutoSync::setEnabled(autoOn);
-            cfg.set("prod_autosync", autoOn ? "1" : "0");
+            AutoSync::setEnabled(autoOn);
+            cfg.set("dl_autosync", autoOn ? "1" : "0");
         }
         ImGui::SameLine();
         if (ImGui::Button("全部检查更新"))
-            Download::AutoSync::checkNow();
+            AutoSync::checkNow();
 
         ImGui::Separator();
 
@@ -870,13 +971,13 @@ namespace Tools::FtpDownload {
             ImGui::TableSetupColumn("操作", ImGuiTableColumnFlags_WidthFixed, 210.0f);
             ImGui::TableHeadersRow();
 
-            for (const auto &p: Download::Catalog::all()) {
+            for (const auto &p: Catalog::all()) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(p.label);
 
-                const auto inst = Download::Store::active(p.id);
-                const auto [phase, version, file, detail, progress, gotBytes, totalBytes] = Download::AutoSync::status(p.id);
+                const auto inst = Store::active(p.id);
+                const auto [phase, version, file, detail, progress, gotBytes, totalBytes] = AutoSync::status(p.id);
 
                 ImGui::TableSetColumnIndex(1);
                 if (inst) {
@@ -889,7 +990,7 @@ namespace Tools::FtpDownload {
                 }
 
                 ImGui::TableSetColumnIndex(2);
-                if (phase == Download::AutoSync::Status::Checking)
+                if (phase == AutoSync::Status::Checking)
                     ImGui::TextDisabled("检查中…");
                 else if (!version.empty())
                     ImGui::TextUnformatted(file.c_str());
@@ -898,7 +999,7 @@ namespace Tools::FtpDownload {
 
                 ImGui::TableSetColumnIndex(3);
                 switch (phase) {
-                    case Download::AutoSync::Status::Downloading: {
+                    case AutoSync::Status::Downloading: {
                         char tip[192];
                         if (totalBytes > 0.0)
                             std::snprintf(tip, sizeof tip, "%s\n%.1f / %.1f MB（中断可续传）",
@@ -910,11 +1011,11 @@ namespace Tools::FtpDownload {
                         downloadChip(file.c_str(), progress, -1.0f, tip);
                         break;
                     }
-                    case Download::AutoSync::Status::Ready:
+                    case AutoSync::Status::Ready:
                         ImGui::TextColored(UI::kColPass, "%s",
                                            detail.empty() ? "就绪" : detail.c_str());
                         break;
-                    case Download::AutoSync::Status::Error:
+                    case AutoSync::Status::Error:
                         ImGui::TextColored(UI::kColFail, "%s", detail.c_str());
                         break;
                     default:
@@ -923,11 +1024,11 @@ namespace Tools::FtpDownload {
                 }
 
                 ImGui::TableSetColumnIndex(4);
-                const bool busy = phase == Download::AutoSync::Status::Checking ||
-                                  phase == Download::AutoSync::Status::Downloading;
+                const bool busy = phase ==AutoSync::Status::Checking ||
+                                  phase == AutoSync::Status::Downloading;
                 ImGui::BeginDisabled(busy);
                 if (ImGui::SmallButton(("检查##chk_" + std::string(p.id)).c_str()))
-                    Download::AutoSync::checkNow(p.id);
+                    AutoSync::checkNow(p.id);
                 ImGui::EndDisabled();
 
                 ImGui::SameLine();
@@ -943,7 +1044,7 @@ namespace Tools::FtpDownload {
                                    ? UI::kColPass
                                    : UI::kColFail,
                                "%s", s_importMsg.c_str());
-        ImGui::TextDisabled("本地目录：%s", Download::Store::root().c_str());
+        ImGui::TextDisabled("本地目录：%s", Store::root().c_str());
     }
 
     //「获取」内联面板
@@ -974,6 +1075,42 @@ namespace Tools::FtpDownload {
             ImGui::TextDisabled("（当前：%s）", cur.empty() ? "未设" : Str::baseName(cur).c_str());
         } else {
             ImGui::TextDisabled("（已选 %d）", static_cast<int>(p.target->size()));
+        }
+
+        if (p.year <= 0 || p.doy <= 0) {
+            const auto [fst, snd] = ProductMeta::defaultObsDate();
+            p.year = fst;
+            p.doy = snd;
+        }
+        {
+            YearMonthDay ymd = Time::DOYToYMD(p.year, p.doy).value_or(YearMonthDay{p.year, 1, 1});
+            bool changed = false;
+            ImGui::TextUnformatted("日期");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::InputInt("##acqYear", &ymd.year, 0, 0)) changed = true;
+            ymd.year = std::clamp(ymd.year, 1980, 2099);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(56.0f);
+            if (ImGui::InputInt("##acqMonth", &ymd.month, 0, 0)) changed = true;
+            ymd.month = std::clamp(ymd.month, 1, 12);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(56.0f);
+            if (ImGui::InputInt("##acqDay", &ymd.day, 0, 0)) changed = true;
+            ymd.day = std::clamp(ymd.day, 1, Time::daysInMonth(ymd.year, ymd.month));
+            ImGui::SameLine();
+            if (ImGui::SmallButton("昨日##acqYest")) {
+                const auto [fst, snd] = ProductMeta::defaultObsDate();
+                if (const auto y = Time::DOYToYMD(fst, snd)) ymd = *y;
+                changed = true;
+            }
+            const int doy = Time::YMDToDOY(ymd);
+            ImGui::SameLine();
+            ImGui::TextDisabled("年积日 %03d   第 %d 周", doy, ProductMeta::gpsWeek(ymd.year, doy));
+            if (changed) {
+                p.year = ymd.year;
+                p.doy = doy;
+            }
         }
 
         std::set<ProductType> types;
@@ -1016,6 +1153,7 @@ namespace Tools::FtpDownload {
         }
         std::sort(all.begin(), all.end(),
                   [](const Match &a, const Match &b) { return a.m.filename < b.m.filename; });
+        for (const auto t: types) appendLocalOnly(all, t, p.year, p.doy);
 
         const auto &dcs = ProductMeta::knownDatacenters();
         if (!isObs) {
@@ -1058,7 +1196,7 @@ namespace Tools::FtpDownload {
         } else {
             // 站点候选取自当天扫到的文件（与独立面板同源），扫描没回来时是空的
             std::set<std::string> sites;
-            for (const auto &[m, _]: all) sites.insert(obsStationOf(m.filename));
+            for (const auto &mt: all) sites.insert(obsStationOf(mt.m.filename));
 
             ImGui::TextUnformatted("站点");
             ImGui::SameLine();
@@ -1122,8 +1260,9 @@ namespace Tools::FtpDownload {
                 if (m.type != ProductType::NAV && !dcSel.empty() && !dcSel.count(m.datacenter))
                     continue;
             }
-            const std::string local =
-                    DownloadStore::findLocalFile(m.type, m.year, m.doy, m.filename);
+            const std::string local = !mt.localPath.empty()
+                                          ? mt.localPath
+                                          : DownloadStore::findLocalFile(m.type, m.year, m.doy, m.filename);
             if (!passStateFilter(p.stateFilter, !local.empty())) continue;
             matches.push_back(mt);
         }
@@ -1160,9 +1299,12 @@ namespace Tools::FtpDownload {
                 const float avail = ImGui::GetContentRegionAvail().x;
                 const float gap = ImGui::GetStyle().ItemSpacing.x;
                 for (const Match *pmt: vec) {
-                    const auto &[m, dirUrl] = *pmt;
-                    const std::string local =
-                            DownloadStore::findLocalFile(m.type, m.year, m.doy, m.filename);
+                    const ProductMeta &m = pmt->m;
+                    const std::string &dirUrl = pmt->dirUrl;
+                    const std::string local = !pmt->localPath.empty()
+                                                  ? pmt->localPath
+                                                  : DownloadStore::findLocalFile(m.type, m.year, m.doy,
+                                                                                 m.filename);
                     float frac = -1.0f;
                     bool downloading = false;
                     {
@@ -1182,21 +1324,25 @@ namespace Tools::FtpDownload {
                             selected = std::find(p.target->begin(), p.target->end(), local) !=
                                        p.target->end();
                     }
-                    std::string label = m.filename;
+                    const std::string shown = DownloadStore::localNameFor(m.filename);
+                    std::string label = shown;
                     if (selected) label.insert(0, "√ ");
                     const float w = downloading
-                                        ? chipWidth((m.filename + "  100%").c_str())
+                                        ? chipWidth((shown + "  100%").c_str())
                                         : chipWidth(label.c_str());
                     if (x > 0.0f && x + w > avail) x = 0.0f;
                     if (x > 0.0f) ImGui::SameLine();
                     ImGui::PushID(label.c_str());
                     if (downloading) {
-                        const std::string tip = m.filename + "\n下载中…（完成后自动变绿）";
-                        downloadChip(m.filename.c_str(), frac, w, tip.c_str());
+                        const std::string tip = shown + "\n下载中…（完成后自动变绿）";
+                        downloadChip(shown.c_str(), frac, w, tip.c_str());
                     } else if (!local.empty()) {
                         if (selected) ImGui::PushStyleColor(ImGuiCol_Text, UI::kColPass);
                         const bool pressed = ImGui::Button(label.c_str());
                         if (selected) ImGui::PopStyleColor();
+                        if (!selected && ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s\n%s", shown.c_str(), local.c_str());
+                        fileContextMenu(local);
                         if (pressed) {
                             if (isObs) {
                                 auto &pm = AppConfig::PathMemory::instance();
@@ -1215,17 +1361,19 @@ namespace Tools::FtpDownload {
                                         p.target->end());
                                 else
                                     p.target->push_back(local);
-                                AppConfig::Products::instance().syncFromFiles();
-                                AppConfig::Products::instance().save();
+                                if (p.owner) {
+                                    p.owner->syncFromFiles();
+                                    p.owner->save();
+                                }
                             }
                         }
                     } else {
                         pushRemoteChipStyle();
-                        const bool pressed = ImGui::Button(m.filename.c_str());
+                        const bool pressed = ImGui::Button(shown.c_str());
                         popRemoteChipStyle();
                         if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("%s\n未下载，点击开始下载", m.filename.c_str());
-                        if (pressed)
+                            ImGui::SetTooltip("%s\n未下载，点击开始下载", shown.c_str());
+                        if (pressed && !dirUrl.empty())
                             enqueueDownload(Pending{
                                 m.filename, dirUrl, m.type, m.year, m.doy,
                                 m.spanDays, ""
@@ -1265,6 +1413,8 @@ namespace Tools::FtpDownload {
         ImGui::SameLine();
         if (ImGui::SmallButton("收起##acqClose")) p.open = false;
 
+        renderDeleteConfirm();
+
         ImGui::Unindent(12.0f);
         ImGui::PopID();
         ImGui::PopID();
@@ -1295,6 +1445,9 @@ namespace Tools::FtpDownload {
             }
             ImGui::EndTabBar();
         }
+
+        renderDeleteConfirm();
+
         ImGui::End();
     }
 

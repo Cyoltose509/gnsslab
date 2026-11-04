@@ -21,6 +21,8 @@ namespace Solvers::PPP {
 
         bool initSolver(void *solver) override;
 
+        void exportCSV(std::ostream &out) const override;
+
         bool wantsKinematic() const override { return kinematic; }
 
         Task() {

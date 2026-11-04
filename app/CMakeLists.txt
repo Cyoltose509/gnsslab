@@ -36,13 +36,13 @@ add_executable(GnssLab WIN32
     io/ObsSource.cpp
     core/IniFile.cpp
     ui/Gui.cpp
-        widgets/tools/GuiTimeConverter.cpp
-        widgets/tools/GuiCoordConverter.cpp
-        widgets/tools/GuiLsqSolver.cpp
-        widgets/tools/GuiInsPanel.cpp
-        widgets/tools/GuiInsCommon.cpp
-        widgets/tools/GuiInsCalib.cpp
-        widgets/tools/GuiInsAlign.cpp
+        tools/GuiTimeConverter.cpp
+        tools/GuiCoordConverter.cpp
+        tools/GuiLsqSolver.cpp
+        tools/ins/GuiInsPanel.cpp
+        tools/ins/GuiInsCommon.cpp
+        tools/ins/GuiInsCalib.cpp
+        tools/ins/GuiInsAlign.cpp
         solvers/view/GuiSolverPanel.cpp
         solvers/common/Task.cpp
         solvers/common/Core.cpp
@@ -65,7 +65,7 @@ add_executable(GnssLab WIN32
         solvers/rtk/Realtime.cpp
         solvers/rtk/Pipeline.cpp
         solvers/view/QualityControl.cpp
-        widgets/tools/GuiFtpDownload.cpp
+        download/GuiFtpDownload.cpp
         client/RemoteClient.cpp
         download/ProductMeta.cpp
         download/DownloadStore.cpp
@@ -83,8 +83,6 @@ target_include_directories(GnssLab PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/client
     ${CMAKE_CURRENT_BINARY_DIR}
     ${PROJECT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/widgets/tools
-    ${CMAKE_CURRENT_SOURCE_DIR}/solvers
     ${PROJECT_SOURCE_DIR}/thirdparty/curl/include
     ${PROJECT_SOURCE_DIR}/thirdparty/zlib
     ${PROJECT_BINARY_DIR}/thirdparty/zlib
@@ -109,6 +107,7 @@ target_link_libraries(GnssLab PRIVATE
     d3d11
     dxgi
     comdlg32
+    shell32
     windowscodecs
     ole32
 )

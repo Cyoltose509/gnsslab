@@ -143,7 +143,6 @@ void GnssEKF::measUpdate(EquSys &equSys) {
 
     Eigen::VectorXd prefit = Eigen::VectorXd::Zero(numObs);
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(numObs, numUnk);
-    Eigen::MatrixXd W = Eigen::MatrixXd::Zero(numObs, numObs);
 
     int iobs = 0;
     for (const auto &[eid, ed]: equSys.obsEquData) {
@@ -152,12 +151,10 @@ void GnssEKF::measUpdate(EquSys &equSys) {
             const int idx = currentIndexData.at(var);
             H(iobs, idx) = coeff;
         }
-        W(iobs, iobs) = ed.weight;
         iobs++;
     }
 
-
-    if (const int rc = kalmanFilter.measUpdate(prefit, H, W); rc != 0) {
+    if (const int rc = kalmanFilter.measUpdate(prefit, H, equSys.weightVector().asDiagonal().toDenseMatrix()); rc != 0) {
         std::cerr << "measUpdate skipped: singular geometry (rc=" << rc << ")\n";
         return;
     }

@@ -13,7 +13,7 @@ inline double c_Ek(const double M, const double e) {
 }
 
 
-PVT Ephemeris::getPVT(CommonTime t) {
+PVT Ephemeris::getPVT(CommonTime t, const FreqCombo *combo) {
     Time::convertSystem(t, timeSystem);
     PVT sv;
     const double tk = t - getCommonTime();
@@ -77,15 +77,15 @@ PVT Ephemeris::getPVT(CommonTime t) {
     if (dt < -HALF_WEEK) dt += FULL_WEEK;
     sv.clockBias = a0 + a1 * dt + a2 * dt * dt;
     sv.clockDrift = a1 + 2 * a2 * dt;
-    sv.relativityCorrection = satRelativityCorrection(sv.p, sv.v); // r·v 式（与 SP3 共用内核）
-    fixTGD(sv);
+    sv.relativityCorrection = satRelativityCorrection(sv.p, sv.v);
+    fixTGD(sv, combo);
     return sv;
 }
 
-PVT GlonassEphem::getPVT(CommonTime t) {
-    Time::convertSystem(t, timeSystem); // 观测时刻对齐到星历时间系统（GPS→UTC，减跳秒）
+PVT GlonassEphem::getPVT(CommonTime t, const FreqCombo *) {
+    Time::convertSystem(t, timeSystem);
     PVT sv;
-    const double dt = t - toeCommon; // 相对参考历元的物理秒数
+    const double dt = t - toeCommon;
 
     constexpr double MU = Frame::PZ90.gm * 1e-9;
     constexpr double OMGE = Frame::PZ90.omega;
@@ -111,8 +111,8 @@ PVT GlonassEphem::getPVT(CommonTime t) {
 
     double tt = dt;
     while (std::fabs(tt) > 1e-9) {
-        const double h = (tt > 0.0 ? 1.0 : -1.0);
-        const double hh = (std::fabs(tt) < 1.0) ? tt : h;
+        const double h = tt > 0.0 ? 1.0 : -1.0;
+        const double hh = std::fabs(tt) < 1.0 ? tt : h;
         double k1[6], k2[6], k3[6], k4[6], tmp[6];
         deq(x, k1);
         for (int i = 0; i < 6; ++i) tmp[i] = x[i] + 0.5 * hh * k1[i];

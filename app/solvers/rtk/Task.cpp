@@ -1,12 +1,14 @@
 #include "Task.h"
 
 #include <chrono>
+#include <ostream>
 #include <string>
 
+#include "EpochDecimator.h"
 #include "Log.h"
 #include "Observer.h"
 #include "StringUtils.h"
-#include "solvers/common/Driver.h"
+#include "solvers/common/CSV.h"
 #include "solvers/rtk/Pipeline.h"
 #include "solvers/rtk/Realtime.h"
 
@@ -47,6 +49,19 @@ namespace Solvers::RTK {
         core->rtEndpoints[0].port = std::to_string(cfg.basePort);
         core->rtEndpoints[1].ip = cfg.roverIp;
         core->rtEndpoints[1].port = std::to_string(cfg.roverPort);
+    }
+
+    void Task::commitRtkEpoch(const ObsData &rover) {
+        Epoch data;
+        data.getFromObs(rover);
+        data.getFromRTK(rtk);
+        const Eigen::Vector3d baseXyz = rtk.mBaseXyz;
+        commitEpoch(core, std::move(data), [&](int, Epoch &) {
+            if (!core->initializedRefECEF) {
+                core->refECEF = XYZ(baseXyz.x(), baseXyz.y(), baseXyz.z());
+                core->initializedRefECEF = true;
+            }
+        });
     }
 
     void Task::readBody() {
@@ -157,7 +172,7 @@ namespace Solvers::RTK {
 
                 if (!ok) continue;
                 if (const Result &r = rtk.result; r.numSats <= 0) continue;
-                Driver::commitRtk(core, rtk, item.rover);
+                commitRtkEpoch(item.rover);
             }
         } catch (const std::exception &e) {
             core->setError(std::string("RTK 解算错误: ") + e.what());
@@ -179,6 +194,41 @@ namespace Solvers::RTK {
         return std::make_unique<Realtime::RTKSession>(
             std::static_pointer_cast<Task>(shared_from_this()),
             core->rtEndpoints[0], core->rtEndpoints[1]);
+    }
+
+    void Task::exportCSV(std::ostream &out) const {
+        const Eigen::Vector3d &ref = core->refECEF;
+        CSV::Writer w;
+        w.row("Wk", "SOW", "Status",
+              "Float-X/m", "Float-Y/m", "Float-Z/m", "Float-E/m", "Float-N/m", "Float-U/m",
+              "Float-3dRMS/m", "Float-SigmaP/m",
+              "Fix-X/m", "Fix-Y/m", "Fix-Z/m", "Fix-E/m", "Fix-N/m", "Fix-U/m",
+              "Fix-3dRMS/m", "Fix-SigmaP/m",
+              "PDOP", "GDOP", "HDOP", "VDOP", "TDOP", "Ratio", "NSats",
+              "REF-X/m", "REF-Y/m", "REF-Z/m").endRow();
+        const int cols = w.colCount();
+        for (const auto &r: core->epochs) {
+            if (!r.solved) {
+                csvInvalidRow(w, r, cols);
+                continue;
+            }
+            const auto &res = r.sppResult;
+            const bool fixed = res.stat == 1;
+            const Eigen::Vector3d base(ref.x(), ref.y(), ref.z());
+            const Eigen::Vector3d floatE = r.rtkFloatXyz.squaredNorm() > 1.0
+                                               ? r.rtkFloatXyz
+                                               : base + r.rtkBaseFloat;
+            const Eigen::Vector3d fixE = fixed ? res.xyz : Eigen::Vector3d::Zero();
+            w.cell(r.week).cell(CSV::fx(r.sow, 3)).cell(csvStatStr(res.stat));
+            csvWriteSolBlock(w, floatE, ref, res.sigmaPFloat, false);
+            csvWriteSolBlock(w, fixE, ref, res.sigmaPFixed, !fixed);
+            w.cell(CSV::f(res.pdop, 4)).cell(CSV::f(res.gdop, 4)).cell(CSV::f(res.hdop, 4))
+                    .cell(CSV::f(res.vdop, 4)).cell(CSV::f(res.tdop, 4))
+                    .cell(r.rtkRatio).cell(r.numSatsResult);
+            w.cell(CSV::f(ref.x(), 11)).cell(CSV::f(ref.y(), 11)).cell(CSV::f(ref.z(), 11));
+            w.endRow();
+        }
+        out << w.str();
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {
