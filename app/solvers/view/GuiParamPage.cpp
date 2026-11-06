@@ -2,12 +2,12 @@
 #include "GuiParamPage.h"
 
 #include "core/PathMemory.h"
-#include "core/Products.h"
+#include "io/Products.h"
 #include "Troposphere.h"
+#include "solvers/common/Config.h"
 #include "ui/ParamPage.h"
-#include "download/ProductStore.h"
-#include "download/ProductCatalog.h"
-#include "download/AutoSync.h"
+#include "download/Store.h"
+#include "download/Catalog.h"
 
 #include <string>
 #include <vector>
@@ -25,16 +25,6 @@ struct UI::ParamPage::Traits<Troposphere::Map> {
 };
 
 namespace {
-    std::string spPrefix(const Solvers::Mode m) {
-        switch (m) {
-            case Solvers::Mode::SPP: return "spp_";
-            case Solvers::Mode::PPP: return "ppp_";
-            case Solvers::Mode::LEO: return "leo_";
-            case Solvers::Mode::RTK: return "rtk_";
-            default: return "solver_";
-        }
-    }
-
     using SolverField = UI::ParamPage::Field<SolverOptions>;
     using SolverGroup = UI::ParamPage::Group<SolverOptions>;
     using UI::ParamPage::between;
@@ -89,6 +79,44 @@ namespace {
         return g;
     }
 
+    SolverField systemsField() {
+        SolverField f;
+        f.label = "参与星座";
+        f.key = "systems";
+        f.draw = [](SolverOptions &o) {
+            ImGui::TextUnformatted("参与星座");
+            for (const auto &[ch, name]: Solvers::Helpers::kConstellations) {
+                ImGui::SameLine();
+                bool on = o.systems.count(ch) > 0;
+                if (ImGui::Checkbox(name, &on)) {
+                    if (on) o.systems.insert(ch);
+                    else o.systems.erase(ch);
+                }
+            }
+        };
+        f.store = [](const SolverOptions &o, const std::string &p) {
+            AppConfig::PathMemory::instance().set(p + "systems", Solvers::sysSetToString(o.systems));
+        };
+        f.fetch = [](SolverOptions &o, const std::string &p) {
+            if (const std::string s = AppConfig::PathMemory::instance().get(p + "systems"); !s.empty())
+                o.systems = Solvers::stringToSysSet(s);
+        };
+        f.reset = [](SolverOptions &o, const SolverOptions &d) { o.systems = d.systems; };
+        return f;
+    }
+
+    /// 三个「简单参数」：任何模式都得先定的粗筛条件，从各模式的配置页收上来统一在这。
+    SolverGroup obsConditionGroup() {
+        return {
+            "观测条件", {
+                field("采样间隔 (s，0=按文件)", "interval", &SolverOptions::sampleInterval,
+                      between(0.0, 3600.0)),
+                systemsField(),
+                field("截止高度角 (°)", "cutoff", &SolverOptions::cutoffDeg, between(0.0, 90.0)),
+            }
+        };
+    }
+
     SolverGroup corrGroup() {
         return {
             "改正模型", {
@@ -108,7 +136,7 @@ namespace {
             return;
         }
 
-        if (const auto st = Download::AutoSync::status(productId); st.phase == Download::AutoSync::Status::Downloading) {
+        if (const auto st = Download::Catalog::updateStatus(productId); st.phase == Download::Catalog::UpdateStatus::Downloading) {
             if (st.totalBytes > 0.0)
                 ImGui::TextColored(kAmber, "正在下载 %s %.0f%% (%.1f/%.1f MB)", st.file.c_str(),
                                    st.progress * 100.0f, st.gotBytes / 1048576.0,
@@ -130,7 +158,7 @@ namespace {
         ImGui::TextColored(kAmber, "未检测到 %s", meta ? meta->label : productId);
         ImGui::SameLine();
         if (ImGui::SmallButton(("获取##get_" + std::string(productId)).c_str()))
-            Download::AutoSync::checkNow(productId);
+            Download::Catalog::checkNow(productId);
     }
 
     SolverGroup atxGroup() {
@@ -234,13 +262,14 @@ namespace {
         };
     }
 
+    /// 位置过程噪声：PPP 静态为 0（位置固定），PPP 动态与 LEO 为 100（逐历元更新）。
+    /// 每个模式各存各的值，前缀不同，互不影响。
     SolverGroup posGroup(const bool leo) {
         SolverGroup g{
             "位置 / 噪声", {
-                field(leo ? "位置过程噪声" : "动态位置过程噪声", "posNoise", &SolverOptions::posNoise),
+                field(leo ? "位置过程噪声" : "位置过程噪声", "posNoise", &SolverOptions::posNoise),
             }
         };
-        if (!leo) g.fields.push_back(field("静态位置过程噪声", "staticPosNoise", &SolverOptions::staticPosNoise));
         g.fields.push_back(field("首历元位置方差", "firstEpochPosVar", &SPPConfig::firstEpochPosVar,
                                  &SolverOptions::spp));
         g.fields.push_back(field("位置方差下界", "posVarFloor", &SPPConfig::posVarFloor, &SolverOptions::spp));
@@ -279,19 +308,35 @@ namespace {
 
     const std::vector<SolverGroup> &schemaFor(const Solvers::Mode mode) {
         static const std::vector spp = {
+            obsConditionGroup(),
             obsGroup(false),
             tropoGroup(Solvers::Mode::SPP, false),
             lsqIterGroup(),
             isbGroup(),
             healthGroup(),
         };
-        static const std::vector ppp = {
+        static const std::vector pppStatic = {
+            obsConditionGroup(),
             obsGroup(true),
             corrGroup(),
             atxGroup(),
             filterIterGroup(false),
             arGroup(),
-            tropoGroup(Solvers::Mode::PPP, true, true),
+            tropoGroup(Solvers::Mode::PPPStatic, true, true),
+            codeBiasGroup(),
+            posGroup(false),
+            slipGroup(),
+            isbGroup(),
+            healthGroup(),
+        };
+        static const std::vector pppKinematic = {
+            obsConditionGroup(),
+            obsGroup(true),
+            corrGroup(),
+            atxGroup(),
+            filterIterGroup(false),
+            arGroup(),
+            tropoGroup(Solvers::Mode::PPPKinematic, true, true),
             codeBiasGroup(),
             posGroup(false),
             slipGroup(),
@@ -299,6 +344,7 @@ namespace {
             healthGroup(),
         };
         static const std::vector leo = {
+            obsConditionGroup(),
             obsGroup(true),
             corrGroup(),
             atxGroup(),
@@ -311,6 +357,7 @@ namespace {
             healthGroup(),
         };
         static const std::vector<SolverGroup> rtk = {
+            obsConditionGroup(),
             {
                 "模糊度与 AR", {
                     flag("使用 AR 固定", "useAR", &RTKConfig::useAR, &SolverOptions::rtk),
@@ -352,7 +399,8 @@ namespace {
         static const std::vector<SolverGroup> empty;
         switch (mode) {
             case Solvers::Mode::SPP: return spp;
-            case Solvers::Mode::PPP: return ppp;
+            case Solvers::Mode::PPPStatic: return pppStatic;
+            case Solvers::Mode::PPPKinematic: return pppKinematic;
             case Solvers::Mode::LEO: return leo;
             case Solvers::Mode::RTK: return rtk;
             default: return empty;
@@ -365,9 +413,10 @@ void Solvers::Helpers::renderAdvancedParams(SolverOptions &opts, const Mode mode
 }
 
 void Solvers::Helpers::saveSolverParams(const Mode mode, const SolverOptions &opts) {
-    UI::ParamPage::save(schemaFor(mode), opts, spPrefix(mode));
+    UI::ParamPage::save(schemaFor(mode), opts, std::string(modeKey(mode)) + "_");
 }
 
 void Solvers::Helpers::loadSolverParams(const Mode mode, SolverOptions &opts) {
-    UI::ParamPage::load(schemaFor(mode), opts, defaultSolverOptions(mode), spPrefix(mode));
+    UI::ParamPage::load(schemaFor(mode), opts, defaultSolverOptions(mode),
+                        std::string(modeKey(mode)) + "_");
 }

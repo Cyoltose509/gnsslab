@@ -1,3 +1,4 @@
+#include "Log.h"
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
@@ -22,6 +23,10 @@
 #include <vector>
 
 namespace Tools::Ins {
+    namespace {
+        /// 每个标定量当前选用的单位（下标进 kCalibQty 的 units），只在本面板里用。
+        int s_qtyUnit[Q_COUNT] = {0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    }
 
     SixPosCalibTask::SixPosCalibTask() {
         fileName = "六位置法标定";
@@ -109,7 +114,7 @@ namespace Tools::Ins {
             if (!parseOne(path, log) || log.empty()) {
                 if (sen.mixedModel()) {
 
-                    abortRun(*this, sen.openFailure(path));
+                    abortRun(*this, sen.failureMessage(path));
                     return;
                 }
                 if (!stop) detSeqLines.emplace_back(name, "解析失败（内容为空或格式不符）");
@@ -329,10 +334,10 @@ namespace Tools::Ins {
                 const CalibQty &def = kCalibQty[q];
                 ImGui::PushID(q);
                 ImGui::SetNextItemWidth(-FLT_MIN);
-                if (ImGui::BeginCombo("##unit", def.units[gCalibQtyUnit[q]].ui)) {
+                if (ImGui::BeginCombo("##unit", def.units[s_qtyUnit[q]].ui)) {
                     for (int i = 0; i < def.nUnits; ++i) {
                         ImGui::PushID(i);
-                        if (ImGui::Selectable(def.units[i].ui, i == gCalibQtyUnit[q])) gCalibQtyUnit[q] = i;
+                        if (ImGui::Selectable(def.units[i].ui, i == s_qtyUnit[q])) s_qtyUnit[q] = i;
                         ImGui::PopID();
                     }
                     ImGui::EndCombo();
@@ -342,7 +347,7 @@ namespace Tools::Ins {
 
             auto qtyRow = [&](const int q, const bool ready) {
                 const CalibQty &def = kCalibQty[q];
-                const CalibUnit &u = def.units[gCalibQtyUnit[q]];
+                const CalibUnit &u = def.units[s_qtyUnit[q]];
                 const Eigen::Vector3d v = calibQtyValue(def, u, rep, par.g);
                 const bool withSigma = def.sigmaQty >= 0;
                 Eigen::Vector3d sg = Eigen::Vector3d::Zero();
@@ -582,7 +587,7 @@ namespace Tools::Ins {
 
             auto qtyRow = [&](const int q) {
                 const CalibQty &def = kCalibQty[q];
-                const CalibUnit &u = def.units[gCalibQtyUnit[q]];
+                const CalibUnit &u = def.units[s_qtyUnit[q]];
                 const Eigen::Vector3d v = calibQtyValue(def, u, r, par.g);
                 const std::string name = std::string(def.csv) + "(" + u.csv + ")";
                 const int d = def.csvDigits;

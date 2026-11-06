@@ -7,6 +7,7 @@
 
 #include "CliCommon.h"
 #include "solvers/common/Core.h"
+#include "solvers/common/Config.h"
 #include "core/IniFile.h"
 
 static std::set<char> parseSystems(const std::string &s) {
@@ -15,6 +16,88 @@ static std::set<char> parseSystems(const std::string &s) {
         if (c >= 'A' && c <= 'Z') out.insert(c);
     if (out.empty()) out = {'G', 'C'};
     return out;
+}
+
+/// ini 的 mode 键 → 解算模式。静态与动态是两个独立模式，各有各的参数。
+Solvers::Mode modeFromKey(const std::string &s) {
+    if (s == "spp") return Solvers::Mode::SPP;
+    if (s == "ppp_static" || s == "ppp") return Solvers::Mode::PPPStatic;
+    if (s == "ppp_kin" || s == "ppp_kinematic") return Solvers::Mode::PPPKinematic;
+    if (s == "rtk") return Solvers::Mode::RTK;
+    if (s == "leo") return Solvers::Mode::LEO;
+    return Solvers::Mode::SPP;
+}
+
+namespace {
+    /// SPP 家族（SPP / PPP / LEO）共用的观测量与滤波参数。
+    void loadCommon(const IniFile &ini, SolverOptions &c) {
+        c.cutoffDeg = ini.getD("solver", "cutoff_deg", c.cutoffDeg);
+        c.systems = parseSystems(ini.get("solver", "systems", "GC"));
+        c.sampleInterval = ini.getD("solver", "sample_interval", c.sampleInterval);
+
+        c.spp.sigIFCode = ini.getD("solver", "sig_if_code", c.spp.sigIFCode);
+        c.spp.sigmaPhase = ini.getD("solver", "sig_phase", c.spp.sigmaPhase);
+        c.spp.minSinElev = ini.getD("solver", "min_sin_elev", c.spp.minSinElev);
+        c.spp.convEps = ini.getD("solver", "conv_eps", c.spp.convEps);
+        c.spp.maxIter = ini.getInt("solver", "max_iter", c.spp.maxIter);
+        c.spp.minCheckIter = ini.getInt("solver", "min_check_iter", c.spp.minCheckIter);
+        c.spp.useHealth = ini.getB("solver", "use_health", c.spp.useHealth);
+        c.spp.applySolidTide = ini.getB("solver", "solid_tide", c.spp.applySolidTide);
+        c.spp.applyWindup = ini.getB("solver", "windup", c.spp.applyWindup);
+        c.spp.isbProcNoise = ini.getD("solver", "isb_proc_noise", c.spp.isbProcNoise);
+        c.spp.isbInitVar = ini.getD("solver", "isb_init_var", c.spp.isbInitVar);
+        c.spp.tropoMap = Troposphere::fromKey(
+            ini.get("solver", "tropo_map", Troposphere::keyOf(c.spp.tropoMap)));
+
+        c.spp.useAR = ini.getB("solver", "use_ar", c.spp.useAR);
+        c.spp.arRatioThreshold = ini.getD("solver", "ar_ratio_threshold", c.spp.arRatioThreshold);
+        c.spp.arSigGate = ini.getD("solver", "ar_sig_gate", c.spp.arSigGate);
+        c.spp.ambInitVar = ini.getD("solver", "amb_init_var", c.spp.ambInitVar);
+        c.spp.ambNoise = ini.getD("solver", "amb_q", c.spp.ambNoise);
+        c.spp.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.spp.keepAmbMaxGap);
+        c.spp.useCycleSlip = ini.getB("solver", "use_cycle_slip", c.spp.useCycleSlip);
+        c.spp.gfSlipMult = ini.getD("solver", "gf_slip_mult", c.spp.gfSlipMult);
+        c.spp.codeBiasProcNoise = ini.getD("solver", "code_bias_proc_noise", c.spp.codeBiasProcNoise);
+        c.spp.codeBiasInitVar = ini.getD("solver", "code_bias_init_var", c.spp.codeBiasInitVar);
+        c.spp.gloIfcbProcNoise = ini.getD("solver", "glo_ifcb_proc_noise", c.spp.gloIfcbProcNoise);
+        c.spp.gloIfcbInitVar = ini.getD("solver", "glo_ifcb_init_var", c.spp.gloIfcbInitVar);
+    }
+
+    /// PPP / LEO 的对流层与滤波参数（静态与动态通用）。
+    void loadPPPFilter(const IniFile &ini, SolverOptions &c) {
+        c.spp.ztdProcNoise = ini.getD("solver", "ztd_q", c.spp.ztdProcNoise);
+        c.spp.troZtdSigma = ini.getD("solver", "tro_ztd_sigma", c.spp.troZtdSigma);
+        if (!ini.getB("solver", "use_tro_ztd", true)) c.spp.troZtdSigma = 0.0;
+        c.spp.useTroGrad = ini.getB("solver", "use_tro_grad", c.spp.useTroGrad);
+        c.spp.ztdPriorSigma = ini.getD("solver", "ztd_prior", c.spp.ztdPriorSigma);
+        c.spp.ztdInitValue = ini.getD("solver", "ztd_init", c.spp.ztdInitValue);
+        c.spp.ztdInitVar = ini.getD("solver", "ztd_init_var", c.spp.ztdInitVar);
+        c.spp.firstEpochPosVar = ini.getD("solver", "first_epoch_pos_var", c.spp.firstEpochPosVar);
+        c.spp.posVarFloor = ini.getD("solver", "pos_var_floor", c.spp.posVarFloor);
+        c.spp.minSatsForUpdate = ini.getInt("solver", "min_sats_for_update", c.spp.minSatsForUpdate);
+        c.spp.maxReanchorIter = ini.getInt("solver", "max_reanchor_iter", c.spp.maxReanchorIter);
+        c.spp.clockNoise = ini.getD("solver", "clock_noise", c.spp.clockNoise);
+        c.spp.sppResidualThr = ini.getD("solver", "spp_residual_thr", c.spp.sppResidualThr);
+    }
+
+    /// RTK 专属的双差与参考星参数。
+    void loadRtk(const IniFile &ini, SolverOptions &c) {
+        c.rtk.useAR = ini.getB("solver", "use_ar", c.rtk.useAR);
+        c.rtk.fullCovariance = ini.getB("solver", "full_covariance", c.rtk.fullCovariance);
+        c.rtk.arThreshold = ini.getD("solver", "ar_ratio_threshold", c.rtk.arThreshold);
+        c.rtk.convEps = ini.getD("solver", "conv_eps", c.rtk.convEps);
+        c.rtk.maxIterFloat = ini.getInt("solver", "max_iter_float", c.rtk.maxIterFloat);
+        c.rtk.maxIterFix = ini.getInt("solver", "max_iter_fix", c.rtk.maxIterFix);
+        c.rtk.minSats = ini.getInt("solver", "min_sats", c.rtk.minSats);
+        c.rtk.useCycleSlip = ini.getB("solver", "use_cycle_slip", c.rtk.useCycleSlip);
+        c.rtk.useGfCycleSlip = ini.getB("solver", "use_gf_cycle_slip", c.rtk.useGfCycleSlip);
+        c.rtk.gfSlipMult = ini.getD("solver", "gf_slip_mult", c.rtk.gfSlipMult);
+        c.rtk.phaseWeight.minSinElev = ini.getD("solver", "min_sin_elev", c.rtk.phaseWeight.minSinElev);
+        c.rtk.phaseWeight.a = ini.getD("solver", "phase_weight_a", c.rtk.phaseWeight.a);
+        c.rtk.phaseWeight.b = ini.getD("solver", "phase_weight_b", c.rtk.phaseWeight.b);
+        c.rtk.codeOverPhaseVar = ini.getD("solver", "code_over_phase_var", c.rtk.codeOverPhaseVar);
+        c.rtk.excludeGeoRef = ini.getB("solver", "exclude_geo_ref", c.rtk.excludeGeoRef);
+    }
 }
 
 SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
@@ -39,9 +122,8 @@ SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
     c.erp = ini.get("input", "erp", "");
     c.tro = ini.get("input", "tro", "");
     c.ionex = ini.get("input", "ionex", "");
-    c.vmf = ini.get("input", "vmf", "");   // 分号分隔的一串 VMF3 时次文件
+    c.vmf = ini.get("input", "vmf", "");   // kIniListSep（|）分隔的一串 VMF3 时次文件
     c.gpt3 = ini.get("input", "gpt3", "");
-    c.met = ini.get("input", "met", "");
     c.att = ini.get("input", "att", "");
 
     c.gnssSp3 = ini.get("input", "gnss_sp3", "");
@@ -53,76 +135,24 @@ SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
     c.realtimeSec = ini.getInt("input", "realtime_sec", 0);
     c.maxEpochs = ini.getInt("input", "max_epochs", 0);
 
-    c.cutoffDeg = ini.getD("solver", "cutoff_deg", c.cutoffDeg);
-    c.systems = parseSystems(ini.get("solver", "systems", "GC"));
-    c.sampleInterval = ini.getD("solver", "sample_interval", c.sampleInterval);
-
-    c.spp.sigIFCode = ini.getD("solver", "sig_if_code", c.spp.sigIFCode);
-    c.spp.sigmaPhase = ini.getD("solver", "sig_phase", c.spp.sigmaPhase);
-
-    auto both = [&ini](const char *key, double &a, double &b) {
-        a = ini.getD("solver", key, a);
-        b = ini.getD("solver", key, b);
-    };
-    auto bothFlag = [&ini](const char *key, bool &a, bool &b) {
-        a = ini.getInt("solver", key, a ? 1 : 0) != 0;
-        b = ini.getInt("solver", key, b ? 1 : 0) != 0;
-    };
-    both("min_sin_elev", c.spp.minSinElev, c.rtk.phaseWeight.minSinElev);
-    both("conv_eps", c.spp.convEps, c.rtk.convEps);
-    both("ar_ratio_threshold", c.spp.arRatioThreshold, c.rtk.arThreshold);
-    bothFlag("use_ar", c.spp.useAR, c.rtk.useAR);
-    bothFlag("use_cycle_slip", c.spp.useCycleSlip, c.rtk.useCycleSlip);
-    both("gf_slip_mult", c.spp.gfSlipMult, c.rtk.gfSlipMult);
-
-    c.rtk.useGfCycleSlip = ini.getInt("solver", "use_gf_cycle_slip", c.rtk.useGfCycleSlip ? 1 : 0) != 0;
-    c.rtk.fullCovariance = ini.getInt("solver", "full_covariance", c.rtk.fullCovariance ? 1 : 0) != 0;
-    c.spp.applySolidTide = ini.getInt("solver", "solid_tide", c.spp.applySolidTide ? 1 : 0) != 0;
-    c.spp.applyWindup = ini.getInt("solver", "windup", c.spp.applyWindup ? 1 : 0) != 0;
-    c.spp.useHealth = ini.getInt("solver", "use_health", c.spp.useHealth ? 1 : 0) != 0;
-    c.kinematic = ini.getInt("solver", "kinematic", c.kinematic);
-    c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
-    c.staticPosNoise = ini.getD("solver", "static_pos_noise", c.staticPosNoise);
-    c.spp.ztdProcNoise = ini.getD("solver", "ztd_q", c.spp.ztdProcNoise);
-    c.spp.ambNoise = ini.getD("solver", "amb_q", c.spp.ambNoise);
-    c.spp.troZtdSigma = ini.getD("solver", "tro_ztd_sigma", c.spp.troZtdSigma);
-    if (ini.getInt("solver", "use_tro_ztd", 1) == 0) c.spp.troZtdSigma = 0.0;
-    c.spp.useTroGrad = ini.getInt("solver", "use_tro_grad", c.spp.useTroGrad ? 1 : 0) != 0;
-
-    c.spp.tropoMap = Troposphere::fromKey(
-        ini.get("solver", "tropo_map", Troposphere::keyOf(c.spp.tropoMap)));
-
-    c.spp.ztdPriorSigma = ini.getD("solver", "ztd_prior", c.spp.ztdPriorSigma);
-    c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
-    c.sppVsPredThresh = ini.getD("solver", "spp_vs_pred_thresh", c.sppVsPredThresh);
-    c.spp.firstEpochPosVar = ini.getD("solver", "first_epoch_pos_var", c.spp.firstEpochPosVar);
-    c.spp.ztdInitValue = ini.getD("solver", "ztd_init", c.spp.ztdInitValue);
-    c.spp.ztdInitVar = ini.getD("solver", "ztd_init_var", c.spp.ztdInitVar);
-    c.spp.ambInitVar = ini.getD("solver", "amb_init_var", c.spp.ambInitVar);
-    c.spp.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.spp.keepAmbMaxGap);
-    c.spp.codeBiasProcNoise = ini.getD("solver", "code_bias_proc_noise", c.spp.codeBiasProcNoise);
-    c.spp.codeBiasInitVar = ini.getD("solver", "code_bias_init_var", c.spp.codeBiasInitVar);
-    c.spp.gloIfcbProcNoise = ini.getD("solver", "glo_ifcb_proc_noise", c.spp.gloIfcbProcNoise);
-    c.spp.gloIfcbInitVar = ini.getD("solver", "glo_ifcb_init_var", c.spp.gloIfcbInitVar);
-    c.spp.isbProcNoise = ini.getD("solver", "isb_proc_noise", c.spp.isbProcNoise);
-    c.spp.isbInitVar = ini.getD("solver", "isb_init_var", c.spp.isbInitVar);
-    c.spp.posVarFloor = ini.getD("solver", "pos_var_floor", c.spp.posVarFloor);
-
-    c.spp.maxIter = ini.getInt("solver", "max_iter", c.spp.maxIter);
-    c.spp.minCheckIter = ini.getInt("solver", "min_check_iter", c.spp.minCheckIter);
-    c.spp.arSigGate = ini.getD("solver", "ar_sig_gate", c.spp.arSigGate);
-    c.spp.clockNoise = ini.getD("solver", "clock_noise", c.spp.clockNoise);
-    c.spp.minSatsForUpdate = ini.getInt("solver", "min_sats_for_update", c.spp.minSatsForUpdate);
-    c.spp.maxReanchorIter = ini.getInt("solver", "max_reanchor_iter", c.spp.maxReanchorIter);
-    c.spp.sppResidualThr = ini.getD("solver", "spp_residual_thr", c.spp.sppResidualThr);
-
-    c.rtk.maxIterFloat = ini.getInt("solver", "max_iter_float", c.rtk.maxIterFloat);
-    c.rtk.maxIterFix = ini.getInt("solver", "max_iter_fix", c.rtk.maxIterFix);
-    c.rtk.minSats = ini.getInt("solver", "min_sats", c.rtk.minSats);
-    c.rtk.codeOverPhaseVar = ini.getD("solver", "code_over_phase_var", c.rtk.codeOverPhaseVar);
-    c.rtk.excludeGeoRef = ini.getInt("solver", "exclude_geo_ref", c.rtk.excludeGeoRef ? 1 : 0) != 0;
-    c.rtk.phaseWeight.a = ini.getD("solver", "phase_weight_a", c.rtk.phaseWeight.a);
-    c.rtk.phaseWeight.b = ini.getD("solver", "phase_weight_b", c.rtk.phaseWeight.b);
+    // 只读本模式用得到的字段：SPP 家族走观测模型，RTK 走双差参数。
+    if (mode == Solvers::Mode::RTK) {
+        loadRtk(ini, c);
+    } else {
+        loadCommon(ini, c);
+        if (mode == Solvers::Mode::SPP) {
+            // SPP 只用码观测，无相位/滤波参数
+        } else {
+            loadPPPFilter(ini, c);
+            if (mode == Solvers::Mode::LEO) {
+                c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
+                c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
+                c.sppVsPredThresh = ini.getD("solver", "spp_vs_pred_thresh", c.sppVsPredThresh);
+            } else {
+                c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
+            }
+        }
+    }
 
     c.csvPath = ini.get("output", "csv", "");
     c.refX = ini.getD("output", "ref_x", 0.0);
@@ -141,16 +171,15 @@ namespace Cli {
         switch (m) {
             case Solvers::Mode::LEO: return "gnss_leo.csv";
             case Solvers::Mode::RTK: return "gnss_rtk.csv";
-            case Solvers::Mode::PPP: return "gnss_ppp.csv";
+            case Solvers::Mode::PPPStatic: return "gnss_ppp_static.csv";
+            case Solvers::Mode::PPPKinematic: return "gnss_ppp_kin.csv";
             default: return "gnss_spp.csv";
         }
     }
 
     void dumpTask(Solvers::Task &task, const SolverOptions &cfg) {
-        const auto core = task.solveResult();
-        if (!core) return;
-        if (cfg.hasRef) core->refECEF = XYZ(cfg.refX, cfg.refY, cfg.refZ);
-        const std::string path = cfg.csvPath.empty() ? defaultCSVName(core->mode) : cfg.csvPath;
+        if (cfg.hasRef) task.refECEF = XYZ(cfg.refX, cfg.refY, cfg.refZ);
+        const std::string path = cfg.csvPath.empty() ? defaultCSVName(task.mode) : cfg.csvPath;
         std::ofstream out(path);
         if (!out) {
             std::cerr << "无法打开输出文件: " << path << "\n";
@@ -158,8 +187,8 @@ namespace Cli {
         }
         std::size_t n = 0;
         {
-            std::lock_guard lk(core->mutex);
-            n = core->epochs.size();
+            std::lock_guard lk(task.mutex);
+            n = task.epochs.size();
         }
         task.exportCSV(out);
         std::cout << "已写出 " << n << " 历元 -> " << path << "\n";
@@ -175,7 +204,7 @@ namespace Cli {
             if (cfg.realtimeSec <= 0 && cfg.maxEpochs <= 0)
                 waiter = std::thread([&task] {
                     std::cin.get();
-                    task.stop = true;
+                    task.cancel();
                 });
             task.startRealtime();
             task.waitDone();

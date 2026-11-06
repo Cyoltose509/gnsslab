@@ -1,16 +1,18 @@
+#include "ui/GuiColors.h"
 #include <windows.h>
 
 #include "GuiHelpers.h"
 #include "GuiProductSection.h"
 
 #include "core/PathMemory.h"
-#include "core/Products.h"
+#include "io/Products.h"
 #include "io/ProductPicker.h"
 #include "io/ObsSource.h"
 #include "ui/FileDialog.h"
 
 #include "download/ProductMeta.h"
-#include "download/GuiFtpDownload.h"
+#include "download/Acquire.h"
+#include "download/ProductMeta.h"
 
 #include "StringUtils.h"
 #include <algorithm>
@@ -78,9 +80,9 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
     }
 
     if (obsIniKey && std::string(iniKey) == obsIniKey) {
-        static std::map<const void *, Download::Panel::AcquirePanel> panels;
+        static std::map<const void *, Download::Acquire::Panel> panels;
         auto &panel = panels[buf];
-        panel.kind = Download::Panel::AcquirePanel::Kind::Obs;
+        panel.kind = Download::Acquire::Panel::Kind::Obs;
         panel.obsKey = iniKey;
         panel.obsOut = buf;
 
@@ -92,13 +94,13 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
             panel.doy = yd->second;
             panel.open = true;
         }
-        if (panel.open) Download::Panel::renderAcquirePanel(panel, iniKey);
+        if (panel.open) Download::Acquire::render(panel, iniKey);
     }
 
     if (const ProductType ptype = ProductMeta::typeFromIniKey(iniKey); ptype != ProductType::Unknown) {
-        static std::map<const void *, Download::Panel::AcquirePanel> singlePanels;
+        static std::map<const void *, Download::Acquire::Panel> singlePanels;
         auto &panel = singlePanels[buf];
-        panel.kind = Download::Panel::AcquirePanel::Kind::Single;
+        panel.kind = Download::Acquire::Panel::Kind::Single;
         panel.singleType = ptype;
         panel.singleOut = buf;
         if (!panel.onPick)
@@ -119,7 +121,7 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
             panel.doy = d;
             panel.open = true;
         }
-        if (panel.open) Download::Panel::renderAcquirePanel(panel, iniKey);
+        if (panel.open) Download::Acquire::render(panel, iniKey);
     }
 }
 
@@ -134,13 +136,6 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
     const auto resync = [&] {
         p.syncFromFiles();
         p.save();
-    };
-
-    const auto typeLabel = [](const ProductType t) -> const char * {
-        if (const int i = static_cast<int>(t); i >= 0 && i < Download::Panel::kDateTypeCount)
-            return Download::Panel::TYPE_LABELS[i];
-        if (t == ProductType::OBS) return "观测文件";
-        return "未识别";
     };
 
     const auto chosenOf = [&](const std::string &path) -> std::string {
@@ -167,14 +162,6 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
         ImGui::TextDisabled("%d 个文件", static_cast<int>(p.files.size()));
         return;
     }
-
-    // ImGui::Indent(12.0f);
-    // if (!yd) {
-    //     ImGui::TextDisabled("（未填观测文件，日期默认取昨日，可在「获取」面板里改）");
-    // } else {
-    //     ImGui::TextDisabled("观测日期 %s（「获取」默认取该日，可改）",
-    //                         ProductMeta::doyToDateStr(yd->first, yd->second).c_str());
-    // }
 
     if (ImGui::SmallButton("添加文件…##prod")) {
         if (std::vector<std::wstring> ws; ShowOpenFilesDialog(ws, FileDialog::fProd, 2)) {
@@ -209,9 +196,9 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    static std::map<std::string, Download::Panel::AcquirePanel> acqPanels;
+    static std::map<std::string, Download::Acquire::Panel> acqPanels;
     auto &acq = acqPanels[obsIniKey ? obsIniKey : ""];
-    acq.kind = Download::Panel::AcquirePanel::Kind::Products;
+    acq.kind = Download::Acquire::Panel::Kind::Products;
     acq.target = &p.files;
     acq.owner = &p;
     if (ImGui::SmallButton("获取##prod")) {
@@ -230,7 +217,7 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
     }
 
     // 内联展开的产品清单（按钮下方），页面整体往下推
-    if (acq.open) Download::Panel::renderAcquirePanel(acq, obsIniKey ? obsIniKey : "prod");
+    if (acq.open) Download::Acquire::render(acq, obsIniKey ? obsIniKey : "prod");
 
     ImGui::Spacing();
     if (p.files.empty()) {
@@ -254,7 +241,7 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
                 const bool win = use == "选用";
                 ImGui::TextColored(win ? UI::kColPass
                                        : UI::kColMute,
-                                   "[%s/%s]", typeLabel(m->type), use.c_str());
+                                   "[%s/%s]", Download::typeLabel(m->type), use.c_str());
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("x##prod")) {
@@ -270,5 +257,4 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
     if (!msg.empty())
         ImGui::TextColored(ok ? UI::kColPass : UI::kColFail,
                            "%s", msg.c_str());
-    ImGui::Unindent(12.0f);
 }

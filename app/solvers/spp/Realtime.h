@@ -1,59 +1,31 @@
 #pragma once
 
-#include <chrono>
-#include <cmath>
 #include <memory>
-#include <thread>
+#include <string>
 
 #include "SPP.h"
-#include "EpochDecimator.h"
-#include "solvers/common/Session.h"
+#include "solvers/common/Config.h"
+#include "solvers/common/Realtime.h"
 
 namespace NovAtel {
-class SocketReader;
+    class SocketReader;
 }
 
 namespace Solvers::SPP {
     struct Task;
 }
 
-namespace Solvers::SPP {
-    template<class ShouldStop, class OnEpoch>
-    bool pump(NovAtel::SocketReader &reader, ::SPP &spp, const EpochDecimator &dec,
-              ShouldStop &&shouldStop, OnEpoch &&onEpoch) {
-        ObsData obs;
-        while (!shouldStop()) {
-            try {
-                if (reader.getNextEpoch(obs, false)) {
-                    const auto eph = reader.ephSnapshot();
-                    spp.ephTable = *eph;
-                    spp.preprocess(obs);
-                    onEpoch(obs, *eph, dec.accept(obs.weekSecond.sow));
-                } else if (!reader.isConnected() || reader.isStale(std::chrono::milliseconds(5000))) {
-                    return false;
-                } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                }
-            } catch (const std::exception &) {
-                if (!reader.isConnected()) return false;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        }
-        return true;
-    }
-}
-
 namespace Solvers::Realtime {
     class SPPSession final : public Session {
     public:
-        SPPSession(std::shared_ptr<SPP::Task> task, Solvers::RealtimeEndpoint endpoint);
+        SPPSession(std::shared_ptr<SPP::Task> task, RealtimeEndpoint endpoint);
 
         ~SPPSession() override;
 
     protected:
-        const char *tag() const noexcept override;
+        [[nodiscard]] const char *tag() const noexcept override;
 
-        std::string target() const override;
+        [[nodiscard]] std::string target() const override;
 
         bool connect() override;
 
@@ -76,6 +48,5 @@ namespace Solvers::Realtime {
         RealtimeEndpoint endpoint;
         std::unique_ptr<NovAtel::SocketReader> reader;
         ::SPP spp;
-        std::chrono::steady_clock::time_point lastQcTime{};
     };
 }

@@ -460,8 +460,31 @@ void RequestCaptureRegionPNG(const std::wstring &path, int x, int y, int w, int 
 
 HWND GetMainWindowHwnd() { return g_mainHwnd; }
 
-static bool ShowFileDialogImpl(bool save, std::wstring &out,
-                               const GuiFileFilter *filters, int nFilters,
+// 把 GuiFileFilter[] 渲染成 COMDLG_FILTERSPEC[]。names/pats 由调用方持有，
+// 其 .c_str() 在 SetFileTypes 调用期间必须保持有效。
+static void fillFilterSpecs(std::vector<COMDLG_FILTERSPEC> &specs,
+                            std::vector<std::wstring> &names,
+                            std::vector<std::wstring> &pats,
+                            const GuiFileFilter *filters, const int nFilters) {
+    specs.reserve(nFilters);
+    names.reserve(nFilters);
+    pats.reserve(nFilters);
+    for (int i = 0; i < nFilters; ++i) {
+        const GuiFileFilter &f = filters[i];
+        std::wstring pat;
+        for (size_t k = 0; k < f.exts.size(); ++k) {
+            if (k) pat += L';';
+            pat += L"*.";
+            pat += f.exts[k];
+        }
+        names.push_back(f.name + L" (" + pat + L")");
+        pats.push_back(std::move(pat));
+        specs.push_back({names.back().c_str(), pats.back().c_str()});
+    }
+}
+
+static bool ShowFileDialogImpl(const bool save, std::wstring &out,
+                               const GuiFileFilter *filters, const int nFilters,
                                const wchar_t *defName, const wchar_t *defExt) {
     IFileDialog *pfd = nullptr;
     const CLSID clsid = save ? CLSID_FileSaveDialog : CLSID_FileOpenDialog;
@@ -471,11 +494,10 @@ static bool ShowFileDialogImpl(bool save, std::wstring &out,
     if (FAILED(hr) || !pfd) return false;
 
     std::vector<COMDLG_FILTERSPEC> specs;
-    specs.reserve(nFilters);
-    for (int i = 0; i < nFilters; i++)
-        specs.push_back({filters[i].name, filters[i].spec});
+    std::vector<std::wstring> names, pats;
+    fillFilterSpecs(specs, names, pats, filters, nFilters);
     if (!specs.empty())
-        pfd->SetFileTypes((UINT)specs.size(), specs.data());
+        pfd->SetFileTypes(static_cast<UINT>(specs.size()), specs.data());
     if (defExt) pfd->SetDefaultExtension(defExt);
     if (defName && *defName) pfd->SetFileName(defName);
 
@@ -503,20 +525,19 @@ bool ShowSaveFileDialog(std::wstring &out, const GuiFileFilter *filters, int nFi
     return ShowFileDialogImpl(true, out, filters, nFilters, defName, defExt);
 }
 
-bool ShowOpenFileDialog(std::wstring &out, const GuiFileFilter *filters, int nFilters) {
+bool ShowOpenFileDialog(std::wstring &out, const GuiFileFilter *filters, const int nFilters) {
     return ShowFileDialogImpl(false, out, filters, nFilters, nullptr, nullptr);
 }
 
-bool ShowOpenFilesDialog(std::vector<std::wstring> &out, const GuiFileFilter *filters, int nFilters) {
+bool ShowOpenFilesDialog(std::vector<std::wstring> &out, const GuiFileFilter *filters, const int nFilters) {
     IFileOpenDialog *pfd = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
                                  IID_IFileOpenDialog, reinterpret_cast<void **>(&pfd));
     if (FAILED(hr) || !pfd) return false;
 
     std::vector<COMDLG_FILTERSPEC> specs;
-    specs.reserve(nFilters);
-    for (int i = 0; i < nFilters; i++)
-        specs.push_back({filters[i].name, filters[i].spec});
+    std::vector<std::wstring> names, pats;
+    fillFilterSpecs(specs, names, pats, filters, nFilters);
     if (!specs.empty())
         pfd->SetFileTypes((UINT)specs.size(), specs.data());
 

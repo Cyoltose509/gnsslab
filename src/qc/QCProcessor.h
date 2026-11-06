@@ -1,8 +1,9 @@
 #pragma once
 
+#include <memory>
+#include <string>
 #include <vector>
 #include <map>
-#include <string>
 #include "GnssStruct.h"
 
 namespace QC {
@@ -119,5 +120,41 @@ namespace QC {
     };
 
 
+    /// 增量质量分析：逐历元 feed，随时 report 当前快照；finish 收尾后与一次性计算等价。
+    /// 依赖未来的三处（MW 周跳前瞻、钟跳跨历元、三重差分需要 4 点定型）靠内部滞后队列解决，
+    /// 快照会晚若干历元定型，finish 之后不再有滞后。
+    class Stream {
+    public:
+        explicit Stream(double nominalInterval = 0.0);
+
+        ~Stream();
+
+        Stream(const Stream &) = delete;
+
+        Stream &operator=(const Stream &) = delete;
+
+        Stream(Stream &&) noexcept;
+
+        Stream &operator=(Stream &&) noexcept;
+
+        /// 清空状态；nominalInterval <= 0 时用首个采样间隔自推。
+        void reset(double nominalInterval = 0.0);
+
+        void feed(const QCObsEpoch &epoch);
+
+        /// 结算尾部未定型历元；文件读完、实时结束时调用一次。
+        void finish();
+
+        [[nodiscard]] QualityReport report() const;
+
+        [[nodiscard]] int epochs() const;
+
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> mImpl;
+    };
+
+
+    /// 一次性计算：喂一遍 + 收尾 + 快照。
     QualityReport compute(const std::vector<QCObsEpoch> &epochs, double nominalInterval = 0.0);
 }

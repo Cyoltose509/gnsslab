@@ -92,14 +92,8 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
         } else if (p == Parameter::ztd) {
             q = ztdProcNoise;                       // 对流层湿延迟：随机游走
         } else if (p == Parameter::ambiguity) {
-            if (csData && (*csData)[var] >= 2.0) {
-                carry = false;                      // 软重置：钉在 reinit(prefit)，不漂移、不动位置
-            } else if (csData && (*csData)[var] > 0.5) {
-                carry = false;
-                q = ambInitVar;                     // 重置：大初值
-            } else {
-                q = ambProcNoise;                   // 常数模糊度（随机游走）
-            }
+            // 新弧段/周跳：方差回初值让模糊度重新自由；若留 0 方差，相位就成了硬约束，把码的偏差拽进位置
+            q = csData && (*csData)[var] > 0.5 ? ambInitVar : ambProcNoise;
         } else if (p == Parameter::dOX || p == Parameter::dOY || p == Parameter::dOZ) {
             q = 1.0E-10;                            // 接收机天线/参考点常值 ECEF 偏移
         } else if (p == Parameter::codeBias) {

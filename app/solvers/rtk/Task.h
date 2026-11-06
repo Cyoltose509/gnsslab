@@ -1,18 +1,16 @@
 #pragma once
 
-#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <queue>
-#include <set>
 #include <string>
 
 #include "EphemerisTable.h"
 #include "GnssStruct.h"
 #include "RTK.h"
 #include "RTKConfig.h"
-#include "solvers/common/Core.h"
+#include "solvers/common/Task.h"
 
 namespace Solvers::RTK {
     /// RTK 双站解算：文件走配对管线，实时走双流泵；界面在 Panel.cpp。
@@ -23,14 +21,6 @@ namespace Solvers::RTK {
 
         bool useBaseCoord = false;
         Eigen::Vector3d baseXyz{0, 0, 0};
-
-        std::set<char> enabledSystems{'G', 'R', 'E', 'C'};
-
-        RTKConfig rtkCfg{};
-        double cutoffDeg = rtkCfg.cutoffElevRad * RAD_TO_DEG;
-        double sampleInterval = 0.0;
-
-        std::shared_ptr<Solvers::Core> core;
 
         ::RTK rtk{};
 
@@ -43,37 +33,35 @@ namespace Solvers::RTK {
         std::queue<RTKPair> pairQueue;
         std::mutex pairMtx;
         std::condition_variable pairCv;
-        std::atomic<bool> readDone{false};
-        std::atomic<bool> solvingDone{false};
-        std::atomic<int> totalEpochs{0};
+        /// 配对队列腾出空位时通知读取端。
+        std::condition_variable pairSpaceCv;
         EphemerisTable navTable;
-
-        std::shared_ptr<Solvers::Core> solveResult() override { return core; }
 
         void applyConfig(const SolverOptions &cfg);
 
-        /// 把当前历元的 RTK 结果提交进 core；首解时用基准站坐标设 ENU 基准。
-        void commitRtkEpoch(const ObsData &rover);
+
+        /// 解一个配对历元并在出解时提交；processEpoch 的异常只废掉本历元。
+        bool solvePair(const ObsData &base, const ObsData &rover, EphemerisTable &eph);
 
         void loadFromMemory();
 
-        void renderConfigPanel();
+        void renderConfigPanel() override;
 
         void exportCSV(std::ostream &out) const override;
 
         Task() {
-            core = std::make_shared<Solvers::Core>();
-            core->mode = Mode::RTK;
-        }
-
-        ~Task() override {
-            if (core) core->stop = true;
+            mode = Mode::RTK;
+            opts.cutoffDeg = RTKConfig{}.cutoffElevRad * RAD_TO_DEG;
         }
 
     protected:
         void readBody() override;
 
         void solveBody() override;
+
+        void onReset() override;
+
+        void wakeQueues() override;
 
         std::unique_ptr<Realtime::Session> makeSession() override;
     };

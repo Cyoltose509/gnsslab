@@ -16,6 +16,14 @@ namespace {
         return s;
     }
 
+    bool isSpanToken(const std::string &tok) {
+        if (tok.size() != 3) return false;
+        if (std::isdigit(static_cast<unsigned char>(tok[0])) == 0) return false;
+        if (std::isdigit(static_cast<unsigned char>(tok[1])) == 0) return false;
+        return tok[2] == 'D' || tok[2] == 'H' || tok[2] == 'M' || tok[2] == 'S' ||
+               tok[2] == 'C' || tok[2] == 'Y';
+    }
+
     std::optional<ProductMeta> parseRINEX2ShortName(const std::string &filename) {
         std::string base = Str::baseName(filename);
         for (;;) {
@@ -45,7 +53,6 @@ namespace {
         const char t = static_cast<char>(std::tolower(static_cast<unsigned char>(base[11])));
         ProductType type;
         if (t == 'o' || t == 'd') type = ProductType::OBS;
-        else if (t == 'm') type = ProductType::MET;
         else if (t == 'n' || t == 'g') type = ProductType::NAV;
         else return std::nullopt;
 
@@ -97,16 +104,14 @@ std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
 
 
     {
+        // 日期后第一个「两位数字 + 单位」是周期，第二个才是采样；导航文件没有采样段，紧跟的是类型。
         const auto afterDate = static_cast<std::size_t>(it->position(0) + it->length(0));
-        if (const auto u = filename.find('_', afterDate); u != std::string::npos && u + 3 < filename.size()) {
-            if (const std::string tok = filename.substr(u + 1, 3); std::isdigit(static_cast<unsigned char>(tok[0])) &&
-                                                                   std::isdigit(static_cast<unsigned char>(tok[1]))) {
-                if (tok[2] == 'D') {
-                    m.spanDays = (tok[0] - '0') * 10 + (tok[1] - '0');
-                    if (const auto v = filename.find('_', u + 1); v != std::string::npos && v + 3 < filename.size())
-                        m.interval = filename.substr(v + 1, 3);
-                } else {
-                    m.interval = tok;
+        if (const auto periodAt = filename.find('_', afterDate); periodAt != std::string::npos && periodAt + 4 <= filename.size()) {
+            if (const std::string period = filename.substr(periodAt + 1, 3); isSpanToken(period)) {
+                if (period[2] == 'D') m.spanDays = (period[0] - '0') * 10 + (period[1] - '0');
+                if (const auto sampleAt = filename.find('_', periodAt + 1); sampleAt != std::string::npos && sampleAt + 4 <= filename.size()) {
+                    if (const std::string sample = filename.substr(sampleAt + 1, 3); isSpanToken(sample))
+                        m.interval = sample;
                 }
             }
         }
@@ -127,8 +132,9 @@ std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
 
     const std::string low = Str::toLower(filename);
 
-    if (typeTok == "ATT" || ext == "OBX") m.type = ProductType::ATT;
-    else if (typeTok == "MM") m.type = ProductType::MET;
+    // 气象 MM 与 *.rnx 同为 RINEX3 长名，不先拦下会被下面的 NAV 分支当成广播星历
+    if (typeTok == "MM") m.type = ProductType::Unknown;
+    else if (typeTok == "ATT" || ext == "OBX") m.type = ProductType::ATT;
     else if (typeTok == "MO" ||
              (typeTok.size() == 3 && std::isdigit(static_cast<unsigned char>(typeTok[0])) &&
               std::isdigit(static_cast<unsigned char>(typeTok[1])) &&
@@ -164,7 +170,6 @@ std::string ProductMeta::typeDir(const ProductType t) {
         case ProductType::OSB: return "osb";
         case ProductType::VMF: return "vmf";
         case ProductType::ATT: return "att";
-        case ProductType::MET: return "met";
         case ProductType::OBS: return "rinex";
         default: return "other";
     }
@@ -258,11 +263,11 @@ const char *ProductMeta::mirrorRoot() {
     return "ftp://igs.gnsswhu.cn/pub/gps";
 }
 
-const char *ProductMeta::vmfRoot() {
+const char *ProductMeta::VMFRoot() {
     return "https://vmf.geo.tuwien.ac.at/trop_products/GRID/5x5/VMF3/VMF3_OP";
 }
 
-int ProductMeta::gpsWeek(const int year, const int doy) {
+int ProductMeta::GPSWeek(const int year, const int doy) {
     if (doy < 1 || doy > 366) return 0;
 
 
@@ -305,10 +310,10 @@ std::vector<std::string> ProductMeta::scanDirs(const std::set<ProductType> &type
         char buf[256];
         const std::pair<int, int> days2[2] = {{year, doy}, {prevYmd.year, prevDoy}};
         for (const auto &[fst, snd]: days2) {
-            std::snprintf(buf, sizeof(buf), "%s/products/%04d/", mirrorRoot(), gpsWeek(fst, snd));
+            std::snprintf(buf, sizeof(buf), "%s/products/%04d/", mirrorRoot(), GPSWeek(fst, snd));
             add(buf);
 
-            std::snprintf(buf, sizeof(buf), "%s/products/mgex/%04d/", mirrorRoot(), gpsWeek(fst, snd));
+            std::snprintf(buf, sizeof(buf), "%s/products/mgex/%04d/", mirrorRoot(), GPSWeek(fst, snd));
             add(buf);
         }
     }
@@ -322,15 +327,6 @@ std::vector<std::string> ProductMeta::scanDirs(const std::set<ProductType> &type
         std::snprintf(buf, sizeof(buf), "%s/products/ionex/%04d/%03d/", mirrorRoot(), year, doy);
         add(buf);
     }
-    if (types.count(ProductType::MET)) {
-        char buf[160];
-        std::snprintf(buf, sizeof(buf), "%s/data/daily/%04d/%03d/%02dm/", mirrorRoot(), year, doy,
-                      year % 100);
-        add(buf);
-        std::snprintf(buf, sizeof(buf), "%s/data/daily/%04d/%03d/%02dd/", mirrorRoot(), year, doy,
-                      year % 100);
-        add(buf);
-    }
     if (types.count(ProductType::OBS)) {
         char buf[160];
         std::snprintf(buf, sizeof(buf), "%s/data/daily/%04d/%03d/%02dd/", mirrorRoot(), year, doy,
@@ -342,7 +338,7 @@ std::vector<std::string> ProductMeta::scanDirs(const std::set<ProductType> &type
     }
     if (types.count(ProductType::VMF)) {
         char buf[256];
-        std::snprintf(buf, sizeof(buf), "%s/%04d/", vmfRoot(), year);
+        std::snprintf(buf, sizeof(buf), "%s/%04d/", VMFRoot(), year);
         add(buf);
     }
 

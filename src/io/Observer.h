@@ -8,9 +8,10 @@
 #include "EphemerisTable.h"
 #include "Exception.h"
 #include "GnssStruct.h"
+
+#include "novatel/LogReader.h"
 #include "novatel/AsciiReader.h"
 #include "novatel/BinaryReader.h"
-#include "novatel/LogReader.h"
 #include "rinex/RINEXObsReader.h"
 #include "StringUtils.h"
 

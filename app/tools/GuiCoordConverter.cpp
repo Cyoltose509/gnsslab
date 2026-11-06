@@ -1,16 +1,29 @@
 #include "GuiCoordConverter.h"
 #include "imgui.h"
+#include "ui/GuiColors.h"
 #include "Const.h"
 #include "CoordStruct.h"
 #include "CoordConvert.h"
 
+#include <exception>
+#include <iterator>
+#include <string>
+
 
 namespace Tools::CoordConverter {
-    static const char *FRAME_NAMES[] = {"WGS84", "GPS", "CGCS2000", "PZ90"};
-    static constexpr int FRAME_COUNT = 4;
-    static const FrameInfo *FRAMES[] = {
-        &Frame::WGS84, &Frame::GPS, &Frame::CGCS2000, &Frame::PZ90
+    struct FrameItem {
+        const char *name;
+        const FrameInfo *info;
     };
+
+    constexpr FrameItem kFrames[] = {
+        {"WGS84", &Frame::WGS84},
+        {"GPS", &Frame::GPS},
+        {"CGCS2000", &Frame::CGCS2000},
+        {"PZ90", &Frame::PZ90},
+    };
+    constexpr int kFrameCount = std::size(kFrames);
+
     static int s_FrameIdx = 0;
 
 
@@ -21,9 +34,6 @@ namespace Tools::CoordConverter {
     static double s_B_deg = 0.0;
     static double s_L_deg = 0.0;
     static double s_H = 0.0;
-
-
-    static int s_XyzBlhSrc = 0;
 
 
     static double s_RefB_deg = 30.0;
@@ -39,57 +49,68 @@ namespace Tools::CoordConverter {
     static double s_U = 0.0;
 
 
+    /// 用户最后改的是哪一侧：0 = 目标 XYZ，1 = ENU；改参考点后按这一侧重算另一侧。
     static int s_EnuSrc = 0;
 
     static bool s_Initialized = false;
+    static std::string s_Error;
 
 
-    static const FrameInfo &CurFrame() { return *FRAMES[s_FrameIdx]; }
+    static const FrameInfo &CurFrame() { return *kFrames[s_FrameIdx].info; }
+
+    /// 跑一次换算：失败原因留在面板上，而不是静默吞掉让界面看着没反应。
+    template <typename F>
+    static void attempt(const char *what, F &&fn) {
+        try {
+            fn();
+            s_Error.clear();
+        } catch (const std::exception &e) {
+            s_Error = std::string(what) + ": " + e.what();
+        } catch (...) {
+            s_Error = std::string(what) + " 失败";
+        }
+    }
 
     static void SyncXYZToBLH() {
-        try {
+        attempt("XYZ→BLH", [] {
             const BLH blh = Coord::XYZToBLH({s_X, s_Y, s_Z}, CurFrame());
             s_B_deg = blh.B() * RAD_TO_DEG;
             s_L_deg = blh.L() * RAD_TO_DEG;
             s_H = blh.H();
-        } catch (...) {
-        }
+        });
     }
 
     static void SyncBLHToXYZ() {
-        try {
-            XYZ xyz = Coord::BLHToXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
+        attempt("BLH→XYZ", [] {
+            const XYZ xyz = Coord::BLHToXYZ({s_B_deg * DEG_TO_RAD, s_L_deg * DEG_TO_RAD, s_H}, CurFrame());
             s_X = xyz.X();
             s_Y = xyz.Y();
             s_Z = xyz.Z();
-        } catch (...) {
-        }
+        });
     }
 
     static void SyncXYZToENU() {
-        try {
+        attempt("XYZ→ENU", [] {
             const XYZ refXYZ = Coord::BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
             const ENU enu = Coord::XYZToENU({s_TgtX, s_TgtY, s_TgtZ}, refXYZ, CurFrame());
             s_E = enu.E();
             s_N = enu.N();
             s_U = enu.U();
-        } catch (...) {
-        }
+        });
     }
 
     static void SyncENUToXYZ() {
-        try {
+        attempt("ENU→XYZ", [] {
             const XYZ refXYZ = Coord::BLHToXYZ({s_RefB_deg * DEG_TO_RAD, s_RefL_deg * DEG_TO_RAD, s_RefH}, CurFrame());
             const XYZ xyz = Coord::ENUToXYZ({s_E, s_N, s_U}, refXYZ, CurFrame());
             s_TgtX = xyz.X();
             s_TgtY = xyz.Y();
             s_TgtZ = xyz.Z();
-        } catch (...) {
-        }
+        });
     }
 
     static bool InputRow3(const char *id, const char *l1, double *v1, const char *l2, double *v2,
-                          const char *l3, double *v3, const char *fmt, ImGuiInputTextFlags flags = 0) {
+                          const char *l3, double *v3, const char *fmt, const ImGuiInputTextFlags flags = 0) {
         bool edited = false;
         if (ImGui::BeginTable(id, 3, ImGuiTableFlags_SizingStretchSame)) {
             ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthStretch);
@@ -105,6 +126,21 @@ namespace Tools::CoordConverter {
             ImGui::EndTable();
         }
         return edited;
+    }
+
+    static bool frameCombo() {
+        bool changed = false;
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::BeginCombo("##frame", kFrames[s_FrameIdx].name)) {
+            for (int i = 0; i < kFrameCount; ++i) {
+                if (ImGui::Selectable(kFrames[i].name, i == s_FrameIdx)) {
+                    s_FrameIdx = i;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        return changed;
     }
 
     void Render(bool *p_open) {
@@ -123,8 +159,7 @@ namespace Tools::CoordConverter {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("参考系:");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(120);
-        if (ImGui::Combo("##frame", &s_FrameIdx, FRAME_NAMES, FRAME_COUNT)) {
+        if (frameCombo()) {
             SyncXYZToBLH();
             SyncXYZToENU();
         }
@@ -140,10 +175,8 @@ namespace Tools::CoordConverter {
         const bool blh_edited = InputRow3("##blh", "B (度)", &s_B_deg, "L (度)", &s_L_deg, "H (m)", &s_H, "%.9f");
 
         if (xyz_edited) {
-            s_XyzBlhSrc = 0;
             SyncXYZToBLH();
         } else if (blh_edited) {
-            s_XyzBlhSrc = 1;
             SyncBLHToXYZ();
         }
 
@@ -176,6 +209,11 @@ namespace Tools::CoordConverter {
         if (ref_edited) {
             if (s_EnuSrc == 0) SyncXYZToENU();
             else SyncENUToXYZ();
+        }
+
+        if (!s_Error.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(UI::kColFail, "%s", s_Error.c_str());
         }
 
         ImGui::End();

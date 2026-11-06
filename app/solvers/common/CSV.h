@@ -3,11 +3,9 @@
 #include <ostream>
 
 #include "CoordConvert.h"
-#include "Epoch.h"
+#include "Core.h"
 #include "util/CSV.h"
 
-/// 各模式共用的 CSV 单元：状态字、无效行、DOP 五列、一组解（位置+ENU+RMS+sigma）。
-/// 表格怎么排、表头长什么样属于各模式，在各自 Task.cpp 的 exportCSV 里。
 namespace Solvers {
     inline const char *csvStatStr(const int stat) {
         return stat == 1 ? "Fixed" : stat == 2 ? "Float" : "Invalid";

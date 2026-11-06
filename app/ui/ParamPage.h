@@ -103,6 +103,8 @@ namespace UI::ParamPage {
         std::function<void(const S &, const std::string &)> store;
         std::function<void(S &, const std::string &)> fetch;
         std::function<void(S &, const S &)> reset;
+        /// 空 = 一直显示；否则按当前状态决定这项出不出现。隐藏不影响存档与恢复默认。
+        std::function<bool(const S &)> show;
     };
 
     template <class S>
@@ -166,10 +168,14 @@ namespace UI::ParamPage {
         ImGui::PushItemWidth(260);
         bool firstGroup = true;
         for (const auto &group: groups) {
+            const bool anyField = std::any_of(group.fields.begin(), group.fields.end(),
+                                              [&](const Field<S> &f) { return !f.show || f.show(state); });
+            if (!anyField && !group.row) continue;
             if (!firstGroup) ImGui::Separator();
             firstGroup = false;
             if (group.title && *group.title) ImGui::TextUnformatted(group.title);
-            for (const auto &f: group.fields) f.draw(state);
+            for (const auto &f: group.fields)
+                if (!f.show || f.show(state)) f.draw(state);
             if (group.row) group.row(state);
         }
         ImGui::PopItemWidth();

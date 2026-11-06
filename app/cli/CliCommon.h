@@ -2,11 +2,14 @@
 #include <string>
 #include <vector>
 
-#include "solvers/common/Core.h"
+#include "solvers/common/Task.h"
 #include "SolverOptions.h"
 #include "core/IniFile.h"
 
 SolverOptions loadConfig(const IniFile &ini, Solvers::Mode mode);
+
+/// ini 的 mode 键 → 解算模式（spp / ppp_static / ppp_kin / rtk / leo）。
+Solvers::Mode modeFromKey(const std::string &s);
 
 namespace Cli {
     std::string defaultCSVName(Solvers::Mode m);

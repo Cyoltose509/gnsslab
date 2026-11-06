@@ -15,9 +15,13 @@ void RequestCaptureRegionPNG(const std::wstring &path, int x, int y, int w, int 
 HWND GetMainWindowHwnd();
 
 
+// 文件对话框过滤器：只存语义数据（显示名 + 后缀数组），不含点。
+// 形如 "RINEX 观测" + {"??O","rnx","obs"}，对话框内部自动生成
+//   name  = L"RINEX 观测 (*.??O;*.rnx;*.obs)"
+//   spec  = L"*.??O;*.rnx;*.obs"
 struct GuiFileFilter {
-    const wchar_t *name;
-    const wchar_t *spec;
+    std::wstring name;                 // 显示名，如 L"RINEX 观测"（不含后缀括号）
+    std::vector<std::wstring> exts;    // 后缀数组，不含点
 };
 
 

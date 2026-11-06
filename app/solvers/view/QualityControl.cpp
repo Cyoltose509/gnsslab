@@ -1,3 +1,4 @@
+#include "ui/GuiColors.h"
 #include <windows.h>
 #include "QualityControl.h"
 #include "ui/Gui.h"
@@ -36,6 +37,16 @@ namespace QualityControl {
                 else ++it;
             }
             return pool[owner];
+        }
+
+        /// 断点轴：QC 序列只在双频齐全的历元上有点，卫星不可见或丢频的整段是真空档，
+        /// 直连会画出一条跨越数小时的假斜线。首帧按需建，报告换掉时整批作废。
+        const Solvers::BrokenAxis &axisOf(QcUiState &qs, const SatQC &q) {
+            auto &m = qs.axes.bySat;
+            if (const auto it = m.find(q.sat); it != m.end()) return it->second;
+            Solvers::BrokenAxis b;
+            b.build(q.t, qs.axes.interval > 0.0 ? 2.5 * qs.axes.interval : 0.0);
+            return m.emplace(q.sat, std::move(b)).first->second;
         }
 
 
@@ -333,27 +344,39 @@ namespace QualityControl {
                                     const std::vector<const SatQC *> &toPlot) {
             drawPlot(qs, baseName, "mp1_all", "多路径误差 MP1", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "m");
-                for (const auto q: toPlot)
-                    if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->mp1Resid.data(), static_cast<int>(q->t.size()));
+                for (const auto q: toPlot) {
+                    if (q->t.empty()) continue;
+                    const auto &ax = axisOf(qs, *q);
+                    const std::vector<double> v = ax.align(q->mp1Resid);
+                    ImPlot::PlotLine(q->sat.toString().c_str(), ax.t.data(), v.data(), static_cast<int>(ax.t.size()));
+                }
             });
             drawPlot(qs, baseName, "mp2_all", "多路径误差 MP2", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "m");
-                for (const auto q: toPlot)
-                    if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->mp2Resid.data(), static_cast<int>(q->t.size()));
+                for (const auto q: toPlot) {
+                    if (q->t.empty()) continue;
+                    const auto &ax = axisOf(qs, *q);
+                    const std::vector<double> v = ax.align(q->mp2Resid);
+                    ImPlot::PlotLine(q->sat.toString().c_str(), ax.t.data(), v.data(), static_cast<int>(ax.t.size()));
+                }
             });
             drawPlot(qs, baseName, "iod_all", "电离层残差变化率 IOD", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "m/s");
-                for (const auto q: toPlot)
-                    if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->ionoRate.data(), static_cast<int>(q->t.size()));
+                for (const auto q: toPlot) {
+                    if (q->t.empty()) continue;
+                    const auto &ax = axisOf(qs, *q);
+                    const std::vector<double> v = ax.align(q->ionoRate);
+                    ImPlot::PlotLine(q->sat.toString().c_str(), ax.t.data(), v.data(), static_cast<int>(ax.t.size()));
+                }
             });
             drawPlot(qs, baseName, "cnr_all", "载噪比 CNR", kPlotH, [&] {
                 ImPlot::SetupAxes("SOW (s)", "dB-Hz");
-                for (const auto q: toPlot)
-                    if (!q->t.empty())
-                        ImPlot::PlotLine(q->sat.toString().c_str(), q->t.data(), q->cnr.data(), static_cast<int>(q->t.size()));
+                for (const auto q: toPlot) {
+                    if (q->t.empty()) continue;
+                    const auto &ax = axisOf(qs, *q);
+                    const std::vector<double> v = ax.align(q->cnr);
+                    ImPlot::PlotLine(q->sat.toString().c_str(), ax.t.data(), v.data(), static_cast<int>(ax.t.size()));
+                }
             });
         }
 
@@ -417,12 +440,13 @@ namespace QualityControl {
                 else
                     drawPlot(qs, baseName, "slipratio", "周跳比", kPlotH, [&] {
                         // 结构化绑定在 C++17 下不能捕获，改在 lambda 体内重新绑定同一份缓冲
-                        auto &[col, labs, labp] = qs.buf("slipratio");
-                        auto &jx = col[0], &jy = col[1];
+                        auto &[_col, _, _labp] = qs.buf("slipratio");
+                        const auto &_jx = _col[0];
+                        const auto &_jy = _col[1];
                         ImPlot::SetupAxis(ImAxis_X1, "");
                         ImPlot::SetupAxis(ImAxis_Y1, "历元/周跳");
-                        ImPlot::SetupAxisTicks(ImAxis_X1, jx.data(), jc, labp.data());
-                        ImPlot::PlotBars("周跳比", jy.data(), jc, 0.7);
+                        ImPlot::SetupAxisTicks(ImAxis_X1, _jx.data(), jc, _labp.data());
+                        ImPlot::PlotBars("周跳比", _jy.data(), jc, 0.7);
                     });
             }
             drawPlot(qs, baseName, "noise_combined", "伪距噪声 / 载波噪声", kPlotH, [&] {
@@ -555,10 +579,12 @@ namespace QualityControl {
             if (!q.t.empty()) {
                 const std::vector<double> &mp1v = q.mp1Resid;
                 const std::vector<double> &mp2v = q.mp2Resid;
+                const auto &ax = axisOf(qs, q);
                 drawPlot(qs, baseName, "s_mp", "多路径误差 MP1 / MP2", kPlotH, [&] {
                     ImPlot::SetupAxes("SOW (s)", "m");
-                    ImPlot::PlotLine("MP1", q.t.data(), mp1v.data(), static_cast<int>(q.t.size()));
-                    ImPlot::PlotLine("MP2", q.t.data(), mp2v.data(), static_cast<int>(q.t.size()));
+                    const std::vector<double> a = ax.align(mp1v), b = ax.align(mp2v);
+                    ImPlot::PlotLine("MP1", ax.t.data(), a.data(), static_cast<int>(ax.t.size()));
+                    ImPlot::PlotLine("MP2", ax.t.data(), b.data(), static_cast<int>(ax.t.size()));
                 });
                 std::vector<double> sl_t, sl_v;
                 for (int i = 0; i < static_cast<int>(q.t.size()); i++)
@@ -573,17 +599,24 @@ namespace QualityControl {
                     });
                 drawPlot(qs, baseName, "s_iod", "电离层残差变化率 IOD", kPlotH, [&] {
                     ImPlot::SetupAxes("SOW (s)", "m/s");
-                    ImPlot::PlotLine("IOD f1", q.t.data(), q.ionoRate.data(), static_cast<int>(q.t.size()));
-                    if (!q.ionoRate2.empty())
-                        ImPlot::PlotLine("IOD f2", q.t.data(), q.ionoRate2.data(), static_cast<int>(q.t.size()));
+                    const std::vector<double> a = ax.align(q.ionoRate);
+                    ImPlot::PlotLine("IOD f1", ax.t.data(), a.data(), static_cast<int>(ax.t.size()));
+                    if (!q.ionoRate2.empty()) {
+                        const std::vector<double> b = ax.align(q.ionoRate2);
+                        ImPlot::PlotLine("IOD f2", ax.t.data(), b.data(), static_cast<int>(ax.t.size()));
+                    }
                 });
                 if (!q.cnr.empty() || !q.cnr2.empty())
                     drawPlot(qs, baseName, "s_cnr", "载噪比 CNR", kPlotH, [&] {
                         ImPlot::SetupAxes("SOW (s)", "dB-Hz");
-                        if (!q.cnr.empty())
-                            ImPlot::PlotLine("CNR f1", q.t.data(), q.cnr.data(), static_cast<int>(q.t.size()));
-                        if (!q.cnr2.empty() && q.cnr2.size() == q.t.size())
-                            ImPlot::PlotLine("CNR f2", q.t.data(), q.cnr2.data(), static_cast<int>(q.t.size()));
+                        if (!q.cnr.empty()) {
+                            const std::vector<double> a = ax.align(q.cnr);
+                            ImPlot::PlotLine("CNR f1", ax.t.data(), a.data(), static_cast<int>(ax.t.size()));
+                        }
+                        if (!q.cnr2.empty() && q.cnr2.size() == q.t.size()) {
+                            const std::vector<double> b = ax.align(q.cnr2);
+                            ImPlot::PlotLine("CNR f2", ax.t.data(), b.data(), static_cast<int>(ax.t.size()));
+                        }
                     });
             }
         }
@@ -624,29 +657,19 @@ namespace QualityControl {
         }
     }
 
-    template<typename TaskT>
-    void render(const std::shared_ptr<TaskT> &task) {
-
-        if (!task->isRealtime && !task->readDone) {
-            ImGui::TextColored(UI::kColInfo, "正在等待历元读取完全…");
-            return;
-        }
-
-
-
-
-        if (task->view.qcDirty && !task->view.qcComputing) {
-            task->view.qcDirty = false;
-            Solvers::SolverPanel::launchQC(task);
+    void render(Solvers::View &view, const std::string &fileName) {
+        if (view.qcDirty && !view.qcComputing) {
+            view.qcDirty = false;
+            Solvers::SolverPanel::launchQC(view);
         }
 
         std::shared_ptr<QualityReport> repPtr;
         {
-            std::lock_guard lk(task->view.qcMutex);
-            repPtr = task->view.qcReport;
+            std::lock_guard lk(view.qcMutex);
+            repPtr = view.qcReport;
         }
-        if (!repPtr || !task->view.qcReady) {
-            if (task->view.qcComputing) {
+        if (!repPtr || !view.qcReady) {
+            if (view.qcComputing) {
                 ImGui::TextColored(UI::kColInfo, "正在解算…");
             } else {
                 ImGui::TextColored(UI::kColInfo, "正在准备质量分析…");
@@ -658,7 +681,12 @@ namespace QualityControl {
             ImGui::TextColored(UI::kColWarn, "无有效双频观测，无法进行质量分析。");
             return;
         }
-        QcUiState &qs = uiState(task);
+        QcUiState &qs = uiState(view.uiTicket);
+        if (qs.axes.report != repPtr.get()) {
+            qs.axes.report = repPtr.get();
+            qs.axes.interval = rep.interval;
+            qs.axes.bySat.clear();
+        }
 
         ImGui::BeginChild("##qcplots", ImVec2(0, 0));
 
@@ -681,8 +709,8 @@ namespace QualityControl {
 
         renderOverviewStats(rep);
 
-        const std::string baseName = Str::stripExt(task->fileName);
-        renderExportBar(qs, rep, task->fileName);
+        const std::string baseName = Str::stripExt(fileName);
+        renderExportBar(qs, rep, fileName);
 
         std::vector<SatID> list;
         std::vector<const SatQC *> toPlot;
@@ -707,8 +735,4 @@ namespace QualityControl {
 
         renderExportOverlay(qs, baseName);
     }
-
-    // 显式实例化：SPP 与 PPP 共用同一套质量分析渲染
-    template void render<Solvers::Core>(const std::shared_ptr<Solvers::Core> &);
-
 }

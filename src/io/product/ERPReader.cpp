@@ -17,8 +17,9 @@ bool ERPReader::read(const std::string &path) {
     while (std::getline(ifs, line)) {
 
         if (!inData) {
+            // IGS 的 ERP 表头写 Xpole/Ypole，IGS 组合产品（COD/GRG）写 X-P/Y-P
             if (line.find("MJD") != std::string::npos &&
-                line.find("Xpole") != std::string::npos) {
+                (line.find("Xpole") != std::string::npos || line.find("X-P") != std::string::npos)) {
                 inData = true;
             }
             continue;

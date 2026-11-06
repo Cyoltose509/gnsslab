@@ -11,25 +11,26 @@
 
 namespace Solvers::Charts {
 
-    struct ChartVisibility {
-        bool satTable  = true;
-        bool posPanel  = true;
-        bool plot3d    = true;
-        bool residual  = true;
-        bool rtn       = true;
-        bool rms       = true;
-    };
-
+    /// 定位页的视图模型。图表序列与天空图轨迹只持有引用，指向 View 里跨帧复用的副本；
+    /// 逐历元的派生量（当前历元的坐标、DOP、表格行）每帧现算，体积只与卫星数有关。
+    /// `s` 是序列本体（派生量/断点轴），`p` 是它逐历元的数值。
     struct PosTabView {
+        PosTabView(const PlotSeries &series, const std::map<SatID, std::vector<SkyPoint> > &sky)
+            : s(series), p(series.data), skyTracks(sky) {
+        }
+
+        const PlotSeries &s;
+        const PlotData &p;
+        const std::map<SatID, std::vector<SkyPoint> > &skyTracks;
+
         int epochCount = 0;
         bool busy = false;
-        int selectedIdx = -1;
         int *selectedEpoch = nullptr;
         int *selectedSatIdx = nullptr;
+        int *resMode = nullptr;
         Eigen::Vector3d *refECEF = nullptr;
         std::function<void()> onRefChanged;
         bool showRefEnu = true;
-        bool showRefInput = true;
 
         std::string statusText;
         ImVec4 statusColor = UI::kColPass;
@@ -39,88 +40,41 @@ namespace Solvers::Charts {
         std::vector<SatRow> satRows;
         bool hasSatRows = false;
 
-        bool showSatTable = true;
-        bool showPosPanel = true;
-
-        bool showResidual = true;
-
         bool showObsDetail = false;
         TypeValueMap detailObs;
         char detailSystem = 0;
 
 
         bool solved = false;
-        Eigen::Vector3d xyz{0, 0, 0}, enu{0, 0, 0}, blh{0, 0, 0};
-        bool showBaseXyz = false;
-        Eigen::Vector3d *baseXyz = nullptr;
-        double sigmaP = 0;
-        bool showZtd = false; double ztd = 0;
-        bool showVelDop = false;
-        bool showVel = true;
-        Eigen::Vector3d vel{0, 0, 0};
         double pdop = 0, gdop = 0, hdop = 0, vdop = 0, tdop = 0;
         int numSatsResult = 0, numObs = 0;
         std::string noSolveMsg;
 
 
         bool showSolveStatus = false;
-        std::string solveStatusText;
         ImVec4 solveStatusColor = ImVec4(1, 1, 1, 1);
 
-        bool fixedY = false;
-        std::vector<double> times, enu_e, enu_n, enu_u;
-        std::vector<double> enu_solved;
-        bool newed = false;
         bool showEnPlan = true;
-        std::string refCenterLabel;
-        bool showRatio = false;
-        std::vector<double> ratioVals;
         bool hasFloatSeries = false;
-        std::vector<double> float_e, float_n, float_u;
 
-        std::map<SatID, std::vector<SkyPoint>> skyTracks;
-        std::vector<std::pair<SatID, SkyPoint>> curSkyPts;
-        std::map<SatID, std::vector<double>> resT, resV;
-
-
-        std::map<SatID, std::vector<double>> resPhaseT, resPhaseV;
-
-
-        bool hasResidualData = false;
-        bool robustRes = false; double resYlo = -8, resYhi = 8;
-        bool robustResPhase = false; double resPhaseYlo = -0.5, resPhaseYhi = 0.5;
-        int *resMode = nullptr;
+        std::vector<std::pair<SatID, SkyPoint> > curSkyPts;
 
         bool showSigmaDop = false;
         bool isRtk = false;
         bool showSigmaV = true;
-        bool showPdop = true;
-        std::vector<double> sigmaPs, sigmaVs, pdops;
-        std::vector<double> sigmaPFloatVals;
-        std::vector<double> gdops, hdops, vdops, tdops;
-
 
         bool showFixRate = false;
         std::string fixRateText;
 
         bool showRtn = false;
-        bool hasRef = false;
         std::vector<double> rtnTimes, rtnR, rtnT, rtnN, rtnD3;
 
-        bool showRms = false;
-        std::vector<double> rmsCode, rmsPhase;
-
         bool show3d = false;
-        ChartVisibility *renderToggles = nullptr;
         Eigen::Vector3d leoPos3d{0, 0, 0};
-        Eigen::Vector3d leoRef3d{0, 0, 0};
-        std::vector<SatVis> gnssVis;
         std::vector<TrajPoint> leoTraj;
         std::vector<TrajPoint> leoRefTraj;
-        std::map<SatID, std::vector<TrajPoint>> gnssTraj;
 
 
-        bool hasFixedDistinction = false;
         bool hasFixed = false;
         Eigen::Vector3d xyzFixedDisp{0, 0, 0};
         Eigen::Vector3d xyzFloatDisp{0, 0, 0};
@@ -145,7 +99,6 @@ namespace Solvers::Charts {
         std::string solStatShort;
         double solRatio = 0;
 
-        bool isDone = false;
         std::function<void()> onExportCSV;
     };
 

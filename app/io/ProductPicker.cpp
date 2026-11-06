@@ -2,7 +2,7 @@
 
 #include "StringUtils.h"
 #include "TimeConvert.h"
-#include "download/DownloadStore.h"
+#include "download/Store.h"
 
 #include <algorithm>
 #include <cctype>
@@ -122,7 +122,7 @@ namespace ProductPicker {
             const YearMonthDay ymd = Time::YMDToCivil(ord);
             const int dd = static_cast<int>(ord - Time::civilToYMD({ymd.year, 1, 1})) + 1;
 
-            const std::string dir = DownloadStore::dirFor(t, ymd.year, dd);
+            const std::string dir = Download::Store::dateDir(t, ymd.year, dd);
             if (!fs::is_directory(dir, ec)) continue;
 
             for (const auto &ent: fs::directory_iterator(dir, ec)) {

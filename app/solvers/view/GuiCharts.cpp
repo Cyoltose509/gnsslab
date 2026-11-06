@@ -23,48 +23,6 @@ namespace Solvers::Charts {
     }
 
 
-    BrokenSeries::BrokenSeries(const std::vector<double> &times) {
-        const int n = static_cast<int>(times.size());
-        double step = 1.0;
-        {
-            std::vector<double> d;
-            d.reserve(n > 1 ? n - 1 : 0);
-            for (int i = 1; i < n; ++i) {
-                if (std::isfinite(times[i]) && std::isfinite(times[i - 1]) && times[i] > times[i - 1])
-                    d.push_back(times[i] - times[i - 1]);
-            }
-            if (!d.empty()) {
-                std::sort(d.begin(), d.end());
-                step = d[d.size() / 2];
-            }
-        }
-        const double thr = 2.5 * step;
-        for (int i = 0; i < n; ++i) {
-            if (!std::isfinite(times[i])) continue;
-
-            if (!kept.empty() && times[i] - t.back() > thr) {
-                t.push_back(t.back());
-                kept.push_back(-1);
-            }
-            t.push_back(times[i]);
-            kept.push_back(i);
-        }
-    }
-
-    std::vector<double> BrokenSeries::align(const std::vector<double> &y) const {
-        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
-        std::vector<double> vv;
-        vv.reserve(kept.size());
-        for (const int k: kept) {
-            if (k < 0) {
-                vv.push_back(nan);
-                continue;
-            }
-            vv.push_back(k < static_cast<int>(y.size()) && std::isfinite(y[k]) ? y[k] : nan);
-        }
-        return vv;
-    }
-
     void epochCursor(const int id, int *selectedEpoch, const int epochCount) {
         double sx = selectedEpoch ? static_cast<double>(*selectedEpoch) : 0.0;
         ImPlot::DragLineX(id, &sx, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f, ImPlotDragToolFlags_NoFit);
@@ -140,54 +98,52 @@ namespace Solvers::Charts {
     }
 
 
-    void renderENUPlot(const std::vector<double> &times,
+    void renderENUPlot(const BrokenAxis &axis,
                        const std::vector<double> &enu_e,
                        const std::vector<double> &enu_n,
                        const std::vector<double> &enu_u,
-                       int &selectedEpoch, bool &newed, const bool fixedY,
+                       int &selectedEpoch, bool &newed,
                        const bool hasFloat,
                        const std::vector<double> &float_e,
                        const std::vector<double> &float_n,
                        const std::vector<double> &float_u,
                        const int epochCount,
                        const float plotH) {
-        const int n = static_cast<int>(times.size());
-        const int nEpoch = epochCount > 0 ? epochCount : n;
-        if (n <= 0 || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, plotH))) return;
+        if (axis.kept.empty() || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, plotH))) return;
+        const int nEpoch = epochCount > 0 ? epochCount : static_cast<int>(axis.t.size());
         ImPlot::SetupAxes("Epoch", "E/N/U (m)");
-        if (fixedY) ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-        const BrokenSeries br(times);
-        const int nf = static_cast<int>(br.t.size());
-        const std::vector<double> ee = br.align(enu_e), nn = br.align(enu_n), uu = br.align(enu_u);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
+        const int nf = static_cast<int>(axis.t.size());
+        const std::vector<double> ee = axis.align(enu_e), nn = axis.align(enu_n), uu = axis.align(enu_u);
         std::vector<double> fe, fn, fu;
         if (hasFloat) {
-            fe = br.align(float_e);
-            fn = br.align(float_n);
-            fu = br.align(float_u);
+            fe = axis.align(float_e);
+            fn = axis.align(float_n);
+            fu = axis.align(float_u);
         }
-        xAxisFollow(br.t, newed);
+        xAxisFollow(axis.t, newed);
         newed = false;
         if (nf > 0) {
             if (hasFloat && !fe.empty()) {                ImPlotSpec fspec;
                 fspec.LineColor = UI::kColFloat;
                 fspec.LineWeight = 1.0f;
-                ImPlot::PlotLine("E(浮点)", br.t.data(), fe.data(), nf, fspec);
-                ImPlot::PlotLine("N(浮点)", br.t.data(), fn.data(), nf, fspec);
-                ImPlot::PlotLine("U(浮点)", br.t.data(), fu.data(), nf, fspec);
+                ImPlot::PlotLine("E(浮点)", axis.t.data(), fe.data(), nf, fspec);
+                ImPlot::PlotLine("N(浮点)", axis.t.data(), fn.data(), nf, fspec);
+                ImPlot::PlotLine("U(浮点)", axis.t.data(), fu.data(), nf, fspec);
             }
 
             ImPlotSpec espec;
             espec.LineColor = UI::kColX;
             espec.LineWeight = 1.5f;
-            ImPlot::PlotLine("E", br.t.data(), ee.data(), nf, espec);
+            ImPlot::PlotLine("E", axis.t.data(), ee.data(), nf, espec);
             ImPlotSpec nspec;
             nspec.LineColor = UI::kColY;
             nspec.LineWeight = 1.5f;
-            ImPlot::PlotLine("N", br.t.data(), nn.data(), nf, nspec);
+            ImPlot::PlotLine("N", axis.t.data(), nn.data(), nf, nspec);
             ImPlotSpec uspec;
             uspec.LineColor = UI::kColZ;
             uspec.LineWeight = 1.5f;
-            ImPlot::PlotLine("U", br.t.data(), uu.data(), nf, uspec);
+            ImPlot::PlotLine("U", axis.t.data(), uu.data(), nf, uspec);
 
             {
                 std::vector<double> rms3d;
@@ -197,7 +153,7 @@ namespace Solvers::Charts {
                 ImPlotSpec rs;
                 rs.LineColor = ImVec4(1.0f, 0.85f, 0.2f, 0.95f);
                 rs.LineWeight = 1.5f;
-                ImPlot::PlotLine("RMS 3D", br.t.data(), rms3d.data(), nf, rs);
+                ImPlot::PlotLine("RMS 3D", axis.t.data(), rms3d.data(), nf, rs);
             }
         }
         if (nf > 0)
@@ -206,43 +162,10 @@ namespace Solvers::Charts {
     }
 
 
-    void renderRatioPlot(const std::vector<double> &times,
-                         const std::vector<double> &ratioVals,
-                         int &selectedEpoch, bool &newed, const int epochCount) {
-        const int n = static_cast<int>(times.size());
-        const int nEpoch = epochCount > 0 ? epochCount : n;
-        if (n <= 0 || !ImPlot::BeginPlot("Ratio 时序", ImVec2(-1, 300))) return;
-        ImPlot::SetupAxes("Epoch", "Ratio");
-        const BrokenSeries br(times);
-        const int nf = static_cast<int>(br.t.size());
-        const std::vector<double> rr = br.align(ratioVals);
-        xAxisFollow(br.t, newed);
-        newed = false;
-        if (nf > 0) {
-
-            if (br.t.front() <= br.t.back()) {
-                double yt[2] = {br.t.front(), br.t.back()};
-                double yv[2] = {3.0, 3.0};
-                ImPlotSpec thr;
-                thr.LineColor = ImVec4(1.0f, 0.6f, 0.1f, 0.9f);
-                thr.LineWeight = 1.5f;
-                ImPlot::PlotLine("阈值 3.0", yt, yv, 2, thr);
-            }
-            ImPlotSpec rspec;
-            rspec.LineColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
-            rspec.LineWeight = 1.5f;
-            ImPlot::PlotLine("Ratio", br.t.data(), rr.data(), nf, rspec);
-        }
-        if (nf > 0)
-            epochCursor(5, &selectedEpoch, nEpoch);
-        ImPlot::EndPlot();
-    }
-
-
-    void renderSatResidualPlot(const std::map<SatID, std::vector<double> > &satResT,
-                               const std::map<SatID, std::vector<double> > &satResV,
-                               const std::map<SatID, std::vector<double> > &phaseT,
+    void renderSatResidualPlot(const std::map<SatID, std::vector<double> > &satResV,
                                const std::map<SatID, std::vector<double> > &phaseV,
+                               const std::map<SatID, BrokenAxis> &codeAxis,
+                               const std::map<SatID, BrokenAxis> &phaseAxis,
                                int *resMode,
                                int &selectedEpoch, const int epochCount, bool &newed,
                                const double *codeLo, const double *codeHi,
@@ -258,8 +181,8 @@ namespace Solvers::Charts {
         if (resMode) *resMode = mode;
         const bool phase = mode == 1;
 
-        const auto &T = phase ? phaseT : satResT;
         const auto &V = phase ? phaseV : satResV;
+        const auto &A = phase ? phaseAxis : codeAxis;
         const double *lo = phase ? phaseLo : codeLo;
         const double *hi = phase ? phaseHi : codeHi;
 
@@ -280,21 +203,14 @@ namespace Solvers::Charts {
                     ImPlot::SetupAxisLimits(ImAxis_Y1, *lo, *hi, ImPlotCond_Once);
             }
 
-            auto plotOne = [&](const std::map<SatID, std::vector<double> > &Ts,
-                               const std::map<SatID, std::vector<double> > &Vs,
-                               const std::string &suffix) {
-                for (auto &[sat, vals]: Vs) {
-                    auto it = Ts.find(sat);
-                    if (it == Ts.end() || vals.empty()) continue;
-                    const std::string base = sat.toString() + suffix;
-                    const BrokenSeries br(it->second);
-                    const std::vector<double> vv = br.align(vals);
-                    if (br.t.empty()) continue;
-                    ImPlot::PlotLine(base.c_str(), br.t.data(), vv.data(), static_cast<int>(br.t.size()));
-                }
-            };
-
-            plotOne(T, V, "");
+            for (auto &[sat, vals]: V) {
+                const auto itA = A.find(sat);
+                if (itA == A.end() || itA->second.kept.empty() || vals.empty()) continue;
+                const BrokenAxis &axis = itA->second;
+                const std::vector<double> vv = axis.align(vals);
+                const std::string base = sat.toString();
+                ImPlot::PlotLine(base.c_str(), axis.t.data(), vv.data(), static_cast<int>(axis.t.size()));
+            }
             epochCursor(1, &selectedEpoch, epochCount);
             ImPlot::EndPlot();
         }
@@ -333,7 +249,8 @@ namespace Solvers::Charts {
         }
 
         auto pt = [&](const float azDeg, const float elDeg) -> ImVec2 {
-            const float r = R * (1.0f - elDeg / 90.0f);
+            const float el = std::clamp(elDeg, 0.0f, 90.0f);   // 防止非有限/越界值画出圆外
+            const float r = R * (1.0f - el / 90.0f);
             const float a = azDeg * static_cast<float>(DEG_TO_RAD);
             return {cx + r * std::sin(a), cy - r * std::cos(a)};
         };
@@ -344,7 +261,16 @@ namespace Solvers::Charts {
             trkCol = IM_COL32((trkCol >> IM_COL32_R_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_G_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_B_SHIFT) & 0xFF, 120);
-            int segStart = 0;
+
+            // 先把每个点映射到屏幕坐标，再分段。分段依据：
+            //  1) epIdx 间隔过大（卫星落到地平线下 / 数据中断）；
+            //  2) 相邻两点屏幕距离过大（方位角绕回、跨地平线、或观测异常导致的跳变）。
+            //  两者任一成立即断开，避免把圆两侧的点用一条直线（横穿线）相连。
+            //  阈值 0.5R 远小于正常采样步长（≤0.02R），不会误断连续弧段。
+            std::vector<ImVec2> sp(pts.size());
+            for (std::size_t k = 0; k < pts.size(); ++k)
+                sp[k] = pt(pts[k].azDeg, pts[k].elDeg);
+
             int gapThr = 2;
             {
                 std::vector<int> gaps;
@@ -352,19 +278,27 @@ namespace Solvers::Charts {
                 for (std::size_t i = 1; i < pts.size(); ++i)
                     gaps.push_back(pts[i].epIdx - pts[i - 1].epIdx);
                 if (!gaps.empty()) {
-                    std::sort(gaps.begin(), gaps.end());
-                    gapThr = std::max(2, 3 * gaps[gaps.size() / 2]);
+                    const int minGap = *std::min_element(gaps.begin(), gaps.end());
+                    gapThr = std::max(2, 3 * minGap);
                 }
             }
+            const float maxJump = 0.5f * R;
+
+            int segStart = 0;
             for (std::size_t i = 1; i <= pts.size(); ++i) {
-                if (i == pts.size() || pts[i].epIdx - pts[i - 1].epIdx > gapThr) {
+                bool brk = (i == pts.size());
+                if (!brk) {
+                    const int gap = pts[i].epIdx - pts[i - 1].epIdx;
+                    const float dx = sp[i].x - sp[i - 1].x;
+                    const float dy = sp[i].y - sp[i - 1].y;
+                    if (gap > gapThr || (dx * dx + dy * dy) > maxJump * maxJump) brk = true;
+                }
+                if (brk) {
                     if (i - segStart >= 2) {
-                        std::vector<ImVec2> seg;
-                        for (int k = segStart; k < static_cast<int>(i); ++k)
-                            seg.push_back(pt(pts[k].azDeg, pts[k].elDeg));
-                        dl->AddPolyline(seg.data(), static_cast<int>(seg.size()), trkCol, ImDrawFlags_None, 1.5f);
+                        dl->AddPolyline(&sp[segStart], static_cast<int>(i - segStart),
+                                        trkCol, ImDrawFlags_None, 1.5f);
                         for (int k = segStart; k < static_cast<int>(i); k += 5)
-                            dl->AddCircleFilled(seg[k - segStart], 1.5f, trkCol);
+                            dl->AddCircleFilled(sp[k], 1.5f, trkCol);
                     }
                     segStart = static_cast<int>(i);
                 }
@@ -385,10 +319,10 @@ namespace Solvers::Charts {
     }
 
 
-    static void renderLeo3DImpl(const Eigen::Vector3d &leoPos,
-                                const std::vector<TrajPoint> &leoTraj,
-                                const std::vector<TrajPoint> &refTraj,
-                                const float sizePx) {
+    void renderLeo3D(const Eigen::Vector3d &leoPos,
+                     const std::vector<TrajPoint> &leoTraj,
+                     const std::vector<TrajPoint> &refTraj,
+                     const float sizePx) {
         if (leoTraj.size() < 2) {
             ImGui::TextDisabled("(轨迹点不足，无法绘制 3D)");
             return;
@@ -413,33 +347,18 @@ namespace Solvers::Charts {
             ImGui::TextDisabled("(有效轨迹点不足，无法绘制 3D)");
             return;
         }
-
+        std::vector<double> rx, ry, rz;
+        if (!refTraj.empty()) fillXYZ(refTraj, rx, ry, rz);
         if (ImPlot3D::BeginPlot("LEO 轨迹 (ECEF XYZ)", ImVec2(-1, sizePx))) {
             ImPlot3D::SetupAxes("X (m)", "Y (m)", "Z (m)");
             ImPlot3D::PlotLine("LEO 估计", xs.data(), ys.data(), zs.data(), static_cast<int>(xs.size()));
-            if (!refTraj.empty()) {
-                std::vector<double> rx, ry, rz;
-                fillXYZ(refTraj, rx, ry, rz);
-                if (rx.size() >= 2)
-                    ImPlot3D::PlotLine("参考轨道", rx.data(), ry.data(), rz.data(), static_cast<int>(rx.size()));
-            }
+            if (rx.size() >= 2)
+                ImPlot3D::PlotLine("参考轨道", rx.data(), ry.data(), rz.data(), static_cast<int>(rx.size()));
             if (leoPos.norm() > 1e3 && std::isfinite(leoPos.x()) && std::isfinite(leoPos.y()) && std::isfinite(leoPos.z())) {
                 const double px[1] = {leoPos.x()}, py[1] = {leoPos.y()}, pz[1] = {leoPos.z()};
                 ImPlot3D::PlotScatter("当前位置", px, py, pz, 1);
             }
             ImPlot3D::EndPlot();
-        }
-    }
-
-
-    void renderLeo3D(const Eigen::Vector3d &leoPos,
-                     const std::vector<TrajPoint> &leoTraj,
-                     const std::vector<TrajPoint> &refTraj,
-                     const float sizePx) {
-        __try {
-            renderLeo3DImpl(leoPos, leoTraj, refTraj, sizePx);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            ImGui::TextColored(UI::kColFail, "LEO 3D 轨迹渲染异常，已跳过");
         }
     }
 }

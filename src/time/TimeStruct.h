@@ -181,7 +181,7 @@ public:
     long m_day{}; // Modified Julian Day
     double m_sod{}; // seconds-of-day
     TimeSystem m_timeSystem;
-}; // end class CommonTime
+};
 
 inline std::ostream &operator<<(std::ostream &os, const CommonTime &ct) {
     os << ct.toString();

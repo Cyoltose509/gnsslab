@@ -34,8 +34,10 @@ public:
 
     [[nodiscard]] Eigen::Vector3d getRcvPCOENU(const std::string &rcvType, const CommonTime &t) const;
 
+    /// 把天线相位中心改正加到卫星坐标上：本体姿态优先用 ORBEX 四元数（satBody），
+    /// 没有 ATT 时退回由太阳方向推的名义偏航。
     void applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const CommonTime &epoch,
-                     const FreqCombo &def) const;
+                     const FreqCombo &def, const Eigen::Matrix3d *satBody = nullptr) const;
 
 
     [[nodiscard]] double rcvPCVIF(const std::string &rcvType, char sys, const FreqCombo &def,

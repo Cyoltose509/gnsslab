@@ -15,7 +15,12 @@ set(LIB_SOURCES
         core/CoordConvert.cpp
         core/Troposphere.h
         core/Troposphere.cpp
+        core/Geodesy.h
+        core/Ionosphere.h
+        core/Weight.h
         io/Observer.h
+        io/FileCache.h
+        io/Decimator.h
         io/novatel/LogReader.h
         io/novatel/LogReader.cpp
         io/novatel/BinaryReader.h
@@ -32,6 +37,7 @@ set(LIB_SOURCES
         io/novatel/SocketReader.cpp
         client/SocketClient.h
         client/SocketClient.cpp
+        io/rinex/RINEXFileBase.h
         io/rinex/RINEXObsReader.h
         io/rinex/RINEXObsReader.cpp
         io/rinex/RINEX2ObsReader.cpp
@@ -46,8 +52,6 @@ set(LIB_SOURCES
         io/product/ERPReader.cpp
         io/product/TROReader.h
         io/product/TROReader.cpp
-        io/product/METReader.h
-        io/product/METReader.cpp
         io/product/ATTReader.h
         io/product/ATTReader.cpp
         io/product/VMF3Reader.h
@@ -68,6 +72,7 @@ set(LIB_SOURCES
         solver/DualPair.h
         solver/DualPair.cpp
         solver/TropoGrid.h
+        solver/SPPConfig.h
         solver/SPP.h
         solver/SPP.cpp
         solver/TropoSite.h
@@ -86,6 +91,7 @@ set(LIB_SOURCES
         solver/GnssEKF.cpp
         solver/ARLambda.h
         solver/ARLambda.cpp
+        solver/RTKConfig.h
         solver/RTK.h
         solver/RTK.cpp
         qc/QCProcessor.h

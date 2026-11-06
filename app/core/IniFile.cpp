@@ -64,7 +64,10 @@ double IniFile::getD(const std::string &sec, const std::string &key, const doubl
 bool IniFile::getB(const std::string &sec, const std::string &key, const bool def) const {
     const std::string v = get(sec, key);
     if (v.empty()) return def;
-    return v == "1" || v == "true" || v == "yes" || v == "on" || v == "TRUE";
+    const std::string low = Str::toLower(v);
+    if (low == "true" || low == "yes" || low == "on") return true;
+    if (low == "false" || low == "no" || low == "off") return false;
+    try { return std::stoi(v) != 0; } catch (...) { return def; }
 }
 
 void IniFile::set(const std::string &sec, const std::string &key, const std::string &val) {

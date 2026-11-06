@@ -8,6 +8,7 @@
 #include "CoordConvert.h"
 #include "Weight.h"
 #include "TimeStruct.h"
+#include "TimeConvert.h"
 #include <Eigen/Eigen>
 #include <map>
 #include <set>
@@ -16,6 +17,14 @@
 #include <utility>
 #include <string>
 
+namespace {
+    /// 码/相位预fit 的粗差门限(m)，判之前先扣掉同系统中位数
+    constexpr double kPrefitGateM = 30.0;
+    /// 相位预fit 的粗差门限(m)：相位噪声在厘米级，远大于此即明显粗差/周跳，
+    /// 与码分开给阈值——码可用 30m，相位绝不能这么松（否则像 G03 那样 ~12m 的相位
+    /// 残差会漏网，被模糊度吸收后拖出位置斜坡）。
+    constexpr double kPhasePrefitGateM = 5.0;
+}
 
 bool PPPStatic::loadSP3(const std::string &path) {
     return mSp3.read(path);
@@ -41,10 +50,6 @@ bool PPPStatic::loadERP(const std::string &path) {
 
 bool PPPStatic::loadTRO(const std::string &path) {
     return mTro.read(path);
-}
-
-bool PPPStatic::loadMET(const std::string &path) {
-    return mMet.read(path);
 }
 
 bool PPPStatic::loadATT(const std::string &path) {
@@ -113,7 +118,10 @@ void PPPStatic::computeSatPos(ObsData &obsData) {
             if (!clkOk) t_emit.m_sod -= eph->getPVT(t0, &def).clockBias;
             pvt = eph->getPVT(t_emit, &def);
         }
-        mAntx.applySatPCO(sat, pvt.p, t_emit, def);
+        Eigen::Matrix3d attM;
+        const Eigen::Matrix3d *att =
+                mAtt.bodyDCM(sat, static_cast<double>(Time::CommonToMJD(t_emit).mjd), attM) ? &attM : nullptr;
+        mAntx.applySatPCO(sat, pvt.p, t_emit, def, att);
         satPVTTransTime[sat] = pvt;
     }
 }
@@ -274,7 +282,7 @@ double PPPStatic::pcvCorrection(const SatID &sat) const {
 }
 
 void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
-                                      double mapW, double tropoFixed) {
+                                      double mapW, double tropoFixed, const bool probeOnly) {
     const FreqCombo &def = *freqComboFor(sat);
     const Variable vclk(mCurObs->station, sysCdtParam.at(sat.system));
     const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
@@ -337,7 +345,13 @@ void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
     const double phasePrefit = L_IF - (rho - dts - rel) - ambMean - clkMean - ztdMean * mapW - tropoFixed - windup_m;
 
 
-    if (mProcEpoch > GATE_WARMUP && (std::abs(codePrefit) > 30.0 || std::abs(phasePrefit) > 30.0)) {
+    if (probeOnly) {
+        mPrefitProbe[sat] = PrefitRec{codePrefit, phasePrefit,
+                                      mCsData && mCsData->count(vamb) > 0};
+        return;
+    }
+
+    if (mPrefitBad.count(sat)) {
         satRejected.insert(sat);
         return;
     }
@@ -512,7 +526,6 @@ void PPPStatic::processSatellite(const SatID &sat, const TypeValueMap &tv) {
         }
     }
     mCurrentSatSet.insert(sat);
-    addSatelliteEquations(sat, tv, mW, tropoFixed);
 }
 
 void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) {
@@ -551,7 +564,7 @@ void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Var
     mCsData = &csData;
     mGfEpoch = CycleSlipEpoch{};
 
-    mEpochTropo.update(mTropoGrid, mConfig.tropoMap, xyzEst, obsData.epoch, &mMet);
+    mEpochTropo.update(mTropoGrid, mConfig.tropoMap, xyzEst, obsData.epoch);
     if (!mTro.empty()) {
         if (double gn = 0.0, ge = 0.0, sgn = 0.0, sge = 0.0;
             mTro.getTropoGrad(mCurObs->station, obsData.epoch, gn, ge, sgn, sge)) {
@@ -562,6 +575,13 @@ void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Var
 
     for (const auto &[sat, tv]: obsData.satTypeValueData)
         processSatellite(sat, tv);
+
+    mPrefitProbe.clear();
+    for (const auto &[sat, tv]: obsData.satTypeValueData)
+        if (mSatMap.count(sat)) addSatelliteEquations(sat, tv, mSatMap.at(sat), mSatTropoFixed.at(sat), true);
+    decidePrefitGate();
+    for (const auto &[sat, tv]: obsData.satTypeValueData)
+        if (mSatMap.count(sat)) addSatelliteEquations(sat, tv, mSatMap.at(sat), mSatTropoFixed.at(sat), false);
 
     {
         SatIDSet gfExcludeSet;
@@ -584,6 +604,40 @@ void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Var
     addZTDConstraint();
 
     mPrevSatSet = std::move(mCurrentSatSet);
+}
+
+void PPPStatic::decidePrefitGate() {
+    mPrefitBad.clear();
+    if (mProcEpoch <= GATE_WARMUP || mPrefitProbe.empty()) return;
+
+    const auto medianBySys = [this] {
+        std::map<char, std::vector<double>> bySys;
+        for (const auto &[sat, r]: mPrefitProbe) bySys[sat.system].push_back(r.code);
+        std::map<char, double> med;
+        for (auto &[sys, v]: bySys) {
+            const auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
+            std::nth_element(v.begin(), mid, v.end());
+            med[sys] = *mid;
+        }
+        return med;
+    };
+
+    // 同系统中位数就是公共偏差（接收机钟跳、公共多路径），判粗差前先扣掉它：
+    // 不扣的话，钟跳会让所有星一起超限，整历元被丢掉，而丢掉的历元又不会更新钟差，
+    // 于是永远恢复不了——整段解就一直空着。
+    std::map<char, double> offset = medianBySys();
+
+    int pass = 0;
+    for (const auto &[sat, r]: mPrefitProbe) {
+        const double o = offset[sat.system];
+        // 新弧段的相位预fit 已把钟差反算进模糊度，扣公共偏移反而会误杀
+        const double phaseRes = std::abs(r.freshAmb ? r.phase : r.phase - o);
+        if (const double codeRes = std::abs(r.code - o);
+            codeRes > kPrefitGateM || phaseRes > kPhasePrefitGateM) mPrefitBad.insert(sat);
+        else ++pass;
+    }
+    // 大面积同向超限是公共项还没吃掉（位置未收敛），不是单星粗差：全放行，交给滤波吸收
+    if (pass == 0 || pass < mConfig.minSatsForUpdate) mPrefitBad.clear();
 }
 
 // 对流层 ZTD 状态 + 先验/外部产品约束方程
@@ -1086,8 +1140,7 @@ void PPPStatic::applyOptions(const SolverOptions &o) {
     setAmbInitVar(c.ambInitVar);
     setZTDProcNoise(c.ztdProcNoise);
     setZTDPriorSigma(c.ztdPriorSigma);
-    if (o.kinematic) setPosProcNoise(o.posNoise);
-    else setPosProcNoise(o.staticPosNoise);
+    setPosProcNoise(o.posNoise);
     setPosVarFloor(c.posVarFloor);
     setAmbProcNoise(c.ambNoise);
     setTROZTDSigma(c.troZtdSigma);

@@ -7,7 +7,6 @@
 #include <Eigen/Eigen>
 
 class CommonTime;
-class METReader;
 
 /// 测站对流层快照
 class TropoSite {
@@ -24,8 +23,7 @@ public:
     void reset();
 
     void update(const TropoGrid &table, Troposphere::Map map, const Eigen::Vector3d &xyzEcef,
-                const CommonTime &epoch, const METReader *met = nullptr,
-                const FrameInfo &frame = Frame::WGS84);
+                const CommonTime &epoch, const FrameInfo &frame = Frame::WGS84);
 
     [[nodiscard]] double latDeg() const;
     [[nodiscard]] double lonDeg() const;

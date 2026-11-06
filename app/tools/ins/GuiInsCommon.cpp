@@ -12,7 +12,7 @@ namespace Tools::Ins {
 
 
 
-        constexpr const char *kInsPrefix = "ins_";
+        constexpr auto kInsPrefix = "ins_";
 
 
 
@@ -247,7 +247,7 @@ namespace Tools::Ins {
         return !res.conflict.empty();
     }
 
-    std::string ScaleIdentifier::openFailure(const std::string &path) const {
+    std::string ScaleIdentifier::failureMessage(const std::string &path) const {
         return mixedModel() ? res.conflict : "无法打开 IMU 日志：" + path;
     }
 

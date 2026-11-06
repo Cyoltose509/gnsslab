@@ -381,9 +381,9 @@ inline std::ostream &operator<<(std::ostream &os, const EquID &equID) {
 }
 
 struct EquData {
-    double prefit;
+    double prefit = 0.0;
     std::map<Variable, double> varCoeffData;
-    double weight;
+    double weight = 1.0;
     double varBudget = 0.0; // 完整误差方差预算(对流层+轨道/钟差)，仅供后验抗差 sigma 使用，不改滤波权
 };
 

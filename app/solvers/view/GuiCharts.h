@@ -23,14 +23,6 @@ namespace Solvers::Charts {
         double phaseRes = std::numeric_limits<double>::quiet_NaN();
     };
 
-    // 断点感知时间序列：相邻有限点间隔超过中位步长 2.5 倍时插入 NaN 断点，时间序列图据此断线。
-    struct BrokenSeries {
-        std::vector<double> t;
-        std::vector<int> kept;
-        explicit BrokenSeries(const std::vector<double> &times);
-        std::vector<double> align(const std::vector<double> &y) const;
-    };
-
     // 红色可拖拽时间游标：拖动结果经 lround+clamp 同步回 *selectedEpoch（空指针只画线不同步）。
     void epochCursor(int id, int *selectedEpoch, int epochCount);
 
@@ -42,11 +34,11 @@ namespace Solvers::Charts {
     }
 
     void renderSatelliteTable(const std::vector<SatRow> &rows, int &selectedSatIdx);
-    void renderENUPlot(const std::vector<double> &times,
+    void renderENUPlot(const BrokenAxis &axis,
                        const std::vector<double> &enu_e,
                        const std::vector<double> &enu_n,
                        const std::vector<double> &enu_u,
-                       int &selectedEpoch, bool &newed, bool fixedY = false,
+                       int &selectedEpoch, bool &newed,
                        bool hasFloat = false,
                        const std::vector<double> &float_e = {},
                        const std::vector<double> &float_n = {},
@@ -54,14 +46,10 @@ namespace Solvers::Charts {
                        int epochCount = -1,
                        float plotH = 380.0f);
 
-    void renderRatioPlot(const std::vector<double> &times,
-                         const std::vector<double> &ratioVals,
-                         int &selectedEpoch, bool &newed, int epochCount = -1);
-
-    void renderSatResidualPlot(const std::map<SatID, std::vector<double>> &satResT,
-                               const std::map<SatID, std::vector<double>> &satResV,
-                               const std::map<SatID, std::vector<double>> &phaseT,
+    void renderSatResidualPlot(const std::map<SatID, std::vector<double>> &satResV,
                                const std::map<SatID, std::vector<double>> &phaseV,
+                               const std::map<SatID, BrokenAxis> &codeAxis,
+                               const std::map<SatID, BrokenAxis> &phaseAxis,
                                int *resMode,
                                int &selectedEpoch, int epochCount, bool &newed,
                                const double *codeLo, const double *codeHi,

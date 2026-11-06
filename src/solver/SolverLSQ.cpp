@@ -1,5 +1,4 @@
 #include "SolverLSQ.h"
-#include <cmath>
 
 void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const bool computeCov) {
     // 仅在变量集合内容变化时重建索引缓存，避免每次求解 O(n) 线性扫描
@@ -7,7 +6,7 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const
         m_varSetCache = equSys.varSet;
         m_varIndex.clear();
         int i = 0;
-        for (const auto &v: m_varSetCache) m_varIndex[v] = i++;
+        for (const auto &var: m_varSetCache) m_varIndex[var] = i++;
     }
     currentUnkSet = m_varSetCache;
     const auto numUnk = static_cast<int>(currentUnkSet.size());

@@ -18,7 +18,6 @@ Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisT
     ObsData work = obs;
     work.antennaPosition = Eigen::Vector3d::Zero();
     try { if (spp.processEpoch(work)) return spp.result.xyz; } catch (...) {
-
     }
     return Eigen::Vector3d::Zero();
 }
@@ -49,7 +48,7 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
     if (rover.antennaPosition.norm() > 1e3) {
         mRoverApprox = rover.antennaPosition;
     } else {
-        if (const std::size_t es =eph.gps.size() + eph.bds.size() + eph.gal.size() + eph.glo.size();
+        if (const std::size_t es = eph.gps.size() + eph.bds.size() + eph.gal.size() + eph.glo.size();
             mRoverApprox.norm() < 1e3 || es > mRoverEphSize) {
             const Eigen::Vector3d p = estimateApproxPosition(rover, eph, mConfig.enabledSystems,
                                                              mConfig.cutoffElevRad * RAD_TO_DEG);
@@ -70,7 +69,7 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
 
     //构建双差几何 + 选参考星 + 记录参与卫星集合
     if (!buildGeometry()) return false;
-    // 站间单差方差（mSdVar）→ 预取「迭代不变」数据到 mDDCache，供 buildEquSys 各次迭代复用
+    // 站间单差方差（mSdVar）
     computeSdVariance();
     buildDDCache();
 
@@ -178,8 +177,8 @@ bool RTK::buildGeometry() {
             sysPart.push_back(sat);
         }
         if (sysPart.size() < 2) continue; // 双差至少需 2 颗
-        // 参考星 = 流动站高度角最大者（默认排除北斗 GEO）
-        const auto ref = selectRtkRefSat(sysPart, satRoverElevData, mConfig.excludeGeoRef);
+        // 参考星 = 流动站高度角最大者
+        const auto ref = selectRtkRefSat(sysPart);
         if (!ref) continue;
         mRtkRefSat[sys] = *ref;
         mRtkPartSats[sys] = std::move(sysPart);
@@ -267,18 +266,20 @@ void RTK::computeSdVariance() {
     }
 }
 
-std::optional<SatID> RTK::selectRtkRefSat(const std::vector<SatID> &candidates,
-                                          const std::map<SatID, double> &roverElev,
-                                          const bool excludeGeo) {
+std::optional<SatID> RTK::selectRtkRefSat(const std::vector<SatID> &candidates) const {
     // 候选 = 系统内满足截止角/可用观测的星；可选排除北斗 GEO
     std::vector<SatID> cands;
-    for (const SatID &s: candidates)
-        if (!excludeGeo || getSatType(s.system, s.id) != SatType::GEO) cands.push_back(s);
+    for (const SatID &s: candidates) {
+        if (mConfig.excludeGeoRef && mEph) {
+            if (const Ephemeris *e = mEph->find(s, mRtkBase->epoch); e && e->isGEO()) continue;
+        }
+        cands.push_back(s);
+    }
     if (cands.empty()) return std::nullopt;
     // 参考星 = 流动站高度角最大者
     return *std::max_element(cands.begin(), cands.end(),
                              [&](const SatID &a, const SatID &b) {
-                                 return roverElev.at(a) < roverElev.at(b);
+                                 return satRoverElevData.at(a) < satRoverElevData.at(b);
                              });
 }
 
@@ -323,9 +324,11 @@ void RTK::buildWeightMatrix(const EquSys &eq) {
     mWeightReady = true;
 }
 
-void RTK::solveIteration(SolverLSQ &solver, EquSys &eq) {
-    if (mConfig.fullCovariance) solver.solve(eq, mWeightMatrix, false);
-    else solver.solve(eq, eq.weightVector().asDiagonal().toDenseMatrix(), false);
+void RTK::solveIteration(SolverLSQ &solver, EquSys &eq) const {
+    if (mConfig.fullCovariance)
+        solver.solve(eq, mWeightMatrix, false);
+    else
+        solver.solve(eq, eq.weightVector().asDiagonal().toDenseMatrix(), false);
 }
 
 // 后处理回填
@@ -359,8 +362,6 @@ void RTK::detectSlips() {
     const double gfThr = mConfig.useGfCycleSlip ? 1.0 : 0.0; // >0 开启 GF
     const double gfMult = mConfig.gfSlipMult; // GF 周跳阈值倍数
 
-    // 配检测器、喂数、GF 簿记：基站与流动站走同一条。
-    // sat 走形参而不是捕获：它是结构化绑定，C++17 的 lambda 捕获不了。
     const auto feedSlot = [&](std::map<SatID, CycleSlip> &dets, const FreqCombo &combo,
                               const SatID &sat, const TypeValueMap &tv, const ObsData *obs) {
         CycleSlip &det = dets[sat];
@@ -395,7 +396,6 @@ void RTK::detectSlips() {
         }
     }
 
-    // 弧段中断（本历元未喂有效观测）的卫星：喂入 valid=false 断开 GF 弧段，避免重现时误报
     auto feedGap = [&](std::map<SatID, CycleSlip> &m, const std::set<SatID> &fed) {
         for (auto &[sat, det]: m)
             if (!fed.count(sat)) det.feedGap();
@@ -409,8 +409,7 @@ void RTK::detectSlips() {
 }
 
 
-void RTK::addDoubleDiffEquation(EquSys &eq, const DDCache &c,
-                                const Eigen::Vector3d &ddLos, double ddGeom,
+void RTK::addDoubleDiffEquation(EquSys &eq, const DDCache &c,const Eigen::Vector3d &ddLos, double ddGeom,
                                 int freq, bool isPhase, bool fixed) const {
     const SatID &sat = c.sat;
     const char sys = c.sys;
@@ -443,7 +442,7 @@ bool RTK::solveFloat(EquSys &eq, SolverLSQ &solver, Eigen::Vector3d &baseline) {
     for (int iter = 0; iter < mConfig.maxIterFloat; ++iter) {
         buildEquSys(eq, roverPos, false);
         if (eq.obsEquData.size() < 4) return false;
-        // 中间迭代跳过协方差 O(n³)，仅最终解后补算一次（等价、提速）
+        // 中间迭代跳过协方差 O(n³)
         solveIteration(solver, eq);
         auto dx = Eigen::Vector3d(solver.getSolution(Parameter::dX),
                                   solver.getSolution(Parameter::dY),
@@ -451,7 +450,7 @@ bool RTK::solveFloat(EquSys &eq, SolverLSQ &solver, Eigen::Vector3d &baseline) {
         roverPos += dx;
         if (dx.norm() < mConfig.convEps) break;
     }
-    solver.computeCovariance(); // 用最终迭代的正规方程分解补算协方差（结果逐位相同）
+    solver.computeCovariance(); // 用最终迭代的正规方程分解补算协方差
     baseline = roverPos - mBaseXyz;
     return true;
 }
@@ -469,7 +468,6 @@ void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed) {
     eq.varSet.insert(dy);
     eq.varSet.insert(dz);
 
-    // 浮点模式：每非参考星每频率一个模糊度状态（从 mDDCache 取缓存变量，迭代内复用，不再重建 map）
     if (!fixed) {
         for (auto &c: mDDCache) {
             eq.varSet.insert(c.amb[0]);
@@ -552,7 +550,6 @@ bool RTK::tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat) {
     mWeightReady = false; // 固定解重新建一次，确保 P 与方程行序严格对齐
     for (int iter = 0; iter < mConfig.maxIterFix; ++iter) {
         buildEquSys(eqFix, roverPos, true);
-        // 中间迭代跳过协方差 O(n³)，仅最终解后补算一次（等价、提速）
         solveIteration(solverFix, eqFix);
         auto dx = Eigen::Vector3d(solverFix.getSolution(Parameter::dX),
                                   solverFix.getSolution(Parameter::dY),

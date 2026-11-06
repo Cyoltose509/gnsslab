@@ -1,3 +1,4 @@
+#include "ui/GuiColors.h"
 #include <windows.h>
 
 #include <algorithm>
@@ -21,110 +22,36 @@
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiPosTab.h"
 #include "solvers/view/QualityControl.h"
-#include "tools/ins/GuiInsPanel.h"
-#include "solvers/spp/Task.h"
-#include "solvers/ppp/Task.h"
-#include "solvers/leo/Task.h"
-#include "solvers/rtk/Task.h"
 
 namespace Solvers::SolverPanel {
-    static QualityReport buildReport(Core &task) {
-        std::vector<QC::QCObsEpoch> qcEpochs;
-        {
-            std::lock_guard lk(task.view.qcInputMutex);
-            qcEpochs = task.view.qcInput;
-        }
-        QualityReport rep = QC::compute(qcEpochs, task.sampleInterval);
-        rep.totalInputEpochs = static_cast<int>(qcEpochs.size());
-        return rep;
-    }
-
-    void launchQC(const std::shared_ptr<Core> &task) {
+    void launchQC(View &view) {
         static std::mutex launchMutex;
         std::lock_guard lk(launchMutex);
-        if (task->view.qcComputing.load()) return;
-        if (task->view.qcWorker.joinable()) task->view.qcWorker.join();
+        if (view.qcComputing.load()) return;
+        if (view.qcWorker.joinable()) view.qcWorker.join();
         LOG_INFO << "[QC] 开始质量分析";
-        task->view.qcComputing = true;
-        task->view.qcWorker = std::thread([task] {
+        view.qcComputing = true;
+        view.qcWorker = std::thread([&view] {
             try {
                 {
-                    QualityReport rep = buildReport(*task);
-                    std::lock_guard lk1(task->view.qcMutex);
-                    task->view.qcReport = std::make_shared<QualityReport>(std::move(rep));
+                    QualityReport rep = view.qcSnapshot();
+                    std::lock_guard lk1(view.qcMutex);
+                    view.qcReport = std::make_shared<QualityReport>(std::move(rep));
                 }
-                task->view.qcReady = true;
+                view.qcReady = true;
                 LOG_INFO << "[QC] 质量分析结束";
             } catch (...) {
-                task->view.qcReady = true;
+                view.qcReady = true;
             }
-            task->view.qcComputing = false;
+            view.qcComputing = false;
         });
     }
 
-    using StatusLine = void (*)(std::string &, ImVec4 &, const Epoch &);
-
-    static const char *solveStatLabel(const unsigned char stat) {
-        return stat == 1 ? "固定(Fixed)" : "浮点(Float)";
-    }
-
-    static ImVec4 solveStatColor(const unsigned char stat) {
-        return stat == 1 ? UI::kColPass : UI::kColWarn;
-    }
-
-    static void statusNone(std::string &, ImVec4 &, const Epoch &) {
-    }
-
-    static void statusRTK(std::string &text, ImVec4 &color, const Epoch &cur) {
-        char buf[200];
-        std::snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
-                 solveStatLabel(cur.rtkStat), cur.rtkRatio, cur.numSatsResult);
-        text = buf;
-        color = solveStatColor(cur.rtkStat);
-    }
-
-    static void statusAmbig(std::string &text, ImVec4 &color, const Epoch &cur) {
-        unsigned char st = cur.sppResult.stat;
-        if (st == 0) st = 2;
-        char buf[200];
-        std::snprintf(buf, sizeof buf, "%s  ratio=%.2f  卫星=%d",
-                 solveStatLabel(st), cur.sppResult.ratio, cur.numSatsResult);
-        text = buf;
-        color = solveStatColor(st);
-    }
-
-    static StatusLine statusLineFor(const Mode m) {
-        switch (m) {
-            case Mode::LEO:
-            case Mode::PPP:
-                return &statusAmbig;
-            case Mode::RTK:
-                return &statusRTK;
-            default:
-                return &statusNone;
-        }
-    }
-
-    static void ensureSkyTracks(Core &task) {
-        std::lock_guard lk(task.mutex);
-        const int totalEp = static_cast<int>(task.epochs.size());
-        for (int e = task.view.skyTracksBuilt; e < totalEp; ++e) {
-            const auto &ep = task.epochs[e];
-            for (int j = 0; j < static_cast<int>(ep.satIds.size()); ++j) {
-                const double el = ep.elevations[j] * RAD_TO_DEG;
-                if (el <= 0.0) continue;
-                task.view.skyTracks[ep.satIds[j]].push_back(
-                    {e, static_cast<float>(ep.azimuths[j] * RAD_TO_DEG), static_cast<float>(el), ep.solved && !ep.rejected[j]});
-            }
-        }
-        task.view.skyTracksBuilt = totalEp;
-    }
-
     static std::vector<std::pair<SatID, SkyPoint>> currentSkyPoints(
-        Core &task, const int sel) {
-        std::lock_guard lk(task.mutex);
-        if (sel < 0 || sel >= static_cast<int>(task.epochs.size())) return {};
-        auto &ep = task.epochs[sel];
+        Core &core, const int sel) {
+        std::lock_guard lk(core.mutex);
+        if (sel < 0 || sel >= static_cast<int>(core.epochs.size())) return {};
+        auto &ep = core.epochs[sel];
         return Charts::buildCurSkyPoints(sel, ep.satIds.size(),
                                          [&](const std::size_t i) {
                                              Charts::SkyView v;
@@ -136,10 +63,10 @@ namespace Solvers::SolverPanel {
                                          }, 0.0);
     }
 
-    static void fillStatusLine(Charts::PosTabView &v, const Core &task,
+    static void fillStatusLine(Charts::PosTabView &v, const Core &core,
                                const bool hasError, const bool busy, const int epochCount) {
         if (hasError) {
-            v.statusText = std::string("状态: ") + task.errorMessage();
+            v.statusText = std::string("状态: ") + core.errorMessage();
             v.statusColor = UI::kColFail;
         } else if (epochCount > 0) {
             v.statusText = "解算：共 " + std::to_string(epochCount) + " 个历元"
@@ -153,14 +80,14 @@ namespace Solvers::SolverPanel {
         }
     }
 
-    static void fillCurrentEpoch(Charts::PosTabView &v, Core &task, const int selectedIdx) {
-        std::lock_guard lk(task.mutex);
-        auto &cur = task.epochs[selectedIdx];
+    static void fillCurrentEpoch(Charts::PosTabView &v, Core &core, const int selectedIdx) {
+        std::lock_guard lk(core.mutex);
+        auto &cur = core.epochs[selectedIdx];
 
         std::vector<int> visIdx;
         visIdx.reserve(static_cast<int>(cur.satIds.size()));
         for (int i = 0; i < static_cast<int>(cur.satIds.size()); ++i)
-            if (task.enabledSystems.count(cur.satIds[i].system)) visIdx.push_back(i);
+            if (core.opts.systems.count(cur.satIds[i].system)) visIdx.push_back(i);
 
         v.satRows = Charts::buildSatRows(visIdx.size(),
                                          [&](const std::size_t i) {
@@ -170,36 +97,29 @@ namespace Solvers::SolverPanel {
                                              _v.used = !cur.rejected[oi] && cur.solved;
                                              _v.elevRad = cur.elevations[oi];
                                              _v.azimRad = cur.azimuths[oi];
-                                             const bool haveXYZ = cur.satPVTs[oi].p.squaredNorm() > 1.0;
+                                             const bool haveXYZ = cur.satPos[oi].squaredNorm() > 1.0;
                                              _v.hasXYZ = haveXYZ;
                                              if (haveXYZ) {
-                                                 _v.x = cur.satPVTs[oi].p[0];
-                                                 _v.y = cur.satPVTs[oi].p[1];
-                                                 _v.z = cur.satPVTs[oi].p[2];
+                                                 _v.x = cur.satPos[oi][0];
+                                                 _v.y = cur.satPos[oi][1];
+                                                 _v.z = cur.satPos[oi][2];
                                              }
-                                             if (const auto itC = cur.sppResult.postRes.find(cur.satIds[oi]); itC != cur.sppResult.postRes.end()) _v.codeRes = itC->second;
-                                             if (const auto itP = cur.sppResult.postResPhase.find(cur.satIds[oi]); itP != cur.sppResult.postResPhase.end()) _v.phaseRes = itP->second;
+                                             _v.codeRes = v.s.codeResidual(cur.satIds[oi], selectedIdx);
+                                             _v.phaseRes = v.s.phaseResidual(cur.satIds[oi], selectedIdx);
                                              return _v;
                                          });
         v.hasSatRows = true;
 
-        if (task.view.selectedSatIdx >= 0 && task.view.selectedSatIdx < static_cast<int>(visIdx.size())) {
-            const int oi = visIdx[task.view.selectedSatIdx];
+        if (core.view.selectedSatIdx >= 0 && core.view.selectedSatIdx < static_cast<int>(visIdx.size())) {
+            const int oi = visIdx[core.view.selectedSatIdx];
             v.showObsDetail = true;
             v.detailSystem = cur.satIds[oi].system;
-            v.detailObs = cur.allObs[oi];
+            v.detailObs = cur.rawObs.of(static_cast<std::size_t>(oi));
         }
 
         if (cur.solved) {
             const auto &r = cur.sppResult;
             v.solved = true;
-            v.xyz = r.xyz;
-            v.enu = Coord::XYZToENU(r.xyz, task.refECEF);
-            v.blh = r.blh;
-            v.sigmaP = r.sigmaP;
-            v.showVelDop = true;
-            v.showVel = r.vel.squaredNorm() > 1e-4;
-            v.vel = r.vel;
             v.pdop = r.pdop;
             v.gdop = r.gdop;
             v.hdop = r.hdop;
@@ -208,12 +128,12 @@ namespace Solvers::SolverPanel {
             v.numSatsResult = cur.numSatsResult;
             v.numObs = cur.numObs;
 
-            const bool isRtkMode = task.mode == Mode::RTK;
-            const bool isLeoMode = task.mode == Mode::LEO;
+            const bool isRtkMode = core.mode == Mode::RTK;
+            const bool isLeoMode = core.mode == Mode::LEO;
             const bool canFixed = isRtkMode || isLeoMode ||
-                                  task.mode == Mode::PPP;
-            const bool isFixed = isRtkMode ? cur.rtkStat == 1 : r.stat == 1;
-            v.hasFixedDistinction = canFixed;
+                                  core.mode == Mode::PPPStatic ||
+                                  core.mode == Mode::PPPKinematic;
+            const bool isFixed = cur.isFixed(core.mode);
             v.hasFixed = isFixed;
 
             Eigen::Vector3d xyzFloat = r.xyzFloat;
@@ -234,7 +154,7 @@ namespace Solvers::SolverPanel {
                 if (cur.rtkStat == 1)
                     v.baseFixedDisp = cur.rtkFixedBaseline.norm() > 0
                                           ? cur.rtkFixedBaseline
-                                          : r.xyz - task.refECEF;
+                                          : r.xyz - core.refECEF;
             }
 
             if (r.vel.squaredNorm() > 1e-4) {
@@ -243,26 +163,27 @@ namespace Solvers::SolverPanel {
                 v.sigmaVDisp = r.sigmaV;
             }
 
-            v.showRefTable = canFixed && (!isLeoMode || !task.view.leoRefTraj.empty());
+            v.showRefTable = canFixed && (!isLeoMode || !core.view.leoRefTraj.empty());
             v.isLeoRtn = isLeoMode;
-            v.refDisp = task.refECEF;
+            v.refDisp = core.refECEF;
             const Eigen::Vector3d xyzPrim = isFixed ? xyzFixed : xyzFloat;
-            v.abs3dDisp = Coord::XYZToENU(xyzPrim, task.refECEF).norm();
+            v.abs3dDisp = Coord::XYZToENU(xyzPrim, core.refECEF).norm();
             if (isLeoMode) {
                 v.rtnDisp = Eigen::Vector3d(cur.rtnR, cur.rtnT, cur.rtnN);
                 v.rtn3dDisp = std::sqrt(cur.rtnR * cur.rtnR + cur.rtnT * cur.rtnT + cur.rtnN * cur.rtnN);
             } else {
-                v.enuFloatDisp = Coord::XYZToENU(xyzFloat, task.refECEF);
-                v.enuFixedDisp = Coord::XYZToENU(xyzFixed, task.refECEF);
+                v.enuFloatDisp = Coord::XYZToENU(xyzFloat, core.refECEF);
+                v.enuFixedDisp = Coord::XYZToENU(xyzFixed, core.refECEF);
                 v.enuFloat3d = v.enuFloatDisp.norm();
                 v.enuFixed3d = v.enuFixedDisp.norm();
             }
 
             v.solStatShort = isFixed ? "固定(Fixed)" : "浮点(Float)";
+            v.solveStatusColor = isFixed ? UI::kColPass : UI::kColWarn;
             v.solRatio = isRtkMode ? cur.rtkRatio : r.ratio;
             v.showSolveStatus = canFixed;
         } else {
-            v.noSolveMsg = task.noEphSolve ? "无定位解（缺少星历文件）" : "无定位解";
+            v.noSolveMsg = core.noEphSolve ? "无定位解（缺少星历文件）" : "无定位解";
         }
 
         char buf[160];
@@ -270,270 +191,73 @@ namespace Solvers::SolverPanel {
         v.epochInfo = buf;
     }
 
-    static void fillPlots(Charts::PosTabView &v, Core &task,
+    static void fillPlots(Charts::PosTabView &v, Core &core,
                           const int selectedIdx, const int epochCount, const bool isDone) {
-        bool sigmaVNonZero = false;
         {
-            std::lock_guard plk(task.view.plotMutex);
-            auto &pp = task.view.plotData;
-            v.times = pp.times;
-            v.enu_e = pp.enu_e;
-            v.enu_n = pp.enu_n;
-            v.enu_u = pp.enu_u;
-            {
-                std::vector<double> solvedFlag;
-                solvedFlag.reserve(static_cast<int>(task.epochs.size()));
-                for (const auto &ep : task.epochs) solvedFlag.push_back(ep.solved ? 1.0 : 0.0);
-                v.enu_solved = std::move(solvedFlag);
-            }
-            v.newed = pp.newed;
-            pp.newed = false;
-            v.fixedY = true;
-            v.hasResidualData = !pp.satResVals.empty() || !pp.satResPhaseVals.empty();
-            if (task.view.resMode == 1) {
-                v.resPhaseT = pp.satResPhaseTimes;
-                v.resPhaseV = pp.satResPhaseVals;
-            } else {
-                v.resT = pp.satResTimes;
-                v.resV = pp.satResVals;
-            }
-            if (isDone && !pp.resRangeReady) {
-                auto [lo, hi] = Helpers::computeRobustResRange(pp.satResVals);
-                pp.resYlo = lo;
-                pp.resYhi = hi;
-                pp.resRangeReady = true;
-            }
+            std::lock_guard plk(core.view.plotMutex);
+            core.view.plotSeries.sync(core.view.plotData);
+        }
+        auto &s = core.view.plotSeries;
+        if (isDone && !s.hasResRange) {
+            const auto [lo, hi] = Helpers::computeRobustResRange(s.data.satResVals);
+            s.resYlo = lo;
+            s.resYhi = hi;
+            s.hasResRange = true;
+        }
+        if (isDone && !s.hasResPhaseRange) {
+            const auto [lo, hi] = Helpers::computeRobustResRange(s.data.satResPhaseVals, 0.01);
+            s.resPhaseYlo = lo;
+            s.resPhaseYhi = hi;
+            s.hasResPhaseRange = true;
+        }
 
-            if (isDone && !pp.resPhaseRangeReady) {
-                auto [lo, hi] = Helpers::computeRobustResRange(pp.satResPhaseVals, 0.01);
-                pp.resPhaseYlo = lo;
-                pp.resPhaseYhi = hi;
-                pp.resPhaseRangeReady = true;
-            }
-            v.robustRes = pp.resRangeReady;
-            v.resYlo = pp.resYlo;
-            v.resYhi = pp.resYhi;
-            v.robustResPhase = pp.resPhaseRangeReady;
-            v.resPhaseYlo = pp.resPhaseYlo;
-            v.resPhaseYhi = pp.resPhaseYhi;
-            v.sigmaPs = pp.sigmaPs;
-            v.sigmaPFloatVals = pp.sigmaPFloatVals;
-            v.sigmaVs = pp.sigmaVs;
-            sigmaVNonZero = std::any_of(pp.sigmaVs.begin(), pp.sigmaVs.end(),
-                                        [](const double x) { return x > 1e-6; });
-            v.pdops = pp.pdops;
-            v.gdops = pp.gdops;
-            v.hdops = pp.hdops;
-            v.vdops = pp.vdops;
-            v.tdops = pp.tdops;
-            v.ratioVals = pp.ratioVals;
-            v.float_e = pp.float_e;
-            v.float_n = pp.float_n;
-            v.float_u = pp.float_u;
-            v.showRatio = task.mode == Mode::RTK ||
-                          task.mode == Mode::PPP ||
-                          task.mode == Mode::LEO;
-            v.hasFloatSeries = v.showRatio;
-            v.showBaseXyz = task.mode == Mode::RTK;
-            v.isRtk = task.mode == Mode::RTK;
-            v.baseXyz = &task.refECEF;
-        }
-        {
-            std::lock_guard lk(task.mutex);
-            v.skyTracks = task.view.skyTracks;
-            int solvedCnt = 0, velCnt = 0;
-            for (const auto &ep: task.epochs) {
-                if (!ep.solved) continue;
-                ++solvedCnt;
-                if (ep.sppResult.vel.squaredNorm() > 1e-4) ++velCnt;
-            }
-            v.showSigmaV = solvedCnt > 0 && static_cast<double>(velCnt) / solvedCnt > 0.05
-                           && sigmaVNonZero;
-        }
-        v.curSkyPts = currentSkyPoints(task, selectedIdx);
         v.showSigmaDop = true;
+        v.showSigmaV = s.data.solvedEpochs > 0 &&
+                       static_cast<double>(s.data.velEpochs) / s.data.solvedEpochs > 0.05 &&
+                       s.data.sigmaVNonZero;
+        v.hasFloatSeries = core.mode != Mode::SPP;
+        v.isRtk = core.mode == Mode::RTK;
+        v.curSkyPts = currentSkyPoints(core, selectedIdx);
 
-        if (v.showRatio && epochCount > 0) {
-            int fixedCnt = 0, totalCnt = 0;
-            {
-                std::lock_guard lk(task.mutex);
-                for (const auto &ep: task.epochs) {
-                    if (!ep.solved) continue;
-                    ++totalCnt;
-                    const bool isFixed = task.mode == Mode::RTK
-                                             ? ep.rtkStat == 1
-                                             : ep.sppResult.stat == 1;
-                    if (isFixed) ++fixedCnt;
-                }
-            }
-            if (totalCnt > 0) {
-                v.showFixRate = true;
-                char buf[64];
-                std::snprintf(buf, sizeof buf, "固定率: %.1f%% (%d/%d)",
-                         100.0 * fixedCnt / totalCnt, fixedCnt, totalCnt);
-                v.fixRateText = buf;
-            }
+        if (epochCount > 0 && s.data.solvedEpochs > 0) {
+            v.showFixRate = true;
+            char buf[64];
+            std::snprintf(buf, sizeof buf, "固定率: %.1f%% (%d/%d)",
+                          100.0 * s.data.fixedEpochs / s.data.solvedEpochs,
+                          s.data.fixedEpochs, s.data.solvedEpochs);
+            v.fixRateText = buf;
         }
     }
 
-    static void fillLEO3D(Charts::PosTabView &v, Core &task) {
-        std::lock_guard lk(task.mutex);
-        if (!task.view.hasLeo) return;
+    static void fillLEO3D(Charts::PosTabView &v, Core &core) {
+        std::lock_guard lk(core.mutex);
+        if (!core.view.hasLeo) return;
         v.show3d = true;
-        v.showRtn = !task.view.leoRefTraj.empty();
-        v.hasRef = !task.view.leoRefTraj.empty();
+        v.showRtn = !core.view.leoRefTraj.empty();
         v.showRefEnu = false;
-        v.leoPos3d = task.view.leoPos3d;
-        v.leoRef3d = task.view.leoRef3d;
-        copySampled(task.view.leoTraj, v.leoTraj);
-        copySampled(task.view.leoRefTraj, v.leoRefTraj);
-        v.gnssVis = task.view.gnssVis;
-        for (const auto &[sat, traj]: task.view.gnssTraj)
-            copySampled(traj, v.gnssTraj[sat], 800);
-        copySampled(task.view.rtnR, v.rtnR);
-        copySampled(task.view.rtnT, v.rtnT);
-        copySampled(task.view.rtnN, v.rtnN);
-        copySampled(task.view.rtnD3, v.rtnD3);
-        copySampled(task.view.rtnTimes, v.rtnTimes);
+        v.leoPos3d = core.view.leoPos3d;
+        copySampled(core.view.leoTraj, v.leoTraj);
+        copySampled(core.view.leoRefTraj, v.leoRefTraj);
+        copySampled(core.view.rtnR, v.rtnR);
+        copySampled(core.view.rtnT, v.rtnT);
+        copySampled(core.view.rtnN, v.rtnN);
+        copySampled(core.view.rtnD3, v.rtnD3);
+        copySampled(core.view.rtnTimes, v.rtnTimes);
     }
 
-    static void fillSolveStatus(Charts::PosTabView &v, Core &task, const int selectedIdx) {
-        std::lock_guard lk(task.mutex);
-        const StatusLine solveStatusLine = statusLineFor(task.mode);
-        std::string line;
-        ImVec4 col;
-        solveStatusLine(line, col, task.epochs[selectedIdx]);
-        if (!line.empty()) {
-            v.showSolveStatus = true;
-            v.solveStatusText = std::string(modeLabel(task.mode)) + ": " + line;
-            v.solveStatusColor = col;
-        }
-    }
 
-    static void renderTaskImpl(const std::shared_ptr<Core> &task, const std::shared_ptr<Task> &job) {
-        const bool isRealtime = task->isRealtime;
-
-        if (isRealtime) {
-            if (!task->done) {
-                if (ImGui::Button("停止连接")) task->stop = true;
-                ImGui::SameLine();
-            } else {
-                ImGui::TextColored(UI::kColFail, "连接已断开");
-                ImGui::SameLine();
-            }
-        }
-
-        const bool isDone = task->done.load();
-        const bool hasError = task->errorFlag();
-
-        const bool busy = !isDone && !hasError;
-        auto [epochCount, selectedIdx] = Helpers::readEpochView(task);
-        int selectedEpochLocal = selectedIdx;
-
-        if (!isRealtime && busy) {
-            ImGui::TextColored(UI::kColInfo,
-                               "正在处理 [%s]: 已解算 %d 历元",
-                               task->fileName.c_str(), task->solvedCount.load());
-        }
-
-        if (ImGui::BeginTabBar("##qa_tabs")) {
-            if (ImGui::BeginTabItem("定位解算")) {
-                Charts::PosTabView v;
-                v.epochCount = epochCount;
-                v.selectedEpoch = &selectedEpochLocal;
-                v.selectedSatIdx = &task->view.selectedSatIdx;
-                v.resMode = &task->view.resMode;
-                v.refECEF = &task->refECEF;
-                v.onRefChanged = [&] {
-                    std::lock_guard lk(task->mutex);
-                    std::lock_guard plk(task->view.plotMutex);
-                    task->view.plotData.refreshENU(task->epochs, task->refECEF);
-                };
-                v.showEnPlan = task->mode != Mode::LEO;
-
-                fillStatusLine(v, *task, hasError, busy, epochCount);
-                v.busy = busy;
-
-                if (epochCount > 0) ensureSkyTracks(*task);
-                if (epochCount > 0 && selectedIdx >= 0) fillCurrentEpoch(v, *task, selectedIdx);
-                if (epochCount > 0 && selectedIdx >= 0) fillPlots(v, *task, selectedIdx, epochCount, isDone);
-                fillLEO3D(v, *task);
-                if (epochCount > 0 && selectedIdx >= 0 && v.solved)
-                    fillSolveStatus(v, *task, selectedIdx);
-
-                v.isDone = isDone || isRealtime;
-                v.onExportCSV = [&] {
-                    exportCSV(job);
-                };
-
-                try {
-                    Charts::renderPositioningTab(v);
-                } catch (const std::exception &e) {
-                    ImGui::TextColored(UI::kColFail, "渲染异常: %s", e.what());
-                } catch (...) {
-                    ImGui::TextColored(UI::kColFail, "渲染发生未知异常");
-                }
-                if (selectedEpochLocal != selectedIdx) {
-                    std::lock_guard lk(task->mutex);
-                    if (selectedEpochLocal >= 0 && selectedEpochLocal < static_cast<int>(task->epochs.size()))
-                        task->view.selectedEpoch = selectedEpochLocal;
-                }
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem(task->view.qcTabLabel.c_str())) {
-                try {
-                    QualityControl::render(task);
-                } catch (const std::exception &e) {
-                    ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
-                } catch (...) {
-                    ImGui::TextColored(UI::kColFail, "质量分析渲染发生未知异常");
-                }
-                ImGui::EndTabItem();
-            }
-            for (auto &[qcLabel, qcSub]: task->view.extraQcTabs) {
-                if (!qcSub) continue;
-                if (ImGui::BeginTabItem(qcLabel.c_str())) {
-                    try {
-                        QualityControl::render(qcSub);
-                    } catch (const std::exception &e) {
-                        ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
-                    } catch (...) {
-                        ImGui::TextColored(UI::kColFail, "质量分析渲染发生未知异常");
-                    }
-                    ImGui::EndTabItem();
-                }
-            }
-            ImGui::EndTabBar();
-        }
-    }
-
-    static void renderConfigPanel(Task &job) {
-        switch (job.mode()) {
-            case Mode::SPP: dynamic_cast<SPP::Task &>(job).renderConfigPanel(); break;
-            case Mode::PPP: dynamic_cast<PPP::Task &>(job).renderConfigPanel(); break;
-            case Mode::LEO: dynamic_cast<LEO::Task &>(job).renderConfigPanel(); break;
-            case Mode::RTK: dynamic_cast<RTK::Task &>(job).renderConfigPanel(); break;
-        }
-    }
 
     void renderTask(const std::shared_ptr<Task> &job) {
-        if (job->kind() == Task::Kind::Tool) {
-            Tools::Ins::Render(*job);
-            return;
-        }
-
         if (job->state == Task::State::Config) {
-            renderConfigPanel(*job);
+            job->renderConfigPanel();
             return;
         }
 
-        renderTaskImpl(job->solveResult(), job);
+        job->renderResult();
     }
 
     void exportCSV(const std::shared_ptr<Task> &task) {
-        const std::string tag = task->kind() == Task::Kind::Tool
-                                    ? std::string("tool")
-                                    : std::string(modeLabel(task->mode()));
+        const std::string tag = modeLabel(task->mode);
         std::string dn = Str::stripExt(Str::baseName(task->fileName));
         dn += "_" + tag + "_result.csv";
         if (dn.size() >= MAX_PATH) dn = tag + "_result.csv";
@@ -543,8 +267,8 @@ namespace Solvers::SolverPanel {
                 << std::filesystem::path(path).string();
 
         std::string csvText;
-        if (const auto core = task->solveResult()) {
-            std::lock_guard lk(core->mutex);
+        {
+            std::lock_guard lk(task->mutex);
             std::ostringstream oss;
             task->exportCSV(oss);
             csvText = oss.str();
@@ -557,5 +281,108 @@ namespace Solvers::SolverPanel {
         out << csvText;
         if (!out)
             LOG_WARN << "[导出] 写入失败: " << std::filesystem::path(path).string();
+    }
+}
+
+namespace Solvers {
+    void Task::renderResult() {
+        const bool isRealtime = this->isRealtime;
+
+        if (isRealtime) {
+            if (!done) {
+                if (ImGui::Button("停止连接")) cancel();
+                ImGui::SameLine();
+            } else {
+                ImGui::TextColored(UI::kColFail, "连接已断开");
+                ImGui::SameLine();
+            }
+        }
+
+        const bool isDone = done.load();
+        const bool hasError = errorFlag();
+
+        const bool busy = !isDone && !hasError;
+        auto [epochCount, selectedIdx] = readEpochView();
+        int selectedEpochLocal = selectedIdx;
+
+        if (!isRealtime && busy) {
+            ImGui::TextColored(UI::kColInfo,
+                               "正在处理 [%s]: 已解算 %d 历元",
+                               fileName.c_str(), epochCount);
+        }
+
+        if (ImGui::BeginTabBar("##qa_tabs")) {
+            if (ImGui::BeginTabItem("定位解算")) {
+                Charts::PosTabView v(view.plotSeries, view.skyTracks);
+                v.epochCount = epochCount;
+                v.selectedEpoch = &selectedEpochLocal;
+                v.selectedSatIdx = &view.selectedSatIdx;
+                v.resMode = &view.resMode;
+                v.refECEF = &refECEF;
+                v.onRefChanged = [&] {
+                    XYZ ref;
+                    {
+                        std::lock_guard lk(mutex);
+                        ref = refECEF;
+                    }
+                    std::lock_guard plk(view.plotMutex);
+                    view.plotData.refreshENU(ref);
+                };
+                v.showEnPlan = mode != Mode::LEO;
+
+                SolverPanel::fillStatusLine(v, *this, hasError, busy, epochCount);
+                v.busy = busy;
+
+                if (epochCount > 0) {
+                    std::lock_guard lk(mutex);
+                    view.ensureSkyTracks(epochs);
+                }
+                if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillCurrentEpoch(v, *this, selectedIdx);
+                if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillPlots(v, *this, selectedIdx, epochCount, isDone);
+                SolverPanel::fillLEO3D(v, *this);
+
+                v.onExportCSV = [&] {
+                    SolverPanel::exportCSV(shared_from_this());
+                };
+
+                try {
+                    Charts::renderPositioningTab(v);
+                } catch (const std::exception &e) {
+                    ImGui::TextColored(UI::kColFail, "渲染异常: %s", e.what());
+                } catch (...) {
+                    ImGui::TextColored(UI::kColFail, "渲染发生未知异常");
+                }
+                if (selectedEpochLocal != selectedIdx) {
+                    std::lock_guard lk(mutex);
+                    if (selectedEpochLocal >= 0 && selectedEpochLocal < static_cast<int>(epochs.size()))
+                        view.selectedEpoch = selectedEpochLocal;
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(view.qcTabLabel.c_str())) {
+                try {
+                    QualityControl::render(view, fileName);
+                } catch (const std::exception &e) {
+                    ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
+                } catch (...) {
+                    ImGui::TextColored(UI::kColFail, "质量分析渲染发生未知异常");
+                }
+                ImGui::EndTabItem();
+            }
+            for (const auto &tab: view.extraQcTabs) {
+                if (!tab) continue;
+                if (ImGui::BeginTabItem(tab->label.c_str())) {
+                    try {
+                        QualityControl::render(tab->view, tab->fileName);
+                    } catch (const std::exception &e) {
+                        ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
+                    } catch (...) {
+                        ImGui::TextColored(UI::kColFail, "质量分析渲染发生未知异常");
+                    }
+                    ImGui::EndTabItem();
+                }
+            }
+            ImGui::EndTabBar();
+        }
     }
 }

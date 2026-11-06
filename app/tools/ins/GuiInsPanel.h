@@ -8,7 +8,7 @@
 #include <vector>
 
 
-#include "solvers/common/Core.h"
+#include "solvers/common/Task.h"
 #include "core/InsStruct.h"
 #include "ins/Aligner.h"
 #include "ins/ImuCalibrator.h"
@@ -102,7 +102,7 @@ namespace Tools::Ins {
         std::atomic<bool> runFailed{false};
     };
 
-    struct SixPosCalibTask : Solvers::Core, InsRunState {
+    struct SixPosCalibTask : Solvers::Task, InsRunState {
         std::vector<std::string> filePaths;
         CalibParams par;
         ScaleFallback scaleSf;
@@ -132,11 +132,11 @@ namespace Tools::Ins {
 
         SixPosCalibTask();
 
-        Solvers::Task::Kind kind() const override { return Solvers::Task::Kind::Tool; }
+        Kind kind() const override { return Kind::Tool; }
 
-        void renderConfigPanel();
+        void renderConfigPanel() override;
 
-        void renderResult();
+        void renderResult() override;
 
     private:
         void startCalib();
@@ -158,7 +158,7 @@ namespace Tools::Ins {
         bool snapshotReport(CalibReport &r);
     };
 
-    struct StaticAlignTask : Solvers::Core, InsRunState {
+    struct StaticAlignTask : Solvers::Task, InsRunState {
         std::string alignPath;
         AlignParams par;
         ScaleFallback scaleSf;
@@ -178,11 +178,11 @@ namespace Tools::Ins {
 
         StaticAlignTask();
 
-        Solvers::Task::Kind kind() const override { return Solvers::Task::Kind::Tool; }
+        Kind kind() const override { return Kind::Tool; }
 
-        void renderConfigPanel();
+        void renderConfigPanel() override;
 
-        void renderResult();
+        void renderResult() override;
 
     private:
         void startAlign();
@@ -202,6 +202,4 @@ namespace Tools::Ins {
 
     std::shared_ptr<Solvers::Task> MakeStaticAlignTask();
 
-    /// 配置页与结果页的唯一入口，内部按 state 分派。
-    void Render(Solvers::Task &job);
 }

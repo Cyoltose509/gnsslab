@@ -9,15 +9,9 @@ public:
         mKinematic = true;
         mReanchorEveryEpoch = true;
 
+        // 行为标志（不随参数页变）：钟差初值方差按运动学取大值
         ekf.clockInitVar = 1.0E8;
-        mConfig.minSatsForUpdate = 4;
-        mConfig.ambNoise = 1.0E-7;
-        mConfig.sigmaPhase = 0.003;
-        mConfig.firstEpochPosVar = 1.0;
-
-        mConfig.sigIFCode = 0.1;
-        mConfig.posNoise = 100.0;
-   }
+    }
 
     ~PPPKinematic() override = default;
 

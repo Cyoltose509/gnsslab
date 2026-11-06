@@ -338,7 +338,7 @@ Eigen::Vector3d ATXReader::getRcvPCOENU(const std::string &rcvType, const Common
 }
 
 void ATXReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const CommonTime &epoch,
-                            const FreqCombo &def) const {
+                            const FreqCombo &def, const Eigen::Matrix3d *satBody) const {
     auto [b1, b2] = atxBands(sat.system, def);
     const Eigen::Vector3d pco1 = getSatPCO(sat, b1, epoch);
     const Eigen::Vector3d pco2 = getSatPCO(sat, b2, epoch);
@@ -347,10 +347,15 @@ void ATXReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const Common
     const Eigen::Vector3d pco = def.c1 * pco1 + def.c2 * pco2;
     if (pco.squaredNorm() < 1e-12) return;
 
-    double gmst;
-    Eigen::Vector3d rsun, rmoon;
-    Geodesy::sunMoonECEF(epoch, rsun, rmoon, gmst);
-    const Eigen::Matrix3d M = Coord::ECEFToSVBodyDCM(pTx, rsun);
+    Eigen::Matrix3d M;
+    if (satBody) {
+        M = *satBody;
+    } else {
+        double gmst;
+        Eigen::Vector3d rsun, rmoon;
+        Geodesy::sunMoonECEF(epoch, rsun, rmoon, gmst);
+        M = Coord::ECEFToSVBodyDCM(pTx, rsun);
+    }
     const Eigen::Vector3d pcoEcef = M.transpose() * pco;
     pTx += pcoEcef;
 }

@@ -3,39 +3,53 @@
 #include <memory>
 
 #include "solvers/common/Core.h"
+#include "solvers/common/Task.h"
+
+class SPP;
+
+namespace Observer {
+    struct Item;
+}
 
 namespace Solvers::SPP {
-    /// SPP 文件/实时解算：配置与结果在 core，界面在 Panel.cpp。
+    /// SPP 文件/实时解算
     struct Task : Solvers::Task {
-        std::shared_ptr<Solvers::Core> core;
+        /// 广播星历路径
+        std::string navPathBuf;
 
-        std::shared_ptr<Solvers::Core> solveResult() override { return core; }
+        /// 按 SolverOptions 灌入配置
+        virtual void applyConfig(const SolverOptions &cfg);
 
-        /// 按 SolverOptions 灌入配置（CLI 与 GUI 共用）。
-        void applyConfig(const SolverOptions &cfg);
+        /// 从 PathMemory 恢复上次界面配置
+        virtual void loadFromMemory();
 
-        /// 从 PathMemory 恢复上次界面配置（仅 GUI）。
-        void loadFromMemory() const;
+        /// 配置面板
+        void renderConfigPanel() override;
 
-        /// 配置面板（仅 GUI，定义在 Panel.cpp）。
-        void renderConfigPanel();
+        virtual bool initSolver(::SPP &solver);
 
-        bool initSolver(void *solver) override;
+        virtual void beforeSolveEpoch(::SPP &solver, Observer::Item &item);
 
-        void beforeSolveEpoch(void *solver, Observer::Item *item) override;
+        virtual bool afterSolveEpoch(::SPP &solver, Epoch &data, Observer::Item &item, int index);
 
         void exportCSV(std::ostream &out) const override;
 
-        Task() {
-            core = std::make_shared<Solvers::Core>();
-            core->mode = Mode::SPP;
-        }
+        Task() { mode = Mode::SPP; }
 
     protected:
-        ::SPP *makeSolver() override;
+        void solveBody() override;
+
+        virtual std::unique_ptr<::SPP> makeSolver();
 
         std::unique_ptr<Realtime::Session> makeSession() override;
     };
+
+    /// SPP 的参数默认值：广播星历解算用 Hopfield 对流层模型。
+    inline SolverOptions defaultOptions() {
+        SolverOptions o{};
+        o.spp.tropoMap = Troposphere::Map::Hopfield;
+        return o;
+    }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg);
 }

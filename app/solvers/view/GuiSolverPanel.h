@@ -5,7 +5,7 @@
 #include <vector>
 
 
-#include "solvers/common/Core.h"
+#include "solvers/common/Task.h"
 
 namespace Solvers::SolverPanel {
     template<typename T>
@@ -26,6 +26,6 @@ namespace Solvers::SolverPanel {
     }
 
     void renderTask(const std::shared_ptr<Task> &job);
-    void launchQC(const std::shared_ptr<Core> &task);
+    void launchQC(View &view);
     void exportCSV(const std::shared_ptr<Task> &task);
 }

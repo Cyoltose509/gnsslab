@@ -32,9 +32,7 @@ public:
     void applyOptions(const SolverOptions &o);
 
     /// 选参考星
-    static std::optional<SatID> selectRtkRefSat(const std::vector<SatID> &candidates,
-                                                const std::map<SatID, double> &roverElev,
-                                                bool excludeGeo);
+    [[nodiscard]] std::optional<SatID> selectRtkRefSat(const std::vector<SatID> &candidates) const;
 
 
     Eigen::Vector3d mBaseXyz{0, 0, 0}; // 基准站
@@ -117,7 +115,7 @@ private:
     /// 构造本历元满阵权：仅完整协方差模式需要，对角模式直接用方程标量权。
     void buildWeightMatrix(const EquSys &eq);
 
-    void solveIteration(SolverLSQ &solver, EquSys &eq);
+    void solveIteration(SolverLSQ &solver, EquSys &eq) const;
 
     bool tryFixAmbiguities(const EquSys &eqFloat, SolverLSQ &solverFloat);
 

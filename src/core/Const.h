@@ -261,37 +261,6 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
     return 0.0;
 }
 
-enum class SatType {
-    MEO,
-    GEO,
-    IGSO,
-};
-
-constexpr SatType getSatType(const char sys, const int prn, const bool old = false) {
-    if (old) {
-        switch (sys) {
-            case 'G': return SatType::MEO;
-            case 'C': {
-                if (prn >= 1 && prn <= 4) return SatType::GEO;
-                if (prn >= 59 && prn <= 62) return SatType::GEO;
-                if ((prn >= 38 && prn <= 40) || (prn >= 13 && prn <= 16))return SatType::IGSO;
-                return SatType::MEO;
-            }
-            default: return SatType::MEO;
-        }
-    }
-    switch (sys) {
-        case 'G': return SatType::MEO;
-        case 'C': {
-            if (prn >= 1 && prn <= 4) return SatType::GEO;
-            if (prn >= 59 && prn <= 62) return SatType::GEO;
-            if (prn >= 6 && prn <= 10) return SatType::IGSO;
-            return SatType::MEO;
-        }
-        default: return SatType::MEO;
-    }
-}
-
 static constexpr double NUTATION_1980[106][10] = {
     {0, 0, 0, 0, 1, -6798.4, -171996, -174.2, 92025, 8.9},
     {0, 0, 2, -2, 2, 182.6, -13187, -1.6, 5736, -3.1},

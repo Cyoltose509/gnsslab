@@ -235,7 +235,7 @@ void SPP::buildResidualMap() {
 }
 
 void SPP::updateTropoSite(const Eigen::Vector3d &xyzEcef, const CommonTime &epoch) {
-    mTropoSite.update(mTropoGrid, mConfig.tropoMap, xyzEcef, epoch, nullptr, frame);
+    mTropoSite.update(mTropoGrid, mConfig.tropoMap, xyzEcef, epoch, frame);
     if (!(mTropoSite.hgt > 0.0)) mTropoSite = TropoSite{};
 }
 

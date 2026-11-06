@@ -14,22 +14,8 @@
 namespace Solvers::Charts {
     namespace {
 
-        void sectionHeader(const char *title, bool *flag) {
+        void sectionHeader(const char *title) {
             ImGui::SeparatorText(title);
-            if (flag) {
-                const float bw = ImGui::CalcTextSize("显示").x
-                                 + ImGui::GetStyle().FramePadding.x * 2.0f
-                                 + ImGui::GetStyle().ItemSpacing.x;
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - bw);
-                ImGui::PushID(title);
-                if (ImGui::SmallButton(*flag ? "隐藏" : "显示"))
-                    *flag = !*flag;
-                ImGui::PopID();
-            }
-        }
-
-        bool vis(const bool *flag, const bool fallback) {
-            return flag ? *flag : fallback;
         }
 
 
@@ -75,13 +61,13 @@ namespace Solvers::Charts {
         std::optional<Eigen::Vector3d> meanSolvedENU(const PosTabView &v) {
             double me = 0.0, mn = 0.0, mu = 0.0;
             int m = 0;
-            const int n = static_cast<int>(v.enu_e.size());
+            const int n = static_cast<int>(v.p.enu_e.size());
             for (int i = 0; i < n; ++i) {
-                if (v.enu_solved[i] < 0.5) continue;
-                if (!std::isfinite(v.enu_e[i]) || !std::isfinite(v.enu_n[i]) || !std::isfinite(v.enu_u[i])) continue;
-                me += v.enu_e[i];
-                mn += v.enu_n[i];
-                mu += v.enu_u[i];
+                if (v.p.solvedFlags[i] < 0.5) continue;
+                if (!std::isfinite(v.p.enu_e[i]) || !std::isfinite(v.p.enu_n[i]) || !std::isfinite(v.p.enu_u[i])) continue;
+                me += v.p.enu_e[i];
+                mn += v.p.enu_n[i];
+                mu += v.p.enu_u[i];
                 ++m;
             }
             if (m == 0) return std::nullopt;
@@ -89,7 +75,7 @@ namespace Solvers::Charts {
         }
 
         void renderRefECEFInput(const PosTabView &v) {
-            if (v.refECEF && v.showRefEnu && v.showRefInput) {
+            if (v.refECEF && v.showRefEnu) {
                 ImGui::Text("参考真值:");
                 ImGui::SameLine();
                 ImGui::PushItemWidth(200);
@@ -312,68 +298,46 @@ namespace Solvers::Charts {
 
 
         void renderSatelliteAndPositionPanels(const PosTabView &v, const float th) {
-            {
-                bool *stTg = v.renderToggles ? &v.renderToggles->satTable : nullptr;
-                bool *ppTg = v.renderToggles ? &v.renderToggles->posPanel : nullptr;
-                const bool stVis = vis(stTg, v.showSatTable);
-                const bool ppVis = vis(ppTg, v.showPosPanel);
-                if (stVis || ppVis || v.renderToggles) {
-                    if (ImGui::BeginTable("##ms", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-                        ImGui::TableSetupColumn("L", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-                        ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-                        ImGui::TableNextRow(ImGuiTableRowFlags_None, th);
+            if (!ImGui::BeginTable("##ms", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
+                return;
+            ImGui::TableSetupColumn("L", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+            ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, th);
 
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::BeginChild("##sat");
-                        {
-                            sectionHeader("卫星概览", stTg);
-                            if (stVis) {
-                                if (v.hasSatRows)
-                                    renderSatelliteTable(v.satRows, *v.selectedSatIdx);
+            ImGui::TableSetColumnIndex(0);
+            if (ImGui::BeginChild("##sat")) {
+                sectionHeader("卫星概览");
+                if (v.hasSatRows) renderSatelliteTable(v.satRows, *v.selectedSatIdx);
+                renderObsDetailTable(v);
+            }
+            ImGui::EndChild();
 
-                                renderObsDetailTable(v);
-                            }
-                        }
-                        ImGui::EndChild();
-
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::BeginChild("##res");
-                        {
-                            sectionHeader("位置 (WGS84)", ppTg);
-                            if (ppVis) {
-                                if (v.solved) {
-                                    ImGui::BeginChild("##restbl", ImVec2(0, -52), ImGuiChildFlags_Borders);
-                                    renderPosTables(v);
-                                    ImGui::EndChild();
-                                    if (v.onExportCSV) {
-                                        const bool canExport = v.epochCount > 0;
-                                        if (!canExport) ImGui::BeginDisabled();
-                                        if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) {
-                                            v.onExportCSV();
-                                        }
-                                        if (!canExport) ImGui::EndDisabled();
-                                    }
-                                } else {
-                                    ImGui::TextColored(UI::kColFail,
-                                                       "%s", v.noSolveMsg.empty() ? "无定位解" : v.noSolveMsg.c_str());
-                                }
-                            } else {
-                                ImGui::TextDisabled("(已隐藏)");
-                            }
-                        }
-                        ImGui::EndChild();
-                        ImGui::EndTable();
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::BeginChild("##res")) {
+                sectionHeader("位置 (WGS84)");
+                if (v.solved) {
+                    if (ImGui::BeginChild("##restbl", ImVec2(0, -52), ImGuiChildFlags_Borders)) renderPosTables(v);
+                    ImGui::EndChild();
+                    if (v.onExportCSV) {
+                        const bool canExport = v.epochCount > 0;
+                        if (!canExport) ImGui::BeginDisabled();
+                        if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) v.onExportCSV();
+                        if (!canExport) ImGui::EndDisabled();
                     }
+                } else {
+                    ImGui::TextColored(UI::kColFail, "%s",
+                                       v.noSolveMsg.empty() ? "无定位解" : v.noSolveMsg.c_str());
                 }
             }
+            ImGui::EndChild();
+            ImGui::EndTable();
         }
 
 
         void renderENPlanView(const PosTabView &v, const float fixedH = 0.0f) {
-            const auto &enu_e = v.enu_e;
-            const auto &enu_n = v.enu_n;
-            const auto &enu_solved = v.enu_solved;
-            if (enu_e.empty() || enu_n.empty() || enu_solved.empty()) return;
+            const auto &xe = v.s.planE;
+            const auto &xn = v.s.planN;
+            if (v.p.enu_e.empty() || v.p.enu_n.empty()) return;
             const ImGuiStyle &style = ImGui::GetStyle();
             const ImVec2 enAvail = ImGui::GetContentRegionAvail();
             float enW = std::max(160.0f, enAvail.x);
@@ -384,24 +348,8 @@ namespace Solvers::Charts {
                 return;
             }
             if (ImPlot::BeginPlot("E-N 平面图", ImVec2(-1, -1), ImPlotFlags_NoLegend | ImPlotFlags_NoBoxSelect)) {
-
-                std::vector<double> xe, xn;
-                const int n = static_cast<int>(enu_e.size());
-                xe.reserve(n);
-                xn.reserve(n);
-                for (int i = 0; i < n; ++i) {
-                    if (enu_solved[i] < 0.5) continue;
-                    const double e = enu_e[i], nn = enu_n[i];
-                    if (!std::isfinite(e) || !std::isfinite(nn)) continue;
-                    xe.push_back(e);
-                    xn.push_back(nn);
-                }
                 const int m = static_cast<int>(xe.size());
-
-                double r = 1e-6;
-                for (int i = 0; i < m; ++i)
-                    r = std::max(r, std::max(std::abs(xe[i]), std::abs(xn[i])));
-                r *= 1.15;
+                const double r = v.s.planR;
                 ImPlot::SetupAxes("E (m) ", "N (m) ");
                 ImPlot::SetupAxisLimits(ImAxis_X1, -r, r, ImPlotCond_Once);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, -r, r, ImPlotCond_Once);
@@ -419,6 +367,23 @@ namespace Solvers::Charts {
                     ps.MarkerSize = 2.5f;
                     ps.LineColor = ImVec4(0.2f, 0.9f, 0.4f, 0.9f);
                     ImPlot::PlotScatter("解算轨迹", xe.data(), xn.data(), m, ps);
+                }
+
+                // 当前历元（时间游标所指）高亮：蓝色大点，叠加在轨迹之上，便于实时/回放时一眼定位。
+                if (v.selectedEpoch && *v.selectedEpoch >= 0 &&
+                    *v.selectedEpoch < static_cast<int>(v.p.enu_e.size()) &&
+                    *v.selectedEpoch < static_cast<int>(v.p.solvedFlags.size()) &&
+                    v.p.solvedFlags[*v.selectedEpoch] > 0.5) {
+                    const double ce = v.p.enu_e[*v.selectedEpoch];
+                    const double cn = *v.selectedEpoch < static_cast<int>(v.p.enu_n.size())
+                                         ? v.p.enu_n[*v.selectedEpoch] : 0.0;
+                    if (std::isfinite(ce) && std::isfinite(cn)) {
+                        ImPlotSpec hs;
+                        hs.Marker = ImPlotMarker_Circle;
+                        hs.MarkerSize = 7.5f;
+                        hs.LineColor = ImVec4(0.15f, 0.45f, 1.0f, 1.0f);
+                        ImPlot::PlotScatter("##curEpoch", &ce, &cn, 1, hs);
+                    }
                 }
 
                 static double cx = 0.0, cy = 0.0;
@@ -448,18 +413,18 @@ namespace Solvers::Charts {
         }
 
         void renderEnuConvergence(const PosTabView &v) {
-            if (v.epochCount > 0 && !v.times.empty() && !v.show3d &&
-                !v.enu_e.empty() && !v.enu_n.empty() && !v.enu_u.empty()) {
-                sectionHeader("ENU 收敛轨迹 / E-N 平面图", nullptr);
+            if (v.epochCount > 0 && !v.s.axis.kept.empty() && !v.show3d &&
+                !v.p.enu_e.empty() && !v.p.enu_n.empty() && !v.p.enu_u.empty()) {
+                sectionHeader("ENU 收敛轨迹 / E-N 平面图");
 
                 const ImGuiStyle &style = ImGui::GetStyle();
                 float rowH = ImGui::GetContentRegionAvail().y - style.ItemSpacing.y;
                 rowH = std::max(280.0f, std::min(rowH, 720.0f));
-                bool newed = v.newed;
+                bool newed = v.s.newed;
                 if (!v.showEnPlan) {
-                    renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
-                                  *v.selectedEpoch, newed, v.fixedY,
-                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount, rowH);
+                    renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
+                                  *v.selectedEpoch, newed,
+                                  v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH);
                     return;
                 }
                 const float availX = ImGui::GetContentRegionAvail().x;
@@ -473,9 +438,9 @@ namespace Solvers::Charts {
                         ImGui::TableSetupColumn("plan", ImGuiTableColumnFlags_WidthStretch, planRatio);
                         ImGui::TableNextRow(ImGuiTableRowFlags_None, rowH);
                         ImGui::TableSetColumnIndex(0);
-                        renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
-                                      *v.selectedEpoch, newed, v.fixedY,
-                                      v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount, rowH);
+                        renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
+                                      *v.selectedEpoch, newed,
+                                      v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH);
                         ImGui::TableSetColumnIndex(1);
 
                         renderENPlanView(v, rowH);
@@ -483,9 +448,9 @@ namespace Solvers::Charts {
                     }
                 } else {
 
-                    renderENUPlot(v.times, v.enu_e, v.enu_n, v.enu_u,
-                                  *v.selectedEpoch, newed, v.fixedY,
-                                  v.hasFloatSeries, v.float_e, v.float_n, v.float_u, v.epochCount,
+                    renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
+                                  *v.selectedEpoch, newed,
+                                  v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount,
                                   std::max(220.0f, rowH * 0.55f));
                     renderENPlanView(v, std::min(rowH, 380.0f));
                 }
@@ -493,67 +458,42 @@ namespace Solvers::Charts {
         }
 
 
-        void renderRatioPlotSection(const PosTabView &v) {
-            if (!v.showRatio || v.epochCount == 0 || v.times.empty() || v.ratioVals.empty()) return;
-            sectionHeader("Ratio 时序 (阈值 3.0)", nullptr);
-            bool newed = v.newed;
-            renderRatioPlot(v.times, v.ratioVals, *v.selectedEpoch, newed, v.epochCount);
-        }
-
-
         void renderSkyResidualRow(const PosTabView &v) {
+            const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
+            if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+                ImGui::TableSetupColumn("Sky", ImGuiTableColumnFlags_WidthStretch, 0.33f);
+                ImGui::TableSetupColumn("Res", ImGuiTableColumnFlags_WidthStretch, 0.67f);
+                ImGui::TableNextRow();
 
-            {
-                bool *d3Tg = v.renderToggles ? &v.renderToggles->plot3d : nullptr;
-                bool *resTg = v.renderToggles ? &v.renderToggles->residual : nullptr;
-                const bool left = vis(d3Tg, true);
-                if (const bool right = vis(resTg, v.showResidual) && v.hasResidualData; left || right) {
-                    const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
-                    if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-                        ImGui::TableSetupColumn("Sky", ImGuiTableColumnFlags_WidthStretch, 0.33f);
-                        ImGui::TableSetupColumn("Res", ImGuiTableColumnFlags_WidthStretch, 0.67f);
-                        ImGui::TableNextRow();
-                        int ci = 0;
-
-                        ImGui::TableSetColumnIndex(ci++);
-                        if (ImGui::BeginChild("##leftpanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                            sectionHeader(v.renderToggles ? "LEO 轨迹 (ECEF XYZ)" : "天顶图", d3Tg);
-                            if (left) {
-                                float fillH = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
-                                if (fillH < 120.0f) fillH = 120.0f;
-                                if (v.show3d)
-                                    renderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, fillH);
-                                else
-                                    renderSkyplot(v.skyTracks, v.curSkyPts, 460.0f);
-                            } else {
-                                ImGui::TextDisabled("(已隐藏)");
-                            }
-                        }
-                        ImGui::EndChild();
-
-                        if (right || v.renderToggles) {
-                            ImGui::TableSetColumnIndex(ci++); //NOLINT
-                            if (ImGui::BeginChild("##respanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                                sectionHeader(v.resMode && *v.resMode == 1 ? "相位残差序列" : "伪距残差序列", resTg);
-                                if (right) {
-                                    const double ylo = v.robustRes ? v.resYlo : -8.0;
-                                    const double yhi = v.robustRes ? v.resYhi : 8.0;
-                                    const double plo = v.robustResPhase ? v.resPhaseYlo : -0.5;
-                                    const double phi = v.robustResPhase ? v.resPhaseYhi : 0.5;
-                                    bool rnewed = v.newed;
-                                    renderSatResidualPlot(v.resT, v.resV,
-                                                          v.resPhaseT, v.resPhaseV, v.resMode,
-                                                          *v.selectedEpoch, v.epochCount, rnewed,
-                                                          &ylo, &yhi, &plo, &phi, 0.0f);
-                                } else {
-                                    ImGui::TextDisabled("(已隐藏)");
-                                }
-                            }
-                            ImGui::EndChild();
-                        }
-                        ImGui::EndTable();
-                    }
+                ImGui::TableSetColumnIndex(0);
+                if (ImGui::BeginChild("##leftpanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
+                    sectionHeader("天顶图");
+                    float fillH = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
+                    if (fillH < 120.0f) fillH = 120.0f;
+                    if (v.show3d)
+                        renderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, fillH);
+                    else
+                        renderSkyplot(v.skyTracks, v.curSkyPts, 460.0f);
                 }
+                ImGui::EndChild();
+
+                if (v.s.hasResidual) {
+                    ImGui::TableSetColumnIndex(1);
+                    if (ImGui::BeginChild("##respanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
+                        sectionHeader(v.resMode && *v.resMode == 1 ? "相位残差序列" : "伪距残差序列");
+                        const double ylo = v.s.hasResRange ? v.s.resYlo : -8.0;
+                        const double yhi = v.s.hasResRange ? v.s.resYhi : 8.0;
+                        const double plo = v.s.hasResPhaseRange ? v.s.resPhaseYlo : -0.5;
+                        const double phi = v.s.hasResPhaseRange ? v.s.resPhaseYhi : 0.5;
+                        bool rnewed = v.s.newed;
+                        renderSatResidualPlot(v.p.satResVals, v.p.satResPhaseVals,
+                                              v.s.resAxisCode, v.s.resAxisPhase, v.resMode,
+                                              *v.selectedEpoch, v.epochCount, rnewed,
+                                              &ylo, &yhi, &plo, &phi, 0.0f);
+                    }
+                    ImGui::EndChild();
+                }
+                ImGui::EndTable();
             }
         }
 
@@ -562,20 +502,20 @@ namespace Solvers::Charts {
             if (ImPlot::BeginPlot("DOP", ImVec2(-1, 350))) {
                 ImPlot::SetupAxes("Epoch", "DOP");
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
-                const BrokenSeries br(v.times);
+                const BrokenAxis &br = v.s.axis;
                 const int n = static_cast<int>(br.t.size());
                 xAxisFollow(br.t, newed);
                 auto plotOne = [&](const char *label, const std::vector<double> &src) {
-                    if (static_cast<int>(src.size()) != static_cast<int>(v.times.size())) return;
+                    if (static_cast<int>(src.size()) != static_cast<int>(v.p.times.size())) return;
                     const std::vector<double> yy = br.align(src);
                     ImPlot::PlotLine(label, br.t.data(), yy.data(), n);
                 };
-                plotOne("PDOP", v.pdops);
-                plotOne("GDOP", v.gdops);
-                plotOne("HDOP", v.hdops);
-                plotOne("VDOP", v.vdops);
+                plotOne("PDOP", v.p.pdops);
+                plotOne("GDOP", v.p.gdops);
+                plotOne("HDOP", v.p.hdops);
+                plotOne("VDOP", v.p.vdops);
                 if (!v.isRtk)
-                    plotOne("TDOP", v.tdops);
+                    plotOne("TDOP", v.p.tdops);
                 if (n > 0)
                     epochCursor(3, v.selectedEpoch, v.epochCount);
                 ImPlot::EndPlot();
@@ -585,9 +525,9 @@ namespace Solvers::Charts {
 
         void renderSigmaDopRow(const PosTabView &v) {
 
-            if (v.showSigmaDop && v.epochCount > 0 && !v.times.empty()) {
-                sectionHeader("σ / 精度 (P·V·DOP)", nullptr);
-                const bool newed = v.newed;
+            if (v.showSigmaDop && v.epochCount > 0 && !v.s.axis.kept.empty()) {
+                sectionHeader("σ / 精度 (P·V·DOP)");
+                const bool newed = v.s.newed;
 
                 struct Col {
                     const char *name;
@@ -595,10 +535,10 @@ namespace Solvers::Charts {
                     bool isDop;
                 };
                 std::vector<Col> cols;
-                if (!v.sigmaPs.empty()) cols.push_back({"SigmaP", &v.sigmaPs, false});
-                if (v.showSigmaV && !v.sigmaVs.empty()) cols.push_back({"SigmaV", &v.sigmaVs, false});
-                const bool hasDop = v.showPdop && !v.pdops.empty() && !v.gdops.empty()
-                                    && !v.hdops.empty() && !v.vdops.empty() && !v.tdops.empty();
+                if (!v.p.sigmaPs.empty()) cols.push_back({"SigmaP", &v.p.sigmaPs, false});
+                if (v.showSigmaV && !v.p.sigmaVs.empty()) cols.push_back({"SigmaV", &v.p.sigmaVs, false});
+                const bool hasDop = !v.p.pdops.empty() && !v.p.gdops.empty()
+                                    && !v.p.hdops.empty() && !v.p.vdops.empty() && !v.p.tdops.empty();
                 if (hasDop) cols.push_back({"DOP", nullptr, true});
                 if (!cols.empty()) {
                     if (ImGui::BeginTable("##bp3", static_cast<int>(cols.size()),
@@ -614,19 +554,19 @@ namespace Solvers::Charts {
                                 continue;
                             }
                             const bool sigPWithFloat = cols[k].name == std::string("SigmaP")
-                                                       && v.hasFloatSeries && !v.sigmaPFloatVals.empty();
+                                                       && v.hasFloatSeries && !v.p.sigmaPFloatVals.empty();
                             if (ImPlot::BeginPlot(cols[k].name, ImVec2(-1, 350),
                                                   sigPWithFloat ? ImPlotFlags_None : ImPlotFlags_NoLegend)) {
                                 ImPlot::SetupAxes("Epoch", "m");
                                 ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
-                                const BrokenSeries br(v.times);
+                                const BrokenAxis &br = v.s.axis;
                                 const int nSigma = static_cast<int>(br.t.size());
                                 const std::vector<double> yy = br.align(*cols[k].data);
                                 xAxisFollow(br.t, newed);
                                 if (nSigma > 0) {
                                     ImPlot::PlotLine(cols[k].name, br.t.data(), yy.data(), nSigma);
                                     if (sigPWithFloat) {
-                                        const std::vector<double> ff = br.align(v.sigmaPFloatVals);
+                                        const std::vector<double> ff = br.align(v.p.sigmaPFloatVals);
                                         ImPlotSpec fspec;
                                         fspec.LineColor = UI::kColFloat;
                                         fspec.LineWeight = 1.0f;
@@ -646,68 +586,28 @@ namespace Solvers::Charts {
 
         // LEO 专用：相对参考轨道的 R/T/N/3D 偏差轨迹
         void renderRtnDeviation(const PosTabView &v) {
-            {
-                bool *rtnTg = v.renderToggles && v.hasRef ? &v.renderToggles->rtn : nullptr;
-                bool rtnVis = v.renderToggles ? (v.hasRef && v.renderToggles->rtn) : v.showRtn; //NOLINT
-                if (rtnTg || (rtnVis && !v.rtnTimes.empty())) {
-                    sectionHeader("R/T/N/3D 偏差", rtnTg);
-                    if (rtnVis && !v.rtnTimes.empty()) {
-                        if (ImPlot::BeginPlot("R/T/N/3D 偏差", ImVec2(-1, 380))) {
-                            ImPlot::SetupAxes("Epoch", "偏差 (m)");
-                            ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
-                            const BrokenSeries br(v.rtnTimes);
-                            const std::vector<double> rr = br.align(v.rtnR), rrt = br.align(v.rtnT),
-                                                      rrn = br.align(v.rtnN), rd3 = br.align(v.rtnD3);
-                            const int nRtn = static_cast<int>(br.t.size());
-                            xAxisFollow(br.t, v.newed, ImPlotCond_Once);
-                            if (nRtn > 0) {
-                                ImPlot::PlotLine("R", br.t.data(), rr.data(), nRtn);
-                                ImPlot::PlotLine("T", br.t.data(), rrt.data(), nRtn);
-                                ImPlot::PlotLine("N", br.t.data(), rrn.data(), nRtn);
-                                ImPlot::PlotLine("3D", br.t.data(), rd3.data(), nRtn);
-                            }
-                            epochCursor(2, v.selectedEpoch, v.epochCount);
-                            ImPlot::EndPlot();
-                        }
-                    } else if (rtnTg) {
-                        ImGui::TextDisabled("(已隐藏)");
-                    }
+            if (!v.showRtn || v.rtnTimes.empty()) return;
+            sectionHeader("R/T/N/3D 偏差");
+            if (ImPlot::BeginPlot("R/T/N/3D 偏差", ImVec2(-1, 380))) {
+                ImPlot::SetupAxes("Epoch", "偏差 (m)");
+                ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
+                BrokenAxis br;
+                br.build(v.rtnTimes);
+                const std::vector<double> rr = br.align(v.rtnR), rrt = br.align(v.rtnT),
+                                          rrn = br.align(v.rtnN), rd3 = br.align(v.rtnD3);
+                const int nRtn = static_cast<int>(br.t.size());
+                xAxisFollow(br.t, v.s.newed, ImPlotCond_Once);
+                if (nRtn > 0) {
+                    ImPlot::PlotLine("R", br.t.data(), rr.data(), nRtn);
+                    ImPlot::PlotLine("T", br.t.data(), rrt.data(), nRtn);
+                    ImPlot::PlotLine("N", br.t.data(), rrn.data(), nRtn);
+                    ImPlot::PlotLine("3D", br.t.data(), rd3.data(), nRtn);
                 }
+                epochCursor(2, v.selectedEpoch, v.epochCount);
+                ImPlot::EndPlot();
             }
         }
 
-        // LEO 专用：逐历元伪距 / 相位 RMS
-        void renderRmsRow(const PosTabView &v) {
-            {
-                bool *rmsTg = v.renderToggles ? &v.renderToggles->rms : nullptr;
-                bool rmsVis = v.renderToggles ? v.renderToggles->rms : v.showRms; //NOLINT
-                if (rmsTg || (rmsVis && !v.times.empty() && !v.rmsCode.empty())) {
-                    sectionHeader("伪距/相位 RMS", rmsTg);
-                    if (rmsVis && !v.times.empty() && !v.rmsCode.empty()) {
-                        if (ImPlot::BeginPlot("伪距/相位 RMS", ImVec2(-1, 320))) {
-                            ImPlot::SetupAxes("Epoch", "RMS (m)");
-                            ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
-                            const BrokenSeries br(v.times);
-                            const bool okRms = !v.rmsCode.empty() && !v.rmsPhase.empty() &&
-                                               static_cast<int>(v.rmsCode.size()) == static_cast<int>(v.times.size()) &&
-                                               static_cast<int>(v.rmsPhase.size()) == static_cast<int>(v.times.size());
-                            const int nRms = static_cast<int>(br.t.size());
-                            xAxisFollow(br.t, true, ImPlotCond_Once);
-                            if (okRms) {
-                                const std::vector<double> rc = br.align(v.rmsCode), rp = br.align(v.rmsPhase);
-                                ImPlot::PlotLine("Code RMS", br.t.data(), rc.data(), nRms);
-                                ImPlot::PlotLine("Phase RMS", br.t.data(), rp.data(), nRms);
-                            }
-                            if (nRms > 0)
-                                epochCursor(4, v.selectedEpoch, v.epochCount);
-                            ImPlot::EndPlot();
-                        }
-                    } else if (rmsTg) {
-                        ImGui::TextDisabled("(已隐藏)");
-                    }
-                }
-            }
-        }
     }
 
     void renderPositioningTab(const PosTabView &v) {
@@ -729,10 +629,8 @@ namespace Solvers::Charts {
 
         renderSatelliteAndPositionPanels(v, th);
         renderEnuConvergence(v);
-        renderRatioPlotSection(v);
         renderSkyResidualRow(v);
         renderSigmaDopRow(v);
         renderRtnDeviation(v);
-        renderRmsRow(v);
     }
 }

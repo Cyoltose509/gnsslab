@@ -1,35 +1,38 @@
 #include "GuiTimeConverter.h"
 #include "imgui.h"
+#include "ui/DatePicker.h"
+#include "ui/GuiColors.h"
 #include "TimeConvert.h"
 #include "TimeStruct.h"
 
 #include <ctime>
 #include <cstring>
+#include <exception>
+#include <iterator>
+#include <string>
 
 namespace Tools::TimeConverter {
-
-    static constexpr int SYS_COUNT = 4;
-
-    static const char *SYS_LABELS[SYS_COUNT] = {"UTC", "GPS", "BDT", "TAI"};
-    static constexpr TimeSystem SYS_TYPES[SYS_COUNT] = {
-        TimeSystem::UTC, TimeSystem::GPS, TimeSystem::BDT,
-        TimeSystem::TAI
+    struct SysItem {
+        const char *label{};
+        TimeSystem type;
+        ImVec4 color;
     };
 
-
-    static constexpr ImVec4 SYS_COLORS[SYS_COUNT] = {
-        {1.0f, 1.0f, 1.0f, 1.0f},
-        {0.4f, 1.0f, 0.4f, 1.0f},
-        {1.0f, 0.45f, 0.45f, 1.0f},
-        {0.55f, 0.75f, 1.0f, 1.0f},
+    constexpr SysItem kSystems[] = {
+        {"UTC", TimeSystem::UTC, {1.00f, 1.00f, 1.00f, 1.00f}},
+        {"GPS", TimeSystem::GPS, {0.40f, 1.00f, 0.40f, 1.00f}},
+        {"BDT", TimeSystem::BDT, {1.00f, 0.45f, 0.45f, 1.00f}},
+        {"TAI", TimeSystem::TAI, {0.55f, 0.75f, 1.00f, 1.00f}},
     };
+    constexpr int kSysCount = std::size(kSystems);
 
-
-    static int s_Civil[SYS_COUNT][6] = {};
+    static int s_Civil[kSysCount][6] = {};
     static bool s_Syncing = false;
     static bool s_Initialized = false;
+    static std::string s_Error;
 
 
+    /// 把一个时间系统的字段当基准，推算出其余各系统；失败原因留在面板上。
     static void SyncFrom(const int source) {
         if (s_Syncing) return;
         s_Syncing = true;
@@ -37,13 +40,13 @@ namespace Tools::TimeConverter {
         try {
             const CivilTime src(s_Civil[source][0], s_Civil[source][1], s_Civil[source][2],
                                 s_Civil[source][3], s_Civil[source][4], s_Civil[source][5],
-                                SYS_TYPES[source]);
+                                kSystems[source].type);
             const CommonTime base = Time::CivilToCommon(src);
 
-            for (int i = 0; i < SYS_COUNT; i++) {
+            for (int i = 0; i < kSysCount; i++) {
                 if (i == source) continue;
                 CommonTime target = base;
-                Time::convertSystem(target, SYS_TYPES[i]);
+                Time::convertSystem(target, kSystems[i].type);
                 const CivilTime civ = Time::CommonToCivil(target);
                 s_Civil[i][0] = civ.year;
                 s_Civil[i][1] = civ.month;
@@ -52,7 +55,11 @@ namespace Tools::TimeConverter {
                 s_Civil[i][4] = civ.minute;
                 s_Civil[i][5] = static_cast<int>(civ.second);
             }
+            s_Error.clear();
+        } catch (const std::exception &e) {
+            s_Error = e.what();
         } catch (...) {
+            s_Error = "时间换算失败";
         }
 
         s_Syncing = false;
@@ -73,6 +80,20 @@ namespace Tools::TimeConverter {
         }
     }
 
+    /// UTC 的今天，供日历标「今天」用——本工具全按 UTC 读，本地时区在晚间会差一天。
+    static void UtcToday(int out[3]) {
+        const std::time_t t = std::time(nullptr);
+        std::tm g{};
+#if defined(_WIN32)
+        gmtime_s(&g, &t);
+#else
+        gmtime_r(&t, &g);
+#endif
+        out[0] = g.tm_year + 1900;
+        out[1] = g.tm_mon + 1;
+        out[2] = g.tm_mday;
+    }
+
 
     void Render(bool *p_open) {
         if (!s_Initialized) {
@@ -89,6 +110,21 @@ namespace Tools::TimeConverter {
 
         if (ImGui::Button("此刻"))
             SetToNow();
+        ImGui::SameLine(0, 16);
+        {
+            // 日历只改日期，时分秒沿用 UTC 行现值
+            int utcToday[3];
+            UtcToday(utcToday);
+            int y = s_Civil[0][0], m = s_Civil[0][1], d = s_Civil[0][2];
+            ImGui::PushID("dateJump");
+            if (UI::DatePicker::button(y, m, d, utcToday)) {
+                s_Civil[0][0] = y;
+                s_Civil[0][1] = m;
+                s_Civil[0][2] = d;
+                SyncFrom(0);
+            }
+            ImGui::PopID();
+        }
         ImGui::SameLine(0, 16);
         ImGui::TextDisabled("编辑任意字段，自动同步所有时间系统");
 
@@ -111,15 +147,15 @@ namespace Tools::TimeConverter {
 
             static const char *FID[] = {"##yr", "##mo", "##dy", "##hr", "##mn", "##sc"};
 
-            for (int i = 0; i < SYS_COUNT; i++) {
+            for (int i = 0; i < kSysCount; i++) {
                 ImGui::PushID(i);
                 ImGui::TableNextRow();
 
 
                 ImGui::TableSetColumnIndex(0);
-                ImGui::PushStyleColor(ImGuiCol_Text, SYS_COLORS[i]);
+                ImGui::PushStyleColor(ImGuiCol_Text, kSystems[i].color);
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(SYS_LABELS[i]);
+                ImGui::TextUnformatted(kSystems[i].label);
                 ImGui::PopStyleColor();
 
 
@@ -148,18 +184,25 @@ namespace Tools::TimeConverter {
         ImGui::Spacing();
         ImGui::Separator();
 
-        try {
-            const CivilTime utcCiv(s_Civil[0][0], s_Civil[0][1], s_Civil[0][2],
-                                   s_Civil[0][3], s_Civil[0][4], s_Civil[0][5],
-                                   TimeSystem::UTC);
-            const CommonTime utc = Time::CivilToCommon(utcCiv);
-            CommonTime gps = utc;
-            Time::convertSystem(gps, TimeSystem::GPS);
+        if (!s_Error.empty()) {
+            ImGui::TextColored(UI::kColFail, "%s", s_Error.c_str());
+        } else {
+            try {
+                const CivilTime utcCiv(s_Civil[0][0], s_Civil[0][1], s_Civil[0][2],
+                                       s_Civil[0][3], s_Civil[0][4], s_Civil[0][5],
+                                       TimeSystem::UTC);
+                const CommonTime utc = Time::CivilToCommon(utcCiv);
+                CommonTime gps = utc;
+                Time::convertSystem(gps, TimeSystem::GPS);
 
-            const double leap = Time::getLeapSeconds(gps);
-            const MJD mjd = Time::CommonToMJD(gps);
-            ImGui::Text("跳秒: %.0f    MJD (GPS): %.6f", leap, static_cast<double>(mjd.mjd));
-        } catch (...) {
+                const double leap = Time::getLeapSeconds(gps);
+                const MJD mjd = Time::CommonToMJD(gps);
+                ImGui::Text("跳秒: %.0f    MJD (GPS): %.6f", leap, static_cast<double>(mjd.mjd));
+            } catch (const std::exception &e) {
+                ImGui::TextColored(UI::kColFail, "%s", e.what());
+            } catch (...) {
+                ImGui::TextColored(UI::kColFail, "MJD 换算失败");
+            }
         }
 
         ImGui::End();

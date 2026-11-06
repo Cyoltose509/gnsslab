@@ -31,11 +31,14 @@ add_executable(GnssLab WIN32
     main.cpp
     core/Application.cpp
     core/PathMemory.cpp
-    core/Products.cpp
+    core/CRXDecoder.cpp
+    core/SinexReader.cpp
+    io/Products.cpp
     io/ProductPicker.cpp
     io/ObsSource.cpp
     core/IniFile.cpp
     ui/Gui.cpp
+    ui/DatePicker.cpp
         tools/GuiTimeConverter.cpp
         tools/GuiCoordConverter.cpp
         tools/GuiLsqSolver.cpp
@@ -46,12 +49,13 @@ add_executable(GnssLab WIN32
         solvers/view/GuiSolverPanel.cpp
         solvers/common/Task.cpp
         solvers/common/Core.cpp
-        solvers/common/Epoch.cpp
-        solvers/common/Session.cpp
+        solvers/common/Realtime.cpp
         solvers/spp/Task.cpp
         solvers/spp/Panel.cpp
-        solvers/ppp/Task.cpp
-        solvers/ppp/Panel.cpp
+        solvers/ppp_static/Task.cpp
+        solvers/ppp_static/Panel.cpp
+        solvers/ppp_kinematic/Task.cpp
+        solvers/ppp_kinematic/Panel.cpp
         solvers/leo/Task.cpp
         solvers/leo/Panel.cpp
         solvers/rtk/Task.cpp
@@ -59,19 +63,22 @@ add_executable(GnssLab WIN32
         solvers/view/GuiCharts.cpp
         solvers/view/GuiPosTab.cpp
         solvers/view/GuiHelpers.cpp
+        solvers/view/TaskGui.cpp
         solvers/view/GuiProductSection.cpp
         solvers/view/GuiParamPage.cpp
+        solvers/view/GuiRefTruth.cpp
         solvers/spp/Realtime.cpp
         solvers/rtk/Realtime.cpp
         solvers/rtk/Pipeline.cpp
         solvers/view/QualityControl.cpp
-        download/GuiFtpDownload.cpp
-        client/RemoteClient.cpp
+        download/Remote.cpp
+        download/Panel.cpp
+        download/Acquire.cpp
+        download/Widgets.cpp
+        download/Transfer.cpp
         download/ProductMeta.cpp
-        download/DownloadStore.cpp
-        download/ProductCatalog.cpp
-        download/ProductStore.cpp
-        download/AutoSync.cpp
+        download/Store.cpp
+        download/Catalog.cpp
         ${GNSSLAB_RESOURCES}
 )
 
@@ -80,7 +87,6 @@ target_compile_definitions(GnssLab PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GnssLab PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/client
     ${CMAKE_CURRENT_BINARY_DIR}
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/thirdparty/curl/include
@@ -128,35 +134,26 @@ set(CLI_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers
 )
 
-set(CLI_INIS spp ppp rtk leo)
-
 # 引擎侧源文件：与 GUI 共用同一份任务骨架与逐历元求解，不含任何 imgui/view 依赖
 set(CLI_ENGINE
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Task.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Core.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Epoch.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Session.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/common/Realtime.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/spp/Task.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/spp/Realtime.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/ppp/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/ppp_static/Task.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/ppp_kinematic/Task.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/leo/Task.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Task.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Realtime.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/io/ObsSource.cpp
+    ${CLI_DIR}/TaskViews.cpp
 )
 
-foreach(_cli spp ppp rtk leo)
-    add_executable(${_cli}_cli ${CLI_DIR}/${_cli}_cli.cpp ${CLI_COMMON} ${CLI_ENGINE})
-    target_compile_definitions(${_cli}_cli PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_include_directories(${_cli}_cli PRIVATE ${CLI_INCLUDES})
-    target_link_libraries(${_cli}_cli PRIVATE gnss ws2_32)
-    target_compile_options(${_cli}_cli PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
-    foreach(_ini ${CLI_INIS})
-        add_custom_command(TARGET ${_cli}_cli POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${CLI_DIR}/${_ini}.ini
-                    $<TARGET_FILE_DIR:${_cli}_cli>/${_ini}.ini
-            COMMENT "Copy ${_ini}.ini -> $<TARGET_FILE_DIR:${_cli}_cli>")
-    endforeach()
-endforeach()
+# 一个 CLI 解所有模式：ini 里的 mode 键决定解算模式
+add_executable(gnss_cli ${CLI_DIR}/gnss_cli.cpp ${CLI_COMMON} ${CLI_ENGINE})
+target_compile_definitions(gnss_cli PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_include_directories(gnss_cli PRIVATE ${CLI_INCLUDES})
+target_link_libraries(gnss_cli PRIVATE gnss ws2_32)
+target_compile_options(gnss_cli PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)

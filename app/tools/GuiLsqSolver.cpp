@@ -111,7 +111,6 @@ namespace Tools::LsqSolver {
             for (int i = 0; i < s_NumObs; ++i) {
                 EquData data;
                 data.prefit = s_L[i];
-                data.weight = W(i, i);
                 for (int j = 0; j < s_NumUnk; ++j) {
                     data.varCoeffData[varList[j]] = s_H[i * s_NumUnk + j];
                 }
@@ -250,9 +249,6 @@ namespace Tools::LsqSolver {
             ImGui::TextColored(UI::kColFail, "状态: %s", s_Error.c_str());
         } else {
             ImGui::Text("单位权中误差 (Sigma0): %.6f", s_Sigma0);
-            if (ImGui::BeginTabBar("##ResultTabs")) {
-                ImGui::EndTabBar();
-            }
             if (ImGui::BeginTable("##result", 2,
                                   ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX | ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthStretch,0.3);

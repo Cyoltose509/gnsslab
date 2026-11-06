@@ -9,6 +9,7 @@ report
 /test/
 /lib/
 /bin/gnsslab.log
+/bin/cli_gnsslab.log
 /bin/imgui.ini
 /bin/gnsslab.ini
 /bin/downloads/

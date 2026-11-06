@@ -6,28 +6,31 @@
 #include "SolverOptions.h"
 
 namespace Solvers {
-    enum class Mode { SPP, PPP, LEO, RTK };
+    enum class Mode { SPP, PPPStatic, PPPKinematic, LEO, RTK };
 
-    inline const char *modeLabel(const Mode m) {
-        switch (m) {
-            case Mode::SPP: return "SPP";
-            case Mode::PPP: return "PPP";
-            case Mode::LEO: return "LEO";
-            case Mode::RTK: return "RTK";
-        }
-        return "SPP";
+    /// 显示名与 ini 键前缀/产品池归属同表维护。
+    struct ModeInfo {
+        Mode mode;
+        const char *label;
+        const char *key;
+    };
+
+    inline constexpr ModeInfo kModes[] = {
+        {Mode::SPP, "SPP", "spp"},
+        {Mode::PPPStatic, "PPP (静态)", "ppp_static"},
+        {Mode::PPPKinematic, "PPP (动态)", "ppp_kin"},
+        {Mode::LEO, "LEO", "leo"},
+        {Mode::RTK, "RTK", "rtk"},
+    };
+
+    inline const ModeInfo &modeInfo(const Mode m) {
+        for (const auto &x: kModes) if (x.mode == m) return x;
+        return kModes[0];
     }
 
-    /// ini 键前缀 / 产品池归属，与 modeLabel 同序但小写
-    inline const char *modeKey(const Mode m) {
-        switch (m) {
-            case Mode::SPP: return "spp";
-            case Mode::PPP: return "ppp";
-            case Mode::LEO: return "leo";
-            case Mode::RTK: return "rtk";
-        }
-        return "spp";
-    }
+    inline const char *modeLabel(const Mode m) { return modeInfo(m).label; }
+
+    inline const char *modeKey(const Mode m) { return modeInfo(m).key; }
 
     inline std::string sysSetToString(const std::set<char> &s) {
         std::string out;
@@ -46,23 +49,7 @@ namespace Solvers {
         std::string port;
     };
 
-    inline SolverOptions defaultSolverOptions(const Mode mode) {
-        SolverOptions o = {};
-        switch (mode) {
-            case Mode::SPP:
-                o.spp.tropoMap = Troposphere::Map::Hopfield;
-                break;
-            case Mode::LEO:
-                o.spp.sigmaPhase = 0.003;
-                o.spp.firstEpochPosVar = 1.0;
-                o.spp.ambNoise = 1.0E-7;
-                o.spp.minSatsForUpdate = 4;
-                o.spp.useCycleSlip = false;
-                o.spp.applySolidTide = false;
-                o.motionThresh = 100.0;
-                break;
-            default: break;
-        }
-        return o;
-    }
+    /// 各模式的参数默认值落在模式自己的 Task.h（`SPP::defaultOptions()` 等），
+    /// 这里只按 Mode 转发，不维护任何数值。RTK 没有特有默认值，用 SolverOptions 的成员初值。
+    SolverOptions defaultSolverOptions(Mode mode);
 }

@@ -6,7 +6,6 @@
 #include "product/OSBBias.h"
 #include "product/ERPReader.h"
 #include "product/TROReader.h"
-#include "product/METReader.h"
 #include "product/ATTReader.h"
 #include "product/IONEXReader.h"
 #include "SPP.h"
@@ -36,9 +35,6 @@ public:
     bool loadERP(const std::string &path);
 
     bool loadTRO(const std::string &path);
-
-    /// 气象文件（RINEX3 *_MM.rnx）
-    bool loadMET(const std::string &path);
 
     /// ORBEX 姿态四元数（*.OBX）
     bool loadATT(const std::string &path);
@@ -174,7 +170,18 @@ protected:
     [[nodiscard]] double pcvCorrection(const SatID &sat) const;
 
     void addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
-                              double mapW, double tropoFixed);
+                              double mapW, double tropoFixed, bool probeOnly);
+
+    /// 用本历元码/相位预fit 判粗差：先扣同系统中位数（吸收接收机钟跳等公共偏差），
+    /// 再与本历元通过数比较；大面积超限视为公共偏差而非单星粗差，放弃剔除以免滤波饿死。
+    void decidePrefitGate();
+
+    /// 预fit 试算结果，供 decidePrefitGate() 决定哪几颗星要剔。
+    struct PrefitRec {
+        double code = 0.0;
+        double phase = 0.0;
+        bool freshAmb = false; // 本历元新弧段：相位预fit 已把钟差反算进模糊度
+    };
 
     void resetSlipDetectors(const ObsData &obsData);
 
@@ -215,7 +222,6 @@ protected:
     std::set<SatID> mOsbSatSet; // 外部 OSB 覆盖的卫星集合
     ERPReader mErp;
     TROReader mTro;
-    METReader mMet;
     ATTReader mAtt;
     IONEXReader mIonex;
 
@@ -250,6 +256,8 @@ protected:
 
     std::map<SatID, double> mSatMap; // 每星湿映射函数
     std::map<SatID, double> mSatTropoFixed; // 每星对流层固定项(m)
+    std::map<SatID, PrefitRec> mPrefitProbe; // 本历元预fit 试算结果
+    std::set<SatID> mPrefitBad; // 本历元判为粗差、要剔除的星
     std::set<char> mSysSeen; // 本历元出现过的系统
     std::set<SatID> mCurrentSatSet; // 本历元参与解算的星
 

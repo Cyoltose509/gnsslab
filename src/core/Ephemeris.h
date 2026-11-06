@@ -116,6 +116,10 @@ struct Ephemeris {
         return s;
     }
 
+    [[nodiscard]] bool isGEO() const {
+        return std::abs(i0) < 10.0 * DEG_TO_RAD && rootA * rootA > 4.0e7;
+    }
+
     virtual PVT getPVT(CommonTime t, const FreqCombo *combo);
 
     FrameInfo refFrame{};
@@ -186,7 +190,6 @@ struct BDSEphem : Ephemeris {
     double tgd1{}; // B1I 相对 B3I 的群时延
     double tgd2{}; // B2I/B2b 相对 B3I 的群时延
 
-    /// 北斗广播钟差以 B3I 单频为参考（ICD 5.2.4.12）
     void fixTGD(PVT &pvt, const FreqCombo *combo) override {
         const double f1 = combo && combo->f1 > 0.0 ? combo->f1 : L2_FREQ_BDS; // 默认 B1I
         const double f2 = combo && combo->f2 > 0.0 ? combo->f2 : L6_FREQ_BDS; // 默认 B3I
@@ -195,10 +198,6 @@ struct BDSEphem : Ephemeris {
         pvt.clockBias -= (s1 * tgdOf(f1) - s2 * tgdOf(f2)) / (s1 - s2);
     }
 
-    /// 频点相对 B3I 的群时延。B1C/B2a 的独立群时延（TGD_B1Cp/TGD_B2ap）只由 B-CNAV
-    /// 播发、只出现在 RINEX 4 的 CNV 记录里，D1 记录取不到，这里按邻近频点近似：
-    /// B1C 用 TGD1（与真值差 ±4 ns 量级）；B2a 直接取 0（真值约 −10 ns，比错用 B1 的 TGD 好）；
-    /// B2I/B2b 用 TGD2，但 BDS-3 的 TGD2 是 TGD1 的副本、不含 B2 信息，故 C19 起同样取 0。
     [[nodiscard]] double tgdOf(const double f) const {
         constexpr double kBand = 1.0e6;
         constexpr int kBds3FirstPrn = 19;

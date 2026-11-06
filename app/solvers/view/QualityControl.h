@@ -2,11 +2,11 @@
 
 #include <functional>
 #include <map>
-#include <memory>
 #include <string>
 #include <vector>
 #include "imgui.h"
 #include "QCProcessor.h"
+#include "solvers/common/Core.h"
 
 
 using QC::SatQC;
@@ -16,10 +16,7 @@ using QC::QualityReport;
 namespace Solvers {
     struct Core;
     struct Epoch;
-}
-
-namespace Solvers::PPP {
-    struct Task;
+    struct View;
 }
 
 namespace QualityControl {
@@ -43,7 +40,16 @@ namespace QualityControl {
         };
         std::map<std::string, PlotBuf> bufs;
         PlotBuf &buf(const std::string &id) { return bufs[id]; }
+
+        /// 逐卫星断点时间轴。QC 序列只在双频齐全的历元上有点，卫星不可见或丢频的
+        /// 整段是真空档，直连会画出一条跨越数小时的假斜线。`report` 变了就整批作废。
+        struct SatAxes {
+            const void *report = nullptr;
+            double interval = 0.0;
+            std::map<SatID, Solvers::BrokenAxis> bySat;
+        };
+        SatAxes axes;
     };
-    template<typename TaskT>
-    void render(const std::shared_ptr<TaskT> &task);
+    /// 渲染一份质量分析：view 提供输入通道与快照，fileName 只用于导出命名。
+    void render(Solvers::View &view, const std::string &fileName);
 }

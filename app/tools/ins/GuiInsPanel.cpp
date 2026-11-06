@@ -1,12 +1,9 @@
 #include "GuiInsPanel.h"
 
 #include "GuiInsCommon.h"
-#include "solvers/view/GuiHelpers.h"
 #include "solvers/common/Core.h"
 #include "core/PathMemory.h"
-#include "Const.h"
 
-#include <sstream>
 #include <string>
 
 namespace Tools::Ins {
@@ -34,16 +31,4 @@ namespace Tools::Ins {
         return t;
     }
 
-    void Render(Solvers::Task &job) {
-        const bool config = job.state == Solvers::Task::State::Config;
-        if (auto *c = dynamic_cast<SixPosCalibTask *>(&job)) {
-            if (config) c->renderConfigPanel();
-            else c->renderResult();
-            return;
-        }
-        if (auto *a = dynamic_cast<StaticAlignTask *>(&job)) {
-            if (config) a->renderConfigPanel();
-            else a->renderResult();
-        }
-    }
 }

@@ -4,19 +4,18 @@
 #include "tools/GuiCoordConverter.h"
 #include "tools/GuiLsqSolver.h"
 #include "tools/ins/GuiInsPanel.h"
-#include "download/GuiFtpDownload.h"
+#include "download/Panel.h"
 #include "solvers/view/GuiSolverPanel.h"
 #include "solvers/spp/Task.h"
-#include "solvers/ppp/Task.h"
+#include "solvers/ppp_kinematic/Task.h"
+#include "solvers/ppp_static/Task.h"
 #include "solvers/leo/Task.h"
 #include "solvers/rtk/Task.h"
-#include "solvers/view/GuiHelpers.h"
 #include "core/PathMemory.h"
-#include "core/Products.h"
-#include "download/ProductStore.h"
-#include "download/ProductCatalog.h"
+#include "io/Products.h"
+#include "download/Store.h"
+#include "download/Catalog.h"
 #include "io/ProductLoad.h"
-#include "download/AutoSync.h"
 #include "version.h"
 #include "Log.h"
 
@@ -27,11 +26,8 @@ namespace {
 
     void stopAndJoinTasks(TaskList &tasks) {
         for (const auto &task: tasks) {
-            task->stop = true;
-            if (const auto c = task->solveResult()) {
-                c->stop = true;
-                if (c->view.qcWorker.joinable()) c->view.qcWorker.join();
-            }
+            task->cancel();
+            if (task->view.qcWorker.joinable()) task->view.qcWorker.join();
         }
         for (const auto &task: tasks) {
             if (task->worker.joinable()) task->worker.join();
@@ -49,25 +45,30 @@ namespace {
             }
         }
     }
-}
 
-namespace {
     /// GUI 提供的产品默认路径：按模式取各自的 Products，引擎解析缺失项时回落到这里（CLI 不注册，只认 ini）。
     void registerProductDefaults() {
         ProductLoad::defaultsProvider() = [](const std::string &scope) {
             const auto &p = AppConfig::Products::of(scope);
             ProductLoad::Defaults d;
-            d.paths = {p.sp3, p.clk, p.brdc, p.osb, p.att, p.erp,
-                       Download::Store::activeFile(Download::Catalog::atx())};
+            d.paths = {
+                p.sp3, p.clk, p.brdc, p.osb, p.att, p.erp,
+                Download::Store::activeFile(Download::Catalog::atx())
+            };
             d.tro = p.tro;
             d.ionex = p.ionex;
-            d.met = p.met;
             d.vmf = p.vmf;
             d.gpt3 = Download::Store::activeFile(Download::Catalog::gpt3());
             return d;
         };
     }
 }
+
+const Application::ToolPanel Application::kToolPanels[3] = {
+    {"时间转换", &Application::m_showTimeConverter, Tools::TimeConverter::Render},
+    {"坐标转换", &Application::m_showCoordConverter, Tools::CoordConverter::Render},
+    {"最小二乘工具", &Application::m_showLsqSolver, Tools::LsqSolver::Render},
+};
 
 Application::Application() {
     registerProductDefaults();
@@ -85,12 +86,12 @@ void Application::Initialize() {
     const bool winMax = pm.getInt("win_max", 0, 0, 1) != 0;
     m_ui.Initialize(title.c_str(), static_cast<float>(winW), static_cast<float>(winH), winMax);
 
-    Download::AutoSync::setEnabled(pm.get("dl_autosync", pm.get("prod_autosync")) != "0");
-    Download::AutoSync::start();
+    Download::Catalog::setUpdatesEnabled(pm.get("dl_autosync", pm.get("prod_autosync")) != "0");
+    Download::Catalog::startUpdates();
 }
 
 void Application::Shutdown() {
-    Download::AutoSync::stop();
+    Download::Catalog::stopUpdates();
 
     {
         int w = 0, h = 0;
@@ -107,7 +108,7 @@ void Application::Shutdown() {
     LOG_INFO << "GnssLab 退出";
     stopAndJoinTasks(m_tasks);
     stopAndJoinTasks(m_closingTasks);
-    Download::Panel::Shutdown();
+    Download::Panel::state().shutdown();
     m_ui.Shutdown();
 }
 
@@ -119,30 +120,31 @@ void Application::RenderMenuBar() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("任务")) {
             if (ImGui::MenuItem("SPP解算..."))
-                OpenSppSolve();
-            if (ImGui::MenuItem("PPP解算..."))
-                OpenPppSolve();
+                makeSppTask();
+            if (ImGui::MenuItem("PPP (静态) 解算..."))
+                makePppStaticTask();
+            if (ImGui::MenuItem("PPP (动态) 解算..."))
+                makePppKinematicTask();
             if (ImGui::MenuItem("LEO定轨..."))
-                OpenLeoSolve();
+                makeLeoTask();
             if (ImGui::MenuItem("RTK解算..."))
-                OpenRtkSolve();
+                makeRtkTask();
             ImGui::Separator();
             if (ImGui::MenuItem("退出", "Alt+F4"))
                 m_quitRequested = true;
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("工具")) {
-            ImGui::MenuItem("时间转换", nullptr, &m_showTimeConverter);
-            ImGui::MenuItem("坐标转换", nullptr, &m_showCoordConverter);
-            ImGui::MenuItem("最小二乘工具", nullptr, &m_showLsqSolver);
+            for (const auto &tool: kToolPanels)
+                ImGui::MenuItem(tool.menu, nullptr, &(this->*tool.open));
             if (ImGui::BeginMenu("惯导标定与对准")) {
-                if (ImGui::MenuItem("六位置法标定")) OpenInsCalib();
-                if (ImGui::MenuItem("静态解析粗对准")) OpenInsAlign();
+                if (ImGui::MenuItem("六位置法标定")) makeInsCalibTask();
+                if (ImGui::MenuItem("静态解析粗对准")) makeInsAlignTask();
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();
         }
-        ImGui::MenuItem("下载", nullptr, &Download::Panel::s_open);
+        ImGui::MenuItem("下载", nullptr, &Download::Panel::state().open);
         if (ImGui::BeginMenu("帮助")) {
             if (ImGui::MenuItem("关于", nullptr))
                 m_showAbout = true;
@@ -175,20 +177,19 @@ void Application::RenderTaskTabList() {
 
     for (int i = 0; i < static_cast<int>(tasks.size()); ++i) {
         auto &task = tasks[i];
-        const auto res = task->solveResult();
-        const bool isTool = res->kind() == Solvers::Task::Kind::Tool;
-        const std::string tag = isTool ? std::string() : std::string(Solvers::modeLabel(res->mode));
+        const bool isTool = task->kind() == Solvers::Task::Kind::Tool;
+        const std::string tag = isTool ? std::string() : std::string(Solvers::modeLabel(task->mode));
         const std::string cat = isTool ? std::string() : "[" + tag + "] ";
         const bool isRealtime = task->isRealtime;
         const std::string defaultName = isTool ? std::string("未命名任务") : tag + "解算";
 
         std::string label;
         if (task->state == Solvers::Task::State::Config)
-            label = "[配置]" + cat + (res->fileName.empty() ? defaultName : res->fileName);
+            label = "[配置]" + cat + (task->fileName.empty() ? defaultName : task->fileName);
         else if (isRealtime)
-            label = "[实时]" + cat + res->fileName;
+            label = "[实时]" + cat + task->fileName;
         else
-            label = cat + res->fileName;
+            label = cat + task->fileName;
 
         if (task->state != Solvers::Task::State::Config && !isRealtime) {
             if (task->loading.load())
@@ -214,9 +215,8 @@ void Application::RenderTaskTabList() {
         }
 
         if (!open) {
-            LOG_INFO << "[任务] 关闭标签页: " << res->fileName;
-            task->stop = true;
-            if (const auto c = task->solveResult()) c->stop = true;
+            LOG_INFO << "[任务] 关闭标签页: " << task->fileName;
+            task->cancel();
             closingTasks.push_back(task);
             tasks.erase(tasks.begin() + i);
 
@@ -286,32 +286,39 @@ void Application::attachTask(const std::shared_ptr<Solvers::Task> &task) {
     m_taskToFocus = m_activeTask;
 }
 
-void Application::OpenSppSolve() {
+void Application::makeSppTask() {
     const auto task = std::make_shared<Solvers::SPP::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 SPP 配置：观测=" << task->core->view.obsPathBuf;
+    LOG_INFO << "[任务] 新建 SPP 配置：观测=" << task->view.obsPathBuf;
 
     attachTask(task);
 }
 
-void Application::OpenPppSolve() {
-    const auto task = std::make_shared<Solvers::PPP::Task>();
+void Application::makePppStaticTask() {
+    const auto task = std::make_shared<Solvers::PPPStatic::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 PPP 配置：观测=" << task->core->view.obsPathBuf
-            << ", 动态=" << (task->kinematic ? "是" : "否");
+    LOG_INFO << "[任务] 新建 PPP (静态) 配置：观测=" << task->view.obsPathBuf;
 
     attachTask(task);
 }
 
-void Application::OpenLeoSolve() {
+void Application::makePppKinematicTask() {
+    const auto task = std::make_shared<Solvers::PPPKinematic::Task>();
+    task->loadFromMemory();
+    LOG_INFO << "[任务] 新建 PPP (动态) 配置：观测=" << task->view.obsPathBuf;
+
+    attachTask(task);
+}
+
+void Application::makeLeoTask() {
     const auto task = std::make_shared<Solvers::LEO::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 LEO 配置：观测=" << task->leoObsPathBuf;
+    LOG_INFO << "[任务] 新建 LEO 配置：观测=" << task->view.obsPathBuf;
 
     attachTask(task);
 }
 
-void Application::OpenRtkSolve() {
+void Application::makeRtkTask() {
     const auto task = std::make_shared<Solvers::RTK::Task>();
     task->loadFromMemory();
     LOG_INFO << "[任务] 新建 RTK 配置：基准=" << task->baseObsPathBuf
@@ -320,13 +327,13 @@ void Application::OpenRtkSolve() {
     attachTask(task);
 }
 
-void Application::OpenInsCalib() {
+void Application::makeInsCalibTask() {
     const auto task = Tools::Ins::MakeSixPosCalibTask();
     LOG_INFO << "[任务] 新建 六位置法标定 配置";
     attachTask(task);
 }
 
-void Application::OpenInsAlign() {
+void Application::makeInsAlignTask() {
     const auto task = Tools::Ins::MakeStaticAlignTask();
     LOG_INFO << "[任务] 新建 静态解析粗对准 配置";
     attachTask(task);
@@ -336,14 +343,9 @@ void Application::Render() {
     RenderMenuBar();
 
 
-    if (m_showTimeConverter)
-        Tools::TimeConverter::Render(&m_showTimeConverter);
-    if (m_showCoordConverter)
-        Tools::CoordConverter::Render(&m_showCoordConverter);
-    if (m_showLsqSolver)
-        Tools::LsqSolver::Render(&m_showLsqSolver);
-    if (Download::Panel::s_open)
-        Download::Panel::Render(&Download::Panel::s_open);
+    for (const auto &tool: kToolPanels)
+        if (this->*tool.open) tool.render(&(this->*tool.open));
+    Download::Panel::state().render();
     RenderTasks();
 }
 

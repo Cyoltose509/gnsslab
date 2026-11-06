@@ -3,12 +3,14 @@
 
 #include "Realtime.h"
 
+#include <chrono>
+#include <exception>
 #include <memory>
 #include <string>
 #include <thread>
 #include <utility>
 
-#include "EpochDecimator.h"
+#include "Decimator.h"
 #include "Log.h"
 #include "novatel/SocketReader.h"
 #include "SolverOptions.h"
@@ -19,7 +21,8 @@
 namespace Solvers::Realtime {
     SPPSession::SPPSession(std::shared_ptr<SPP::Task> task, Solvers::RealtimeEndpoint endpoint)
         : task(std::move(task)), endpoint(std::move(endpoint)) {
-        this->task->core->initializedRefECEF = false;
+        this->task->initializedRefECEF = false;
+        this->task->view.clearQCInput(this->task->opts.sampleInterval);
     }
 
     SPPSession::~SPPSession() = default;
@@ -28,19 +31,17 @@ namespace Solvers::Realtime {
 
     std::string SPPSession::target() const { return endpoint.ip + ":" + endpoint.port; }
 
-    void SPPSession::clearError() { task->core->clearError(); }
+    void SPPSession::clearError() { task->clearError(); }
 
-    void SPPSession::setConnectError() { task->core->setError("正在尝试连接 " + target() + "..."); }
+    void SPPSession::setConnectError() { task->setError("正在尝试连接 " + target() + "..."); }
 
     void SPPSession::onException(const std::exception &e) {
-        task->core->setError(std::string("运行异常: ") + e.what());
+        task->setError(std::string("运行异常: ") + e.what());
     }
 
     void SPPSession::finish() {
         task->loading = false;
         task->done = true;
-        task->core->loading = false;
-        task->core->done = true;
     }
 
     bool SPPSession::connect() {
@@ -61,38 +62,46 @@ namespace Solvers::Realtime {
         reader.reset();
     }
 
-    bool SPPSession::stopped() { return task->shouldStop() || task->core->stop.load(); }
+    bool SPPSession::stopped() { return task->shouldStop(); }
 
     bool SPPSession::pump() {
-        const EpochDecimator dec(task->core->sampleInterval);
-        std::chrono::steady_clock::time_point lastQcTime;
-        return SPP::pump(*reader, spp, dec,
-                         [&] { return stopped(); },
-                         [&](ObsData &obs, const EphemerisTable &eph, const bool accepted) {
-                             {
-                                 std::lock_guard lk(task->core->view.qcInputMutex);
-                                 pushQcWindow(task->core->view.qcInput, obs, obs.weekSecond.sow);
-                             }
-                             if (!accepted) return;
-                             Solvers::Epoch data;
-                             data.getFromObs(obs);
-                             if (!task->core->hasNav && !eph.empty()) task->core->hasNav = true;
-                             try {
-                                 spp.processEpoch(obs);
-                                 data.getFromSPP(spp);
-                                 if (!task->core->initializedRefECEF) {
-                                     task->core->refECEF = data.sppResult.xyz;
-                                     task->core->initializedRefECEF = true;
-                                 }
-                             } catch (...) {
-                                 data.solved = false;
-                             }
-                             Solvers::commitEpoch(task->core, std::move(data));
-                             if (const auto now = std::chrono::steady_clock::now();
-                                 now - lastQcTime > std::chrono::milliseconds(500)) {
-                                 lastQcTime = now;
-                                 task->core->view.qcDirty = true;
-                             }
-                         });
+        const Observer::Decimator dec(task->opts.sampleInterval);
+        ObsData obs;
+        while (!stopped()) {
+            try {
+                if (reader->getNextEpoch(obs, false)) {
+                    const auto eph = reader->ephSnapshot();
+                    spp.ephTable = *eph;
+                    spp.preprocess(obs);
+                    task->view.pushQCInput(obs, obs.weekSecond.sow);
+                    task->view.markQcDirty();
+                    if (!dec.accept(obs.weekSecond.sow)) continue;
+
+                    Epoch data;
+                    data.getFromObs(obs);
+                    if (!task->hasNav && !eph->empty()) task->hasNav = true;
+                    try {
+                        spp.processEpoch(obs);
+                        data.getFromSPP(spp);
+                    } catch (...) {
+                        data.solved = false;
+                    }
+                    task->commitEpoch(std::move(data), [&](int, const Epoch &stored) {
+                        if (stored.solved && !task->initializedRefECEF) {
+                            task->refECEF = stored.sppResult.xyz;
+                            task->initializedRefECEF = true;
+                        }
+                    });
+                } else if (!reader->isConnected() || reader->isStale(std::chrono::milliseconds(5000))) {
+                    return false;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+            } catch (const std::exception &) {
+                if (!reader->isConnected()) return false;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+        return true;
     }
 }

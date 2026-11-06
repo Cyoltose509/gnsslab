@@ -1,3 +1,4 @@
+#include "Log.h"
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
@@ -99,7 +100,7 @@ namespace Tools::Ins {
             });
         };
         if (!pumpImuFile(alignPath, stop, onReader, onSample, onBatch)) {
-            abortRun(*this, sen.openFailure(alignPath));
+            abortRun(*this, sen.failureMessage(alignPath));
             return;
         }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 
+#include "Log.h"
 #include "GuiInsPanel.h"
 #include "solvers/view/GuiHelpers.h"
 #include "ui/FileDialog.h"
@@ -10,14 +11,12 @@
 
 #include "Const.h"
 #include "CSV.h"
-#include "Observer.h" // makeNovAtelReader：二进制 / ASC 由内容挑
+#include "Observer.h"
 #include "io/novatel/LogReader.h"
-#include "util/StringUtils.h"
 
 #include "implot.h"
 #include <atomic>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -58,7 +57,7 @@ namespace Tools::Ins {
         };
         // 二进制日志与 ASC 文本日志由内容决定用哪个读取器，后缀不作数
         const auto reader = Observer::makeNovAtelReader(path);
-        return reader && run(*reader);
+        return run(*reader);
     }
 
 
@@ -75,7 +74,7 @@ namespace Tools::Ins {
         task.chartDirty.store(false);
         LOG_INFO << "[" << task.fileName << "] 开始";
     }
-    
+
     template<class Task>
     void endRun(Task &task) {
         task.loading = false;
@@ -106,7 +105,6 @@ namespace Tools::Ins {
 
     template<class Task, class Fn>
     void launchWorker(Task &task, Fn fn) {
-        auto self = task.shared_from_this();
         task.worker = std::thread([fn] { fn(); });
     }
 
@@ -114,6 +112,7 @@ namespace Tools::Ins {
     using UI::kColFail;
     using UI::kColWarn;
     using UI::kColInfo;
+
     void drawAlert(AlertLevel lv, const char *text);
 
     template<class Task>
@@ -137,7 +136,8 @@ namespace Tools::Ins {
     template<class Task, class FileTabFn, class ParamTabFn, class StartFn>
     void renderInsConfig(const char *title, Task &task, const char *startLabel,
                          FileTabFn fileTab, ParamTabFn paramTab, StartFn onStart) {
-        Solvers::Helpers::beginConfigBody(title, task);
+        const std::string childId = std::string(title) + std::to_string(task.cfgIndex);
+        ImGui::BeginChild(childId.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
         if (ImGui::BeginTabBar("##cfg_tabs")) {
             if (ImGui::BeginTabItem("文件")) {
                 ImGui::Spacing();
@@ -155,9 +155,9 @@ namespace Tools::Ins {
         ImGui::Spacing();
         if (ImGui::Button(startLabel, ImVec2(200, 40))) onStart();
         ImGui::SameLine();
-        Solvers::Helpers::renderCancelButton(&task);
+        task.renderCancelButton();
         drawRunError(task);
-        Solvers::Helpers::endConfigBody();
+        ImGui::EndChild();
     }
 
     void renderInsParams(CalibParams &par);
@@ -173,6 +173,7 @@ namespace Tools::Ins {
     void loadInsParams(AlignParams &par);
 
     enum class ScaleSource { None, Record, Manual, Guess };
+
     enum class RecordScale { Model, UnknownType, NoType };
 
     struct RecordScaleInfo {
@@ -206,11 +207,15 @@ namespace Tools::Ins {
         [[nodiscard]] bool hasRecord() const { return recordModel != nullptr; }
 
         [[nodiscard]] ImuScale currentScale() const { return recordModel ? recordModel->scale : ImuScale{}; }
+
         bool observe(const RecordScaleInfo &info);
+
         bool resolve(ScaleFallback &sf, const std::vector<ImuLog> &staticCandidates, double g);
 
         [[nodiscard]] std::string failMessage() const;
+
         [[nodiscard]] std::string describe() const;
+
         [[nodiscard]] std::string recordLabel() const;
 
         [[nodiscard]] ScaleNotice notice(bool settled) const;
@@ -222,13 +227,16 @@ namespace Tools::Ins {
     };
 
     constexpr std::size_t kScaleProbeSamples = 4000;
+
     struct ScaleIdentifier {
-        explicit ScaleIdentifier(ScaleFallback &fallback) : sf(fallback) {}
+        explicit ScaleIdentifier(ScaleFallback &fallback) : sf(fallback) {
+        }
 
         ScaleFallback &sf;
         ScaleResolution res;
         std::vector<ImuLog> candidates;
         ImuLog probe;
+
         template<class Reader, class Sink>
         bool observe(const Reader &r, Sink sink) {
             if (!res.observe(readRecordScale(r))) return false;
@@ -238,7 +246,9 @@ namespace Tools::Ins {
         }
 
         void probeSample(const ImuSample &s);
+
         void offerProbe();
+
         void offerStatic(const ImuLog &seg);
 
         bool resolve(double g);
@@ -247,11 +257,14 @@ namespace Tools::Ins {
 
         [[nodiscard]] bool mixedModel() const;
 
-        [[nodiscard]] std::string openFailure(const std::string &path) const;
+        [[nodiscard]] std::string failureMessage(const std::string &path) const;
 
         [[nodiscard]] std::string label() const;
+
         [[nodiscard]] ImuScale currentScale() const;
+
         [[nodiscard]] ImuScale scale() const;
+
         [[nodiscard]] ScaleNotice notice(bool settled) const;
     };
 
@@ -307,7 +320,7 @@ namespace Tools::Ins {
         }
         task.clearError();
         LOG_INFO << "[" << task.fileName << "] 导出 " << displayName << " → "
-                 << std::filesystem::path(out).string();
+                << std::filesystem::path(out).string();
     }
 
     struct CalibUnit {
@@ -390,43 +403,61 @@ namespace Tools::Ins {
     };
 
     inline constexpr CalibQty kCalibQty[Q_COUNT] = {
-        {"加速度计比例因子 K_a", "加速度计比例因子",
+        {
+            "加速度计比例因子 K_a", "加速度计比例因子",
             topVec(&CalibReport::accelScaleG), topVec(&CalibReport::accelScaleG),
-            kAccScaleUnits, 3, 4, false, false, Q_ACC_SCALE_SIGMA},
-        {"加速度计比例因子 1σ", "加速度计比例因子1σ",
+            kAccScaleUnits, 3, 4, false, false, Q_ACC_SCALE_SIGMA
+        },
+        {
+            "加速度计比例因子 1σ", "加速度计比例因子1σ",
             topVec(&CalibReport::accelScaleSigma, true), topVec(&CalibReport::accelScaleSigma, true),
-            kAccScaleUnits, 3, 4, false, false, -1},
-        {"加速度计零偏 b_a", "加速度计零偏",
+            kAccScaleUnits, 3, 4, false, false, -1
+        },
+        {
+            "加速度计零偏 b_a", "加速度计零偏",
             calVec(&ImuCalibration::accelB), topVec(&CalibReport::accelBiasPhys),
-            kAccBiasUnits, 5, 4, false, false, -1},
-        {"标称比例因子 K_nom", "标称比例因子K_nom",
+            kAccBiasUnits, 5, 4, false, false, -1
+        },
+        {
+            "标称比例因子 K_nom", "标称比例因子K_nom",
             topScalar(&CalibReport::nominalAccelK, true), topScalar(&CalibReport::nominalAccelK, true),
-            kAccScaleUnits, 3, 6, false, true, -1},
-        {"加速度计比例因子误差 δs_a", "加速度计比例因子误差delta_s",
+            kAccScaleUnits, 3, 6, false, true, -1
+        },
+        {
+            "加速度计比例因子误差 δs_a", "加速度计比例因子误差delta_s",
             topVec(&CalibReport::accelDeltaS), topVec(&CalibReport::accelDeltaS),
-            kDsUnits, 3, 9, true, false, -1},
-        {"陀螺有效比例因子 K_eff,g", "陀螺有效比例因子K_eff,g",
+            kDsUnits, 3, 9, true, false, -1
+        },
+        {
+            "陀螺有效比例因子 K_eff,g", "陀螺有效比例因子K_eff,g",
             topVec(&CalibReport::gyroKeff), topVec(&CalibReport::gyroKeff),
-            kGyroKeffUnits, 2, 6, true, false, -1},
-        {"标称有效比例因子 K_eff,nom", "标称有效比例因子K_eff,nom",
+            kGyroKeffUnits, 2, 6, true, false, -1
+        },
+        {
+            "标称有效比例因子 K_eff,nom", "标称有效比例因子K_eff,nom",
             topScalar(&CalibReport::nominalKeff), topScalar(&CalibReport::nominalKeff),
-            kGyroKeffUnits, 2, 6, true, true, -1},
-        {"陀螺比例因子 S_g", "陀螺比例因子S_g",
+            kGyroKeffUnits, 2, 6, true, true, -1
+        },
+        {
+            "陀螺比例因子 S_g", "陀螺比例因子S_g",
             calVec(&ImuCalibration::gyroScale), calVec(&ImuCalibration::gyroScale),
-            kGyroScaleUnits, 2, 6, true, false, -1},
-        {"陀螺零偏 b_g", "陀螺零偏",
+            kGyroScaleUnits, 2, 6, true, false, -1
+        },
+        {
+            "陀螺零偏 b_g", "陀螺零偏",
             calVec(&ImuCalibration::gyroBias), topVec(&CalibReport::gyroBiasPhys),
-            kGyroBiasUnits, 3, 4, false, false, -1},
-        {"陀螺比例因子误差 δs_g", "陀螺比例因子误差delta_s",
+            kGyroBiasUnits, 3, 4, false, false, -1
+        },
+        {
+            "陀螺比例因子误差 δs_g", "陀螺比例因子误差delta_s",
             topVec(&CalibReport::gyroDeltaS), topVec(&CalibReport::gyroDeltaS),
-            kDsUnits, 3, 6, true, false, -1},
+            kDsUnits, 3, 6, true, false, -1
+        },
     };
 
     inline constexpr int kCalibUiRows[] = {
         Q_ACC_SCALE, Q_ACC_BIAS, Q_ACC_DS, Q_GYRO_KEFF, Q_GYRO_SCALE, Q_GYRO_BIAS, Q_GYRO_DS
     };
-
-    inline int gCalibQtyUnit[Q_COUNT] = {0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
     Eigen::Vector3d calibQtyValue(const CalibQty &q, const CalibUnit &u, const CalibReport &r, double g);
 

@@ -15,7 +15,7 @@ struct SolverOptions {
     std::string baseIp, roverIp;
     int basePort = 0, roverPort = 0;
 
-    std::string sp3, clk, atx, osb, erp, tro, ionex, vmf, gpt3, met, att;
+    std::string sp3, clk, atx, osb, erp, tro, ionex, vmf, gpt3, att;
     std::string gnssSp3, gnssClk, gnssBrdc, refSp3, aux;
     int refPrn = 49;
 
@@ -25,13 +25,12 @@ struct SolverOptions {
     double cutoffDeg = 15.0;
     std::set<char> systems{'G', 'C'};
     double sampleInterval = 0.0;
-    int kinematic = 0;
 
     SPPConfig spp;
     RTKConfig rtk;
 
+    /// 位置过程噪声（m^2/epoch）。PPP 静态为 0（位置固定），PPP 动态与 LEO 为 100。
     double posNoise = 100.0;
-    double staticPosNoise = 0.0;
 
     double motionThresh = 0.0, sppVsPredThresh = 300.0;
 

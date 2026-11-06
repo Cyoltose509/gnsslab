@@ -1,3 +1,4 @@
+#include "ui/GuiColors.h"
 #include "Task.h"
 
 #include <sstream>
@@ -45,13 +46,6 @@ namespace Solvers::RTK {
             ss << task->baseXyz.x() << ',' << task->baseXyz.y() << ',' << task->baseXyz.z();
             cfg.set("rtk_base_xyz", ss.str());
         }
-
-        // Task 的公共配置是自己的成员（非 core 的），解算/实时线程读 core，启动前同步过去
-        void syncCommonToCore(Task *task) {
-            task->core->enabledSystems = task->enabledSystems;
-            task->core->cutoffDeg = task->cutoffDeg;
-            task->core->sampleInterval = task->sampleInterval;
-        }
     }
 
     void Task::loadFromMemory() {
@@ -59,17 +53,15 @@ namespace Solvers::RTK {
         baseObsPathBuf = pm.get("rtk_base");
         roverObsPathBuf = pm.get("rtk_rover");
         navPathBuf = pm.get("rtk_nav");
-        Helpers::loadCommonCfg("rtk", Mode::RTK, &core->opts,
-                               &cutoffDeg, &sampleInterval, &enabledSystems);
-        core->rtEndpoints.resize(2);
-        core->rtEndpoints[0].ip = pm.get("rtk_rt_base_ip", "8.148.22.229");
-        core->rtEndpoints[0].port = pm.get("rtk_rt_base_port", "2002");
-        core->rtEndpoints[1].ip = pm.get("rtk_rt_rover_ip", "8.148.22.229");
-        core->rtEndpoints[1].port = pm.get("rtk_rt_rover_port", "3002");
+        Helpers::loadSolverParams(Mode::RTK, opts);
+        rtEndpoints.resize(2);
+        rtEndpoints[0].ip = pm.get("rtk_rt_base_ip", "47.114.134.129");
+        rtEndpoints[0].port = pm.get("rtk_rt_base_port", "7190");
+        rtEndpoints[1].ip = pm.get("rtk_rt_rover_ip", "8.148.22.229");
+        rtEndpoints[1].port = pm.get("rtk_rt_rover_port", "7201");
         if (const std::string manualStr = pm.get("rtk_base_manual"); !manualStr.empty() && manualStr != "0")
             useBaseCoord = true;
         if (const std::string xyzStr = pm.get("rtk_base_xyz"); !xyzStr.empty()) {
-            // "x,y,z"：三段都得是数，缺一段/有一段不是数就整份丢掉 —— 别把解析失败当 0 用
             const auto parts = Str::split(xyzStr, ',', false);
             double v[3]{0, 0, 0};
             bool ok = parts.size() == 3;
@@ -82,99 +74,64 @@ namespace Solvers::RTK {
     }
 
     void Task::renderConfigPanel() {
-        Helpers::beginConfigBody("RTK 处理配置###rtk_cfg_", *this);
+        auto *self = this;
+        const auto onStart = [self] {
+            const auto &cfg = AppConfig::PathMemory::instance();
+            cfg.set("rtk_base", self->baseObsPathBuf);
+            cfg.set("rtk_rover", self->roverObsPathBuf);
+            cfg.set("rtk_nav", self->navPathBuf);
+            Helpers::saveSolverParams(Mode::RTK, self->opts);
+            persistBaseCoord(self);
 
-        if (ImGui::BeginTabBar("##rtk_cfg_tabs")) {
-            if (ImGui::BeginTabItem("文件")) {
-                Helpers::fileRow("基准站观测文件", &baseObsPathBuf, "rtk_base", FileDialog::fObs, 3,
-                                 {}, nullptr, &navPathBuf);
-                Helpers::fileRow("流动站观测文件", &roverObsPathBuf, "rtk_rover", FileDialog::fObs, 3,
-                                 {}, nullptr, &navPathBuf);
-                Helpers::fileRow("广播星历 BRDC", &navPathBuf, "rtk_nav", FileDialog::fRnx, 2, {}, "rtk_base");
-                ImGui::Separator();
-                Helpers::renderSimpleConfig(&cutoffDeg, &enabledSystems, &sampleInterval);
-
-                ImGui::Separator();
-                renderBaseCoordInput(this);
-
-                if (ImGui::Button("开始解算", ImVec2(200, 40))) {
-                    const auto &cfg = AppConfig::PathMemory::instance();
-                    cfg.set("rtk_base", baseObsPathBuf);
-                    cfg.set("rtk_rover", roverObsPathBuf);
-                    cfg.set("rtk_nav", navPathBuf);
-                    Helpers::saveCommonCfg("rtk", Mode::RTK, core->opts,
-                                           cutoffDeg, sampleInterval, enabledSystems);
-                    persistBaseCoord(this);
-                    syncCommonToCore(this);
-
-                    if (const std::string inputErr = ObsSource::rtkInputError(
-                            baseObsPathBuf, roverObsPathBuf, navPathBuf);
-                        !inputErr.empty()) {
-                        ImGui::TextColored(UI::kColFail, "%s", inputErr.c_str());
-                    } else {
-                        core->filePath = roverObsPathBuf;
-                        core->fileName = Str::baseName(roverObsPathBuf) + " / "
-                                         + Str::baseName(baseObsPathBuf);
-                        LOG_INFO << "[RTK] 开始解算: 基准=" << baseObsPathBuf
-                                << ", 流动站=" << roverObsPathBuf;
-
-                        if (worker.joinable()) worker.join();
-                        stop = false;
-                        core->stop = false;
-                        core->initializedRefECEF = false;
-
-                        state = State::Running;
-                        loading = true;
-                        core->loading = true;
-                        startFile();
-                    }
-                }
-                ImGui::SameLine();
-                Helpers::renderCancelButton(this);
-                ImGui::EndTabItem();
+            if (const std::string inputErr = ObsSource::rtkInputError(
+                    self->baseObsPathBuf, self->roverObsPathBuf, self->navPathBuf);
+                !inputErr.empty()) {
+                ImGui::TextColored(UI::kColFail, "%s", inputErr.c_str());
+            } else {
+                self->isRealtime = false;
+                self->filePath = self->roverObsPathBuf;
+                self->fileName = Str::baseName(self->roverObsPathBuf) + " / "
+                                + Str::baseName(self->baseObsPathBuf);
+                LOG_INFO << "[RTK] 开始解算: 基准=" << self->baseObsPathBuf
+                        << ", 流动站=" << self->roverObsPathBuf;
+                self->startFile();
             }
+        };
+        const auto fileTab = [self] {
+            Helpers::fileRow("基准站观测文件", &self->baseObsPathBuf, "rtk_base", FileDialog::fObs, 3,
+                             {}, nullptr, &self->navPathBuf);
+            Helpers::fileRow("流动站观测文件", &self->roverObsPathBuf, "rtk_rover", FileDialog::fObs, 3,
+                             {}, nullptr, &self->navPathBuf);
+            Helpers::fileRow("广播星历 BRDC", &self->navPathBuf, "rtk_nav", FileDialog::fRnx, 2, {}, "rtk_base");
+            ImGui::Separator();
+            renderBaseCoordInput(self);
+        };
+        const auto realtimeTab = [self] {
+            const auto &cfg = AppConfig::PathMemory::instance();
+            self->renderRealtimeConfig({"基准站", "流动站"},
+                [self, &cfg] {
+                    const std::string &bip = self->rtEndpoints[0].ip;
+                    const std::string &bport = self->rtEndpoints[0].port;
+                    const std::string &rip = self->rtEndpoints[1].ip;
+                    const std::string &rport = self->rtEndpoints[1].port;
+                    cfg.set("rtk_rt_base_ip", bip);
+                    cfg.set("rtk_rt_base_port", bport);
+                    cfg.set("rtk_rt_rover_ip", rip);
+                    cfg.set("rtk_rt_rover_port", rport);
+                    Helpers::saveSolverParams(Mode::RTK, self->opts);
+                    persistBaseCoord(self);
 
-            if (ImGui::BeginTabItem("实时")) {
-                const auto &cfg = AppConfig::PathMemory::instance();
-                Helpers::renderRealtimeConfig(
-                    this, &core->rtEndpoints, {"基准站", "流动站"},
-                    &cutoffDeg, &enabledSystems, &sampleInterval,
-                    [&] {
-                        const std::string &bip = core->rtEndpoints[0].ip;
-                        const std::string &bport = core->rtEndpoints[0].port;
-                        const std::string &rip = core->rtEndpoints[1].ip;
-                        const std::string &rport = core->rtEndpoints[1].port;
-                        cfg.set("rtk_rt_base_ip", bip);
-                        cfg.set("rtk_rt_base_port", bport);
-                        cfg.set("rtk_rt_rover_ip", rip);
-                        cfg.set("rtk_rt_rover_port", rport);
-                        Helpers::saveCommonCfg("rtk", Mode::RTK, core->opts,
-                                               cutoffDeg, sampleInterval, enabledSystems);
-                        persistBaseCoord(this);
-                        syncCommonToCore(this);
+                    self->isRealtime = true;
+                    self->mode = Mode::RTK;
+                    self->fileName = bip + ":" + bport + " / " + rip + ":" + rport;
+                    self->filePath = self->fileName;
+                    LOG_INFO << "[RTK] 开始实时解算: base=" << bip << ":" << bport
+                            << ", rover=" << rip << ":" << rport;
 
-                        isRealtime = true;
-                        core->isRealtime = true;
-                        core->mode = Mode::RTK;
-                        core->fileName = bip + ":" + bport + " / " + rip + ":" + rport;
-                        core->filePath = core->fileName;
-                        LOG_INFO << "[RTK] 开始实时解算: base=" << bip << ":" << bport
-                                << ", rover=" << rip << ":" << rport;
-
-                        startRealtime();
-                    },
-                    [&] { renderBaseCoordInput(this); });
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("参数")) {
-                ImGui::Spacing();
-                Helpers::renderAdvancedParams(core->opts, Mode::RTK);
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-
-        Helpers::endConfigBody();
+                    self->startRealtime();
+                },
+                [self] { renderBaseCoordInput(self); });
+        };
+        self->renderConfigTabs("RTK 处理配置###rtk_cfg_", fileTab, onStart, realtimeTab);
     }
 }

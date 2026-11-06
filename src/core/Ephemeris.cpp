@@ -31,7 +31,7 @@ PVT Ephemeris::getPVT(CommonTime t, const FreqCombo *combo) {
     const double x0 = rk * std::cos(uk), y0 = rk * std::sin(uk);
 
     double OMEk, sOMEk, cOMEk;
-    if (getSatType(type, prn) == SatType::GEO) {
+    if (isGEO()) {
         OMEk = omega0 + omegaDot * tk - refFrame.omega * toe;
         sOMEk = std::sin(OMEk), cOMEk = std::cos(OMEk);
         const double cosik = std::cos(ik), sinik = std::sin(ik);

@@ -83,7 +83,7 @@ double CLKReader::getClockBias(const SatID &sat, const CommonTime &t) const {
     const double tRel = t - r[0].t;
     const int lb = Math::lowerBoundIndex(times, tRel);
     const double span = r[lb + 1].t - r[lb].t;
-    // 重复历元会让 span 为 0；其余 reader 都做了这个保护，这里原来漏了（frac 会变 inf）
+    // 重复历元会让 span 为 0，避免除零
     const double frac = span > 0.0 ? (t - r[lb].t) / span : 0.0;
     return Math::lerp(r[lb].bias, r[lb + 1].bias, frac);
 }
@@ -96,10 +96,11 @@ bool CLKReader::covers(const SatID &sat, const CommonTime &t, const double maxGa
     if (itT == relTimes.end()) return false;
     const std::vector<double> &times = itT->second;
     const double tRel = t - r.front().t;
-    if (tRel < -1e-6) return false;
+    // 文件首末样本外 maxGap 内仍算覆盖：getClockBias 夹到端点样本，钟漂移忽略不计
+    if (tRel < -maxGap) return false;
     const int n = static_cast<int>(times.size());
     const int lb = Math::lowerBoundIndex(times, tRel);
-    if (lb >= n) return false;
+    if (lb >= n) return tRel - times.back() <= maxGap;
     if (tRel - times[lb] > maxGap) return false;
     if (lb + 1 < n && times[lb + 1] - tRel > maxGap) return false;
     return true;
