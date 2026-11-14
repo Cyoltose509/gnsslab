@@ -1,6 +1,6 @@
 #include "QCProcessor.h"
-#include "FreqCombo.h"
-#include "Const.h"
+#include "core/obs/FreqCombo.h"
+#include "core/Const.h"
 #include <algorithm>
 #include <deque>
 #include <utility>

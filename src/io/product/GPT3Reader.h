@@ -25,8 +25,6 @@ public:
     static constexpr int kRows = 2592;
     static constexpr int kCols = 64;
 
-    // 校验 GPT3 格网文件格式与完整性（下载 / 手工导入时用，不进逐历元路径）。
-    // 返回 false 时 detail 写原因，返回 true 时写人读摘要。
     static bool validate(const std::string &path, std::string &detail);
 
     bool load(const std::string &path);

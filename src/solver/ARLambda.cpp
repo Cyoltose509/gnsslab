@@ -112,7 +112,7 @@ int ARLambda::search(Eigen::MatrixXd &L, Eigen::VectorXd &D, Eigen::VectorXd &zs
     zb(k) = zs(k);
     z(k) = std::round(zb(k));
     double y = zb(k) - z(k);
-    step(k) = sign(y);
+    step(k) = Math::sign(y);
 
     int nn(0), imax(0);
     double maxDist = 1E99;
@@ -128,7 +128,7 @@ int ARLambda::search(Eigen::MatrixXd &L, Eigen::VectorXd &D, Eigen::VectorXd &zs
                 zb(k) = zs(k) + S(k, k);
                 z(k) = std::round(zb(k));
                 y = zb(k) - z(k);
-                step(k) = sign(y);
+                step(k) = Math::sign(y);
             } else {
                 if (nn < m) {
                     if (nn == 0 || newDist > s(imax)) imax = nn;
@@ -144,7 +144,7 @@ int ARLambda::search(Eigen::MatrixXd &L, Eigen::VectorXd &D, Eigen::VectorXd &zs
                 }
                 z(0) += step(0);
                 y = zb(0) - z(0);
-                step(0) = -step(0) - sign(step(0));
+                step(0) = -step(0) - Math::sign(step(0));
             }
         } else {
             if (k == n - 1) {
@@ -154,7 +154,7 @@ int ARLambda::search(Eigen::MatrixXd &L, Eigen::VectorXd &D, Eigen::VectorXd &zs
             k++;
             z(k) += step(k);
             y = zb(k) - z(k);
-            step(k) = -step(k) - sign(step(k));
+            step(k) = -step(k) - Math::sign(step(k));
         }
     }
     if (!converged) return -1;

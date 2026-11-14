@@ -1,7 +1,7 @@
 #pragma once
 
-#include "CoordConvert.h"
-#include "GnssStruct.h"
+#include "core/geom/Attitude.h"
+#include "core/SatID.h"
 
 #include <Eigen/Eigen>
 
@@ -14,13 +14,15 @@ class ATTReader {
 public:
     bool read(const std::string &path);
 
+    bool read(const std::string &path, bool append);
+
     void clear() { data.clear(); }
 
     [[nodiscard]] bool empty() const { return data.empty(); }
 
     [[nodiscard]] bool quaternion(const SatID &sat, double mjd, ATTQuat &q) const;
 
-    [[nodiscard]] bool bodyDCM(const SatID &sat, double mjd, Eigen::Matrix3d &M) const;
+    [[nodiscard]] bool bodyDCM(const SatID &sat, double mjd, DCM &C) const;
 
     static constexpr double kMaxGapSec = 3600.0;
 

@@ -1,6 +1,7 @@
 #include "ui/Gui.h"
 
 #include "StringUtils.h"
+#include "util/Clock.h"
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -9,6 +10,8 @@
 #include "implot3d.h"
 #include <vector>
 #include <string>
+#include <filesystem>
+#include <thread>
 #include <d3d11.h>
 #include <wincodec.h>
 #include <shobjidl.h>
@@ -78,8 +81,8 @@ static bool CreateDeviceD3D(HWND hWnd) { //NOLINT
 }
 
 static void CreateRenderTarget() {
-    ID3D11Texture2D *pBackBuffer;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    ID3D11Texture2D *pBackBuffer = nullptr;
+    if (FAILED(g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer))) || !pBackBuffer) return;
     g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
     pBackBuffer->Release();
 }
@@ -128,11 +131,7 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 return 0;
             break;
         case WM_CLOSE:
-            // 只申请退出，**不在这里销毁窗口**：DefWindowProc 的默认处理会立刻
-            // DestroyWindow，等主循环退出、Application::Shutdown() 去读窗口尺寸时
-            // 句柄已经失效，GetWindowPlacement 失败、IsZoomed 恒 false ——
-            // 结果是尺寸写不进去、最大化状态每次都被存成 0。
-            // 窗口留到 Gui::Shutdown() 里销毁，退出前那次读取才拿得到真值。
+            // 只申请退出：窗口留到 Gui::Shutdown() 销毁，退出前那次读尺寸才拿得到真值。
             PostQuitMessage(0);
             return 0;
         case WM_DESTROY:
@@ -148,7 +147,8 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 void Gui::Initialize(const char *title, const float width, const float height, const bool maximized) {
     if (m_initialized) return;
 
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    m_comInit = SUCCEEDED(comHr); // RPC_E_CHANGED_MODE 时不能配对 CoUninitialize
 
     ImGui_ImplWin32_EnableDpiAwareness();
     const float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(
@@ -180,6 +180,9 @@ void Gui::Initialize(const char *title, const float width, const float height, c
     // DX11
     if (!CreateDeviceD3D(m_hwnd)) {
         CleanupDeviceD3D();
+        DestroyWindow(m_hwnd);
+        m_hwnd = nullptr;
+        g_mainHwnd = nullptr;
         UnregisterClassW(m_wndClass.lpszClassName, m_wndClass.hInstance);
         return;
     }
@@ -205,10 +208,14 @@ void Gui::Initialize(const char *title, const float width, const float height, c
 
     // Chinese font
     const float fontSize = 18.0f * main_scale;
-    const ImFont *font = io.Fonts->AddFontFromFileTTF(
-        R"(C:\Windows\Fonts\msyh.ttc)", fontSize, nullptr,
-        io.Fonts->GetGlyphRangesChineseFull());
-    IM_ASSERT(font != nullptr);
+    ImFont *font = nullptr;
+    for (const char *path: {R"(C:\Windows\Fonts\msyh.ttc)", R"(C:\Windows\Fonts\simhei.ttf)",
+                            R"(C:\Windows\Fonts\simsun.ttc)"}) {
+        if (!std::filesystem::exists(path)) continue;
+        font = io.Fonts->AddFontFromFileTTF(path, fontSize, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+        if (font) break;
+    }
+    if (!font) io.Fonts->AddFontDefault(); // 一个中文字体都没有时至少还能出英文
 
     // Backends
     ImGui_ImplWin32_Init(m_hwnd);
@@ -284,11 +291,14 @@ void Gui::Shutdown() {
     DestroyWindow(m_hwnd);
     UnregisterClassW(m_wndClass.lpszClassName, m_wndClass.hInstance);
 
-    // 不置空的话，退出后再问尺寸会拿一个已销毁的句柄去查（本项目的持久化就这么错过一次）。
+    // 不置空的话，退出后再问尺寸会拿一个已销毁的句柄去查。
     m_hwnd = nullptr;
     g_mainHwnd = nullptr;
 
-    CoUninitialize();
+    if (m_comInit) {
+        CoUninitialize();
+        m_comInit = false;
+    }
 
     m_initialized = false;
 }
@@ -341,7 +351,7 @@ bool Gui::BeginFrame(bool *frameReady) const {
 }
 
 void Gui::EndFrame() const {
-    if (!m_initialized) return;
+    if (!m_initialized || !g_mainRenderTargetView) return; // 尺寸重建失败时这一帧没得画
 
     ImGui::Render();
 
@@ -365,24 +375,35 @@ static bool SavePixelsToPNG(const wchar_t *path, int x0, int y0, int w, int h,
                             UINT srcPitch, const BYTE *srcBGRA) {
     if (w <= 0 || h <= 0) return false;
     IWICImagingFactory *factory = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-    if (FAILED(hr)) return false;
     IWICStream *stream = nullptr;
-    factory->CreateStream(&stream);
-    stream->InitializeFromFilename(path, GENERIC_WRITE);
     IWICBitmapEncoder *encoder = nullptr;
-    factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
-    encoder->Initialize(stream, WICBitmapEncoderNoCache);
     IWICBitmapFrameEncode *frame = nullptr;
-    encoder->CreateNewFrame(&frame, nullptr);
+    const auto bail = [&] {
+        if (frame) frame->Release();
+        if (encoder) encoder->Release();
+        if (stream) stream->Release();
+        if (factory) factory->Release();
+        return false;
+    };
+
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&factory))))
+        return bail();
+    if (FAILED(factory->CreateStream(&stream)) ||
+        FAILED(stream->InitializeFromFilename(path, GENERIC_WRITE)) ||
+        FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) ||
+        FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) ||
+        FAILED(encoder->CreateNewFrame(&frame, nullptr)))
+        return bail();
     frame->Initialize(nullptr);
-    frame->SetSize((UINT)w, (UINT)h);
+    if (FAILED(frame->SetSize(static_cast<UINT>(w), static_cast<UINT>(h)))) return bail();
     WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppRGBA;
-    frame->SetPixelFormat(&fmt);
-    std::vector<BYTE> rgba((std::size_t)w * h * 4);
+    if (FAILED(frame->SetPixelFormat(&fmt))) return bail();
+
+    std::vector<BYTE> rgba(static_cast<std::size_t>(w) * h * 4);
     for (int y = 0; y < h; y++) {
-        const BYTE *s = srcBGRA + (std::size_t)(y0 + y) * srcPitch + (std::size_t)x0 * 4;
-        BYTE *d = rgba.data() + (std::size_t)y * (w * 4);
+        const BYTE *s = srcBGRA + static_cast<std::size_t>(y0 + y) * srcPitch + static_cast<std::size_t>(x0) * 4;
+        BYTE *d = rgba.data() + static_cast<std::size_t>(y) * (w * 4);
         for (int x = 0; x < w; x++) {
             d[x * 4 + 0] = s[x * 4 + 2];
             d[x * 4 + 1] = s[x * 4 + 1];
@@ -390,10 +411,12 @@ static bool SavePixelsToPNG(const wchar_t *path, int x0, int y0, int w, int h,
             d[x * 4 + 3] = s[x * 4 + 3];
         }
     }
-    frame->WritePixels((UINT)h, (UINT)w * 4, (UINT)rgba.size(), rgba.data());
+    if (FAILED(frame->WritePixels(static_cast<UINT>(h), static_cast<UINT>(w) * 4,
+                                  static_cast<UINT>(rgba.size()), rgba.data())))
+        return bail();
     frame->Commit();
     encoder->Commit();
-    frame->Release(); encoder->Release(); stream->Release(); factory->Release();
+    bail(); // 只做释放，写成功与否已由上面的 HRESULT 判过
     return true;
 }
 
@@ -413,12 +436,16 @@ static bool CaptureBackBufferToPNG(const wchar_t *path) {
     hr = g_pd3dDevice->CreateTexture2D(&sdesc, nullptr, &staging);
     if (FAILED(hr)) { pBackBuffer->Release(); return false; }
     g_pd3dDeviceContext->CopyResource(staging, pBackBuffer);
-    // 等待 GPU 完成所有渲染，避免截到半帧/空图
+    // 等待 GPU 完成所有渲染，避免截到半帧/空图；设备丢失时不能无限自旋
     {   ID3D11Query *q = nullptr;
         D3D11_QUERY_DESC qd{D3D11_QUERY_EVENT, 0};
         if (SUCCEEDED(g_pd3dDevice->CreateQuery(&qd, &q))) {
             g_pd3dDeviceContext->End(q);
-            while (g_pd3dDeviceContext->GetData(q, nullptr, 0, 0) == S_FALSE) {}
+            const auto deadline = Clock::after(Clock::seconds(2));
+            while (g_pd3dDeviceContext->GetData(q, nullptr, 0, 0) == S_FALSE) {
+                if (Clock::due(deadline)) break;
+                Clock::sleep(Clock::microseconds(200));
+            }
             q->Release();
         }
     }
@@ -443,12 +470,6 @@ static bool CaptureBackBufferToPNG(const wchar_t *path) {
     staging->Release();
     pBackBuffer->Release();
     return ok;
-}
-
-void RequestCapturePNG(const std::wstring &path) {
-    g_capturePath = path;
-    g_captureRegion = false;
-    g_captureReq = true;
 }
 
 void RequestCaptureRegionPNG(const std::wstring &path, int x, int y, int w, int h) {

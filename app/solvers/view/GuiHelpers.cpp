@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "StringUtils.h"
+
 static int inputTextResizeCallback(ImGuiInputTextCallbackData *data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
         auto *str = static_cast<std::string *>(data->UserData);
@@ -16,6 +18,43 @@ static int inputTextResizeCallback(ImGuiInputTextCallbackData *data) {
 }
 
 namespace Solvers::Helpers {
+    PasteResult clipboardXYZButton(const char *id) {
+        ImGui::PushID(id);
+        PasteResult p;
+        p.clicked = ImGui::Button("从剪贴板获取");
+        if (p.clicked)
+            if (const char *clip = ImGui::GetClipboardText()) p.count = Str::scanMeters(clip, p.xyz, 3);
+        ImGui::PopID();
+        return p;
+    }
+
+    void renderEpochNav(int &selectedEpoch, const int epochCount,
+                        const char *epochInfo, const char *tailText) {
+        if (epochCount <= 0) return;
+        if (selectedEpoch < 0) selectedEpoch = 0;
+        if (selectedEpoch >= epochCount) selectedEpoch = epochCount - 1;
+        if (ImGui::Button("<<")) selectedEpoch = 0;
+        ImGui::SameLine();
+        if (ImGui::Button("<")) { if (selectedEpoch > 0) --selectedEpoch; }
+        ImGui::SameLine();
+        ImGui::PushItemWidth(150);
+        int ep = selectedEpoch + 1;
+        if (ImGui::SliderInt("##es", &ep, 1, epochCount)) selectedEpoch = ep - 1;
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        if (ImGui::Button(">")) { if (selectedEpoch < epochCount - 1) ++selectedEpoch; }
+        ImGui::SameLine();
+        if (ImGui::Button(">>")) selectedEpoch = epochCount - 1;
+        if (epochInfo && *epochInfo) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("| %s", epochInfo);
+        }
+        if (tailText && *tailText) {
+            ImGui::SameLine();
+            ImGui::Text("| %s", tailText);
+        }
+    }
+
     RobustResRange computeRobustResRange(const std::map<SatID, std::vector<double> > &satRes,
                                          const double minHalf) {
         std::vector<double> all_v;

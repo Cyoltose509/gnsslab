@@ -6,8 +6,23 @@
 #include <string>
 #include <vector>
 
-#include "GnssStruct.h"
+#include "core/geom/CoordStruct.h"
+#include "core/obs/ObsStruct.h"
 #include "rinex/RINEXFileBase.h"
+
+struct RINEXHeader {
+    std::string station;
+    double version;
+    std::string antType;
+    XYZ antennaPosition;
+    Eigen::Vector3d antDeltaENU{0, 0, 0};
+    std::map<char, std::vector<std::string> > mapObsTypes;
+
+    std::map<std::string, double> phaseShift;
+
+    RINEXHeader() : version(0) {
+    }
+};
 
 class RINEXObsReader : public RINEXFileBase {
 public:
@@ -24,6 +39,10 @@ public:
     [[nodiscard]] const RINEXHeader &getHeader() const { return rinexHeader; }
 
     [[nodiscard]] double version() const { return rinexHeader.version; }
+
+    /// 头里 GLONASS SLOT / FRQ # 不全时用它补槽位（PRN→频率号），由调用方从广播星历取；
+    /// 头里已有的以头为准。必须在 parseRINEXHeader 之前赋值。
+    std::map<std::string, int> gloSlots;
 
     ObsData parseRINEXObs(const CommonTime &syncEpoch) {
         const std::streampos sp(pStream->tellg());

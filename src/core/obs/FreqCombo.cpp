@@ -1,0 +1,150 @@
+#include "core/obs/FreqCombo.h"
+#include <algorithm>
+#include "core/Const.h"   // getFreq, C_MPS
+
+FreqCombo::FreqCombo(std::string c1, std::string c2)
+    : code1(std::move(c1)), code2(std::move(c2)) {
+}
+
+FreqCombo FreqCombo::fromFreq(const double f1, const double f2) {
+    FreqCombo d;
+    d.f1 = f1;
+    d.f2 = f2;
+    d.lambda1 = C_MPS / f1;
+    d.lambda2 = C_MPS / f2;
+    d.lambdaW = C_MPS / (f1 - f2);
+    d.lambdaN = C_MPS / (f1 + f2);
+    const double f1s = f1 * f1, f2s = f2 * f2;
+    d.c1 = f1s / (f1s - f2s);
+    d.c2 = -f2s / (f1s - f2s);
+    d.mwA1 = 1.0 / d.lambda1;  // = f1/c
+    d.mwA2 = -1.0 / d.lambda2; // = -f2/c
+    const double r = f1 / f2 * (f1 / f2);
+    const double K = -(d.mwA1 + d.mwA2);
+    const double Gc = d.mwA1 + r * d.mwA2;
+    d.mwB2 = (Gc - K) / (r - 1.0);
+    d.mwB1 = K - d.mwB2;
+    return d;
+}
+
+FreqCombo FreqCombo::detect(const char sys, const std::vector<std::string> &codes, const bool requirePhase) {
+    return detect(sys, codes, 0, requirePhase);
+}
+
+FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, int channel, bool requirePhase) {
+    FreqCombo invalid;
+    auto findCode = [&](const char kind, const char band) -> std::string {
+        std::string first;
+        for (const auto &c: codes) {
+            if (c.size() >= 2 && c[0] == kind && c[1] == band) {
+                if (c.size() >= 3 && c[2] == 'W') return c;
+                if (first.empty()) first = c;
+            }
+        }
+        return first;
+    };
+
+    std::string code1, code2;
+    if (sys == 'G') {
+        for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);
+        if (code2.empty())
+            for (char b: {'2', '5', '7'}) if (code2.empty()) code2 = findCode('C', b);
+    } else if (sys == 'C') {
+        for (char b: {'2', '1'}) if (code1.empty()) code1 = findCode('C', b);
+        for (char b: {'6', '7', '5'}) if (code2.empty()) code2 = findCode('C', b);
+    } else if (sys == 'R') {
+        // GLONASS FDMA：每星频率由通道号 k 决定，但"频段"与 GPS 同构（'1'=G1, '2'=G2）
+        for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);
+        if (code2.empty())
+            for (char b: {'2', '1'}) if (code2.empty()) code2 = findCode('C', b);
+    } else if (sys == 'E') {
+        // Galileo CDMA：E1 作 f1，E5a/E5b/E5/E6 选其一作 f2（优先 E5a）
+        for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);
+        for (char b: {'5', '7', '8', '6'}) if (code2.empty()) code2 = findCode('C', b);
+    } else {
+        // 通用兜底
+        std::vector<std::string> avail;
+        for (const auto &c: codes) if (c.size() >= 2 && c[0] == 'C') avail.push_back(c);
+        std::sort(avail.begin(), avail.end(), [&](const std::string &a, const std::string &b) {
+            return getFreq(sys, a) < getFreq(sys, b);
+        });
+        if (avail.size() >= 2) {
+            code1 = avail[0];
+            code2 = avail[1];
+        }
+    }
+    if (code1.empty() || code2.empty() || code1 == code2) return invalid;
+
+    std::string phase1 = findCode('L', code1[1]);
+    std::string phase2 = findCode('L', code2[1]);
+    if (requirePhase && (phase1.empty() || phase2.empty())) return invalid;
+    if (phase1.empty()) phase1 = "L" + std::string(1, code1[1]);
+    if (phase2.empty()) phase2 = "L" + std::string(1, code2[1]);
+
+    // GLONASS 频率随通道号 k 变化（FDMA），必须逐星给定；其余系统频率仅由 (sys, band) 决定
+    double f1, f2;
+    if (sys == 'R') {
+        f1 = getGlonassFreq(code1[1], channel);
+        f2 = getGlonassFreq(code2[1], channel);
+    } else {
+        f1 = getFreq(sys, code1);
+        f2 = getFreq(sys, code2);
+    }
+    if (f1 == 0.0 || f2 == 0.0) return invalid;
+
+    FreqCombo d = fromFreq(f1, f2); // 频率派生的常量（含 MW 四项）只有 fromFreq 一处
+    d.code1 = code1;
+    d.code2 = code2;
+    d.phase1 = phase1;
+    d.phase2 = phase2;
+    return d;
+}
+
+// 单颗卫星（逐星，GLONASS 每星通道号不同），需显式给出通道号
+FreqCombo FreqCombo::detect(const char sys, const TypeValueMap &tv, const int channel, const bool requirePhase) {
+    std::vector<std::string> codes;
+    for (const auto &[c, _]: tv) codes.push_back(c);
+    return detect(sys, codes, channel, requirePhase);
+}
+
+
+// 从整段 ObsData 收集某系统的观测码
+FreqCombo FreqCombo::detect(const char sys, const ObsData &obs, const bool requirePhase) {
+    std::vector<std::string> codes;
+    for (const auto &[sat, tv]: obs.satTypeValueData)
+        if (sat.system == sys)
+            for (const auto &[c, _]: tv) codes.push_back(c);
+    return detect(sys, codes, requirePhase);
+}
+
+bool FreqCombo::available(const TypeValueMap &tv, const bool requirePhase) const {
+    const auto ok = [&](const std::string &c) {
+        const auto it = tv.find(c);
+        return it != tv.end() && std::abs(it->second) > 1e-6;
+    };
+    if (!ok(code1) || !ok(code2)) return false;
+    if (requirePhase && (!ok(phase1) || !ok(phase2))) return false;
+    return true;
+}
+
+double FreqCombo::combineCode(const double P1, const double P2) const { return c1 * P1 + c2 * P2; }
+double FreqCombo::combinePhase(const double L1, const double L2) const { return c1 * L1 + c2 * L2; }
+
+double FreqCombo::combineCodeFromObs(const std::map<std::string, double> &obs) const {
+    return combineCode(obs.at(code1), obs.at(code2));
+}
+
+double FreqCombo::MW_cycle(const double P1, const double P2, const double L1, const double L2,
+                           const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
+    const double oP1 = P1 - osbP1, oP2 = P2 - osbP2;
+    const double oL1 = L1 - osbL1, oL2 = L2 - osbL2;
+    return mwA1 * oL1 + mwA2 * oL2 + mwB1 * oP1 + mwB2 * oP2;
+}
+
+double FreqCombo::MW_meter(const double P1, const double P2, const double L1, const double L2,
+                           const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
+    return MW_cycle(P1, P2, L1, L2, osbP1, osbP2, osbL1, osbL2) * lambdaW;
+}
+
+double FreqCombo::GF_phase(const double L1, const double L2) { return L2 - L1; }
+double FreqCombo::GF_code(const double P1, const double P2) { return P2 - P1; }

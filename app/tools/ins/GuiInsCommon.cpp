@@ -40,6 +40,40 @@ namespace Tools::Ins {
             };
             return s;
         }
+
+
+        const std::vector<Group<VerifyParams> > &verifySchema() {
+            static const std::vector<Group<VerifyParams> > s = {
+                {"初始位置", {
+                    field("纬度 φ (°N)", "vLatDeg", &VerifyParams::latDeg, between(-90.0, 90.0)),
+                    field("经度 λ (°E)", "vLonDeg", &VerifyParams::lonDeg, between(-180.0, 180.0)),
+                    field("高程 h (m)", "vHM", &VerifyParams::hM, between(-2000.0, 100000.0)),
+                }},
+                {"初始速度 (m/s, NED)", {
+                    field("北向 vN", "vVN", &VerifyParams::vN, between(-1000.0, 1000.0)),
+                    field("东向 vE", "vVE", &VerifyParams::vE, between(-1000.0, 1000.0)),
+                    field("地向 vD", "vVD", &VerifyParams::vD, between(-1000.0, 1000.0)),
+                }},
+                {"初始姿态 (°)", {
+                    field("横滚 roll", "vRollDeg", &VerifyParams::rollDeg, between(-360.0, 360.0)),
+                    field("俯仰 pitch", "vPitchDeg", &VerifyParams::pitchDeg, between(-90.0, 90.0)),
+                    field("航向 heading", "vHeadingDeg", &VerifyParams::headingDeg, between(-360.0, 360.0)),
+                }},
+                {"时间", {
+                    field("起始时刻 tow (s)", "vStartTow", &VerifyParams::startTime, between(0.0, 1000000.0)),
+                }},
+            };
+            return s;
+        }
+
+
+        const char *alertTitle(const AlertLevel lv) {
+            switch (lv) {
+                case AlertLevel::Error: return "错误";
+                case AlertLevel::Warn: return "注意";
+                default: return "提示";
+            }
+        }
     }
 
     void renderInsParams(CalibParams &par) {
@@ -50,12 +84,20 @@ namespace Tools::Ins {
         UI::ParamPage::render(alignSchema(), par, AlignParams{});
     }
 
+    void renderInsParams(VerifyParams &par) {
+        UI::ParamPage::render(verifySchema(), par, VerifyParams{});
+    }
+
     void saveInsParams(const CalibParams &par) {
         UI::ParamPage::save(calibSchema(), par, kInsPrefix);
     }
 
     void saveInsParams(const AlignParams &par) {
         UI::ParamPage::save(alignSchema(), par, kInsPrefix);
+    }
+
+    void saveInsParams(const VerifyParams &par) {
+        UI::ParamPage::save(verifySchema(), par, kInsPrefix);
     }
 
     void loadInsParams(CalibParams &par) {
@@ -66,16 +108,10 @@ namespace Tools::Ins {
         UI::ParamPage::load(alignSchema(), par, AlignParams{}, kInsPrefix);
     }
 
-    namespace {
-
-        const char *alertTitle(const AlertLevel lv) {
-            switch (lv) {
-                case AlertLevel::Error: return "错误";
-                case AlertLevel::Warn: return "注意";
-                default: return "提示";
-            }
-        }
+    void loadInsParams(VerifyParams &par) {
+        UI::ParamPage::load(verifySchema(), par, VerifyParams{}, kInsPrefix);
     }
+
 
     void drawAlert(const AlertLevel lv, const char *text) {
         if (!text || !*text) return;
@@ -251,22 +287,6 @@ namespace Tools::Ins {
         return mixedModel() ? res.conflict : "无法打开 IMU 日志：" + path;
     }
 
-    std::string ScaleIdentifier::label() const {
-        return res.describe();
-    }
-
-    ImuScale ScaleIdentifier::currentScale() const {
-        return res.currentScale();
-    }
-
-    ImuScale ScaleIdentifier::scale() const {
-        return res.scale;
-    }
-
-    ScaleNotice ScaleIdentifier::notice(const bool settled) const {
-        return res.notice(settled);
-    }
-
     void keepManualScaleFor(ScaleFallback &sf, const std::string &sig) {
         if (sf.accepted.load(std::memory_order_relaxed) && sf.sig != sig) sf.reset();
         sf.sig = sig;
@@ -287,17 +307,19 @@ namespace Tools::Ins {
                       : sf.reason.c_str());
         ImGui::TextDisabled("请按这台设备手册填写解码当量，然后点「以此当量重算」。");
         ImGui::Spacing();
-        auto field = [](const char *id, const char *label, const char *unit, double *v, const char *fmt) {
+        auto field = [](const char *id, const char *label, const char *unit, std::atomic<double> &v,
+                        const char *fmt) {
             ImGui::TextUnformatted(label);
             ImGui::SameLine(160.0f);
             ImGui::SetNextItemWidth(140.0f);
-            ImGui::InputDouble(id, v, 0.0, 0.0, fmt);
+            double val = v.load(std::memory_order_relaxed);
+            if (ImGui::InputDouble(id, &val, 0.0, 0.0, fmt)) v.store(val, std::memory_order_relaxed);
             ImGui::SameLine();
             ImGui::TextDisabled("%s", unit);
         };
-        field("##kf_a", "加计当量 k_a", "(m/s)/LSB", &sf.accelMpsPerLsb, "%.6e");
-        field("##kf_g", "陀螺当量 k_g", "°/LSB", &sf.gyroDegPerLsb, "%.6e");
-        field("##kf_r", "采样率", "Hz", &sf.rateHz, "%.3f");
+        field("##kf_a", "加计当量 k_a", "(m/s)/LSB", sf.accelMpsPerLsb, "%.6e");
+        field("##kf_g", "陀螺当量 k_g", "°/LSB", sf.gyroDegPerLsb, "%.6e");
+        field("##kf_r", "采样率", "Hz", sf.rateHz, "%.3f");
         ImGui::Spacing();
 
         bool retry = false;

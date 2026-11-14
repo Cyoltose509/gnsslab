@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GnssStruct.h"
+#include "core/equ/EquStruct.h"
 #include <map>
 #include <Eigen/Eigen>
 

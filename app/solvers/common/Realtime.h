@@ -29,12 +29,10 @@ namespace Solvers::Realtime {
 
         virtual void setStreamBroken() {
         }
+
         virtual void onException(const std::exception &e) = 0;
 
         virtual void finish() = 0;
-
-        virtual int connectFailBackoffMs() const noexcept { return 2000; }
-        virtual int streamBreakBackoffMs() const noexcept { return 0; }
 
     private:
         void sleep(int ms);

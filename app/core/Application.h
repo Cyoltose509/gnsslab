@@ -3,8 +3,11 @@
 
 #include "ui/Gui.h"
 
-#include <vector>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace Solvers {
     struct Core;
@@ -26,13 +29,19 @@ private:
     void RenderTasks();
     void RenderTaskTabList();
 
+    /// 关掉的标签页由后台回收线程做线程收尾与析构，界面线程只搬指针。
+    void startReaper();
+    void stopReaper();
+
     void makeSppTask();
     void makePppStaticTask();
     void makePppKinematicTask();
     void makeLeoTask();
     void makeRtkTask();
+    void makeInsTask();
     void makeInsCalibTask();
     void makeInsAlignTask();
+    void makeInsVerifyTask();
 
     /// 新任务入列并聚焦：六个 Open* 共用的收尾。
     void attachTask(const std::shared_ptr<Solvers::Task> &task);
@@ -50,10 +59,16 @@ private:
     bool  m_showTimeConverter  = false;
     bool  m_showCoordConverter = false;
     bool  m_showLsqSolver      = false;
+    bool  m_showEarthdata      = false;
     bool  m_showAbout          = false;
 
     std::vector<std::shared_ptr<Solvers::Task>> m_tasks;
     std::vector<std::shared_ptr<Solvers::Task>> m_closingTasks;
-    int m_activeTask   = -1;
     int m_taskToFocus  = -1;
+
+    std::mutex m_reapMutex;
+    std::condition_variable m_reapCv;
+    std::vector<std::shared_ptr<Solvers::Task>> m_reapQueue;
+    std::thread m_reaper;
+    bool m_reapQuit = false;
 };

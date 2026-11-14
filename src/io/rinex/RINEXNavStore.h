@@ -5,8 +5,7 @@
 #include <map>
 #include <fstream>
 
-#include "EphemerisTable.h"
-#include "GnssStruct.h"
+#include "core/geom/EphemerisTable.h"
 #include "rinex/RINEXFileBase.h"
 class RINEXNavStore : public RINEXFileBase {
 public:
@@ -16,6 +15,10 @@ public:
 
 
     void loadFile(const std::string &file, EphemerisTable &ephTable);
+
+    /// 只扫 GLONASS 记录的频率号（PRN→k），不建星历；给观测头缺槽位时兜底。
+    /// 失败（文件打不开/没有 GLONASS 记录）时 out 保持为空。
+    static void readGlonassSlots(const std::string &file, std::map<std::string, int> &out);
 
 
     struct TimeSysCorr {

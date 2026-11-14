@@ -1,11 +1,20 @@
+#include <atomic>
+#include <cctype>
+#include "util/Clock.h"
+#include <conio.h>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "CliCommon.h"
+#include "FileUtils.h"
 #include "solvers/common/Core.h"
 #include "solvers/common/Config.h"
 #include "core/IniFile.h"
@@ -13,30 +22,32 @@
 static std::set<char> parseSystems(const std::string &s) {
     std::set<char> out;
     for (char c: s)
-        if (c >= 'A' && c <= 'Z') out.insert(c);
+        if (c >= 'a' && c <= 'z') out.insert(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        else if (c >= 'A' && c <= 'Z') out.insert(c);
     if (out.empty()) out = {'G', 'C'};
     return out;
 }
 
 /// ini 的 mode 键 → 解算模式。静态与动态是两个独立模式，各有各的参数。
-Solvers::Mode modeFromKey(const std::string &s) {
+std::optional<Solvers::Mode> modeFromKey(const std::string &s) {
     if (s == "spp") return Solvers::Mode::SPP;
     if (s == "ppp_static" || s == "ppp") return Solvers::Mode::PPPStatic;
     if (s == "ppp_kin" || s == "ppp_kinematic") return Solvers::Mode::PPPKinematic;
     if (s == "rtk") return Solvers::Mode::RTK;
     if (s == "leo") return Solvers::Mode::LEO;
-    return Solvers::Mode::SPP;
+    if (s == "ins") return Solvers::Mode::INS;
+    return std::nullopt; // 拼错就报错退出，别静默按 SPP 跑一趟
 }
 
 namespace {
     /// SPP 家族（SPP / PPP / LEO）共用的观测量与滤波参数。
-    void loadCommon(const IniFile &ini, SolverOptions &c) {
+    void loadCommon(const CliSource &ini, SolverOptions &c) {
         c.cutoffDeg = ini.getD("solver", "cutoff_deg", c.cutoffDeg);
         c.systems = parseSystems(ini.get("solver", "systems", "GC"));
         c.sampleInterval = ini.getD("solver", "sample_interval", c.sampleInterval);
 
-        c.spp.sigIFCode = ini.getD("solver", "sig_if_code", c.spp.sigIFCode);
-        c.spp.sigmaPhase = ini.getD("solver", "sig_phase", c.spp.sigmaPhase);
+        c.spp.codeSigma = ini.getD("solver", "code_sigma", c.spp.codeSigma);
+        c.spp.phaseSigma = ini.getD("solver", "phase_sigma", c.spp.phaseSigma);
         c.spp.minSinElev = ini.getD("solver", "min_sin_elev", c.spp.minSinElev);
         c.spp.convEps = ini.getD("solver", "conv_eps", c.spp.convEps);
         c.spp.maxIter = ini.getInt("solver", "max_iter", c.spp.maxIter);
@@ -44,44 +55,51 @@ namespace {
         c.spp.useHealth = ini.getB("solver", "use_health", c.spp.useHealth);
         c.spp.applySolidTide = ini.getB("solver", "solid_tide", c.spp.applySolidTide);
         c.spp.applyWindup = ini.getB("solver", "windup", c.spp.applyWindup);
-        c.spp.isbProcNoise = ini.getD("solver", "isb_proc_noise", c.spp.isbProcNoise);
-        c.spp.isbInitVar = ini.getD("solver", "isb_init_var", c.spp.isbInitVar);
+        c.spp.isbProcSigma = ini.getD("solver", "isb_proc_sigma", c.spp.isbProcSigma);
+        c.spp.isbInitSigma = ini.getD("solver", "isb_init_sigma", c.spp.isbInitSigma);
         c.spp.tropoMap = Troposphere::fromKey(
             ini.get("solver", "tropo_map", Troposphere::keyOf(c.spp.tropoMap)));
 
         c.spp.useAR = ini.getB("solver", "use_ar", c.spp.useAR);
         c.spp.arRatioThreshold = ini.getD("solver", "ar_ratio_threshold", c.spp.arRatioThreshold);
-        c.spp.arSigGate = ini.getD("solver", "ar_sig_gate", c.spp.arSigGate);
-        c.spp.ambInitVar = ini.getD("solver", "amb_init_var", c.spp.ambInitVar);
-        c.spp.ambNoise = ini.getD("solver", "amb_q", c.spp.ambNoise);
+        c.spp.arGateSigma = ini.getD("solver", "ar_gate_sigma", c.spp.arGateSigma);
+        c.spp.ambInitSigma = ini.getD("solver", "amb_init_sigma", c.spp.ambInitSigma);
+        c.spp.ambProcSigma = ini.getD("solver", "amb_proc_sigma", c.spp.ambProcSigma);
         c.spp.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.spp.keepAmbMaxGap);
         c.spp.useCycleSlip = ini.getB("solver", "use_cycle_slip", c.spp.useCycleSlip);
         c.spp.gfSlipMult = ini.getD("solver", "gf_slip_mult", c.spp.gfSlipMult);
-        c.spp.codeBiasProcNoise = ini.getD("solver", "code_bias_proc_noise", c.spp.codeBiasProcNoise);
-        c.spp.codeBiasInitVar = ini.getD("solver", "code_bias_init_var", c.spp.codeBiasInitVar);
-        c.spp.gloIfcbProcNoise = ini.getD("solver", "glo_ifcb_proc_noise", c.spp.gloIfcbProcNoise);
-        c.spp.gloIfcbInitVar = ini.getD("solver", "glo_ifcb_init_var", c.spp.gloIfcbInitVar);
+        c.spp.codeBiasProcSigma = ini.getD("solver", "code_bias_proc_sigma", c.spp.codeBiasProcSigma);
+        c.spp.codeBiasInitSigma = ini.getD("solver", "code_bias_init_sigma", c.spp.codeBiasInitSigma);
+        c.spp.gloIfcbProcSigma = ini.getD("solver", "glo_ifcb_proc_sigma", c.spp.gloIfcbProcSigma);
+        c.spp.gloIfcbInitSigma = ini.getD("solver", "glo_ifcb_init_sigma", c.spp.gloIfcbInitSigma);
+
+        // 位置过程噪声与常速度模型（SPP 滤波档用；PPP/LEO 不接速度态）。
+        c.posProcSigma = ini.getD("solver", "pos_proc_sigma", c.posProcSigma);
+        c.accProcSigma = ini.getD("solver", "acc_proc_sigma", c.accProcSigma);
+        c.velInitSigma = ini.getD("solver", "vel_init_sigma", c.velInitSigma);
+        // SPP 专属钟差过程 σ；PPP 随后由 loadPPPFilter 的 clock_proc_sigma 覆盖，两套互不干扰。
+        c.spp.clockProcSigma = ini.getD("solver", "spp_clock_proc_sigma", c.spp.clockProcSigma);
     }
 
     /// PPP / LEO 的对流层与滤波参数（静态与动态通用）。
-    void loadPPPFilter(const IniFile &ini, SolverOptions &c) {
-        c.spp.ztdProcNoise = ini.getD("solver", "ztd_q", c.spp.ztdProcNoise);
+    void loadPPPFilter(const CliSource &ini, SolverOptions &c) {
+        c.spp.ztdProcSigma = ini.getD("solver", "ztd_proc_sigma", c.spp.ztdProcSigma);
         c.spp.troZtdSigma = ini.getD("solver", "tro_ztd_sigma", c.spp.troZtdSigma);
         if (!ini.getB("solver", "use_tro_ztd", true)) c.spp.troZtdSigma = 0.0;
         c.spp.useTroGrad = ini.getB("solver", "use_tro_grad", c.spp.useTroGrad);
-        c.spp.ztdPriorSigma = ini.getD("solver", "ztd_prior", c.spp.ztdPriorSigma);
+        c.spp.ztdPriorSigma = ini.getD("solver", "ztd_prior_sigma", c.spp.ztdPriorSigma);
         c.spp.ztdInitValue = ini.getD("solver", "ztd_init", c.spp.ztdInitValue);
-        c.spp.ztdInitVar = ini.getD("solver", "ztd_init_var", c.spp.ztdInitVar);
-        c.spp.firstEpochPosVar = ini.getD("solver", "first_epoch_pos_var", c.spp.firstEpochPosVar);
-        c.spp.posVarFloor = ini.getD("solver", "pos_var_floor", c.spp.posVarFloor);
+        c.spp.ztdInitSigma = ini.getD("solver", "ztd_init_sigma", c.spp.ztdInitSigma);
+        c.spp.firstEpochPosSigma = ini.getD("solver", "first_epoch_pos_sigma", c.spp.firstEpochPosSigma);
+        c.spp.posFloorSigma = ini.getD("solver", "pos_floor_sigma", c.spp.posFloorSigma);
         c.spp.minSatsForUpdate = ini.getInt("solver", "min_sats_for_update", c.spp.minSatsForUpdate);
         c.spp.maxReanchorIter = ini.getInt("solver", "max_reanchor_iter", c.spp.maxReanchorIter);
-        c.spp.clockNoise = ini.getD("solver", "clock_noise", c.spp.clockNoise);
+        c.spp.clockProcSigma = ini.getD("solver", "clock_proc_sigma", c.spp.clockProcSigma);
         c.spp.sppResidualThr = ini.getD("solver", "spp_residual_thr", c.spp.sppResidualThr);
     }
 
     /// RTK 专属的双差与参考星参数。
-    void loadRtk(const IniFile &ini, SolverOptions &c) {
+    void loadRTK(const CliSource &ini, SolverOptions &c) {
         c.rtk.useAR = ini.getB("solver", "use_ar", c.rtk.useAR);
         c.rtk.fullCovariance = ini.getB("solver", "full_covariance", c.rtk.fullCovariance);
         c.rtk.arThreshold = ini.getD("solver", "ar_ratio_threshold", c.rtk.arThreshold);
@@ -95,12 +113,53 @@ namespace {
         c.rtk.phaseWeight.minSinElev = ini.getD("solver", "min_sin_elev", c.rtk.phaseWeight.minSinElev);
         c.rtk.phaseWeight.a = ini.getD("solver", "phase_weight_a", c.rtk.phaseWeight.a);
         c.rtk.phaseWeight.b = ini.getD("solver", "phase_weight_b", c.rtk.phaseWeight.b);
-        c.rtk.codeOverPhaseVar = ini.getD("solver", "code_over_phase_var", c.rtk.codeOverPhaseVar);
+        c.rtk.codeOverPhaseSigma = ini.getD("solver", "code_over_phase_sigma", c.rtk.codeOverPhaseSigma);
         c.rtk.excludeGeoRef = ini.getB("solver", "exclude_geo_ref", c.rtk.excludeGeoRef);
+        // 滤波方向与 SPP 家族同一套词表（none/forward/backward/both），缺省 none＝逐历元 LSQ；
+        // 位置/速度 σ 与 SPP 共用同一组键，模糊度 σ 用 rtk_ 前缀避免与 PPP 撞车
+        if (const std::string flt = ini.get("solver", "rtk_filter", ""); !flt.empty())
+            c.filter = Solvers::filterFromKey(flt, c.filter);
+        c.rtk.ambInitSigma = ini.getD("solver", "rtk_amb_init_sigma", c.rtk.ambInitSigma);
+        c.rtk.ambProcSigma = ini.getD("solver", "rtk_amb_proc_sigma", c.rtk.ambProcSigma);
+        c.posProcSigma = ini.getD("solver", "pos_proc_sigma", c.posProcSigma);
+        c.accProcSigma = ini.getD("solver", "acc_proc_sigma", c.accProcSigma);
+        c.velInitSigma = ini.getD("solver", "vel_init_sigma", c.velInitSigma);
+    }
+
+    /// 参考真值：新写 [ref] 段，同时认旧的 [input] ref_sp3 与 [output] ref_x/y/z。
+    void loadRef(const CliSource &ini, const Solvers::Mode mode, SolverOptions &c) {
+        c.refSp3 = ini.get("ref", "sp3", ini.get("input", "ref_sp3", ""));
+        c.refX = ini.getD("ref", "x", ini.getD("output", "ref_x", 0.0));
+        c.refY = ini.getD("ref", "y", ini.getD("output", "ref_y", 0.0));
+        c.refZ = ini.getD("ref", "z", ini.getD("output", "ref_z", 0.0));
+        c.hasRef = c.refX != 0.0 || c.refY != 0.0 || c.refZ != 0.0;
+
+        const std::string form = ini.get("ref", "form", "auto");
+        if (form == "fixed") c.refForm = RefForm::Fixed;
+        else if (form == "file") c.refForm = RefForm::File;
+        else if (form != "auto")
+            std::cerr << "[ref] form = " << form << " 不认识（auto | fixed | file），按 auto\n";
+
+        if (c.refForm == RefForm::Fixed && !c.hasRef) {
+            std::cerr << "[ref] form = fixed 但 x/y/z 全 0，本趟不做参考对比\n";
+            c.refForm = RefForm::None;
+        }
+        if (c.refForm == RefForm::File && c.refSp3.empty()) {
+            std::cerr << "[ref] form = file 但 sp3 为空，本趟不做参考对比（x/y/z 一并忽略）\n";
+            c.refForm = RefForm::None;
+            c.hasRef = false;
+        }
+        // 模式不接受的参考形式会被 setupTruth 静默降级成「无」，这里点明，
+        // 免得跑完看到一列空偏差、以为是指标没算出来。
+        if (c.hasRef && !Solvers::modeAllowsRefFixed(mode))
+            std::cerr << Solvers::modeLabel(mode) << " 不接恒值参考真值，[ref] x/y/z 被忽略"
+                    << (Solvers::modeAllowsRefFile(mode) ? "（动态偏差请给 sp3）" : "") << "\n";
+        if (!c.refSp3.empty() && !Solvers::modeAllowsRefFile(mode))
+            std::cerr << Solvers::modeLabel(mode) << " 不接参考真值文件，[ref] sp3 被忽略\n";
     }
 }
 
-SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
+SolverOptions loadConfig(const CliSource &ini, const Solvers::Mode mode) {
     SolverOptions c = Solvers::defaultSolverOptions(mode);
 
     c.source = ini.get("input", "source", c.source);
@@ -129,36 +188,48 @@ SolverOptions loadConfig(const IniFile &ini, const Solvers::Mode mode) {
     c.gnssSp3 = ini.get("input", "gnss_sp3", "");
     c.gnssClk = ini.get("input", "gnss_clk", "");
     c.gnssBrdc = ini.get("input", "gnss_brdc", "");
-    c.refSp3 = ini.get("input", "ref_sp3", "");
     c.aux = ini.get("input", "aux", "");
-    c.refPrn = ini.getInt("input", "ref_prn", c.refPrn);
+    c.leoAnt = ini.get("input", "leo_ant", "");
+    c.leoPco = ini.get("input", "leo_pco", "");
     c.realtimeSec = ini.getInt("input", "realtime_sec", 0);
     c.maxEpochs = ini.getInt("input", "max_epochs", 0);
+    loadRef(ini, mode, c);
 
-    // 只读本模式用得到的字段：SPP 家族走观测模型，RTK 走双差参数。
+    if (mode == Solvers::Mode::INS) {
+        c.ins.imuPath = ini.get("input", "ins_imu", "");
+        c.ins.latDeg = ini.getD("input", "ins_lat", 0.0);
+        c.ins.lonDeg = ini.getD("input", "ins_lon", 0.0);
+        c.ins.hM = ini.getD("input", "ins_h", 0.0);
+        c.ins.vN = ini.getD("input", "ins_vn", 0.0);
+        c.ins.vE = ini.getD("input", "ins_ve", 0.0);
+        c.ins.vD = ini.getD("input", "ins_vd", 0.0);
+        c.ins.specifyAttitude = ini.getB("input", "ins_specify_att", false);
+        c.ins.rollDeg = ini.getD("input", "ins_roll", 0.0);
+        c.ins.pitchDeg = ini.getD("input", "ins_pitch", 0.0);
+        c.ins.headingDeg = ini.getD("input", "ins_heading", 0.0);
+        c.ins.zuptAccelTol = ini.getD("input", "ins_zupt_accel_tol", 0.3);
+        c.ins.zuptGyroTol = ini.getD("input", "ins_zupt_gyro_tol", 0.02);
+        c.ins.zuptHoldSec = ini.getD("input", "ins_zupt_hold", 0.5);
+        c.ins.manual.accelMpsPerLsb = ini.getD("input", "ins_accel_lsb", 0.0);
+        c.ins.manual.gyroRadPerLsb = ini.getD("input", "ins_gyro_lsb", 0.0);
+        c.ins.manual.rateHz = ini.getD("input", "ins_rate_hz", 0.0);
+    }
+
+    // 只读本模式用得到的字段：SPP 家族走观测模型，RTK 走双差参数，INS 不读 GNSS 参数。
     if (mode == Solvers::Mode::RTK) {
-        loadRtk(ini, c);
-    } else {
+        loadRTK(ini, c);
+    } else if (mode != Solvers::Mode::INS) {
         loadCommon(ini, c);
-        if (mode == Solvers::Mode::SPP) {
-            // SPP 只用码观测，无相位/滤波参数
-        } else {
-            loadPPPFilter(ini, c);
-            if (mode == Solvers::Mode::LEO) {
-                c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
-                c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
-                c.sppVsPredThresh = ini.getD("solver", "spp_vs_pred_thresh", c.sppVsPredThresh);
-            } else {
-                c.posNoise = ini.getD("solver", "pos_noise", c.posNoise);
-            }
+        if (const std::string sm = ini.get("solver", "smooth", ""); !sm.empty())
+            c.filter = Solvers::filterFromKey(sm, SolverOptions::FilterMode::Forward);
+        if (mode != Solvers::Mode::SPP) loadPPPFilter(ini, c);
+        if (mode == Solvers::Mode::LEO) {
+            c.motionThresh = ini.getD("solver", "motion_thresh", c.motionThresh);
+            c.sppVsPredThresh = ini.getD("solver", "spp_vs_pred_thresh", c.sppVsPredThresh);
         }
     }
 
     c.csvPath = ini.get("output", "csv", "");
-    c.refX = ini.getD("output", "ref_x", 0.0);
-    c.refY = ini.getD("output", "ref_y", 0.0);
-    c.refZ = ini.getD("output", "ref_z", 0.0);
-    c.hasRef = c.refX != 0.0 || c.refY != 0.0 || c.refZ != 0.0;
     c.baseCoordX = ini.getD("input", "base_coord_x", 0.0);
     c.baseCoordY = ini.getD("input", "base_coord_y", 0.0);
     c.baseCoordZ = ini.getD("input", "base_coord_z", 0.0);
@@ -173,41 +244,155 @@ namespace Cli {
             case Solvers::Mode::RTK: return "gnss_rtk.csv";
             case Solvers::Mode::PPPStatic: return "gnss_ppp_static.csv";
             case Solvers::Mode::PPPKinematic: return "gnss_ppp_kin.csv";
+            case Solvers::Mode::INS: return "gnss_ins.csv";
             default: return "gnss_spp.csv";
         }
     }
 
-    void dumpTask(Solvers::Task &task, const SolverOptions &cfg) {
-        if (cfg.hasRef) task.refECEF = XYZ(cfg.refX, cfg.refY, cfg.refZ);
-        const std::string path = cfg.csvPath.empty() ? defaultCSVName(task.mode) : cfg.csvPath;
-        std::ofstream out(path);
-        if (!out) {
-            std::cerr << "无法打开输出文件: " << path << "\n";
-            return;
+    void applyFieldList(const std::string &list, Solvers::Export::Spec &spec, const char *where) {
+        std::string cur;
+        for (const char ch: list + ",") {
+            if (ch != ',' && ch != ' ' && ch != '\t') {
+                cur.push_back(ch);
+                continue;
+            }
+            if (cur.empty()) continue;
+            if (const auto f = Solvers::Export::fieldByKey(cur)) spec.fields.push_back(*f);
+            else std::cerr << where << " 里的 " << cur << " 不是已知字段，忽略\n";
+            cur.clear();
         }
-        std::size_t n = 0;
-        {
-            std::lock_guard lk(task.mutex);
-            n = task.epochs.size();
-        }
-        task.exportCSV(out);
-        std::cout << "已写出 " << n << " 历元 -> " << path << "\n";
     }
 
-    int runTask(Solvers::Task &task, const SolverOptions &cfg) {
+    namespace {
+        /// 换掉扩展名（路径里没有扩展名就补一个），只认最后一段里的点。
+        std::string withExt(const std::string &path, const char *ext) {
+            const auto slash = path.find_last_of("/\\");
+            const auto dot = path.find_last_of('.');
+            const bool hasExt = dot != std::string::npos && (slash == std::string::npos || dot > slash);
+            return (hasExt ? path.substr(0, dot) : path) + "." + ext;
+        }
+    }
+
+    ExportOpt loadExportOpt(const CliSource &ini, const Solvers::Mode mode) {
+        using Solvers::Export::Format;
+        ExportOpt o;
+
+        const std::string fmtKey = ini.get("output", "format", "csv");
+        const auto fmt = Solvers::Export::formatByKey(fmtKey);
+        if (!fmt) {
+            std::cerr << "[output] format = " << fmtKey << " 不认识（csv|pos|sp3|orb|traj|kml|sbet），按 csv 导出\n";
+        } else if (!Solvers::Export::formatSolves(*fmt, mode)) {
+            std::cerr << Solvers::modeLabel(mode) << " 不支持 " << Solvers::Export::formatName(*fmt)
+                    << " 导出，按 csv 导出\n";
+        } else {
+            o.spec.format = *fmt;
+        }
+
+        const double interval = ini.getD("output", "interval", 0.0);
+        if (interval > 0.0) {
+            o.spec.sampling.mode = Solvers::Export::Sampling::Mode::Seconds;
+            o.spec.sampling.seconds = interval;
+        }
+
+        const int begin = ini.getInt("output", "begin", 0);
+        const int end = ini.getInt("output", "end", 0);
+        o.spec.begin = begin > 0 ? static_cast<std::size_t>(begin) : 0;
+        o.spec.end = end > 0 ? static_cast<std::size_t>(end) : 0;
+
+        applyFieldList(ini.get("output", "fields", ""), o.spec, "[output] fields");
+
+        if (const std::string sat = ini.get("output", "sp3_sat", "L01"); sat.size() == 3) o.spec.satId = sat;
+        else if (o.spec.format == Format::SP3)
+            std::cerr << "[output] sp3_sat = " << sat << " 不是 3 字符（SP3 的卫星号占 3 列），按 L01 写\n";
+        o.spec.marker = ini.get("output", "sp3_marker", "gnssLab");
+        o.spec.sp3Velocity = ini.getB("output", "sp3_velocity", false);
+
+        const std::string posForm = ini.get("output", "pos_form", "blh");
+        if (posForm == "ecef") o.spec.posForm = Solvers::Export::PosForm::ECEF;
+        else if (posForm == "enu") o.spec.posForm = Solvers::Export::PosForm::ENU;
+        else if (posForm != "blh")
+            std::cerr << "[output] pos_form = " << posForm << " 不认识（blh|ecef|enu），按 blh 写\n";
+        o.spec.posVelocity = ini.getB("output", "pos_velocity", true);
+        o.spec.posHeader = ini.getB("output", "pos_header", true);
+
+        o.path = ini.get("output", "out", "");
+        return o;
+    }
+
+    void dumpTask(Solvers::Task &task, const SolverOptions &cfg, const ExportOpt &opt) {
+        std::string path = opt.path;
+        // 显式给的 out 也要跟着最终格式换后缀：--format 可能在读完 ini 之后才覆盖。
+        if (!path.empty()) path = withExt(path, Solvers::Export::fileExt(opt.spec.format));
+        if (path.empty()) {
+            path = cfg.csvPath.empty() ? defaultCSVName(task.mode) : cfg.csvPath;
+            if (opt.spec.format != Solvers::Export::Format::CSV) {
+                const std::size_t dot = path.find_last_of('.');
+                if (dot != std::string::npos) path.resize(dot);
+                if (opt.spec.format == Solvers::Export::Format::ORB) path += "_elements";
+                if (opt.spec.format == Solvers::Export::Format::TRAJ ||
+                    opt.spec.format == Solvers::Export::Format::KML)
+                    path += "_traj";
+                path += std::string(".") + Solvers::Export::fileExt(opt.spec.format);
+            }
+        }
+        // 只有 SBET 开二进制：裸双精度里的 0x0A 会被文本模式翻成 0x0D 0x0A，其余格式保持逐字节不变。
+        const std::size_t n = task.resultEpochCount();
+        std::string error;
+        if (!File::safeWrite(path, [&](std::ostream &out) {
+                std::lock_guard lk(task.mutex);
+                task.exportTo(out, opt.spec);
+            }, error, opt.spec.format == Solvers::Export::Format::SBET)) {
+            std::cerr << error << "\n";
+            return;
+        }
+        std::cout << "已写出 " << path << "（" << Solvers::Export::formatName(opt.spec.format)
+                << "，解算 " << n << " 历元）\n";
+    }
+
+    /// 命令行上写清这次到底用哪套参考真值：静默降级最容易让人对着空偏差列找 bug。
+    std::string refText(const Solvers::Task &task, const SolverOptions &cfg) {
+        switch (task.truth.form) {
+            case RefForm::Fixed: {
+                std::ostringstream os;
+                os << std::fixed << std::setprecision(3) << "恒值 (" << cfg.refX << ", "
+                        << cfg.refY << ", " << cfg.refZ << ')';
+                return os.str();
+            }
+            case RefForm::File:
+                return "文件 " + cfg.refSp3;
+            default:
+                return "无（只解算，不出偏差）";
+        }
+    }
+
+    int runTask(Solvers::Task &task, const SolverOptions &cfg, const ExportOpt &opt) {
         task.maxEpochs = cfg.maxEpochs;
         task.realtimeSec = cfg.realtimeSec;
 
+        task.setupTruth(cfg);
+        std::cout << "参考真值=" << refText(task, cfg) << "\n";
+        if (task.truth.form == RefForm::File && !std::filesystem::exists(cfg.refSp3))
+            std::cerr << "[ref] 文件不存在: " << cfg.refSp3 << "，本趟按无参考真值解\n";
+
         if (cfg.source == "realtime") {
+            std::atomic<bool> quitWaiter{false};
             std::thread waiter;
-            // 没给时限也没给历元上限时，回车停止（与 GUI 的取消按钮等价）
+            // 没给时限也没给历元上限时，回车停止（与 GUI 的取消按钮等价）。轮询键盘而不是阻塞
+            // 在 std::cin.get() 上：流自己读完时 join 才不会永久卡住。
             if (cfg.realtimeSec <= 0 && cfg.maxEpochs <= 0)
-                waiter = std::thread([&task] {
-                    std::cin.get();
-                    task.cancel();
+                waiter = std::thread([&task, &quitWaiter] {
+                    while (!quitWaiter.load()) {
+                        if (_kbhit()) {
+                            _getch();
+                            task.cancel();
+                            return;
+                        }
+                        Clock::sleep(Clock::milliseconds(50));
+                    }
                 });
             task.startRealtime();
             task.waitDone();
+            quitWaiter = true;
             if (waiter.joinable()) waiter.join();
         } else {
             task.startFile();
@@ -215,7 +400,7 @@ namespace Cli {
         }
 
         if (task.errorFlag()) std::cerr << "错误: " << task.errorMessage() << "\n";
-        dumpTask(task, cfg);
-        return task.ok() ? 0 : 1;
+        dumpTask(task, cfg, opt);
+        return task.errorFlag() ? 1 : 0;
     }
 }

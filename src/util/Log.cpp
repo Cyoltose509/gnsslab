@@ -1,13 +1,12 @@
 #include "Log.h"
+#include "Clock.h"
 #include <fstream>
-#include <chrono>
-#include <ctime>
 #include <iomanip>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include "Const.h"
+#include "core/Const.h"
 
 namespace {
     // 这两个静态量故意 new 出来不析构（退出时泄漏几十字节）：
@@ -35,13 +34,11 @@ void Log::write(const Level lvl, const std::string &msg) {
     std::ofstream f(logPath(), std::ios::app);
     if (!f) return;
 
-    const auto now = std::chrono::system_clock::now();
-    const auto tt = std::chrono::system_clock::to_time_t(now);
-    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    const auto now = Clock::wallNow();
+    const auto ms = Clock::duration_cast<Clock::milliseconds>(
         now.time_since_epoch()) % MS_PER_SEC;
 
-    std::tm tm;
-    localtime_s(&tm, &tt);
+    const std::tm tm = Clock::localTime(now);
 
     f << std::put_time(&tm, "%H:%M:%S")
       << '.' << std::setfill('0') << std::setw(3) << ms.count()

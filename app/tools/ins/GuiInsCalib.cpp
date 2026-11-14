@@ -1,4 +1,5 @@
 #include "Log.h"
+#include "FileUtils.h"
 #include "GuiInsPanel.h"
 #include "GuiInsCommon.h"
 
@@ -6,10 +7,10 @@
 #include "ui/FileDialog.h"
 #include "solvers/common/Core.h"
 #include "core/PathMemory.h"
-#include "ins/ImuCalibrator.h"
-#include "core/InsMath.h"
-#include "Const.h"
-#include "util/StringUtils.h"
+#include "solver/ins/Calibrator.h"
+#include "core/ins/InsMath.h"
+#include "core/Const.h"
+#include "StringUtils.h"
 
 #include <algorithm>
 #include <atomic>
@@ -65,8 +66,6 @@ namespace Tools::Ins {
             std::lock_guard lk(resultMutex);
             currentFile.clear();
             detectSeq.clear();
-            accelMp.setIdentity();
-            accelBp.setZero();
             accelScaleGp.setZero();
             accelRmsp = 0.0;
             report = CalibReport();
@@ -82,7 +81,7 @@ namespace Tools::Ins {
     void SixPosCalibTask::calibWorker() {
 
         ScaleIdentifier sen(scaleSf);
-        ImuCalibrator::CalibSegments segs;
+        Calibrator::CalibSegments segs;
         std::vector<std::pair<std::string, std::string> > detSeqLines;
         int dups = 0;
 
@@ -90,7 +89,7 @@ namespace Tools::Ins {
             out.clear();
             auto onSample = [&](const ImuSample &s) { out.push_back(s); };
             auto onBatch = [&](const long long n) { sampleCount.store(n); };
-            auto onReader = [&](auto &r) -> bool {
+            auto onReader = [&](NovAtel::LogReader &r) -> bool {
                 return sen.observe(r, [&](const std::string &, const ScaleNotice &n) {
                     std::lock_guard lk(resultMutex);
                     scaleNotice = n;
@@ -105,7 +104,7 @@ namespace Tools::Ins {
 
         for (const auto &path: filePaths) {
             if (stop) break;
-            const std::string name = Str::baseName(path);
+            const std::string name = File::baseName(path);
             {
                 std::lock_guard lk(resultMutex);
                 currentFile = name;
@@ -120,7 +119,7 @@ namespace Tools::Ins {
                 if (!stop) detSeqLines.emplace_back(name, "解析失败（内容为空或格式不符）");
                 continue;
             }
-            const std::string hash = Str::fileContentHash(path);
+            const std::string hash = File::contentHash(path);
             if (seenHash.count(hash)) {
                 ++dups;
                 detSeqLines.emplace_back(name, "重复文件，已跳过");
@@ -129,7 +128,7 @@ namespace Tools::Ins {
             seenHash.insert(hash);
 
 
-            auto segsFile = ImuCalibrator::detect(log);
+            auto segsFile = Calibrator::detect(log);
             std::string seq;
             for (const auto &[isStatic, pos, rot, i0, i1]: segsFile) {
                 if (i1 <= i0) continue;
@@ -138,11 +137,11 @@ namespace Tools::Ins {
                     ++nStatic;
                     sen.offerStatic(sub);
                     segs.pos.emplace_back(pos, std::move(sub));
-                    seq += std::string(seq.empty() ? "" : " ") + ImuCalibrator::posLabel(pos);
+                    seq += std::string(seq.empty() ? "" : " ") + Calibrator::posLabel(pos);
                 } else {
                     ++nRot;
                     segs.rot.emplace_back(rot, std::move(sub));
-                    seq += std::string(seq.empty() ? "" : " ") + ImuCalibrator::rotLabel(rot);
+                    seq += std::string(seq.empty() ? "" : " ") + Calibrator::rotLabel(rot);
                 }
             }
             if (seq.empty()) seq = "未识别到静置段或旋转段";
@@ -169,12 +168,12 @@ namespace Tools::Ins {
             abortRun(*this, sen.failText());
             return;
         }
-        CalibReport rep = ImuCalibrator::calibrate(segs, par.turnAngleDeg * DEG_TO_RAD, par.g);
+        CalibReport rep = Calibrator::calibrate(segs, par.turnAngleDeg * DEG_TO_RAD, par.g);
         if (!rep.ok) {
             abortRun(*this, rep.errorMsg);
             return;
         }
-        ImuCalibrator::applyNominal(rep, sen.scale());
+        Calibrator::applyNominal(rep, sen.res.scale);
         if (!rep.ok) {
             abortRun(*this, rep.errorMsg);
             return;
@@ -185,7 +184,7 @@ namespace Tools::Ins {
             compSegs = segs;
             compSel = 0;
             for (int i = 0; i < static_cast<int>(compSegs.pos.size()); ++i)
-                if (compSegs.pos[i].first == ImuCalibrator::XUP) {
+                if (compSegs.pos[i].first == Calibrator::XUP) {
                     compSel = i;
                     break;
                 }
@@ -193,8 +192,6 @@ namespace Tools::Ins {
 
         {
             std::lock_guard lk(resultMutex);
-            accelMp = rep.calib.accelM;
-            accelBp = rep.calib.accelB;
             accelScaleGp = rep.accelScaleG;
             accelRmsp = rep.accelRms;
         }
@@ -206,13 +203,13 @@ namespace Tools::Ins {
             std::snprintf(ka, sizeof ka, "[%.2f %.2f %.2f] LSB/g",
                           rep.accelScaleG(0), rep.accelScaleG(1), rep.accelScaleG(2));
             LOG_INFO << "[六位置法标定] 完成：静置段 " << segStatic.load() << " 个 / 旋转段 "
-                     << segRot.load() << " 个，当量 " << sen.label() << "，K_a=" << ka
+                     << segRot.load() << " 个，当量 " << sen.res.describe() << "，K_a=" << ka
                      << "，拟合残差 RMS=" << rep.accelRms << " LSB";
         }
         {
             std::lock_guard lk(resultMutex);
             report = std::move(rep);
-            scaleNotice = sen.notice(true);
+            scaleNotice = sen.res.notice(true);
         }
         finishRun(*this);
     }
@@ -223,7 +220,7 @@ namespace Tools::Ins {
                             ImGui::Text("添加任意数量的 IMU 日志文件，程序自动识别每个文件里的静置段与旋转段。");
                             ImGui::Spacing();
 
-                            if (ImGui::Button("添加文件…", ImVec2(140, 0))) {
+                            if (ImGui::Button("浏览", ImVec2(140, 0))) {
                                 if (std::vector<std::wstring> wpaths; ShowOpenFilesDialog(
                                     wpaths, FileDialog::fIns, std::size(FileDialog::fIns))) {
                                     for (auto &wp: wpaths) {
@@ -231,39 +228,22 @@ namespace Tools::Ins {
                                         if (!p.empty() &&
                                             std::find(filePaths.begin(), filePaths.end(), p) == filePaths.end())
                                             filePaths.push_back(p);
-                                        AppConfig::PathMemory::instance().addRecent("ins_cal_files", p);
                                     }
                                 }
                             }
-                            ImGui::SameLine();
-                            if (ImGui::Button("从记录添加", ImVec2(120, 0)))
-                                ImGui::OpenPopup("##cal_hist_pop");
                             ImGui::SameLine();
                             if (ImGui::Button("清空", ImVec2(80, 0)) && !filePaths.empty())
                                 filePaths.clear();
 
-                            if (ImGui::BeginPopup("##cal_hist_pop")) {
-                                const auto recent =
-                                        AppConfig::PathMemory::instance().getRecent("ins_cal_files");
-                                if (recent.empty()) ImGui::TextDisabled("（暂无记录）");
-                                for (auto &r: recent) {
-                                    if (ImGui::Selectable(Str::baseName(r).c_str())) {
-                                        if (std::find(filePaths.begin(), filePaths.end(), r) == filePaths.end())
-                                            filePaths.push_back(r);
-                                    }
-                                }
-                                ImGui::EndPopup();
-                            }
-
                             ImGui::Spacing();
                             ImGui::Separator();
                             if (filePaths.empty()) {
-                                ImGui::TextDisabled("尚未添加任何文件。点击「添加文件…」选择标定日志。");
+                                ImGui::TextDisabled("尚未添加任何文件。点击「浏览」");
                             } else {
                                 ImGui::Text("已选 %d 个文件：", static_cast<int>(filePaths.size()));
                                 for (std::size_t i = 0; i < filePaths.size(); ++i) {
                                     ImGui::Bullet();
-                                    ImGui::Text("%s", Str::baseName(filePaths[i]).c_str());
+                                    ImGui::Text("%s", File::baseName(filePaths[i]).c_str());
                                     ImGui::SameLine();
                                     if (ImGui::SmallButton(("x##cal" + std::to_string(i)).c_str())) {
                                         filePaths.erase(filePaths.begin() + i);
@@ -504,9 +484,7 @@ namespace Tools::Ins {
 
         ImGui::SeparatorText("补偿序列");
 
-        if (const auto segLabels = compSegLabels(); segLabels.empty()) {
-            ImGui::TextDisabled("标定完成后可按段导出、按段查看补偿结果。");
-        } else {
+        if (const auto segLabels = compSegLabels(); !segLabels.empty()) {
             compSel = std::clamp(compSel, 0, static_cast<int>(segLabels.size()) - 1);
             ImGui::SetNextItemWidth(190.0f);
             if (ImGui::BeginCombo("##comp_seg", segLabels[compSel].c_str())) {
@@ -526,17 +504,16 @@ namespace Tools::Ins {
             if (CalibReport r; peekReport(r)) {
                 ImuLog seg;
                 {
-
                     std::lock_guard lk(resultMutex);
                     const int np = static_cast<int>(compSegs.pos.size());
                     const int nr = static_cast<int>(compSegs.rot.size());
-                    const int k = std::clamp(compSel, 0, np + nr - 1);
-                    decimateImu(k < np ? compSegs.pos[k].second : compSegs.rot[k - np].second, seg);
+                    if (const int total = np + nr; total > 0) { // 段可能被 worker 清空，空表不能 clamp
+                        const int k = std::clamp(compSel, 0, total - 1);
+                        decimateImu(k < np ? compSegs.pos[k].second : compSegs.rot[k - np].second, seg);
+                    }
                 }
-                if (seg.empty()) {
-                    ImGui::TextDisabled("该段没有样本，请重新标定后再看。");
-                } else {
-                    const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r);
+                if (!seg.empty()) {
+                    const Calibrator::CompMat cm = Calibrator::compMatrices(r);
                     std::vector<double> t, fx, fy, fz, gx, gy, gz;
                     t.reserve(seg.size());
                     fx.reserve(seg.size());
@@ -548,7 +525,7 @@ namespace Tools::Ins {
                     for (const auto &smp: seg) {
                         t.push_back(smp.tow);
                         Eigen::Vector3d _f, _g;
-                        ImuCalibrator::compensate(cm, r, smp, _f, _g);
+                        Calibrator::compensate(cm, r, smp, _f, _g);
                         fx.push_back(_f(0));
                         fy.push_back(_f(1));
                         fz.push_back(_f(2));
@@ -658,9 +635,9 @@ namespace Tools::Ins {
         std::vector<std::string> v;
         v.reserve(compSegs.pos.size() + compSegs.rot.size());
         for (const auto &[first, _]: compSegs.pos)
-            v.emplace_back(std::string("静置 · ") + ImuCalibrator::posLabel(first));
+            v.emplace_back(std::string("静置 · ") + Calibrator::posLabel(first));
         for (const auto &[first, _]: compSegs.rot)
-            v.emplace_back(std::string("旋转 · ") + ImuCalibrator::rotLabel(first));
+            v.emplace_back(std::string("旋转 · ") + Calibrator::rotLabel(first));
         std::map<std::string, int> seen;
         for (auto &s: v) {
             if (const int n = ++seen[s]; n > 1) s += " #" + std::to_string(n);
@@ -668,13 +645,13 @@ namespace Tools::Ins {
         return v;
     }
 
-    static std::string compPosFileName(const ImuCalibrator::Pos p) {
+    static std::string compPosFileName(const Calibrator::Pos p) {
         static const char *tag[6] = {"xup", "xdn", "yup", "ydn", "zup", "zdn"};
         return std::string("calib_") + tag[static_cast<int>(p)] + "_comp.csv";
     }
 
-    static std::string compRotFileName(const ImuCalibrator::Rot r) {
-        static const char *tag[6] = {"rot", "xrev", "yfwd", "yrev", "zfwd", "zrev"};
+    static std::string compRotFileName(const Calibrator::Rot r) {
+        static const char *tag[6] = {"xfwd", "xrev", "yfwd", "yrev", "zfwd", "zrev"};
         return std::string("calib_") + tag[static_cast<int>(r)] + "_comp.csv";
     }
 
@@ -708,13 +685,13 @@ namespace Tools::Ins {
             selIdx >= 0 && selIdx < static_cast<int>(segLabels.size()))
             label = segLabels[selIdx];
 
-        const ImuCalibrator::CompMat cm = ImuCalibrator::compMatrices(r);
+        const Calibrator::CompMat cm = Calibrator::compMatrices(r);
         exportCSVDialog(*this, defName, defName + "（" + label + "）", [&](CSV::Writer &w) {
             w.row("tow", "comp_fx(m/s2)", "comp_fy(m/s2)", "comp_fz(m/s2)",
                   "raw_gx", "raw_gy", "raw_gz", "comp_gx", "comp_gy", "comp_gz");
             for (const auto &s: seg) {
                 Eigen::Vector3d f, g;
-                ImuCalibrator::compensate(cm, r, s, f, g);
+                Calibrator::compensate(cm, r, s, f, g);
                 w.row(CSV::fx(s.tow, 3),
                       CSV::fx(f(0), 5), CSV::fx(f(1), 5), CSV::fx(f(2), 5),
                       s.gx, s.gy, s.gz,

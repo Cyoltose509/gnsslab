@@ -26,6 +26,9 @@ namespace Solvers::SolverPanel {
     }
 
     void renderTask(const std::shared_ptr<Task> &job);
+
+    /// 结果页「导出…」按钮：打开格式/采样/元素配置。
+    void openExport(const std::shared_ptr<Task> &task);
+
     void launchQC(View &view);
-    void exportCSV(const std::shared_ptr<Task> &task);
 }

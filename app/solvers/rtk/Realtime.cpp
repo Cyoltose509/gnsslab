@@ -1,10 +1,6 @@
-#define COM_NO_WINDOWS_H
-#define _HAS_STD_BYTE 0
-
 #include "Realtime.h"
+#include "FileUtils.h"
 
-#include <chrono>
-#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -12,8 +8,9 @@
 
 #include "Decimator.h"
 #include "DualPair.h"
-#include "EphemerisTable.h"
+#include "core/geom/EphemerisTable.h"
 #include "Log.h"
+#include "util/Clock.h"
 #include "novatel/SocketReader.h"
 #include "RTK.h"
 #include "SolverOptions.h"
@@ -22,78 +19,15 @@
 #include "Task.h"
 
 namespace Solvers::Realtime {
-    namespace {
-        using PollStream = std::function<int(ObsData &, std::shared_ptr<EphemerisTable> &)>;
-        using OnPair = std::function<bool(const ObsData &, const ObsData &, EphemerisTable *)>;
-
-        /// 双流配对泵：两路取数 → DualPair 配对 → onPair。返回 false 表示流断开或长时间无数据。
-        bool pumpStreams(Observer::DualPair &pairing,
-                         const PollStream &getBase, const PollStream &getRover,
-                         const std::function<bool()> &shouldStop,
-                         const std::function<bool()> &onAttempt, const OnPair &onPair) {
-            bool haveBase = false, haveRover = false;
-            ObsData base, rover;
-            std::shared_ptr<EphemerisTable> baseEph, roverEph;
-
-            constexpr auto kIdleEpochMs = std::chrono::milliseconds(10000);
-            bool basePolling = false, roverPolling = false;
-            std::chrono::steady_clock::time_point basePollSince{}, roverPollSince{};
-
-            while (!shouldStop()) {
-                if (!haveBase) {
-                    if (!basePolling) {
-                        basePolling = true;
-                        basePollSince = std::chrono::steady_clock::now();
-                    }
-                    const int r = getBase(base, baseEph);
-                    if (r < 0) return false;
-                    if (r > 0) {
-                        pairing.observeBase(base.weekSecond.sow);
-                        haveBase = true;
-                        basePolling = false;
-                    } else if (std::chrono::steady_clock::now() - basePollSince > kIdleEpochMs) {
-                        return false;
-                    }
-                }
-                if (!haveRover) {
-                    if (!roverPolling) {
-                        roverPolling = true;
-                        roverPollSince = std::chrono::steady_clock::now();
-                    }
-                    const int r = getRover(rover, roverEph);
-                    if (r < 0) return false;
-                    if (r > 0) {
-                        pairing.observeRover(rover.weekSecond.sow);
-                        haveRover = true;
-                        roverPolling = false;
-                    } else if (std::chrono::steady_clock::now() - roverPollSince > kIdleEpochMs) {
-                        return false;
-                    }
-                }
-                if (!haveBase || !haveRover) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                    continue;
-                }
-                if (!onAttempt()) return true;
-                const double tol = pairing.pairWindow();
-                if (const auto act = Observer::DualPair::classify(base.epoch, rover.epoch, tol);
-                    act == Observer::DualPair::Action::Pair) {
-                    if (!onPair(base, rover, Observer::DualPair::selectEph(baseEph, roverEph))) return true;
-                    haveBase = haveRover = false;
-                } else if (act == Observer::DualPair::Action::AdvanceBase) {
-                    haveBase = false;
-                } else {
-                    haveRover = false;
-                }
-            }
-            return true;
-        }
-    }
-
     RTKSession::RTKSession(std::shared_ptr<RTK::Task> task,
                            RealtimeEndpoint base, RealtimeEndpoint rover)
         : task(std::move(task)), baseEp(std::move(base)), roverEp(std::move(rover)) {
         SolverOptions opts = this->task->opts;
+        if (const SolverOptions::FilterMode rt = filterForRealtime(opts.filter); rt != opts.filter) {
+            LOG_WARN << "[RTK实时] 实时流没有倒序趟，滤波方向 " << filterLabel(opts.filter)
+                    << " 按 " << filterLabel(rt) << " 处理";
+            opts.filter = rt;
+        }
         this->task->rtk.applyOptions(opts);
         this->task->rtk.mBaseXyzUser = this->task->useBaseCoord
                                            ? this->task->baseXyz
@@ -104,7 +38,7 @@ namespace Solvers::Realtime {
 
         baseTab = std::make_shared<QcTab>();
         baseTab->label = "质量分析[基准站]";
-        baseTab->fileName = Str::baseName(this->task->rtEndpoints[0].ip);
+        baseTab->fileName = File::baseName(this->task->rtEndpoints[0].ip);
         baseTab->view.clearQCInput(this->task->opts.sampleInterval);
         {
             std::lock_guard lk(this->task->mutex);
@@ -142,8 +76,6 @@ namespace Solvers::Realtime {
         if (baseTab) baseTab->view.endQCInput();
     }
 
-    int RTKSession::streamBreakBackoffMs() const noexcept { return 1000; }
-
     bool RTKSession::connect() {
         baseRdr = std::make_unique<NovAtel::SocketReader>();
         roverRdr = std::make_unique<NovAtel::SocketReader>();
@@ -175,61 +107,90 @@ namespace Solvers::Realtime {
         pairing.setInterval(task->opts.sampleInterval);
         const Observer::Decimator dec(task->opts.sampleInterval);
 
-        std::chrono::steady_clock::time_point lastCommit = std::chrono::steady_clock::now();
-        std::chrono::steady_clock::time_point lastStallWarn{};
+        constexpr auto kReadIdle = Clock::milliseconds(10000); // 单路这么久没历元算断流
+        constexpr auto kStallWarn = Clock::seconds(30);        // 有历元但长时间没新解
+        constexpr auto kStallWarnGap = Clock::seconds(10);
+        constexpr auto kStallReconnect = Clock::seconds(120);
+
+        auto lastCommit = Clock::now();
+        auto lastStallWarn = Clock::Point{}; // 哨兵：尚未告过警，over() 对它恒真
+        auto baseWaitSince = lastCommit, roverWaitSince = lastCommit;
         long long lastCommitSow = 0;
         bool stallWarned = false;
-        constexpr auto kStallWarn = std::chrono::seconds(30);
-        constexpr auto kStallReopen = std::chrono::seconds(120);
-        auto stallExceeded = [&] {
-            return std::chrono::steady_clock::now() - lastCommit > kStallReopen;
-        };
-        auto getBase = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
-            if (stallExceeded()) return -1;
-            if (!baseRdr->getNextEpoch(o, false)) return baseRdr->isConnected() ? 0 : -1;
-            e = baseRdr->ephSnapshot();
-            return 1;
-        };
-        auto getRover = [&](ObsData &o, std::shared_ptr<EphemerisTable> &e) -> int {
-            if (stallExceeded()) return -1;
-            if (!roverRdr->getNextEpoch(o, false)) return roverRdr->isConnected() ? 0 : -1;
-            e = roverRdr->ephSnapshot();
-            return 1;
-        };
 
-        return pumpStreams(pairing, getBase, getRover,
-                           [&] { return stopped(); },
-                           [&] {
-                               if (stopped()) return false;
-                               const auto now = std::chrono::steady_clock::now();
-                               if (const auto idle = now - lastCommit;
-                                   idle > kStallWarn && now - lastStallWarn > std::chrono::seconds(10)) {
-                                   lastStallWarn = now;
-                                   stallWarned = true;
-                                   const auto sec = std::chrono::duration_cast<std::chrono::seconds>(idle).count();
-                                   const std::string msg = "已 " + std::to_string(sec) + " s 无新解（最后提交历元 SOW "
-                                                           + std::to_string(lastCommitSow) + "），数据在流但未产出解算结果";
-                                   LOG_WARN << "[RTK实时] " << msg;
-                                   task->setError("实时流" + msg);
-                               }
-                               return true;
-                           },
-                           [&](const ObsData &b, const ObsData &r, EphemerisTable *eph) -> bool {
-                               task->view.pushQCInput(r, r.weekSecond.sow);
-                               baseTab->view.pushQCInput(b, b.weekSecond.sow);
-                               task->view.markQcDirty();
-                               baseTab->view.markQcDirty();
-                               if (!dec.accept(r.weekSecond.sow)) return true;
-                               if (task->solvePair(b, r, *eph)) {
-                                   lastCommit = std::chrono::steady_clock::now();
-                                   lastCommitSow = static_cast<long long>(r.weekSecond.sow);
-                                   if (stallWarned) {
-                                       stallWarned = false;
-                                       LOG_INFO << "[RTK实时] 恢复产出新解，最后提交历元 SOW " << lastCommitSow;
-                                       task->clearError();
-                                   }
-                               }
-                               return true;
-                           });
+        ObsData base, rover;
+        Observer::DualPair::EphPtr baseEph, roverEph;
+        bool haveBase = false, haveRover = false;
+
+        while (!stopped()) {
+            if (!haveBase) {
+                if (Clock::over(lastCommit, kStallReconnect)) return false;
+                if (!baseRdr->getNextEpoch(base, false)) {
+                    if (!baseRdr->isConnected() || Clock::over(baseWaitSince, kReadIdle)) return false;
+                } else {
+                    baseEph = baseRdr->ephSnapshot();
+                    pairing.observeBase(base.weekSecond.sow);
+                    haveBase = true;
+                }
+            }
+            if (!haveRover) {
+                if (Clock::over(lastCommit, kStallReconnect)) return false;
+                if (!roverRdr->getNextEpoch(rover, false)) {
+                    if (!roverRdr->isConnected() || Clock::over(roverWaitSince, kReadIdle)) return false;
+                } else {
+                    roverEph = roverRdr->ephSnapshot();
+                    pairing.observeRover(rover.weekSecond.sow);
+                    haveRover = true;
+                }
+            }
+            if (!haveBase || !haveRover) {
+                Clock::sleep(Clock::milliseconds(20));
+                continue;
+            }
+            if (stopped()) return true;
+
+            if (const auto idle = Clock::since(lastCommit); idle > kStallWarn && Clock::over(lastStallWarn, kStallWarnGap)) {
+                lastStallWarn = Clock::now();
+                stallWarned = true;
+                const std::string msg = "已 " + std::to_string(static_cast<long long>(idle.sec()))
+                                        + " s 无新解（最后提交历元 SOW "
+                                        + std::to_string(lastCommitSow) + "），数据在流但未产出解算结果";
+                LOG_WARN << "[RTK实时] " << msg;
+                task->setError("实时流" + msg);
+            }
+
+            // 配对窗口按两路历元间隔估；对不齐时只推进落后的一侧。
+            const auto act = Observer::DualPair::classify(base.epoch, rover.epoch, pairing.pairWindow());
+            if (act == Observer::DualPair::Action::AdvanceBase) {
+                haveBase = false;
+                baseWaitSince = Clock::now();
+                continue;
+            }
+            if (act == Observer::DualPair::Action::AdvanceRover) {
+                haveRover = false;
+                roverWaitSince = Clock::now();
+                continue;
+            }
+
+            haveBase = haveRover = false;
+            baseWaitSince = roverWaitSince = Clock::now();
+            const auto eph = Observer::DualPair::selectEph(baseEph, roverEph);
+
+            task->view.pushQCInput(rover, rover.weekSecond.sow);
+            baseTab->view.pushQCInput(base, base.weekSecond.sow);
+            task->view.markQcDirty();
+            baseTab->view.markQcDirty();
+            if (!dec.accept(rover.weekSecond.sow)) continue;
+
+            if (!task->solvePair(base, rover, *eph)) return true;
+            lastCommit = Clock::now();
+            lastCommitSow = static_cast<long long>(rover.weekSecond.sow);
+            if (stallWarned) {
+                stallWarned = false;
+                LOG_INFO << "[RTK实时] 恢复产出新解，最后提交历元 SOW " << lastCommitSow;
+                task->clearError();
+            }
+        }
+        return true;
     }
 }

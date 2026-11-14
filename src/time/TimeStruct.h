@@ -5,8 +5,9 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
-#include "Const.h"
+#include "core/Const.h"
 #include <array>
+#include <optional>
 
 enum class TimeSystem:uint8_t {
     Unknown = 0,
@@ -54,6 +55,12 @@ inline std::ostream &operator<<(std::ostream &os, const TimeSystem ts) {
 }
 
 
+class CivilTime;
+class YDSTime;
+class WeekSecond;
+class MJD;
+class JulianDate;
+
 class CommonTime {
 public:
     explicit CommonTime(const long day = 0, const double sod = 0.0, const TimeSystem timeSystem = TimeSystem::GPS) {
@@ -82,6 +89,25 @@ public:
         sod = m_sod;
         timeSystem = m_timeSystem;
     }
+
+    // 表示转换（实现见 TimeStruct.cpp）：CommonTime 是枢纽，各时标类型都能 toCommonTime()/fromCommonTime()
+    [[nodiscard]] CivilTime toCivilTime() const;
+
+    [[nodiscard]] YDSTime toYDS() const;
+
+    /// 周/周内秒：周基准取本对象自己的时标（GPS/GAL/BDT 各有纪元；UTC/TAI 无周纪元，直接抛错）
+    [[nodiscard]] WeekSecond toWeekSecond() const;
+
+    [[nodiscard]] MJD toMJD() const;
+
+    [[nodiscard]] JulianDate toJulianDate() const;
+
+    /// 原地转到目标时标，闰秒按当前 MJD 日查表
+    void convertSystem(TimeSystem target);
+
+    [[nodiscard]] double leapSeconds() const;
+
+    [[nodiscard]] double toGMST() const;
 
     CommonTime &operator=(const CommonTime &right) = default;
 
@@ -212,6 +238,10 @@ public:
 
     CivilTime &operator=(const CivilTime &right) = default;
 
+    [[nodiscard]] CommonTime toCommonTime() const;
+
+    static CivilTime fromCommonTime(const CommonTime &ct);
+
     bool operator==(const CivilTime &right) const {
         if (timeSys != right.timeSys)
             return false;
@@ -257,6 +287,23 @@ struct YearMonthDay {
     int year = 0;
     int month = 0;
     int day = 0;
+
+    /// 天序号：距 1970-01-01 的天数，可为负；JD = 天序号 + 2440587.5（MJD = 天序号 + 40587）。
+    [[nodiscard]] long toDays() const;
+
+    [[nodiscard]] double toJD() const;
+
+    /// 月日越界返回 0
+    [[nodiscard]] int toDOY() const;
+
+    static YearMonthDay fromDays(long days);
+
+    static YearMonthDay fromJD(double jd);
+
+    /// doy 越出该年返回 std::nullopt
+    static std::optional<YearMonthDay> fromDOY(int year, int doy);
+
+    static int daysInMonth(int year, int month);
 };
 
 /// 时分秒
@@ -264,6 +311,10 @@ struct HourMinSec {
     int hour = 0;
     int minute = 0;
     double second = 0.0;
+
+    [[nodiscard]] double toSOD() const;
+
+    static HourMinSec fromSOD(double sod);
 };
 
 class JulianDate {
@@ -275,6 +326,10 @@ public:
         : jd(right.jd) { timeSystem = right.timeSystem; }
 
     JulianDate &operator=(const JulianDate &right) = default;
+
+    [[nodiscard]] CommonTime toCommonTime() const;
+
+    static JulianDate fromCommonTime(const CommonTime &ct);
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
@@ -330,6 +385,10 @@ public:
         : year(right.year), doy(right.doy), sod(right.sod) { timeSystem = right.timeSystem; }
 
     YDSTime &operator=(const YDSTime &right) = default;
+
+    [[nodiscard]] CommonTime toCommonTime() const;
+
+    static YDSTime fromCommonTime(const CommonTime &ct);
 
     [[nodiscard]] std::string toString() const {
         std::ostringstream oss;
@@ -389,6 +448,13 @@ public:
 
 
     MJD &operator=(const MJD &right) = default;
+
+    [[nodiscard]] CommonTime toCommonTime() const;
+
+    static MJD fromCommonTime(const CommonTime &ct);
+
+    /// 从 MJD 数值算年积日（含日内小数）
+    [[nodiscard]] double toDOY() const;
 
     /// Destructor.
     ~MJD() = default;
@@ -468,6 +534,10 @@ public:
     [[nodiscard]] int Nbits() const {
         return TIME_SYSTEM_EPOCH[static_cast<std::size_t>(timeSystem)].nBits;
     }
+
+    [[nodiscard]] CommonTime toCommonTime() const;
+
+    static WeekSecond fromCommonTime(const CommonTime &ct);
 
     [[nodiscard]] int bitmask() const {
         return TIME_SYSTEM_EPOCH[static_cast<std::size_t>(timeSystem)].bitmask;

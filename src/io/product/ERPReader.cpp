@@ -1,5 +1,6 @@
 #include "product/ERPReader.h"
-#include "Const.h"
+#include "core/Const.h"
+#include "TimeStruct.h"
 #include "MathUtils.h"
 
 #include <algorithm>
@@ -7,10 +8,13 @@
 #include <sstream>
 
 bool ERPReader::read(const std::string &path) {
-    std::ifstream ifs(path);
-    if (!ifs.is_open()) return false;
+    return read(path, false);
+}
 
-    data.clear();
+bool ERPReader::read(const std::string &path, bool append) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) return !data.empty();
+    if (!append) data.clear();
 
     std::string line;
     bool inData = false;
@@ -47,8 +51,8 @@ bool ERPReader::read(const std::string &path) {
 }
 
 bool ERPReader::getERP(const CommonTime &t, double &xp, double &yp, double &ut1Utc) const {
-    const auto b = Math::bracketSample(data, static_cast<double>(Time::CommonToMJD(t).mjd),
-                                       [](const Record &r) { return r.mjd; });
+    const auto b = Math::bracketSample(data, static_cast<double>(t.toMJD().mjd),
+                                       &Record::mjd);
     if (!b) return false;
 
     const Record &lo = data[b->lo], &hi = data[b->hi];

@@ -9,9 +9,10 @@
 
 
 #include "solvers/common/Task.h"
-#include "core/InsStruct.h"
-#include "ins/Aligner.h"
-#include "ins/ImuCalibrator.h"
+#include "core/ins/InsStruct.h"
+#include "solver/ins/Aligner.h"
+#include "solver/ins/Calibrator.h"
+#include "solver/ins/InsVerify.h"
 
 namespace Tools::Ins {
 
@@ -31,6 +32,18 @@ namespace Tools::Ins {
         int win = 400;
     };
 
+    /// 示例数据验证的初始条件
+    struct VerifyParams {
+        double latDeg = 23.1373950708;
+        double lonDeg = 113.3713651222;
+        double hM = 2.175;
+        double vN = 0.0, vE = 0.0, vD = 0.0;
+        double rollDeg = 0.0107951084511778;
+        double pitchDeg = -2.14251290749072;
+        double headingDeg = -75.7498049314083;
+        double startTime = 91620.0;
+    };
+
     enum class AlertLevel { Error, Warn, Info };
 
     struct ScaleNotice {
@@ -40,30 +53,37 @@ namespace Tools::Ins {
     };
 
 
+    /// 当量兜底对话框的共享状态：工作线程提议、界面线程改并回填，两条线程都读，故三个当量走原子。
     struct ScaleFallback {
         std::atomic<bool> asked{false};
         std::atomic<bool> accepted{false};
-        double accelMpsPerLsb = 0.0;
-        double gyroDegPerLsb = 0.0;
-        double rateHz = 0.0;
+        std::atomic<double> accelMpsPerLsb{0.0};
+        std::atomic<double> gyroDegPerLsb{0.0};
+        std::atomic<double> rateHz{0.0};
         std::string reason;
         std::string sig;
 
 
         void request(const double suggestAccel, const double suggestRate, std::string why = {}) {
-            if (!(accelMpsPerLsb > 0.0)) accelMpsPerLsb = suggestAccel;
-            if (!(rateHz > 0.0)) rateHz = suggestRate;
+            if (!(accelMpsPerLsb.load(std::memory_order_relaxed) > 0.0))
+                accelMpsPerLsb.store(suggestAccel, std::memory_order_relaxed);
+            if (!(rateHz.load(std::memory_order_relaxed) > 0.0))
+                rateHz.store(suggestRate, std::memory_order_relaxed);
             reason = std::move(why);
             asked.store(true, std::memory_order_release);
         }
 
         [[nodiscard]] ImuScale scale() const {
-            return {accelMpsPerLsb, gyroDegPerLsb * DEG_TO_RAD, rateHz};
+            return {accelMpsPerLsb.load(std::memory_order_relaxed),
+                    gyroDegPerLsb.load(std::memory_order_relaxed) * DEG_TO_RAD,
+                    rateHz.load(std::memory_order_relaxed)};
         }
 
         void reset() {
             accepted.store(false, std::memory_order_relaxed);
-            accelMpsPerLsb = gyroDegPerLsb = rateHz = 0.0;
+            accelMpsPerLsb.store(0.0, std::memory_order_relaxed);
+            gyroDegPerLsb.store(0.0, std::memory_order_relaxed);
+            rateHz.store(0.0, std::memory_order_relaxed);
             reason.clear();
             sig.clear();
         }
@@ -122,11 +142,9 @@ namespace Tools::Ins {
         std::atomic<bool> detectDone{false};
 
 
-        ImuCalibrator::CalibSegments compSegs;
+        Calibrator::CalibSegments compSegs;
         int compSel = 0;
 
-        Eigen::Matrix3d accelMp{Eigen::Matrix3d::Identity()};
-        Eigen::Vector3d accelBp{Eigen::Vector3d::Zero()};
         Eigen::Vector3d accelScaleGp{Eigen::Vector3d::Zero()};
         double accelRmsp = 0.0;
 
@@ -163,7 +181,7 @@ namespace Tools::Ins {
         AlignParams par;
         ScaleFallback scaleSf;
 
-        Attitude att{};
+        Euler att{};
         std::vector<AttitudeSample> series;
         std::vector<AttitudeSample> plotPts;
 
@@ -197,9 +215,37 @@ namespace Tools::Ins {
         std::vector<AttitudeSample> snapshotSeries();
     };
 
+    /// 示例数据验证：拿 IMU 增量跑 src 的机械编排，与参考轨迹逐点比对。
+    struct InsVerifyTask : Solvers::Task, InsRunState {
+        std::string imuPath;
+        std::string refPath;
+        VerifyParams par;
+
+        ::Ins::VerifyReport report;
+        bool reportValid = false;
+
+        InsVerifyTask();
+
+        Kind kind() const override { return Kind::Tool; }
+
+        void renderConfigPanel() override;
+
+        void renderResult() override;
+
+    private:
+        void startVerify();
+
+        void verifyWorker();
+
+        void exportSampleCSV();
+        void exportSummaryCSV();
+    };
+
 
     std::shared_ptr<Solvers::Task> MakeSixPosCalibTask();
 
     std::shared_ptr<Solvers::Task> MakeStaticAlignTask();
+
+    std::shared_ptr<Solvers::Task> MakeInsVerifyTask();
 
 }

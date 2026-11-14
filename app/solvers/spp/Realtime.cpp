@@ -1,9 +1,5 @@
-#define COM_NO_WINDOWS_H
-#define _HAS_STD_BYTE 0
-
 #include "Realtime.h"
 
-#include <chrono>
 #include <exception>
 #include <memory>
 #include <string>
@@ -11,9 +7,12 @@
 #include <utility>
 
 #include "Decimator.h"
+#include "io/ProductLoad.h"
 #include "Log.h"
+#include "util/Clock.h"
 #include "novatel/SocketReader.h"
 #include "SolverOptions.h"
+#include "solvers/common/Config.h"
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
 #include "Task.h"
@@ -23,6 +22,19 @@ namespace Solvers::Realtime {
         : task(std::move(task)), endpoint(std::move(endpoint)) {
         this->task->initializedRefECEF = false;
         this->task->view.clearQCInput(this->task->opts.sampleInterval);
+
+        // 文件档由 Task::initSolver 灌选项，实时链路没人代劳：这里自己按同一份 opts 起解，
+        // 否则滤波方向、截止高度角、系统集与对流层模型全部落到 SPPConfig 的默认值。
+        SolverOptions opts = this->task->opts;
+        if (const SolverOptions::FilterMode rt = filterForRealtime(opts.filter); rt != opts.filter) {
+            LOG_WARN << "[SPP实时] 实时流没有倒序趟，滤波方向 " << filterLabel(opts.filter)
+                    << " 按 " << filterLabel(rt) << " 处理";
+            opts.filter = rt;
+        }
+        spp.applyOptions(opts);
+        const auto products = ProductLoad::resolve(opts, modeKey(Mode::SPP));
+        ProductLoad::loadSPPGrids(spp, products.vmf, products.gpt3);
+        ProductLoad::warnTropoFallback("SPP实时", opts.spp.tropoMap, spp.tropoGridReady());
     }
 
     SPPSession::~SPPSession() = default;
@@ -92,14 +104,14 @@ namespace Solvers::Realtime {
                             task->initializedRefECEF = true;
                         }
                     });
-                } else if (!reader->isConnected() || reader->isStale(std::chrono::milliseconds(5000))) {
+                } else if (!reader->isConnected() || reader->isStale(Clock::milliseconds(5000))) {
                     return false;
                 } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    Clock::sleep(Clock::milliseconds(50));
                 }
             } catch (const std::exception &) {
                 if (!reader->isConnected()) return false;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                Clock::sleep(Clock::milliseconds(100));
             }
         }
         return true;

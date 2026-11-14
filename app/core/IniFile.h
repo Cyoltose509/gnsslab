@@ -22,6 +22,11 @@ struct IniFile {
 
     [[nodiscard]] bool getB(const std::string &sec, const std::string &key, bool def = false) const;
 
+    /// 文本 → 数值/布尔，ini 键值与命令行覆盖值共用这一套转换。
+    static int toInt(const std::string &s, int def);
+    static double toDouble(const std::string &s, double def);
+    static bool toBool(const std::string &s, bool def);
+
 
     void set(const std::string &sec, const std::string &key, const std::string &val);
 

@@ -2,10 +2,9 @@
 #include "imgui.h"
 #include "ui/DatePicker.h"
 #include "ui/GuiColors.h"
-#include "TimeConvert.h"
 #include "TimeStruct.h"
+#include "util/Clock.h"
 
-#include <ctime>
 #include <cstring>
 #include <exception>
 #include <iterator>
@@ -41,13 +40,13 @@ namespace Tools::TimeConverter {
             const CivilTime src(s_Civil[source][0], s_Civil[source][1], s_Civil[source][2],
                                 s_Civil[source][3], s_Civil[source][4], s_Civil[source][5],
                                 kSystems[source].type);
-            const CommonTime base = Time::CivilToCommon(src);
+            const CommonTime base = src.toCommonTime();
 
             for (int i = 0; i < kSysCount; i++) {
                 if (i == source) continue;
                 CommonTime target = base;
-                Time::convertSystem(target, kSystems[i].type);
-                const CivilTime civ = Time::CommonToCivil(target);
+                target.convertSystem(kSystems[i].type);
+                const CivilTime civ = target.toCivilTime();
                 s_Civil[i][0] = civ.year;
                 s_Civil[i][1] = civ.month;
                 s_Civil[i][2] = civ.day;
@@ -66,29 +65,19 @@ namespace Tools::TimeConverter {
     }
 
     static void SetToNow() {
-        time_t raw_time;
-        tm utc;
-        time(&raw_time);
-        if (!gmtime_s(&utc, &raw_time)) {
-            s_Civil[0][0] = utc.tm_year + 1900;
-            s_Civil[0][1] = utc.tm_mon + 1;
-            s_Civil[0][2] = utc.tm_mday;
-            s_Civil[0][3] = utc.tm_hour;
-            s_Civil[0][4] = utc.tm_min;
-            s_Civil[0][5] = utc.tm_sec;
-            SyncFrom(0);
-        }
+        const std::tm utc = Clock::UTC(Clock::wallNow());
+        s_Civil[0][0] = utc.tm_year + 1900;
+        s_Civil[0][1] = utc.tm_mon + 1;
+        s_Civil[0][2] = utc.tm_mday;
+        s_Civil[0][3] = utc.tm_hour;
+        s_Civil[0][4] = utc.tm_min;
+        s_Civil[0][5] = utc.tm_sec;
+        SyncFrom(0);
     }
 
     /// UTC 的今天，供日历标「今天」用——本工具全按 UTC 读，本地时区在晚间会差一天。
     static void UtcToday(int out[3]) {
-        const std::time_t t = std::time(nullptr);
-        std::tm g{};
-#if defined(_WIN32)
-        gmtime_s(&g, &t);
-#else
-        gmtime_r(&t, &g);
-#endif
+        const std::tm g = Clock::UTC(Clock::wallNow());
         out[0] = g.tm_year + 1900;
         out[1] = g.tm_mon + 1;
         out[2] = g.tm_mday;
@@ -125,8 +114,6 @@ namespace Tools::TimeConverter {
             }
             ImGui::PopID();
         }
-        ImGui::SameLine(0, 16);
-        ImGui::TextDisabled("编辑任意字段，自动同步所有时间系统");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -191,12 +178,12 @@ namespace Tools::TimeConverter {
                 const CivilTime utcCiv(s_Civil[0][0], s_Civil[0][1], s_Civil[0][2],
                                        s_Civil[0][3], s_Civil[0][4], s_Civil[0][5],
                                        TimeSystem::UTC);
-                const CommonTime utc = Time::CivilToCommon(utcCiv);
+                const CommonTime utc = utcCiv.toCommonTime();
                 CommonTime gps = utc;
-                Time::convertSystem(gps, TimeSystem::GPS);
+                gps.convertSystem(TimeSystem::GPS);
 
-                const double leap = Time::getLeapSeconds(gps);
-                const MJD mjd = Time::CommonToMJD(gps);
+                const double leap = gps.leapSeconds();
+                const MJD mjd = gps.toMJD();
                 ImGui::Text("跳秒: %.0f    MJD (GPS): %.6f", leap, static_cast<double>(mjd.mjd));
             } catch (const std::exception &e) {
                 ImGui::TextColored(UI::kColFail, "%s", e.what());

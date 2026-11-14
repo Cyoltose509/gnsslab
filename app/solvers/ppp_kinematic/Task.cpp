@@ -2,12 +2,12 @@
 
 #include <memory>
 
-#include "PPPKinematic.h"
+#include "solver/ppp/Kinematic.h"
 #include "SPP.h"
 
 namespace Solvers::PPPKinematic {
     std::unique_ptr<::SPP> Task::makeSolver() {
-        return std::make_unique<::PPPKinematic>();
+        return std::make_unique<::PPP::Kinematic>();
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

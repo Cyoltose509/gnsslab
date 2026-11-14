@@ -12,17 +12,14 @@ namespace Solvers::RTK {
                                            const std::shared_ptr<EphemerisTable> &,
                                            EphemerisTable *)> &onPair,
                   std::string &err) {
-        const auto fb = Observer::classifyObsPath(basePath);
-        const auto fr = Observer::classifyObsPath(roverPath);
-        if (fb == Observer::Format::Unknown || fr == Observer::Format::Unknown) {
-            err = "无法识别观测文件格式";
+        ObsSource::ObsPair files;
+        if (!files.open(basePath, roverPath, navPath)) {
+            err = files.err;
             return -1;
         }
-        const bool baseRinex = Observer::isRINEX(fb);
-        const bool roverRinex = Observer::isRINEX(fr);
-        if (baseRinex || roverRinex) {
+        if (files.needsNav()) {
             if (navPath.empty()) {
-                err = "RINEX 模式需要广播星历（任一观测文件为 RINEX 即需要）";
+                err = "RINEX 观测需要广播星历文件（任一侧为 RINEX 即需要）";
                 return -1;
             }
             if (!ObsSource::loadNav(navPath, navTable, err)) return -1;
@@ -31,12 +28,7 @@ namespace Solvers::RTK {
                     << " bds=" << navTable.bds.size();
         }
 
-        ObsSource::Handles h;
-        ObsSource::Puller nextBase, nextRover;
-        if (!ObsSource::openDual(baseRinex, roverRinex, basePath, roverPath, h, nextBase, nextRover, err))
-            return -1;
-
-        Observer::DualPair p(nextBase, nextRover);
+        Observer::DualPair p(ObsSource::nextOf(files.base), ObsSource::nextOf(files.rover));
         p.setInterval(sampleInterval);
         int n = 0;
         Observer::DualPair::Pair pr;

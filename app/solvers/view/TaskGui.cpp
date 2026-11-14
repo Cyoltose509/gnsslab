@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include "solvers/common/Task.h"
+#include "FileUtils.h"
 
 #include <functional>
 #include <string>
@@ -46,7 +47,8 @@ namespace Solvers {
     void Task::renderConfigTabs(const std::string &title,
                                 const std::function<void()> &fileTab,
                                 const std::function<void()> &onStart,
-                                const std::function<void()> &realtimeTab) {
+                                const std::function<void()> &realtimeTab,
+                                const bool showParamTab) {
         const std::string childId = title + std::to_string(cfgIndex);
         ImGui::BeginChild(childId.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
         if (ImGui::BeginTabBar(("##cfg_tabs_" + std::string(modeKey(mode))).c_str())) {
@@ -66,10 +68,12 @@ namespace Solvers {
                     ImGui::EndTabItem();
                 }
             }
-            if (ImGui::BeginTabItem("参数")) {
-                ImGui::Spacing();
-                Helpers::renderAdvancedParams(opts, mode);
-                ImGui::EndTabItem();
+            if (showParamTab) {
+                if (ImGui::BeginTabItem("参数")) {
+                    ImGui::Spacing();
+                    Helpers::renderAdvancedParams(opts, mode);
+                    ImGui::EndTabItem();
+                }
             }
             ImGui::EndTabBar();
         }
@@ -88,7 +92,7 @@ namespace Solvers {
         Helpers::saveSolverParams(mode, opts);
         if (onLog) onLog();
         else LOG_INFO << "[" << modeLabel(mode) << "] 开始解算: 观测=" << path
-                     << ", 格式=" << (isRINEX ? "RINEX" : "NovAtel");
+                     << ", 格式=" << Observer::formatName(obsFormat);
         startFile();
     }
 
@@ -114,10 +118,7 @@ namespace Solvers {
             return false;
         }
         if (worker.joinable()) worker.join();
-        filePath = obsPath;
-        fileName = Str::baseName(obsPath);
-        view.obsPathBuf = obsPath;
-        isRINEX = Observer::isRINEX(fmt);
+        applyObsPath(obsPath);
         isRealtime = false;
         return true;
     }

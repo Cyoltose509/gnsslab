@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GnssStruct.h"
+#include "TimeStruct.h"
 #include <map>
 #include <string>
 #include <vector>

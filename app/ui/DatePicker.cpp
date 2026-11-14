@@ -2,14 +2,14 @@
 
 #include "GuiColors.h"
 
-#include "TimeConvert.h"
+#include "TimeStruct.h"
+#include "util/Clock.h"
 
 #include "imgui.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <ctime>
 
 namespace UI::DatePicker {
     namespace {
@@ -26,7 +26,7 @@ namespace UI::DatePicker {
 
         /// 0＝周日 … 6＝周六。1970-01-01 是周四，故 +4 对齐。
         int weekdayOf(const int y, const int m, const int d) {
-            const long days = Time::civilToYMD({y, m, d});
+            const long days = YearMonthDay{y, m, d}.toDays();
             return static_cast<int>(((days + 4) % 7 + 7) % 7);
         }
 
@@ -104,7 +104,7 @@ namespace UI::DatePicker {
             }
 
             const int first = weekdayOf(s_viewYear, s_viewMonth, 1);
-            const int nDays = Time::daysInMonth(s_viewYear, s_viewMonth);
+            const int nDays = YearMonthDay::daysInMonth(s_viewYear, s_viewMonth);
             const ImVec4 frameBg = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
             const ImVec4 frameHover = ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered);
             const ImVec4 frameActive = ImGui::GetStyleColorVec4(ImGuiCol_FrameBgActive);
@@ -157,11 +157,11 @@ namespace UI::DatePicker {
             ImGui::SameLine(0.0f, kGap);
             ImGui::SetNextItemWidth(54.0f);
             if (ImGui::InputInt("##goD", &day, 0, 0)) {
-                day = std::clamp(day, 1, Time::daysInMonth(year, month));
+                day = std::clamp(day, 1, YearMonthDay::daysInMonth(year, month));
                 changed = true;
             }
             if (changed) {
-                day = std::clamp(day, 1, Time::daysInMonth(year, month));
+                day = std::clamp(day, 1, YearMonthDay::daysInMonth(year, month));
                 s_viewYear = year;
                 s_viewMonth = month;
             }
@@ -181,13 +181,7 @@ namespace UI::DatePicker {
     }
 
     void today(int &year, int &month, int &day) {
-        const std::time_t t = std::time(nullptr);
-        std::tm tm{};
-#if defined(_WIN32)
-        localtime_s(&tm, &t);
-#else
-        localtime_r(&t, &tm);
-#endif
+        const std::tm tm = Clock::localNow();
         year = tm.tm_year + 1900;
         month = tm.tm_mon + 1;
         day = tm.tm_mday;

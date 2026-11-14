@@ -16,3 +16,9 @@
 [submodule "thirdparty/zlib"]
 	path = thirdparty/zlib
 	url = https://github.com/madler/zlib.git
+[submodule "thirdparty/libarchive"]
+	path = thirdparty/libarchive
+	url = https://github.com/libarchive/libarchive.git
+[submodule "thirdparty/imgui_markdown"]
+	path = thirdparty/imgui_markdown
+	url = https://github.com/juliettef/imgui_markdown.git

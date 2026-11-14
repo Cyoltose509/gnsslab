@@ -2,10 +2,11 @@
 #include <algorithm>
 #include <cmath>
 
-#include "TimeConvert.h"
-#include "GnssStruct.h"
+#include "TimeStruct.h"
+#include "core/obs/ObsStruct.h"
+#include "core/geom/CoordConvert.h"
 #include "novatel/LogReader.h"
-#include "Const.h"
+#include "core/Const.h"
 
 #include "Log.h"
 #include "MathUtils.h"
@@ -27,7 +28,6 @@ namespace NovAtel {
 
     void LogReader::close() {
         mEphSnap.reset();
-        mInsLayout = InsRecordLayout();
         mPending.reset();
         mEpochWeek = -1;
         mEpochMs = 0;
@@ -35,6 +35,8 @@ namespace NovAtel {
         mSeenCmpRange = false;
         mPrevLock.clear();
         mCurLock.clear();
+        mImuLog.clear();
+        mImuType = -1;
     }
 
     void LogReader::noteRangeFormat(const bool full) {
@@ -150,17 +152,23 @@ namespace NovAtel {
                     break;
                 case 4:
                     out.sys = 'C';
+                    // NovAtel OEM7 RANGE/RANGECMP 的 BeiDou 信号类型表（docs.novatel.com RANGE.htm）：
+                    // 0/4 = B1I 的 D1/D2 电文版（D2 仅 GEO），1/5 = B2I 的 D1/D2，11 = B2b，
+                    // 三者同为 1207.14；2/6 = B3I 的 D1/D2(1268.52)；9 = B2a(1176.45)。
+                    // 不收 sigType 7（B1C）：RINEX 相位偏移 0.25 周，emitObs 无相移机制，
+                    // 收进来会给相位注入常偏破坏整周固定；B1C 也超出 IF 组合的频率表用途。
                     switch (sigType) {
-                        case 0: // B1I
-                        case 4: out.freqIdx = 2;
+                        case 0: // B1I (D1)
+                        case 4: out.freqIdx = 2; // B1I (D2，GEO)
                             break;
-                        case 1: // B2I (BDS-2) / B2b (BDS-3)
-                        case 11: out.freqIdx = 7;
+                        case 1: // B2I (D1) / B2b
+                        case 5: // B2I (D2，GEO)
+                        case 11: out.freqIdx = 7; // 1207.14
                             break;
                         case 9: out.freqIdx = 5; // B2a
                             break;
-                        case 2: // B3I
-                        case 6: out.freqIdx = 6;
+                        case 2: // B3I (D1)
+                        case 6: out.freqIdx = 6; // B3I (D2)
                             break;
                         default: return false;
                     }
@@ -249,7 +257,7 @@ namespace NovAtel {
         mPrevLock.swap(mCurLock);
         mCurLock.clear();
         const WeekSecond ws(currentHeader.week, currentHeader.ms * 0.001, TimeSystem::GPS);
-        currentObs.epoch = Time::WeekSecondToCommon(ws);
+        currentObs.epoch = ws.toCommonTime();
         currentObs.weekSecond = ws;
     }
 
@@ -270,8 +278,6 @@ namespace NovAtel {
         const bool parityKnown = static_cast<int>(status >> 11) & 1;
 
         const SatID sat(sys, sig.prn, sig.chan);
-        // 同一历元里 RANGE 与 RANGECMP 可能都到：RANGE 是未量化的，任何类型它都覆盖；
-        // RANGECMP 只补 RANGE 没给的类型。
         auto &values = currentObs.satTypeValueData[sat];
         const auto put = [&](const std::string &type, const double v) {
             if (fromFull || values.find(type) == values.end()) values[type] = v;
@@ -282,12 +288,7 @@ namespace NovAtel {
         put("D" + s_f, doppler);
         put("S" + s_f, cn0);
 
-        // RINEX 的 LLI 在这台接收机上没有独立字段，但 phase lock / parity known /
-        // lock time 三样合起来正好对应：lock time 回退＝重新捕获（bit0），
-        // parity 未知＝可能差半周（bit1）。同一频点可能有多条码（如 L1CA 与 L1P），
-        // lock time 取最小值，任一信号断就按断算。
-        const int fi = sig.freqIdx;
-        if (fi >= 0 && fi < 9) {
+        if (const int fi = sig.freqIdx; fi >= 0 && fi < 9) {
             bool regress = false;
             if (const auto it = mPrevLock.find(sat); it != mPrevLock.end() && it->second[fi] >= 0.0f)
                 regress = lockTime + 0.05 < it->second[fi];
@@ -337,12 +338,12 @@ namespace NovAtel {
             const std::uint8_t *rec = &message[off];
             const auto status = static_cast<std::uint32_t>(extractBits(rec, 0, 32));
             const auto dopplerRaw = static_cast<std::int32_t>(extractBits(rec, 32, 28) << 4) >> 4; // 28 位补符号
-            const double psr = static_cast<double>(extractBits(rec, 60, 36)) / 128.0;
+            const auto psr = static_cast<double>(extractBits(rec, 60, 36)) / 128.0;
             const auto adrRaw = static_cast<double>(static_cast<std::int32_t>(extractBits(rec, 96, 32))) / 256.0;
-            const int prnRaw = static_cast<int>(extractBits(rec, 136, 8));
-            const double cn0 = 20.0 + static_cast<double>(extractBits(rec, 165, 5));
-            const int gfrq = static_cast<int>(extractBits(rec, 170, 6));
-            const double lockTime = static_cast<double>(extractBits(rec, 144, 21)) / 32.0;
+            const auto prnRaw = static_cast<int>(extractBits(rec, 136, 8));
+            const auto cn0 = 20.0 + static_cast<double>(extractBits(rec, 165, 5));
+            const auto gfrq = static_cast<int>(extractBits(rec, 170, 6));
+            const auto lockTime = static_cast<double>(extractBits(rec, 144, 21)) / 32.0;
 
             double adr = adrRaw;
             if (SignalRef sig; decodeSignal(status, prnRaw, gfrq, sig))
@@ -527,8 +528,8 @@ namespace NovAtel {
         eph.freqNum = frq;
 
         const WeekSecond wsGps(week, tow);
-        CommonTime toeGps = Time::WeekSecondToCommon(wsGps);
-        Time::convertSystem(toeGps, TimeSystem::UTC);
+        CommonTime toeGps = wsGps.toCommonTime();
+        toeGps.convertSystem(TimeSystem::UTC);
         eph.toeCommon = toeGps;
         eph.week = week;
         eph.toe = tow;
@@ -751,59 +752,36 @@ namespace NovAtel {
     bool LogReader::parseImu(const std::vector<std::uint8_t> &message) {
         if (message.size() < 6) return false;
         const int type = Math::U2(&message[4]);
+        if (type != LogID::RAWIMU && type != LogID::RAWIMUS &&
+            type != LogID::RAWIMUX && type != LogID::RAWIMUSX) return false;
+        if (!crcExam(message) || message.size() < 12) return false;
+
+        const int hLen = message[3] == 28 ? 28 : 12;
+        const std::size_t off = static_cast<std::size_t>(hLen) + 16;
+        if (message.size() < off + 24) return false;
 
         int week = 0;
-        double towSec = 0.0;
-        std::int32_t zacc = 0, nyacc = 0, xacc = 0, zgyro = 0, nygyro = 0, xgyro = 0;
-
-        if (type == LogID::RAWIMU || type == LogID::RAWIMUS || type == LogID::RAWIMUX || type == LogID::RAWIMUSX) {
-            if (!crcExam(message)) return false;
-            if (message.size() < 12) return false;
-            const int hLen = message[3] == 28 ? 28 : 12;
-            const std::size_t off = static_cast<std::size_t>(hLen) + 16;
-            if (message.size() < off + 24) return false;
-            if (type == LogID::RAWIMUX || type == LogID::RAWIMUSX) {
-                week = Math::U2(&message[hLen + 2]);
-                if (mImuType < 0) {
-                    if (const int t = message[hLen + 1]; t > 0) mImuType = t;
-                }
-            } else {
-                week = static_cast<int>(Math::U4(&message[hLen + 0]));
+        if (type == LogID::RAWIMUX || type == LogID::RAWIMUSX) {
+            week = Math::U2(&message[hLen + 2]);
+            if (mImuType < 0) {
+                if (const int t = message[hLen + 1]; t > 0) mImuType = t;
             }
-            std::memcpy(&towSec, &message[hLen + 4], sizeof(double));
-
-            zacc = Math::I4(&message[off + 0]);
-            nyacc = Math::I4(&message[off + 4]);
-            xacc = Math::I4(&message[off + 8]);
-            zgyro = Math::I4(&message[off + 12]);
-            nygyro = Math::I4(&message[off + 16]);
-            xgyro = Math::I4(&message[off + 20]);
-        } else if (type == LogID::RAWIMUCOMPACT) {
-            if (!mInsLayout.valid) return false;
-            if (message.size() < static_cast<std::size_t>(mInsLayout.recLen)) return false;
-            if (mImuType < 0 && mInsLayout.imuTypeOffset >= 0) mImuType = message[mInsLayout.imuTypeOffset];
-            week = Math::U2(&message[mInsLayout.weekOffset]);
-            std::memcpy(&towSec, &message[mInsLayout.secOffset], sizeof(double));
-            const int c = mInsLayout.countsOffset;
-            zacc = Math::I4(&message[c + 0]);
-            nyacc = Math::I4(&message[c + 4]);
-            xacc = Math::I4(&message[c + 8]);
-            zgyro = Math::I4(&message[c + 12]);
-            nygyro = Math::I4(&message[c + 16]);
-            xgyro = Math::I4(&message[c + 20]);
         } else {
-            return false;
+            week = static_cast<int>(Math::U4(&message[hLen + 0]));
         }
+
+        double towSec = 0.0;
+        std::memcpy(&towSec, &message[hLen + 4], sizeof(double));
 
         ImuSample s;
         s.gnssWeek = week;
         s.tow = week * FULL_WEEK + towSec;
-        s.ax = xacc;
-        s.ay = -nyacc;
-        s.az = zacc;
-        s.gx = xgyro;
-        s.gy = -nygyro;
-        s.gz = zgyro;
+        s.ax = Math::I4(&message[off + 8]);
+        s.ay = -Math::I4(&message[off + 4]);
+        s.az = Math::I4(&message[off + 0]);
+        s.gx = Math::I4(&message[off + 20]);
+        s.gy = -Math::I4(&message[off + 16]);
+        s.gz = Math::I4(&message[off + 12]);
         mImuLog.push_back(s);
         return true;
     }

@@ -1,13 +1,14 @@
 #include "Core.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <limits>
 #include <string>
 
-#include "Const.h"
-#include "CoordConvert.h"
+#include "core/Const.h"
+#include "core/geom/CoordConvert.h"
+#include "FileUtils.h"
+#include "Log.h"
 #include "RTK.h"
 #include "SPP.h"
 #include "solvers/leo/Task.h"
@@ -19,7 +20,7 @@ namespace Solvers {
     namespace {
         constexpr double kEnuNaN = std::numeric_limits<double>::quiet_NaN();
         constexpr int kQcDirtyEvery = 200;
-        constexpr auto kQcDirtyInterval = std::chrono::milliseconds(500);
+        constexpr auto kQcDirtyInterval = Clock::milliseconds(500);
 
         /// 一个历元的两套 ENU：实解用于轨迹，浮点解用于「浮点-固定」对比。
         /// 未出解时实解取 0、浮点取 NaN（图上断线）；插入与换基准重算共用这一套取法。
@@ -35,6 +36,51 @@ namespace Solvers {
             out.solved = Coord::XYZToENU(xyz, ref);
             out.floatSol = Coord::XYZToENU(floatXyz, ref);
             return out;
+        }
+
+        /// 无解格子的 ECEF 是零向量，真实地心距远大于 1e6 m。
+        constexpr double kSmoothMinNorm2 = 1e12;
+
+        /// E-N 平面图散点：静态解取 ENU 误差，动态解取相对 planOrigin 的轨迹（中心由用户拖）。
+        void rebuildPlan(PlotSeries &s) {
+            s.planE.clear();
+            s.planN.clear();
+            s.planR = 1e-6;
+            const auto &d = s.data;
+            const auto add = [&s](const double e, const double n) {
+                if (!std::isfinite(e) || !std::isfinite(n)) return;
+                s.planE.push_back(e);
+                s.planN.push_back(n);
+                s.planR = std::max(s.planR, std::max(std::abs(e), std::abs(n)));
+            };
+            const auto solved = [&d](const int i) {
+                return i < static_cast<int>(d.solvedFlags.size()) && d.solvedFlags[i] > 0.5;
+            };
+
+            if (s.planTrack) {
+                const auto &xyz = d.ecef;
+                if (!s.planOriginSet) {
+                    for (const auto &p: xyz) {
+                        if (p.squaredNorm() <= kSmoothMinNorm2) continue;
+                        s.planOrigin = p;
+                        s.planOriginSet = true;
+                        break;
+                    }
+                }
+                for (int i = 0; i < static_cast<int>(xyz.size()); ++i) {
+                    if (!solved(i) || xyz[i].squaredNorm() <= kSmoothMinNorm2) continue;
+                    const ENU enu = Coord::XYZToENU(xyz[i], s.planOrigin);
+                    add(enu.E(), enu.N());
+                }
+            } else {
+                const auto &eArr = d.enu_e;
+                const auto &nArr = d.enu_n;
+                for (int i = 0; i < static_cast<int>(eArr.size()); ++i) {
+                    if (!solved(i)) continue;
+                    add(eArr[i], i < static_cast<int>(nArr.size()) ? nArr[i] : 0.0);
+                }
+            }
+            s.planR *= 1.15;
         }
 
         /// 实解与浮点解各自的 ECEF：RTK 的浮点解在历元自己身上，其余模式看 sppResult。
@@ -177,7 +223,7 @@ namespace Solvers {
         if (solved) {
             ++solvedEpochs;
             if (result.vel.squaredNorm() > 1e-4) ++velEpochs;
-            if (ep.isFixed(mode)) ++fixedEpochs;
+            if (modeFixesAmbiguities(mode) && ep.isFixed(mode)) ++fixedEpochs;
         }
         constexpr double dopNaN = std::numeric_limits<double>::quiet_NaN();
         sigmaPs.push_back(solved ? result.sigmaP : 0.0);
@@ -195,7 +241,11 @@ namespace Solvers {
         ecef.push_back(xyz);
         floatEcef.push_back(floatXyz);
 
-        const EnuOfEpoch enu = enuFrom(solved, xyz, floatXyz, refECEF);
+        const bool perEpoch = ep.refECEF.squaredNorm() > 1.0
+                              && (ep.refECEF - refECEF).squaredNorm() > 1e-6;
+        refs.push_back(perEpoch ? ep.refECEF : Eigen::Vector3d::Zero());
+        const Eigen::Vector3d ref = perEpoch ? ep.refECEF : refECEF;
+        const EnuOfEpoch enu = enuFrom(solved, xyz, floatXyz, ref);
         enu_e.push_back(enu.solved[0]);
         enu_n.push_back(enu.solved[1]);
         enu_u.push_back(enu.solved[2]);
@@ -204,13 +254,15 @@ namespace Solvers {
         float_u.push_back(enu.floatSol[2]);
 
         if (solved) {
-            for (auto &[satID, res]: result.postRes) {
-                satResTimes[satID].push_back(index);
-                satResVals[satID].push_back(res);
+            for (std::size_t k = 0; k < result.postRes.size(); ++k) {
+                const SatID &sat = result.postRes.sats[k];
+                satResTimes[sat].push_back(index);
+                satResVals[sat].push_back(result.postRes.values[k]);
             }
-            for (auto &[satID, res]: result.postResPhase) {
-                satResPhaseTimes[satID].push_back(index);
-                satResPhaseVals[satID].push_back(res);
+            for (std::size_t k = 0; k < result.postResPhase.size(); ++k) {
+                const SatID &sat = result.postResPhase.sats[k];
+                satResPhaseTimes[sat].push_back(index);
+                satResPhaseVals[sat].push_back(result.postResPhase.values[k]);
             }
         }
     }
@@ -245,6 +297,7 @@ namespace Solvers {
         tail(tdops, src.tdops);
         tail(ecef, src.ecef);
         tail(floatEcef, src.floatEcef);
+        tail(refs, src.refs);
         tail(enu_e, src.enu_e);
         tail(enu_n, src.enu_n);
         tail(enu_u, src.enu_u);
@@ -265,7 +318,9 @@ namespace Solvers {
         ++revision;
         ++gen;
         for (int i = 0; i < static_cast<int>(enu_e.size()); i++) {
-            const EnuOfEpoch enu = enuFrom(solvedFlags[i] != 0.0, ecef[i], floatEcef[i], refECEF);
+            const Eigen::Vector3d ref = i < static_cast<int>(refs.size()) && refs[i].squaredNorm() > 1.0
+                                            ? refs[i] : refECEF;
+            const EnuOfEpoch enu = enuFrom(solvedFlags[i] != 0.0, ecef[i], floatEcef[i], ref);
             enu_e[i] = enu.solved[0];
             enu_n[i] = enu.solved[1];
             enu_u[i] = enu.solved[2];
@@ -273,6 +328,12 @@ namespace Solvers {
             float_n[i] = enu.floatSol[1];
             float_u[i] = enu.floatSol[2];
         }
+    }
+
+    void PlotData::replaceAll(const std::vector<Epoch> &epochs, const XYZ &refECEF, const Mode mode) {
+        clear();
+        for (int i = 0; i < static_cast<int>(epochs.size()); ++i)
+            insert(i, epochs[i], refECEF, mode);
     }
 
     void PlotData::clear() {
@@ -293,6 +354,7 @@ namespace Solvers {
         enu_u.clear();
         ecef.clear();
         floatEcef.clear();
+        refs.clear();
         float_e.clear();
         float_n.clear();
         float_u.clear();
@@ -312,9 +374,8 @@ namespace Solvers {
     }
 
     void View::markQcDirty() {
-        const auto now = std::chrono::steady_clock::now();
-        if (++qcDirtyTick % kQcDirtyEvery != 0 && now - qcDirtyAt < kQcDirtyInterval) return;
-        qcDirtyAt = now;
+        if (++qcDirtyTick % kQcDirtyEvery != 0 && !Clock::over(qcDirtyAt, kQcDirtyInterval)) return;
+        qcDirtyAt = Clock::now();
         qcDirty = true;
     }
 
@@ -347,6 +408,32 @@ namespace Solvers {
             }
         }
         skyTracksBuilt = totalEp;
+    }
+
+    void View::rebuildTruthTrails(const std::vector<Epoch> &epochs) {
+        leoTraj.clear();
+        leoRefTraj.clear();
+        rtnTimes.clear();
+        rtnR.clear();
+        rtnT.clear();
+        rtnN.clear();
+        rtnD3.clear();
+        for (int i = 0; i < static_cast<int>(epochs.size()); ++i) {
+            const Epoch &ep = epochs[i];
+            if (!ep.solved || ep.sppResult.xyz.squaredNorm() <= 1e12) continue;
+            const Eigen::Vector3d &pos = ep.sppResult.xyz;
+            hasLeo = true;
+            leoPos3d = pos;
+            leoTraj.push_back({i, pos});
+            if (ep.refECEF.squaredNorm() <= 1e12) continue;
+            leoRef3d = ep.refECEF;
+            leoRefTraj.push_back({i, ep.refECEF});
+            rtnTimes.push_back(i);
+            rtnR.push_back(ep.rtnR);
+            rtnT.push_back(ep.rtnT);
+            rtnN.push_back(ep.rtnN);
+            rtnD3.push_back((pos - ep.refECEF).norm());
+        }
     }
 
     QC::QualityReport View::qcSnapshot() {
@@ -407,12 +494,12 @@ namespace Solvers {
         return vv;
     }
 
-    double PlotSeries::codeResidual(const SatID sat, const int idx) const {
-        return residualAt(data.satResTimes, data.satResVals, sat, idx);
+    double PlotData::codeResidual(const SatID sat, const int idx) const {
+        return residualAt(satResTimes, satResVals, sat, idx);
     }
 
-    double PlotSeries::phaseResidual(const SatID sat, const int idx) const {
-        return residualAt(data.satResPhaseTimes, data.satResPhaseVals, sat, idx);
+    double PlotData::phaseResidual(const SatID sat, const int idx) const {
+        return residualAt(satResPhaseTimes, satResPhaseVals, sat, idx);
     }
 
     void PlotSeries::sync(const PlotData &pp) {
@@ -429,20 +516,19 @@ namespace Solvers {
         pruneAxes(resAxisPhase, data.satResPhaseTimes);
         hasResidual = !data.satResVals.empty() || !data.satResPhaseVals.empty();
 
-        planE.clear();
-        planN.clear();
-        planR = 1e-6;
-        const int n = static_cast<int>(data.enu_e.size());
-        for (int i = 0; i < n; ++i) {
-            if (i >= static_cast<int>(data.solvedFlags.size()) || data.solvedFlags[i] < 0.5) continue;
-            const double e = data.enu_e[i];
-            const double nn = i < static_cast<int>(data.enu_n.size()) ? data.enu_n[i] : 0.0;
-            if (!std::isfinite(e) || !std::isfinite(nn)) continue;
-            planE.push_back(e);
-            planN.push_back(nn);
-            planR = std::max(planR, std::max(std::abs(e), std::abs(nn)));
-        }
-        planR *= 1.15;
+        rebuildPlan(*this);
+    }
+
+    void PlotSeries::setPlanTrack(const bool track) {
+        if (planTrack == track) return;
+        planTrack = track;
+        rebuildPlan(*this);
+    }
+
+    void PlotSeries::setPlanOrigin(const Eigen::Vector3d &origin) {
+        planOrigin = origin;
+        planOriginSet = true;
+        rebuildPlan(*this);
     }
 
     bool Core::errorFlag() const { return hasError.load(); }
@@ -470,7 +556,13 @@ namespace Solvers {
             case Mode::PPPStatic: return PPPStatic::defaultOptions();
             case Mode::PPPKinematic: return PPPKinematic::defaultOptions();
             case Mode::LEO: return LEO::defaultOptions();
-            case Mode::RTK: break;
+            case Mode::RTK: {
+                // 其余模式缺省前向滤波，RTK 缺省逐历元 LSQ：滤波档只改善浮点解，固定率略降
+                SolverOptions o;
+                o.filter = SolverOptions::FilterMode::LSQ;
+                return o;
+            }
+            case Mode::INS: break;  // 惯导参数在 SolverOptions::ins，默认值由 INSConfig 给出
         }
         return {};
     }
@@ -497,6 +589,138 @@ namespace Solvers {
         return !stop.load();
     }
 
+    void Core::applyObsPath(const std::string &obsPath) {
+        filePath = obsPath;
+        fileName = File::baseName(obsPath);
+        obsFormat = Observer::classifyObsPath(obsPath);
+        view.obsPathBuf = obsPath;
+    }
+
+    void Core::setupTruth(const SolverOptions &cfg) {
+        truth.form = cfg.refForm;
+        truth.fixed = cfg.hasRef
+                          ? Eigen::Vector3d(cfg.refX, cfg.refY, cfg.refZ)
+                          : Eigen::Vector3d::Zero();
+        truth.sp3Path = cfg.refSp3;
+        if (truth.form == RefForm::None && cfg.hasRef && modeAllowsRefFixed(mode))
+            truth.form = RefForm::Fixed;
+        else if (truth.form == RefForm::None && !cfg.refSp3.empty() && modeAllowsRefFile(mode))
+            truth.form = RefForm::File;
+    }
+
+    bool Core::loadTruth() {
+        truth.fileReady = false;
+        if (truth.form != RefForm::File || truth.sp3Path.empty()) return false;
+        try {
+            truth.reader.read(truth.sp3Path);
+            const auto &data = truth.reader.getData();
+            if (data.empty()) {
+                LOG_WARN << "[参考真值] SP3 无轨道记录: " << truth.sp3Path;
+                return false;
+            }
+            // 真值 SP3 一般只含一颗 LEO 星，直接取第一颗 L 星；
+            // 没有 L 星时仍按 L 系统取编号（与旧 LEO 口径一致：插值取不到 → 参考退化为解自身）。
+            truth.sat = SatID();
+            for (const auto &[sat, recs]: data)
+                if (!recs.empty() && sat.system == 'L') {
+                    truth.sat = sat;
+                    break;
+                }
+            if (truth.sat.id < 0) truth.sat = SatID('L', data.begin()->first.id);
+            truth.fileReady = true;
+            LOG_INFO << "[参考真值] SP3 已加载: " << truth.sp3Path
+                     << ", 真值星 " << truth.sat.system << truth.sat.id;
+            return true;
+        } catch (const std::exception &e) {
+            LOG_ERROR << "[参考真值] SP3 读取失败 " << truth.sp3Path << ": " << e.what();
+            return false;
+        } catch (...) {
+            LOG_ERROR << "[参考真值] SP3 读取失败: " << truth.sp3Path;
+            return false;
+        }
+    }
+
+    void Core::warnFrameMismatch() const {
+        if (!hasOrbitFrame) {
+            LOG_INFO << "[参考框架] 没有产品轨道框架声明（广播星历，或 SP3 头没写），导出按 IGS14 记";
+            return;
+        }
+        LOG_INFO << "[参考框架] 解所在框架 " << Frame::refName(orbitFrame);
+        if (truth.form != RefForm::File || !truth.fileReady || !truth.reader.hasFrame) return;
+        if (truth.reader.frame == orbitFrame) return;
+        LOG_WARN << "[参考框架] 产品轨道在 " << Frame::refName(orbitFrame)
+                 << "，参考真值在 " << Frame::refName(truth.reader.frame)
+                 << "：R/T/N 与 ENU 差里含两个实现之间的系统差（厘米级），别全算进模型误差";
+    }
+
+    void Core::applyTruthAtEpoch(Epoch &ep, const int index) {
+        if (!ep.solved) return;
+        Eigen::Vector3d pos, floatPos;
+        ecefOfEpoch(ep, pos, floatPos);
+        if (pos.squaredNorm() <= 1e12) return;
+
+        const CommonTime ct = CommonTime(GPS_EPOCH_MJD, 0.0, TimeSystem::GPS)
+                              + (static_cast<double>(ep.week) * 7.0 * SEC_PER_DAY + ep.sow);
+        Eigen::Vector3d refPos = Eigen::Vector3d::Zero(), refVel = Eigen::Vector3d::Zero();
+        bool haveRef = false;
+        if (truth.form == RefForm::File && truth.fileReady) {
+            try {
+                // 不覆盖该历元时 getPVT 会做拉格朗日外推，插出完全无意义的坐标。
+                if (truth.reader.covers(truth.sat, ct)) {
+                    const PVT pvt = truth.reader.getPVT(truth.sat, ct);
+                    if (pvt.p.squaredNorm() > 1e12 && pvt.p.squaredNorm() < 1e16) {
+                        refPos = pvt.p;
+                        refVel = pvt.v;
+                        haveRef = true;
+                    }
+                }
+            } catch (...) {
+            }
+        } else if (truth.form == RefForm::Fixed && truth.fixed.squaredNorm() > 1.0) {
+            refPos = truth.fixed;
+            haveRef = true;
+        }
+        if (haveRef) ep.refECEF = refPos;
+        // 只认首历元的基准：之后在结果页拖 E-N 中心改的基准要留住，不能被后续历元冲回真值。
+        if (!initializedRefECEF) {
+            refECEF = haveRef ? refPos : pos;
+            initializedRefECEF = true;
+        }
+
+        if (truth.form != RefForm::File || !modeUsesRTN(mode)) return;
+        view.hasLeo = true;
+        view.leoPos3d = pos;
+        view.leoTraj.push_back({index, pos});
+        if (!haveRef) return;
+        view.leoRef3d = refPos;
+        view.leoRefTraj.push_back({index, refPos});
+        const Eigen::Vector3d rtn = Coord::XYZToRTN(pos, refPos, refVel);
+        ep.rtnR = rtn(0);
+        ep.rtnT = rtn(1);
+        ep.rtnN = rtn(2);
+        view.rtnTimes.push_back(index);
+        view.rtnR.push_back(rtn(0));
+        view.rtnT.push_back(rtn(1));
+        view.rtnN.push_back(rtn(2));
+        view.rtnD3.push_back((pos - refPos).norm());
+    }
+
+    void Core::refreshTruthAtEpoch(Epoch &ep, const CommonTime &epoch) {
+        if (!modeUsesRTN(mode) || truth.form != RefForm::File || !truth.fileReady) return;
+        if (ep.sppResult.xyz.squaredNorm() <= 1e12) return;
+        try {
+            if (!truth.reader.covers(truth.sat, epoch)) return;
+            const PVT pvt = truth.reader.getPVT(truth.sat, epoch);
+            if (pvt.p.squaredNorm() <= 1e12 || pvt.p.squaredNorm() >= 1e16) return;
+            const Eigen::Vector3d rtn = Coord::XYZToRTN(ep.sppResult.xyz, pvt.p, pvt.v);
+            ep.refECEF = pvt.p;
+            ep.rtnR = rtn(0);
+            ep.rtnT = rtn(1);
+            ep.rtnN = rtn(2);
+        } catch (...) {
+        }
+    }
+
     /// 提交一个历元：复用观测类型表、刷新图表序列并清掉重复残差。
     void Core::commitEpoch(Epoch &&item,
                            const std::function<void(int, Epoch &)> &onStored) {
@@ -507,14 +731,18 @@ namespace Solvers {
         const int idx = static_cast<int>(epochs.size());
         epochs.push_back(std::move(item));
         if (onStored) onStored(idx, epochs.back());
+        applyTruthAtEpoch(epochs.back(), idx);
         try {
             std::lock_guard plk(view.plotMutex);
             view.plotData.insert(idx, epochs.back(), refECEF, mode);
         } catch (...) {
         }
-        epochs.back().sppResult.postRes.clear();
-        epochs.back().sppResult.postResPhase.clear();
-        if (view.selectedEpoch == -1 || view.selectedEpoch == idx - 1) view.selectedEpoch = idx;
+        epochs.back().sppResult.postRes.release();
+        epochs.back().sppResult.postResPhase.release();
+        // 选中历元若还跟着解算游标（用户没拖走），就一起前进；一旦拖走就不再干预。
+        if (view.selectedEpoch < 0 || view.selectedEpoch == view.lastSolveCursor)
+            view.selectedEpoch = idx;
+        view.lastSolveCursor = idx;
     }
 
     std::pair<int, int> Core::readEpochView() {

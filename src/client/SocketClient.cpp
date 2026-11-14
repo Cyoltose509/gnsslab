@@ -1,5 +1,48 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "WS2_32.lib")
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#endif
+
 #include "SocketClient.h"
-#include "Const.h"
+#include "core/Const.h"
+
+namespace {
+    void init_winsock() {
+#ifdef _WIN32
+        static WSADATA wsaData{};
+        static std::once_flag flag;
+        std::call_once(flag, [] { WSAStartup(MAKEWORD(2, 2), &wsaData); });
+#endif
+    }
+
+    void socket_close(const SocketType s) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        ::close(s);
+#endif
+    }
+
+    int socket_connect(const SocketType s, const sockaddr *addr, const socklen_t len) {
+#ifdef _WIN32
+        return connect(s, addr, len);
+#else
+        return ::connect(s, addr, len);
+#endif
+    }
+
+    int socket_receive(const SocketType s, char *buf, const int len) {
+        return recv(s, buf, len, 0);
+    }
+}
 
 bool SocketClient::connect(const std::string &ip, const unsigned short port) {
     init_winsock();
@@ -88,7 +131,7 @@ bool SocketClient::connect(const std::string &ip, const unsigned short port) {
 
     setReceiveTimeout(200);
     connected = true;
-    lastRecvTime = std::chrono::steady_clock::now();
+    lastRecvTime = Clock::now();
     return true;
 }
 
@@ -158,7 +201,7 @@ int SocketClient::receive(unsigned char *buffer, const int maxLen, const int tim
         }
 #endif
     } else {
-        lastRecvTime = std::chrono::steady_clock::now();
+        lastRecvTime = Clock::now();
     }
     return ret;
 }

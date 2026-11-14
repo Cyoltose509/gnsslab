@@ -1,11 +1,12 @@
 #pragma once
+#include <functional>
 
 #include <vector>
 #include <map>
 #include <limits>
 #include <utility>
 
-#include "Const.h"
+#include "core/Const.h"
 #include "solvers/common/Core.h"
 #include "implot.h"
 
@@ -26,6 +27,9 @@ namespace Solvers::Charts {
     // 红色可拖拽时间游标：拖动结果经 lround+clamp 同步回 *selectedEpoch（空指针只画线不同步）。
     void epochCursor(int id, int *selectedEpoch, int epochCount);
 
+    // 绿色解算游标：标出解算线程当前正在处理的历元，只读不可拖；传负值表示没在解算，不画。
+    void solveCursor(int solvingEpoch);
+
     // follow 为真时把 X 轴右端推到最新时刻，新历元到达时滚动跟随
     inline void xAxisFollow(const std::vector<double> &t, const bool follow,
                             const ImPlotCond cond = ImPlotCond_Always) {
@@ -44,7 +48,8 @@ namespace Solvers::Charts {
                        const std::vector<double> &float_n = {},
                        const std::vector<double> &float_u = {},
                        int epochCount = -1,
-                       float plotH = 380.0f);
+                       float plotH = 380.0f,
+                       int solvingEpoch = -1);
 
     void renderSatResidualPlot(const std::map<SatID, std::vector<double>> &satResV,
                                const std::map<SatID, std::vector<double>> &phaseV,
@@ -54,7 +59,7 @@ namespace Solvers::Charts {
                                int &selectedEpoch, int epochCount, bool &newed,
                                const double *codeLo, const double *codeHi,
                                const double *phaseLo, const double *phaseHi,
-                               float plotH = 0.0f);
+                               float plotH = 0.0f, int solvingEpoch = -1);
 
     struct SatRowView {
         SatID sat;
@@ -71,8 +76,7 @@ namespace Solvers::Charts {
         bool used = true;
     };
 
-  template<typename Proj>
-    std::vector<SatRow> buildSatRows(const std::size_t n, Proj &&proj) {
+  inline std::vector<SatRow> buildSatRows(const std::size_t n, const std::function<SatRowView(std::size_t)> &proj) {
         std::vector<SatRow> rows;
         rows.reserve(n);
         for (std::size_t i = 0; i < n; ++i) {
@@ -94,8 +98,9 @@ namespace Solvers::Charts {
         return rows;
     }
 
-  template<typename Proj>
-    std::vector<std::pair<SatID, SkyPoint> > buildCurSkyPoints(const int epIdx, const std::size_t n, Proj &&proj, const double minElevDeg = -1.0) {
+  inline std::vector<std::pair<SatID, SkyPoint> > buildCurSkyPoints(const int epIdx, const std::size_t n,
+                                                                    const std::function<SkyView(std::size_t)> &proj,
+                                                                    const double minElevDeg = -1.0) {
         std::vector<std::pair<SatID, SkyPoint> > pts;
         for (std::size_t i = 0; i < n; ++i) {
             SkyView v = proj(i);

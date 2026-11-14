@@ -6,9 +6,6 @@
 #include <vector>
 
 
-void RequestCapturePNG(const std::wstring &path);
-
-
 void RequestCaptureRegionPNG(const std::wstring &path, int x, int y, int w, int h);
 
 
@@ -59,6 +56,7 @@ private:
     HWND m_hwnd{};
     WNDCLASSEXW m_wndClass{};
     bool m_initialized = false;
+    bool m_comInit = false;
 
     float m_mainScale = 1.0f;
 

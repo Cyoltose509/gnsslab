@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -76,23 +77,33 @@ namespace UI::ParamPage {
 
     enum Style { kValue, kFlag };
 
+    /// 本页所有行共用的控件起点（像素）：文字一律在左，输入框/下拉/勾选框左边缘对齐。
+    /// render() 按本页最长标签算一次；个别页面（INS 初值表）可以自己调大。
+    extern float labelWidth;
+
+    void beginField(const char *label, bool autoWidth = true);
+    void drawGroupTitle(const char *title);
+
     template <class T>
     void drawValue(const char *label, T &v, const Range r) {
+        beginField(label);
+        const std::string id = std::string("##v_") + label;
         if constexpr (std::is_same_v<T, int>) {
-            ImGui::InputInt(label, &v);
+            ImGui::InputInt(id.c_str(), &v);
             if (r.on) v = std::clamp(v, static_cast<int>(r.lo), static_cast<int>(r.hi));
         } else if constexpr (std::is_same_v<T, double>) {
-            ImGui::InputDouble(label, &v, 0.0, 0.0, "%.10g");
+            ImGui::InputDouble(id.c_str(), &v, 0.0, 0.0, "%.10g");
             if (r.on) v = std::clamp(v, r.lo, r.hi);
         } else if constexpr (std::is_same_v<T, bool>) {
-            ImGui::Checkbox(label, &v);
+            ImGui::Checkbox(id.c_str(), &v);
         }
     }
 
     template <class T>
     void drawFlag(const char *label, T &v) {
         bool on = v != 0;
-        if (ImGui::Checkbox(label, &on)) v = static_cast<T>(on);
+        beginField(label);
+        if (ImGui::Checkbox((std::string("##flag_") + label).c_str(), &on)) v = static_cast<T>(on);
     }
 
     template <class S>
@@ -112,6 +123,8 @@ namespace UI::ParamPage {
         const char *title = "";
         std::vector<Field<S> > fields;
         std::function<void(S &)> row;
+        /// row 跟在哪个字段的控件右侧；空 = 跟在组末行。
+        const char *rowAfterKey = nullptr;
     };
 
     template <Style Style_, class S, class T, class At, class Atc>
@@ -165,7 +178,12 @@ namespace UI::ParamPage {
 
     template <class S>
     void render(const std::vector<Group<S> > &groups, S &state, const S &def) {
-        ImGui::PushItemWidth(260);
+        float maxLabel = 0.0f;
+        for (const auto &group: groups)
+            for (const auto &f: group.fields)
+                if ((!f.show || f.show(state)) && f.label && *f.label)
+                    maxLabel = std::max(maxLabel, ImGui::CalcTextSize(f.label).x);
+        labelWidth = maxLabel + ImGui::GetStyle().ItemSpacing.x * 2.0f;
         bool firstGroup = true;
         for (const auto &group: groups) {
             const bool anyField = std::any_of(group.fields.begin(), group.fields.end(),
@@ -173,15 +191,32 @@ namespace UI::ParamPage {
             if (!anyField && !group.row) continue;
             if (!firstGroup) ImGui::Separator();
             firstGroup = false;
-            if (group.title && *group.title) ImGui::TextUnformatted(group.title);
-            for (const auto &f: group.fields)
-                if (!f.show || f.show(state)) f.draw(state);
-            if (group.row) group.row(state);
+            drawGroupTitle(group.title);
+            bool drawnField = false;
+            bool rowDrawn = false;
+            auto drawRow = [&]() {
+                if (!group.row) return;
+                if (drawnField) ImGui::SameLine();
+                ImGui::BeginGroup();
+                ImGui::PushTextWrapPos(0.0f);
+                group.row(state);
+                ImGui::PopTextWrapPos();
+                ImGui::EndGroup();
+                rowDrawn = true;
+            };
+            for (const auto &f: group.fields) {
+                if (f.show && !f.show(state)) continue;
+                f.draw(state);
+                drawnField = true;
+                if (group.row && group.rowAfterKey && std::string_view(f.key) == group.rowAfterKey)
+                    drawRow();
+            }
+            if (!rowDrawn) drawRow();
         }
-        ImGui::PopItemWidth();
         ImGui::Spacing();
         if (ImGui::Button("恢复默认设置", ImVec2(160, 0)))
             forEach(groups, [&](const Field<S> &f) { f.reset(state, def); });
+        //drawWidthHandle();
     }
 
     template <class S>

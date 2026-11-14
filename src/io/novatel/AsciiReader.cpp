@@ -324,10 +324,6 @@ namespace NovAtel {
         if (!mIn) return false;
 
         mEphSnap = std::make_shared<EphemerisTable>();
-        mImuLog.clear();
-        mInsLayout = InsRecordLayout();
-        mImuType = -1;
-
         return true;
     }
 

@@ -8,10 +8,10 @@
 #include "solvers/common/Core.h"
 #include "io/novatel/AsciiReader.h"
 #include "io/novatel/LogReader.h"
-#include "ins/Aligner.h"
-#include "core/InsMath.h"
-#include "Const.h"
-#include "util/StringUtils.h"
+#include "solver/ins/Aligner.h"
+#include "core/ins/InsMath.h"
+#include "core/Const.h"
+#include "StringUtils.h"
 
 #include <algorithm>
 #include <atomic>
@@ -84,15 +84,14 @@ namespace Tools::Ins {
             if (count > 0) {
                 const Eigen::Vector3d accm = sumAcc / static_cast<double>(count);
                 const Eigen::Vector3d gyrm = sumGyr / static_cast<double>(count);
-                const Eigen::Matrix3d C = alignDCM(-accm, gyrm, sp);
-                Coord::DCMToEuler(C, att.roll, att.pitch, att.yaw);
-                alignQ = Aligner::diagnoseMeans(accm, gyrm, sp, sen.currentScale());
+                att = alignDCM(-accm, gyrm, sp).toEuler();
+                alignQ = Aligner::diagnoseMeans(accm, gyrm, sp, sen.res.currentScale());
                 alignQValid = true;
             }
         };
 
 
-        auto onReader = [&](auto &r) -> bool {
+        auto onReader = [&](NovAtel::LogReader &r) -> bool {
             return sen.observe(r, [&](const std::string &label, const ScaleNotice &n) {
                 std::lock_guard lk(resultMutex);
                 sensorModel = label;
@@ -113,18 +112,17 @@ namespace Tools::Ins {
         sen.resolve(par.g);
         {
             std::lock_guard lk(resultMutex);
-            sensorModel = sen.label();
-            scaleNotice = sen.notice(true);
+            sensorModel = sen.res.describe();
+            scaleNotice = sen.res.notice(true);
         }
 
-        Attitude a{};
+        Euler a{};
         AlignQuality aq;
         {
             const Eigen::Vector3d acc = sumAcc / static_cast<double>(count);
             const Eigen::Vector3d gyr = sumGyr / static_cast<double>(count);
-            const Eigen::Matrix3d C = alignDCM(-acc, gyr, sp);
-            Coord::DCMToEuler(C, a.roll, a.pitch, a.yaw);
-            aq = Aligner::diagnoseMeans(acc, gyr, sp, sen.scale());
+            a = alignDCM(-acc, gyr, sp).toEuler();
+            aq = Aligner::diagnoseMeans(acc, gyr, sp, sen.res.scale);
         }
         double ym, ysd, pm, psd, rm, rsd;
         steadyStats(seriesLocal, ym, ysd, pm, psd, rm, rsd);
@@ -134,7 +132,7 @@ namespace Tools::Ins {
             std::snprintf(ang, sizeof ang, "yaw=%.4f° pitch=%.4f° roll=%.4f°",
                           a.yaw * RAD_TO_DEG, a.pitch * RAD_TO_DEG, a.roll * RAD_TO_DEG);
             LOG_INFO << "[静态解析粗对准] 完成：" << seriesLocal.size() << " 个历元，当量 "
-                     << sen.label() << "，" << ang << "，模长校验" << (aq.hasScale ? "可用" : "不可用");
+                     << sen.res.describe() << "，" << ang << "，模长校验" << (aq.hasScale ? "可用" : "不可用");
         }
         {
             std::lock_guard lk(resultMutex);
@@ -171,12 +169,12 @@ namespace Tools::Ins {
         if (renderResultPrologue(*this, true, [this] { startAlign(); })) return;
 
         if (running) {
-            ImGui::TextColored(kColInfo, "正在对准 %s：已解析 %lld 个历元", fileName.c_str(),
+            ImGui::TextColored(kColInfo, "正在对准 %s：正在解析第 %lld 个历元", fileName.c_str(),
                                static_cast<long long>(sampleCount.load()));
         }
 
         {
-            Attitude m;
+            Euler m;
             {
                 std::lock_guard lk(resultMutex);
                 m = att;
@@ -402,7 +400,7 @@ namespace Tools::Ins {
     void StaticAlignTask::exportAlignSummary() {
         const auto s = snapshotSeries();
         if (s.empty()) return;
-        Attitude a{};
+        Euler a{};
         double ym = 0, pm = 0, rm = 0;
         AlignQuality aq;
         std::string model;
@@ -443,7 +441,7 @@ namespace Tools::Ins {
                   CSV::fx(rs * RAD_TO_DEG, 4));
             w.row("每历元稳态(后1/3)均值", CSV::fx(ym, 4), CSV::fx(pm, 4), CSV::fx(rm, 4));
 
-            w.endRow();
+            w.blank();
             w.row("对准质量", "实测", "参考", "判定/偏差");
             const bool orthoOk = std::fabs(aq.dcmDet - 1.0) < 1e-9 && aq.dcmOrthoErr < 1e-9;
             w.row("姿态矩阵 det(C)", CSV::fx(aq.dcmDet, 12), "+1", orthoOk ? "单位正交" : "非单位正交");

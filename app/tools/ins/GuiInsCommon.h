@@ -9,25 +9,29 @@
 
 #include <Eigen/Eigen>
 
-#include "Const.h"
+#include "core/Const.h"
 #include "CSV.h"
 #include "Observer.h"
 #include "io/novatel/LogReader.h"
+#include "FileUtils.h"
 
 #include "implot.h"
 #include <atomic>
+#include <functional>
 #include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace Tools::Ins {
-    template<class Reader, class ReadFn, class OnSample, class OnBatch>
-    void pumpImu(Reader &r, ReadFn readOne, const std::atomic<bool> &stop,
-                 OnSample onSample, OnBatch onBatch) {
+    /// IMU 泵：轮询读取器直到读完，逐样本回调 onSample，每 2048 样本用总数回调一次 onBatch。
+    inline void pumpImu(NovAtel::LogReader &r, const std::atomic<bool> &stop,
+                        const std::function<void(const ImuSample &)> &onSample,
+                        const std::function<void(long long)> &onBatch) {
         std::size_t last = 0, batchMark = 0;
         while (!stop) {
-            const bool more = readOne();
+            ImuSample t;
+            const bool more = r.getNextImu(t);
             const ImuLog &L = r.getImuLog();
             for (std::size_t i = last; i < L.size(); ++i) onSample(L[i]);
             last = L.size();
@@ -40,24 +44,16 @@ namespace Tools::Ins {
         onBatch(static_cast<long long>(r.getImuLog().size()));
     }
 
-    template<class Reader, class OnSample, class OnBatch>
-    void pumpImuReader(Reader &r, const std::atomic<bool> &stop,
-                       OnSample onSample, OnBatch onBatch) {
-        ImuSample t;
-        pumpImu(r, [&] { return r.getNextImu(t); }, stop, onSample, onBatch);
-    }
-
-    template<class OnReader, class OnSample, class OnBatch>
-    bool pumpImuFile(const std::string &path, const std::atomic<bool> &stop,
-                     OnReader onReader, OnSample onSample, OnBatch onBatch) {
-        auto run = [&](auto &r) {
-            if (!r.open(path) || !onReader(r)) return false;
-            pumpImuReader(r, stop, onSample, onBatch);
-            return true;
-        };
-        // 二进制日志与 ASC 文本日志由内容决定用哪个读取器，后缀不作数
+    /// NovAtel 日志按内容定读取器（二进制/ASC 文本，后缀不作数）；open 成功且 onReader
+    /// 通过后进入 IMU 泵，任一步失败返回 false。
+    inline bool pumpImuFile(const std::string &path, const std::atomic<bool> &stop,
+                            const std::function<bool(NovAtel::LogReader &)> &onReader,
+                            const std::function<void(const ImuSample &)> &onSample,
+                            const std::function<void(long long)> &onBatch) {
         const auto reader = Observer::makeNovAtelReader(path);
-        return run(*reader);
+        if (!reader->open(path) || !onReader(*reader)) return false;
+        pumpImu(*reader, stop, onSample, onBatch);
+        return true;
     }
 
 
@@ -123,11 +119,6 @@ namespace Tools::Ins {
     }
 
     template<class Task>
-    bool errorBlocksResult(const Task &task) {
-        return task.errorFlag() && task.runFailed.load();
-    }
-
-    template<class Task>
     void drawRunError(const Task &task) {
         if (task.errorFlag() && !task.hasResult.load())
             drawAlert(AlertLevel::Error, task.errorMessage().c_str());
@@ -164,13 +155,19 @@ namespace Tools::Ins {
 
     void renderInsParams(AlignParams &par);
 
+    void renderInsParams(VerifyParams &par);
+
     void saveInsParams(const CalibParams &par);
 
     void saveInsParams(const AlignParams &par);
 
+    void saveInsParams(const VerifyParams &par);
+
     void loadInsParams(CalibParams &par);
 
     void loadInsParams(AlignParams &par);
+
+    void loadInsParams(VerifyParams &par);
 
     enum class ScaleSource { None, Record, Manual, Guess };
 
@@ -182,8 +179,7 @@ namespace Tools::Ins {
         int type = -1;
     };
 
-    template<class Reader>
-    RecordScaleInfo readRecordScale(const Reader &r) {
+    inline RecordScaleInfo readRecordScale(const NovAtel::LogReader &r) {
         if (const ImuModel *m = r.detectedImuModel()) return {RecordScale::Model, m, m->type};
         if (const int t = r.detectedImuType(); t >= 0) return {RecordScale::UnknownType, nullptr, t};
         return {RecordScale::NoType, nullptr, -1};
@@ -237,8 +233,8 @@ namespace Tools::Ins {
         std::vector<ImuLog> candidates;
         ImuLog probe;
 
-        template<class Reader, class Sink>
-        bool observe(const Reader &r, Sink sink) {
+        bool observe(const NovAtel::LogReader &r,
+                     const std::function<void(const std::string &, const ScaleNotice &)> &sink) {
             if (!res.observe(readRecordScale(r))) return false;
             if (const std::string label = res.recordLabel(); !label.empty())
                 sink(label, res.notice(false));
@@ -258,22 +254,14 @@ namespace Tools::Ins {
         [[nodiscard]] bool mixedModel() const;
 
         [[nodiscard]] std::string failureMessage(const std::string &path) const;
-
-        [[nodiscard]] std::string label() const;
-
-        [[nodiscard]] ImuScale currentScale() const;
-
-        [[nodiscard]] ImuScale scale() const;
-
-        [[nodiscard]] ScaleNotice notice(bool settled) const;
     };
 
     void keepManualScaleFor(ScaleFallback &sf, const std::string &sig);
 
     bool drawScaleFallback(ScaleFallback &sf, bool allowSkip);
 
-    template<class Task, class RestartFn>
-    bool renderResultPrologue(Task &task, const bool allowSkipScale, RestartFn restart) {
+    template<class Task>
+    bool renderResultPrologue(Task &task, const bool allowSkipScale, const std::function<void()> &restart) {
         ScaleNotice notice;
         {
             std::lock_guard lk(task.resultMutex);
@@ -286,7 +274,7 @@ namespace Tools::Ins {
             restart();
             return true;
         }
-        return errored && errorBlocksResult(task);
+        return errored && task.runFailed.load();
     }
 
     constexpr float kChartHeight = 360.0f;
@@ -306,16 +294,19 @@ namespace Tools::Ins {
 
     void fitXToLatest(bool newData, double xmax);
 
-    template<class Task, class BuildFn>
+    template<class Task>
     void exportCSVDialog(Task &task, const std::string &defaultName, const std::string &displayName,
-                         BuildFn build) {
+                         const std::function<void(CSV::Writer &)> &build) {
         std::wstring out;
         if (!FileDialog::saveCSV(defaultName, out)) return;
         CSV::Writer w;
         build(w);
-        if (!w.save(out, true)) {
-            task.setError(displayName +
-                          " 导出失败：无法写入文件（目录不存在、无写权限，或被 Excel 等程序占用）");
+        std::string error;
+        if (!File::safeWrite(std::filesystem::path(out), [&](std::ostream &f) {
+                CSV::Writer::writeBom(f);
+                f << w.str();
+            }, error)) {
+            task.setError(error);
             return;
         }
         task.clearError();

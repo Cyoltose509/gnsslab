@@ -1,8 +1,8 @@
 #include "TropoSite.h"
 
-#include "Const.h"
-#include "CoordConvert.h"
-#include "TimeConvert.h"
+#include "core/Const.h"
+#include "core/geom/CoordConvert.h"
+#include "TimeStruct.h"
 
 
 void TropoSite::reset() {
@@ -14,10 +14,11 @@ void TropoSite::reset() {
     zwd = 0.0;
     gradN = gradE = 0.0;
     grid = {};
+    gmf = {};
 }
 
 void TropoSite::update(const TropoGrid &table, const Troposphere::Map map, const Eigen::Vector3d &xyzEcef,
-                       const CommonTime &epoch, const FrameInfo &frame) {
+                       const CommonTime &epoch, const GeodeticFrame &frame) {
     reset();
     if (!(xyzEcef.norm() > 1000.0)) return;
 
@@ -25,12 +26,17 @@ void TropoSite::update(const TropoGrid &table, const Troposphere::Map map, const
     latRad = blh.B();
     lonRad = blh.L();
     hgt = blh.H();
-    doy = static_cast<double>(Time::CommonToYDS(epoch).doy);
-    const MJD m = Time::CommonToMJD(epoch);
+    doy = static_cast<double>(epoch.toYDS().doy);
+    const MJD m = epoch.toMJD();
     mjd = static_cast<double>(m.mjd);
     valid = true;
 
     table.site(map, mjd, latRad, lonRad, hgt, doy, grid);
+    // 格网产品没配（或没覆盖到）时映射走 GMF 球谐：系数只与站坐标/时间有关，
+    // 逐卫星重算 55 项 Legendre 纯属浪费，这里按历元算一次留给 mapping() 用。
+    if (!grid.valid && (map == Troposphere::Map::GMF || map == Troposphere::Map::VMF3 ||
+                        map == Troposphere::Map::GPT3))
+        gmf = Troposphere::GMF::coef(latRad, lonRad, mjd);
 
     if (grid.valid && grid.hasVMF3Zhd) {
         const double p = Troposphere::Saastamoinen::stdPressure(hgt);
@@ -59,6 +65,13 @@ double TropoSite::zwdPrior(const Troposphere::Map map) const {
 }
 
 double TropoSite::mapping(const Troposphere::Map map, const double elevRad, double *mW) const {
+    if (!grid.valid && gmf.ready &&
+        (map == Troposphere::Map::GMF || map == Troposphere::Map::VMF3 ||
+         map == Troposphere::Map::GPT3)) {
+        double mH = 0.0;
+        Troposphere::GMF::mapping(gmf, hgt, elevRad, &mH, mW);
+        return mH;
+    }
     return tropoMappingWith(grid, map, elevRad, latRad, lonRad, hgt, doy, mjd, mW);
 }
 

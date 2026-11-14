@@ -1,3 +1,4 @@
+#include "solvers/ins/Task.h"
 #include "solvers/leo/Task.h"
 #include "solvers/ppp_kinematic/Task.h"
 #include "solvers/ppp_static/Task.h"
@@ -31,4 +32,10 @@ namespace Solvers::LEO {
 
 namespace Solvers::RTK {
     void Task::renderConfigPanel() {}
+}
+
+namespace Solvers::INS {
+    void Task::renderConfigPanel() {}
+    void Task::renderResult() {}
+    void Task::loadFromMemory() {}
 }

@@ -6,7 +6,7 @@
 #include "SolverOptions.h"
 
 namespace Solvers {
-    enum class Mode { SPP, PPPStatic, PPPKinematic, LEO, RTK };
+    enum class Mode { SPP, PPPStatic, PPPKinematic, LEO, RTK, INS };
 
     /// 显示名与 ini 键前缀/产品池归属同表维护。
     struct ModeInfo {
@@ -17,10 +17,11 @@ namespace Solvers {
 
     inline constexpr ModeInfo kModes[] = {
         {Mode::SPP, "SPP", "spp"},
-        {Mode::PPPStatic, "PPP (静态)", "ppp_static"},
-        {Mode::PPPKinematic, "PPP (动态)", "ppp_kin"},
+        {Mode::PPPStatic, "PPP (Static)", "ppp_static"},
+        {Mode::PPPKinematic, "PPP (Kinematic)", "ppp_kin"},
         {Mode::LEO, "LEO", "leo"},
         {Mode::RTK, "RTK", "rtk"},
+        {Mode::INS, "INS", "ins"},
     };
 
     inline const ModeInfo &modeInfo(const Mode m) {
@@ -31,6 +32,70 @@ namespace Solvers {
     inline const char *modeLabel(const Mode m) { return modeInfo(m).label; }
 
     inline const char *modeKey(const Mode m) { return modeInfo(m).key; }
+
+    constexpr bool modeAllowsRefFixed(const Mode m) {
+        return m == Mode::SPP || m == Mode::RTK || m == Mode::PPPStatic;
+    }
+
+    constexpr bool modeAllowsRefFile(const Mode m) {
+        return m == Mode::SPP || m == Mode::RTK || m == Mode::PPPKinematic || m == Mode::LEO;
+    }
+
+    constexpr bool modeUsesRTN(const Mode m) { return m == Mode::LEO; }
+
+    /// 只有估了模糊度的模式才有 Fixed/Float 之分：界面「固定率」「解状态」与固定解列都以此为界，
+    /// SPP 纯码解、INS 力学编排都不出现这两个词。
+    constexpr bool modeFixesAmbiguities(const Mode m) {
+        return m == Mode::RTK || m == Mode::PPPStatic || m == Mode::PPPKinematic || m == Mode::LEO;
+    }
+
+    /// 有跨历元状态的模式才谈得上滤波方向：SPP 起家，PPP/LEO 继承，RTK 的双站重放是另一条链路但语义相同。
+    constexpr bool modeHasFilter(const Mode m) {
+        return m == Mode::SPP || m == Mode::PPPStatic || m == Mode::PPPKinematic || m == Mode::LEO ||
+               m == Mode::RTK;
+    }
+
+    /// 滤波方向词表唯一真源：界面下拉、`smooth` 键、日志与导出元信息都从这里取。
+    constexpr const char *filterKey(const SolverOptions::FilterMode m) {
+        using SM = SolverOptions::FilterMode;
+        switch (m) {
+            case SM::LSQ: return "none";
+            case SM::Backward: return "backward";
+            case SM::Both: return "both";
+            default: return "forward";
+        }
+    }
+
+    constexpr const char *filterLabel(const SolverOptions::FilterMode m) {
+        using SM = SolverOptions::FilterMode;
+        switch (m) {
+            case SM::LSQ: return "逐历元最小二乘";
+            case SM::Backward: return "后向滤波";
+            case SM::Both: return "前向 + 后向";
+            default: return "前向滤波";
+        }
+    }
+
+    inline SolverOptions::FilterMode filterFromKey(const std::string &s, const SolverOptions::FilterMode def) {
+        using SM = SolverOptions::FilterMode;
+        if (s == "none" || s == "0" || s == "false") return SM::LSQ;
+        if (s == "backward") return SM::Backward;
+        if (s == "both") return SM::Both;
+        if (s == "forward" || s == "1" || s == "true") return SM::Forward;
+        return def;
+    }
+
+    struct FilterChoice {
+        SolverOptions::FilterMode mode;
+        const char *label;
+    };
+
+    inline constexpr FilterChoice kFilterChoices[] = {
+        {SolverOptions::FilterMode::LSQ, filterLabel(SolverOptions::FilterMode::LSQ)},
+        {SolverOptions::FilterMode::Forward, filterLabel(SolverOptions::FilterMode::Forward)},
+        {SolverOptions::FilterMode::Backward, filterLabel(SolverOptions::FilterMode::Backward)},
+        {SolverOptions::FilterMode::Both, filterLabel(SolverOptions::FilterMode::Both)},
+    };
 
     inline std::string sysSetToString(const std::set<char> &s) {
         std::string out;
@@ -49,7 +114,5 @@ namespace Solvers {
         std::string port;
     };
 
-    /// 各模式的参数默认值落在模式自己的 Task.h（`SPP::defaultOptions()` 等），
-    /// 这里只按 Mode 转发，不维护任何数值。RTK 没有特有默认值，用 SolverOptions 的成员初值。
     SolverOptions defaultSolverOptions(Mode mode);
 }

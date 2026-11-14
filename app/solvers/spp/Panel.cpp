@@ -23,7 +23,7 @@ namespace Solvers::SPP {
         rtEndpoints[0].port = pm.get("spp_rt_port", pm.get("rt_port", "7190"));
         Helpers::loadSolverParams(Mode::SPP, opts);
         AppConfig::Products::of(modeKey(Mode::SPP)).load();
-        RefTruth::restore(this, "spp_");
+        RefTruth::restore(this);
     }
 
     void Task::renderConfigPanel() {
@@ -32,7 +32,7 @@ namespace Solvers::SPP {
             self->renderFileStart("spp_obs", false,
                 [self] {
                     AppConfig::PathMemory::instance().set("spp_brdc", self->navPathBuf);
-                    RefTruth::persist(self, "spp_");
+                    RefTruth::persist(self);
                 },
                 [self] { LOG_INFO << "[SPP] 开始解算: 观测=" << self->view.obsPathBuf; });
         };
@@ -42,7 +42,7 @@ namespace Solvers::SPP {
             ImGui::Separator();
             Helpers::fileRow("广播星历 BRDC", &self->navPathBuf, "spp_brdc", FileDialog::fRnx, 2, {}, "spp_obs");
             ImGui::Separator();
-            RefTruth::renderRefTruthField(self);
+            RefTruth::renderRefTruthSection(self);
         };
         const auto realtimeTab = [self] {
             const auto &pm = AppConfig::PathMemory::instance();

@@ -6,9 +6,9 @@
 #include <atomic>
 #include <cmath>
 #include <optional>
-#include "GnssStruct.h"
-#include "EphemerisTable.h"
-#include "core/InsStruct.h"
+#include "core/obs/ObsStruct.h"
+#include "core/geom/EphemerisTable.h"
+#include "core/ins/InsStruct.h"
 
 namespace NovAtel {
     namespace LogID {
@@ -25,7 +25,6 @@ namespace NovAtel {
         constexpr std::uint16_t RAWIMUS = 325;
         constexpr std::uint16_t RAWIMUX = 1461;
         constexpr std::uint16_t RAWIMUSX = 1462;
-        constexpr std::uint16_t RAWIMUCOMPACT = 0x1313;
     }
 
     std::uint32_t crc32(const std::uint8_t *data, std::size_t len);
@@ -51,18 +50,6 @@ namespace NovAtel {
 
     class LogReader {
     public:
-        struct InsRecordLayout {
-            bool valid = false;
-            int recLen = 56;
-            int weekOffset = 14;
-            int imuTypeOffset = 13;
-            int towMsOffset = 8;
-            int secOffset = 16;
-            int statusOffset = 24;
-            int countsOffset = 28;
-            const char *name = "未识别";
-        };
-
         LogReader() = default;
 
         virtual ~LogReader() = default;
@@ -73,13 +60,9 @@ namespace NovAtel {
 
         bool getNextEpoch(ObsData &obs, bool block = true);
 
-        [[nodiscard]] const InsRecordLayout &insLayout() const { return mInsLayout; }
-
         [[nodiscard]] int detectedImuType() const { return mImuType; }
 
         [[nodiscard]] const ImuModel *detectedImuModel() const { return findImuModel(mImuType); }
-
-        [[nodiscard]] const std::string &insDiagnostic() const { return mInsDiag; }
 
         bool getNextImu(ImuSample &s) {
             std::vector<std::uint8_t> message;
@@ -127,21 +110,15 @@ namespace NovAtel {
         } currentHeader = {};
 
         ObsData currentObs;
-        // 已经收完、但还没交出的一整个历元：同一时刻可能既有 RANGE 又有 RANGECMP，
-        // 两条消息要合到同一历元里（RANGE 优先），所以不能读一条就交一条。
+
         std::optional<ObsData> mPending;
         int mEpochWeek = -1;
         int mEpochMs = 0;
-        // 上一历元/本历元各 (卫星,频点) 的 lock time（连续无周跳跟踪秒数）。
-        // 回退即重新捕获，是这个接收机唯一直接给出的周跳先验。
         std::map<SatID, std::array<float, 9> > mPrevLock, mCurLock;
         ImuLog mImuLog;
         Eigen::Vector3d antennaPosition{0, 0, 0};
 
-        InsRecordLayout mInsLayout;
         int mImuType = -1;
-        std::string mInsDiag;
-        std::atomic<bool> mInsDiagLogged{false};
         std::atomic<bool> mSeenFullRange{false};
         std::atomic<bool> mSeenCmpRange{false};
 

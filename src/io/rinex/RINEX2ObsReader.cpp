@@ -1,7 +1,7 @@
 #include "rinex/RINEXObsReader.h"
 
 #include "StringUtils.h"
-#include "TimeConvert.h"
+#include "TimeStruct.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -52,7 +52,7 @@ CommonTime RINEX2ObsReader::parseTime(const std::string &line) {
     double sec = 0.0;
     if (!(ss >> yy >> mo >> d >> h >> mi >> sec)) return CommonTime();
     const int year = yy < 80 ? 2000 + yy : 1900 + yy;
-    return Time::CivilToCommon(CivilTime(year, mo, d, h, mi, sec));
+    return (CivilTime(year, mo, d, h, mi, sec)).toCommonTime();
 }
 
 bool RINEX2ObsReader::isEpochLine(const std::string &line) const {

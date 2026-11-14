@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <memory>
 
 #include "solvers/common/Core.h"
@@ -19,11 +20,11 @@ namespace Solvers::PPPKinematic {
 
     inline SolverOptions defaultOptions() {
         SolverOptions o{};
-        o.posNoise = 100.0;
-        o.spp.sigIFCode = 0.1;
-        o.spp.sigmaPhase = 0.003;
-        o.spp.ambNoise = 1.0E-7;
-        o.spp.firstEpochPosVar = 1.0;
+        o.posProcSigma = 10.0;
+        o.spp.codeSigma = 0.1;
+        o.spp.phaseSigma = 0.003;
+        o.spp.ambProcSigma = std::sqrt(1.0E-7); // 旧方差口径默认值 1e-7 的精确开方（σ 口径）
+        o.spp.firstEpochPosSigma = 1.0;
         o.spp.minSatsForUpdate = 4;
         return o;
     }

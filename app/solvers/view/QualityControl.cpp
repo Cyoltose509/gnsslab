@@ -6,6 +6,8 @@
 #include "solvers/common/Core.h"
 #include "implot.h"
 #include "CSV.h"
+#include "Log.h"
+#include "FileUtils.h"
 #include <mutex>
 #include <vector>
 #include <functional>
@@ -53,10 +55,11 @@ namespace QualityControl {
     void exportCSV(const QualityReport &rep, const std::string &taskLabel) {
         std::wstring path;
 
-        if (!FileDialog::saveCSV(Str::stripExt(taskLabel) + "_qc.csv", path)) return;
+        if (!FileDialog::saveCSV(File::stripExt(taskLabel) + "_qc.csv", path)) return;
 
 
         CSV::Writer w;
+        CSV::Meta m{w};
         auto d3 = [](const double v) { return CSV::fx(v, 3); };
         auto num3 = [](const double v) {
             std::ostringstream os;
@@ -70,9 +73,9 @@ namespace QualityControl {
         w.row("总历元", rep.totalEpochs, "间隔(s)", d3(rep.interval), "可用卫星",
               static_cast<int>(rep.sats.size()), "总体完整率%", d3(rep.overallCompleteness),
               "平均CNR(dB-Hz)", d3(rep.overallCnr));
-        w.endRow();
+        w.blank();
 
-        w.cell("[系统汇总]").endRow();
+        m.section("系统汇总");
         w.row("系统", "完整率%", "DI_f1%", "DI_f2%", "周跳数", "周跳比", "粗差数", "钟跳数",
               "MP1(m)", "MP2(m)", "伪距噪声(m)", "载波噪声(cyc)",
               "CNR_all(dB-Hz)", "CNR_f1(dB-Hz)", "CNR_f2(dB-Hz)",
@@ -100,9 +103,9 @@ namespace QualityControl {
                     .cell(d3(atOr(rep.comprehensive.sysE, s)))
                     .endRow();
         }
-        w.endRow();
+        w.blank();
 
-        w.cell("[逐卫星统计]").endRow();
+        m.section("逐卫星统计");
         w.row("卫星", "系统", "频点f1", "频点f2", "完整率%", "DI_f1%", "DI_f2%",
               "周跳数", "周跳比", "粗差数", "钟跳数", "MP1(m)", "MP2(m)",
               "伪距噪声_f1(m)", "伪距噪声_f2(m)", "载波噪声_f1(cyc)", "载波噪声_f2(cyc)",
@@ -122,9 +125,9 @@ namespace QualityControl {
                     .cell(q.ionoJumps1).cell(q.ionoJumps2)
                     .endRow();
         }
-        w.endRow();
+        w.blank();
 
-        w.cell("[综合评估]").endRow();
+        m.section("综合评估");
         w.row("整体综合E", d3(rep.comprehensive.overallE));
         w.cell("系统综合E");
         for (auto &[s, e]: rep.comprehensive.sysE) w.cell(std::string(Solvers::Helpers::systemName(s)) + "=" + num3(e));
@@ -135,9 +138,9 @@ namespace QualityControl {
         w.cell("权重");
         for (const double wt: rep.comprehensive.weights) w.cell(d3(wt));
         w.endRow();
-        w.endRow();
+        w.blank();
 
-        w.cell("[逐卫星综合评估]").endRow();
+        m.section("逐卫星综合评估");
         w.cell("卫星").cell("系统");
         for (auto &ind: rep.comprehensive.indicators) w.cell(ind);
         w.cell("E").endRow();
@@ -149,10 +152,15 @@ namespace QualityControl {
                 for (std::size_t l = 0; l < rep.comprehensive.indicators.size(); l++) w.cell("0");
             w.cell(d3(atOr(rep.comprehensive.E, sat))).endRow();
         }
-        w.endRow();
+        w.blank();
 
 
-        (void) w.save(path, true);
+        std::string error;
+        if (!File::safeWrite(std::filesystem::path(path), [&](std::ostream &f) {
+                CSV::Writer::writeBom(f);
+                f << w.str();
+            }, error))
+            LOG_ERROR << "[质量报告] " << error;
     }
 
 
@@ -270,7 +278,7 @@ namespace QualityControl {
                 if (ImGui::TableGetColumnFlags(12) & ImGuiTableColumnFlags_IsHovered) {
                     if (ImGui::BeginTooltip()) {
                         const auto &ce = rep.comprehensive;
-                        ImGui::TextDisabled("熵权 (越小越好 E)");
+                        ImGui::TextDisabled("熵权E (越小越好)");
                         for (std::size_t l = 0; l < ce.indicators.size(); l++)
                             ImGui::Text("%s: %.4f", ce.indicators[l].c_str(), ce.weights[l]);
                         ImGui::EndTooltip();
@@ -415,8 +423,8 @@ namespace QualityControl {
                     ImPlot::SetupAxis(ImAxis_X1, "");
                     ImPlot::SetupAxis(ImAxis_Y1, "%");
                     auto &[col, labs, labp] = buf;
-                    ImPlot::SetupAxisTicks(ImAxis_X1, col[0].data(), M, labp.data());
-                    ImPlot::PlotBars("观测完整率", col[1].data(), M, 0.7);
+                    ImPlot::SetupAxisTicks(ImAxis_X1, col[0].data(), static_cast<int>(labs.size()), labp.data());
+                    ImPlot::PlotBars("观测完整率", col[1].data(), static_cast<int>(col[1].size()), 0.7);
                 });
             }
 
@@ -426,27 +434,27 @@ namespace QualityControl {
                 auto &jx = col[0], &jy = col[1];
                 jx.clear();
                 jy.clear();
-                labs.clear();
-                labp.clear();
-                for (int i = 0; i < M; i++) {
-                    if (const auto &q = rep.sats.at(list[i]); q.slips > 0) {
-                        jx.push_back(static_cast<double>(labp.size()));
-                        jy.push_back(q.slipRatio);
-                        labs.push_back(q.sat.toString());
-                        labp.push_back(labs.back().c_str());
-                    }
+                std::vector<const SatQC *> slid;
+                for (int i = 0; i < M; i++)
+                    if (const auto &q = rep.sats.at(list[i]); q.slips > 0) slid.push_back(&q);
+                const auto jc = static_cast<int>(slid.size());
+                labs.resize(jc);
+                labp.resize(jc);
+                for (int i = 0; i < jc; i++) {
+                    jx.push_back(i);
+                    jy.push_back(slid[i]->slipRatio);
+                    labs[i] = slid[i]->sat.toString();
+                    labp[i] = labs[i].c_str();
                 }
-                if (const int jc = static_cast<int>(labp.size()); jc == 0) ImGui::TextDisabled("所有卫星均未检测到周跳");
+                if (jc == 0) ImGui::TextDisabled("所有卫星均未检测到周跳");
                 else
                     drawPlot(qs, baseName, "slipratio", "周跳比", kPlotH, [&] {
-                        // 结构化绑定在 C++17 下不能捕获，改在 lambda 体内重新绑定同一份缓冲
-                        auto &[_col, _, _labp] = qs.buf("slipratio");
-                        const auto &_jx = _col[0];
-                        const auto &_jy = _col[1];
+                        const QcUiState::PlotBuf &_b = qs.buf("slipratio");
                         ImPlot::SetupAxis(ImAxis_X1, "");
                         ImPlot::SetupAxis(ImAxis_Y1, "历元/周跳");
-                        ImPlot::SetupAxisTicks(ImAxis_X1, _jx.data(), jc, _labp.data());
-                        ImPlot::PlotBars("周跳比", _jy.data(), jc, 0.7);
+                        ImPlot::SetupAxisTicks(ImAxis_X1, _b.col[0].data(), static_cast<int>(_b.labp.size()),
+                                               _b.labp.data());
+                        ImPlot::PlotBars("周跳比", _b.col[1].data(), static_cast<int>(_b.col[1].size()), 0.7);
                     });
             }
             drawPlot(qs, baseName, "noise_combined", "伪距噪声 / 载波噪声", kPlotH, [&] {
@@ -586,8 +594,12 @@ namespace QualityControl {
                     ImPlot::PlotLine("MP1", ax.t.data(), a.data(), static_cast<int>(ax.t.size()));
                     ImPlot::PlotLine("MP2", ax.t.data(), b.data(), static_cast<int>(ax.t.size()));
                 });
-                std::vector<double> sl_t, sl_v;
-                for (int i = 0; i < static_cast<int>(q.t.size()); i++)
+                std::vector<double> &sl_t = qs.buf("s_slip").col[0];
+                std::vector<double> &sl_v = qs.buf("s_slip").col[1];
+                sl_t.clear();
+                sl_v.clear();
+                const std::size_t ns = std::min({q.t.size(), q.slipFlag.size(), mp1v.size()});
+                for (std::size_t i = 0; i < ns; i++)
                     if (q.slipFlag[i]) {
                         sl_t.push_back(q.t[i]);
                         sl_v.push_back(mp1v[i]);
@@ -709,14 +721,14 @@ namespace QualityControl {
 
         renderOverviewStats(rep);
 
-        const std::string baseName = Str::stripExt(fileName);
+        const std::string baseName = File::stripExt(fileName);
         renderExportBar(qs, rep, fileName);
 
         std::vector<SatID> list;
         std::vector<const SatQC *> toPlot;
         bool allView = false;
         if (!renderSatelliteSelector(rep, qs, sysSel, list, toPlot, allView)) {
-            ImGui::EndChild(); // ##qcplots
+            ImGui::EndChild();
             return;
         }
 
@@ -731,7 +743,7 @@ namespace QualityControl {
             renderSingleSatView(rep, qs, baseName, toPlot);
         }
 
-        ImGui::EndChild(); // ##qcplots
+        ImGui::EndChild();
 
         renderExportOverlay(qs, baseName);
     }

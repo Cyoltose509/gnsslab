@@ -1,26 +1,20 @@
 #include "GuiCoordConverter.h"
 #include "imgui.h"
 #include "ui/GuiColors.h"
-#include "Const.h"
-#include "CoordStruct.h"
-#include "CoordConvert.h"
+#include "core/Const.h"
+#include "core/geom/CoordStruct.h"
+#include "core/geom/CoordConvert.h"
 
+#include <functional>
 #include <exception>
 #include <iterator>
 #include <string>
 
 
 namespace Tools::CoordConverter {
-    struct FrameItem {
-        const char *name;
-        const FrameInfo *info;
-    };
-
-    constexpr FrameItem kFrames[] = {
-        {"WGS84", &Frame::WGS84},
-        {"GPS", &Frame::GPS},
-        {"CGCS2000", &Frame::CGCS2000},
-        {"PZ90", &Frame::PZ90},
+    /// 工具页只列椭球参数互异的三套；名字直接取框架对象，不另写一份字符串表。
+    constexpr const GeodeticFrame *kFrames[] = {
+        &Frame::WGS84, &Frame::CGCS2000, &Frame::PZ90,
     };
     constexpr int kFrameCount = std::size(kFrames);
 
@@ -56,11 +50,10 @@ namespace Tools::CoordConverter {
     static std::string s_Error;
 
 
-    static const FrameInfo &CurFrame() { return *kFrames[s_FrameIdx].info; }
+    static const GeodeticFrame &CurFrame() { return *kFrames[s_FrameIdx]; }
 
     /// 跑一次换算：失败原因留在面板上，而不是静默吞掉让界面看着没反应。
-    template <typename F>
-    static void attempt(const char *what, F &&fn) {
+    void attempt(const char *what, const std::function<void()> &fn) {
         try {
             fn();
             s_Error.clear();
@@ -131,9 +124,9 @@ namespace Tools::CoordConverter {
     static bool frameCombo() {
         bool changed = false;
         ImGui::SetNextItemWidth(120);
-        if (ImGui::BeginCombo("##frame", kFrames[s_FrameIdx].name)) {
+        if (ImGui::BeginCombo("##frame", kFrames[s_FrameIdx]->name)) {
             for (int i = 0; i < kFrameCount; ++i) {
-                if (ImGui::Selectable(kFrames[i].name, i == s_FrameIdx)) {
+                if (ImGui::Selectable(kFrames[i]->name, i == s_FrameIdx)) {
                     s_FrameIdx = i;
                     changed = true;
                 }

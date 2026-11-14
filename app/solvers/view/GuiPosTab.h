@@ -25,12 +25,20 @@ namespace Solvers::Charts {
 
         int epochCount = 0;
         bool busy = false;
+        /// 解算线程当前正在处理的历元（0 基）；-1 表示没在解算，图表不画绿线。
+        int solvingEpoch = -1;
         int *selectedEpoch = nullptr;
         int *selectedSatIdx = nullptr;
         int *resMode = nullptr;
+        /// 参数页选定的滤波方向，结果页只读显示（不支持滤波的模式为空）
+        std::string filterDirectionText;
         Eigen::Vector3d *refECEF = nullptr;
         std::function<void()> onRefChanged;
         bool showRefEnu = true;
+
+        /// E-N 平面图口径：动态解画轨迹，拖拽中心只改这张图的显示原点（不改真值对比）。
+        bool enPlanTrack = false;
+        std::function<void(const Eigen::Vector3d &)> onPlanOriginChanged;
 
         std::string statusText;
         ImVec4 statusColor = UI::kColPass;
@@ -82,7 +90,6 @@ namespace Solvers::Charts {
         bool hasBaseline = false;
         Eigen::Vector3d baseFloatDisp{0, 0, 0};
         Eigen::Vector3d baseFixedDisp{0, 0, 0};
-        bool hasVelDisp = false;
         Eigen::Vector3d velDisp{0, 0, 0};
         double sigmaVDisp = 0;
 
@@ -99,7 +106,7 @@ namespace Solvers::Charts {
         std::string solStatShort;
         double solRatio = 0;
 
-        std::function<void()> onExportCSV;
+        std::function<void()> onExport;
     };
 
     void renderPositioningTab(const PosTabView &v);

@@ -2,7 +2,8 @@
 #include "core/PathMemory.h"
 #include "StringUtils.h"
 
-#include <algorithm>
+#include <charconv>
+#include <vector>
 
 namespace AppConfig {
     PathMemory &PathMemory::instance() {
@@ -11,9 +12,14 @@ namespace AppConfig {
     }
 
     PathMemory::PathMemory() {
-        char buf[MAX_PATH] = {};
-        const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-        std::string s(buf, n > 0 ? n : 0);
+        // MAX_PATH 只够常规安装位置；路径更长时按实际长度扩容，别让截断悄悄改写配置文件位置。
+        std::vector<char> buf(MAX_PATH);
+        while (true) {
+            const DWORD n = GetModuleFileNameA(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+            if (n < static_cast<DWORD>(buf.size())) break;
+            buf.resize(buf.size() * 2);
+        }
+        std::string s(buf.data());
         if (const auto pos = s.find_last_of("\\/"); pos != std::string::npos) s = s.substr(0, pos + 1);
         s += "gnsslab.ini";
         filePath = s;
@@ -22,6 +28,13 @@ namespace AppConfig {
     namespace {
         bool isBlank(const std::string &s) {
             return Str::strip(s).empty();
+        }
+
+        template<class T>
+        bool parseExact(const std::string &s, T &out) {
+            const char *b = s.data();
+            const auto [p, ec] = std::from_chars(b, b + s.size(), out);
+            return ec == std::errc() && p == b + s.size();
         }
     }
 
@@ -57,29 +70,15 @@ namespace AppConfig {
     }
 
     double PathMemory::getNum(const std::string &key, const double def, const double lo, const double hi) const {
-        const std::string s = get(key);
-        if (s.empty()) return def;
-        try {
-            std::size_t pos = 0;
-            const double v = std::stod(s, &pos);
-            if (pos != s.size()) return def;
-            return v >= lo && v <= hi ? v : def;
-        } catch (...) {
-            return def;
-        }
+        double v = 0;
+        if (!parseExact(get(key), v)) return def;
+        return v >= lo && v <= hi ? v : def;
     }
 
     int PathMemory::getInt(const std::string &key, const int def, const int lo, const int hi) const {
-        const std::string s = get(key);
-        if (s.empty()) return def;
-        try {
-            std::size_t pos = 0;
-            const int v = std::stoi(s, &pos);
-            if (pos != s.size()) return def;
-            return v >= lo && v <= hi ? v : def;
-        } catch (...) {
-            return def;
-        }
+        int v = 0;
+        if (!parseExact(get(key), v)) return def;
+        return v >= lo && v <= hi ? v : def;
     }
 
     void PathMemory::setNum(const std::string &key, const double v) const {
@@ -88,40 +87,5 @@ namespace AppConfig {
 
     void PathMemory::setInt(const std::string &key, const int v) const {
         set(key, std::to_string(v));
-    }
-
-    std::vector<std::string> PathMemory::getRecent(const std::string &group) const {
-        std::vector<std::string> v;
-        const IniFile &f = file();
-        const std::string sec = "recent_" + group;
-        for (int i = 0;; ++i) {
-            const std::string e = f.get(sec, std::to_string(i));
-            if (e.empty()) break;
-            v.push_back(e);
-        }
-        return v;
-    }
-
-    void PathMemory::addRecent(const std::string &group, const std::string &entry, const int max) const {
-        if (entry.empty()) return;
-        const std::vector<std::string> old = getRecent(group);
-        std::vector<std::string> v = old;
-        v.erase(std::remove_if(v.begin(), v.end(),
-                               [&](const std::string &s) { return s == entry; }),
-                v.end());
-        v.insert(v.begin(), entry);
-        if (static_cast<int>(v.size()) > max) v.resize(max);
-        if (v == old) return;
-
-        IniFile &f = file();
-        const std::string sec = "recent_" + group;
-        for (int i = 0; i < static_cast<int>(v.size()); ++i)
-            f.set(sec, std::to_string(i), v[i]);
-        for (int i = static_cast<int>(v.size());; ++i) {
-            const std::string k = std::to_string(i);
-            if (f.get(sec, k).empty()) break;
-            f.erase(sec, k);
-        }
-        dirty = true;
     }
 }

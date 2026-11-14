@@ -3,7 +3,7 @@
 #include <functional>
 #include <string>
 
-#include "EphemerisTable.h"
+#include "core/geom/EphemerisTable.h"
 #include "Observer.h"
 
 namespace Solvers::RTK {

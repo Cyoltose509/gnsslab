@@ -1,16 +1,20 @@
 #include "product/ATTReader.h"
 
 #include "MathUtils.h"
-#include "TimeConvert.h"
+#include "TimeStruct.h"
 
 #include <algorithm>
 #include <fstream>
 #include <sstream>
 
 bool ATTReader::read(const std::string &path) {
+    return read(path, false);
+}
+
+bool ATTReader::read(const std::string &path, bool append) {
     std::ifstream ifs(path);
-    if (!ifs.is_open()) return false;
-    data.clear();
+    if (!ifs.is_open()) return !data.empty();
+    if (!append) data.clear();
 
     double curMjd = 0.0;
     bool haveEpoch = false;
@@ -26,8 +30,8 @@ bool ATTReader::read(const std::string &path) {
             double sec = 0.0;
             if (!(is >> y >> mo >> d >> hh >> mi >> sec)) { haveEpoch = false; continue; }
             const CommonTime t =
-                    Time::CivilToCommon(CivilTime(y, mo, d, hh, mi, sec, TimeSystem::GPS));
-            const MJD m = Time::CommonToMJD(t);
+                    (CivilTime(y, mo, d, hh, mi, sec, TimeSystem::GPS)).toCommonTime();
+            const MJD m = t.toMJD();
             curMjd = static_cast<double>(m.mjd);
             haveEpoch = true;
             continue;
@@ -81,15 +85,15 @@ bool ATTReader::quaternion(const SatID &sat, const double mjd, ATTQuat &q) const
         q = v.back().q;
         return true;
     }
-    const auto b = Math::bracketSample(v, mjd, [](const Sample &s) { return s.mjd; });
+    const auto b = Math::bracketSample(v, mjd, &Sample::mjd);
     if (!b) return false;
     q = ATTQuat::slerp(v[b->lo].q, v[b->hi].q, b->f);
     return true;
 }
 
-bool ATTReader::bodyDCM(const SatID &sat, const double mjd, Eigen::Matrix3d &M) const {
+bool ATTReader::bodyDCM(const SatID &sat, const double mjd, DCM &C) const {
     ATTQuat q;
     if (!quaternion(sat, mjd, q)) return false;
-    M = q.toDCM();
+    C = q.toDCM();
     return true;
 }

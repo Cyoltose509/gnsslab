@@ -3,7 +3,6 @@
 #include "core/IniFile.h"
 
 #include <string>
-#include <vector>
 
 namespace AppConfig {
 
@@ -17,19 +16,14 @@ namespace AppConfig {
 
         [[nodiscard]] int getInt(const std::string &key, int def, int lo, int hi) const;
 
-        [[nodiscard]] std::vector<std::string> getRecent(const std::string &group) const;
-
         void set(const std::string &key, const std::string &val) const; //NOLINT
 
         void setNum(const std::string &key, double v) const; //NOLINT
 
         void setInt(const std::string &key, int v) const; //NOLINT
 
-        void addRecent(const std::string &group, const std::string &entry, int max = 12) const; //NOLINT
-
         void flush() const; //NOLINT
 
-        [[nodiscard]] const std::string &path() const { return filePath; }
 
     private:
         PathMemory();

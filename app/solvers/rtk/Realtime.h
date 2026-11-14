@@ -22,8 +22,8 @@ namespace Solvers::Realtime {
     class RTKSession final : public Session {
     public:
         RTKSession(std::shared_ptr<RTK::Task> task,
-                   Solvers::RealtimeEndpoint base,
-                   Solvers::RealtimeEndpoint rover);
+                   RealtimeEndpoint base,
+                   RealtimeEndpoint rover);
 
         ~RTKSession() override;
 
@@ -50,12 +50,10 @@ namespace Solvers::Realtime {
 
         void finish() override;
 
-        int streamBreakBackoffMs() const noexcept override;
-
     private:
         std::shared_ptr<RTK::Task> task;
-        Solvers::RealtimeEndpoint baseEp, roverEp;
+        RealtimeEndpoint baseEp, roverEp;
         std::unique_ptr<NovAtel::SocketReader> baseRdr, roverRdr;
-        std::shared_ptr<Solvers::QcTab> baseTab;
+        std::shared_ptr<QcTab> baseTab;
     };
 }

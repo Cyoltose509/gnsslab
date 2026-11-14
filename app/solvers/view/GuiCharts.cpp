@@ -1,24 +1,25 @@
 #include "GuiCharts.h"
 
-#include "Const.h"
+#include "core/Const.h"
 #include "StringUtils.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
-#include <excpt.h>
 
 #include "implot.h"
 #include "implot3d.h"
 #include "ui/GuiColors.h"
 
 namespace Solvers::Charts {
-    ImU32 getSatCol(const char s) {
-        switch (s) {
-            case 'G': return IM_COL32(80, 220, 120, 255);
-            case 'C': return IM_COL32(255, 130, 60, 255);
-            case 'R': return IM_COL32(80, 200, 255, 255);
-            case 'E': return IM_COL32(240, 220, 70, 255);
-            default: return IM_COL32(220, 220, 220, 255);
+    namespace {
+        ImU32 getSatCol(const char s) {
+            switch (s) {
+                case 'G': return IM_COL32(80, 220, 120, 255);
+                case 'C': return IM_COL32(255, 130, 60, 255);
+                case 'R': return IM_COL32(80, 200, 255, 255);
+                case 'E': return IM_COL32(240, 220, 70, 255);
+                default: return IM_COL32(220, 220, 220, 255);
+            }
         }
     }
 
@@ -31,6 +32,15 @@ namespace Solvers::Charts {
         if (se < 0) se = 0;
         if (epochCount > 0 && se >= epochCount) se = epochCount - 1;
         *selectedEpoch = se;
+    }
+
+    void solveCursor(const int solvingEpoch) {
+        if (solvingEpoch < 0) return;
+        const double x = static_cast<double>(solvingEpoch);
+        ImPlotSpec spec;
+        spec.LineColor = ImVec4(0.2f, 0.9f, 0.35f, 0.85f);
+        spec.LineWeight = 1.5f;
+        ImPlot::PlotInfLines("##solvingEpoch", &x, 1, spec);
     }
 
     void renderSatelliteTable(const std::vector<SatRow> &rows, int &selectedSatIdx) {
@@ -56,8 +66,8 @@ namespace Solvers::Charts {
                 ImGui::TableSetupColumn("Y(m)", ImGuiTableColumnFlags_WidthFixed, 90);
                 ImGui::TableSetupColumn("Z(m)", ImGuiTableColumnFlags_WidthFixed, 90);
             }
-            ImGui::TableSetupColumn("伪距残差(m)", ImGuiTableColumnFlags_WidthFixed, 110);
-            ImGui::TableSetupColumn("相位残差(m)", ImGuiTableColumnFlags_WidthFixed, 110);
+            ImGui::TableSetupColumn("伪距残差(m)", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("相位残差(m)", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("状态", ImGuiTableColumnFlags_WidthFixed, 56);
             ImGui::TableHeadersRow();
 
@@ -108,7 +118,8 @@ namespace Solvers::Charts {
                        const std::vector<double> &float_n,
                        const std::vector<double> &float_u,
                        const int epochCount,
-                       const float plotH) {
+                       const float plotH,
+                       const int solvingEpoch) {
         if (axis.kept.empty() || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, plotH))) return;
         const int nEpoch = epochCount > 0 ? epochCount : static_cast<int>(axis.t.size());
         ImPlot::SetupAxes("Epoch", "E/N/U (m)");
@@ -156,8 +167,10 @@ namespace Solvers::Charts {
                 ImPlot::PlotLine("RMS 3D", axis.t.data(), rms3d.data(), nf, rs);
             }
         }
-        if (nf > 0)
+        if (nf > 0) {
+            solveCursor(solvingEpoch);
             epochCursor(0, &selectedEpoch, nEpoch);
+        }
         ImPlot::EndPlot();
     }
 
@@ -170,7 +183,7 @@ namespace Solvers::Charts {
                                int &selectedEpoch, const int epochCount, bool &newed,
                                const double *codeLo, const double *codeHi,
                                const double *phaseLo, const double *phaseHi,
-                               const float plotH) {
+                               const float plotH, const int solvingEpoch) {
 
         int mode = resMode ? *resMode : 0;
         ImGui::PushID("resmode");
@@ -188,7 +201,7 @@ namespace Solvers::Charts {
 
         if (phase && V.empty()) {
             ImGui::SameLine();
-            ImGui::TextDisabled("(无相位残差：该模式不使用载波相位)");
+            ImGui::TextDisabled("(无相位残差)");
         }
 
         float ph = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
@@ -211,6 +224,7 @@ namespace Solvers::Charts {
                 const std::string base = sat.toString();
                 ImPlot::PlotLine(base.c_str(), axis.t.data(), vv.data(), static_cast<int>(axis.t.size()));
             }
+            solveCursor(solvingEpoch);
             epochCursor(1, &selectedEpoch, epochCount);
             ImPlot::EndPlot();
         }
@@ -324,7 +338,7 @@ namespace Solvers::Charts {
                      const std::vector<TrajPoint> &refTraj,
                      const float sizePx) {
         if (leoTraj.size() < 2) {
-            ImGui::TextDisabled("(轨迹点不足，无法绘制 3D)");
+            ImGui::TextDisabled("(轨迹点不足，无法绘制)");
             return;
         }
         auto fillXYZ = [&](const std::vector<TrajPoint> &traj,
@@ -344,7 +358,7 @@ namespace Solvers::Charts {
         std::vector<double> xs, ys, zs;
         fillXYZ(leoTraj, xs, ys, zs);
         if (xs.size() < 2) {
-            ImGui::TextDisabled("(有效轨迹点不足，无法绘制 3D)");
+            ImGui::TextDisabled("(有效轨迹点不足，无法绘制)");
             return;
         }
         std::vector<double> rx, ry, rz;

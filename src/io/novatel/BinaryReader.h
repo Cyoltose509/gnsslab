@@ -19,14 +19,11 @@ protected:
 
 
 private:
-    bool acceptInsRecord(std::size_t start, const InsRecordLayout &layout) const;
+    std::size_t frameLengthAt(std::size_t at) const;
 
-    bool probeInsLayout();
-
-    void probeImuTypeFromShortHeader();
+    void probeImuType();
 
     std::vector<unsigned char> buffer;
     std::size_t bufferIndex = 0;
-    std::size_t fileSize = 0;
 };
 }

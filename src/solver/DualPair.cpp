@@ -66,7 +66,7 @@ void DualPair::observeRover(const double epochSec) { mRoverIv.observe(epochSec);
 }
 
 bool DualPair::next(Pair &out) {
-    for (;;) {
+    while (true) {
         if (!ensurePrimed()) return false;
         switch (const double tol = IntervalEstimator::pairWindow(mBaseIv, mRoverIv);
             classify(mBase.epoch, mRover.epoch, tol)) {

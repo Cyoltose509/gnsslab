@@ -18,7 +18,7 @@ namespace Solvers::PPPStatic {
         view.obsPathBuf = pm.get("ppp_static_obs");
         Helpers::loadSolverParams(Mode::PPPStatic, opts);
         AppConfig::Products::of(modeKey(Mode::PPPStatic)).load();
-        RefTruth::restore(this, "ppp_static_");
+        RefTruth::restore(this);
     }
 
     void Task::renderConfigPanel() {
@@ -26,18 +26,18 @@ namespace Solvers::PPPStatic {
         auto &prod = AppConfig::Products::of(modeKey(Mode::PPPStatic));
         const auto onStart = [self] {
             self->renderFileStart("ppp_static_obs", true,
-                [self] { Solvers::RefTruth::persist(self, "ppp_static_"); },
+                [self] { RefTruth::persist(self); },
                 [self] {
                     LOG_INFO << "[PPP (静态)] 开始解算: 观测=" << self->view.obsPathBuf
-                            << ", 格式=" << (self->isRINEX ? "RINEX" : "NovAtel");
+                            << ", 格式=" << Observer::formatName(self->obsFormat);
                 });
         };
         const auto fileTab = [self, &prod] {
             Helpers::fileRow("观测文件", &self->view.obsPathBuf, "ppp_static_obs",
                              FileDialog::fObs, 3, {}, "ppp_static_obs", &prod.brdc);
-            Helpers::renderProductSection(prod, "ppp_static_obs");
+            Helpers::renderProductSection(prod, "ppp_static_obs", true);
             ImGui::Separator();
-            RefTruth::renderRefTruthField(self);
+            RefTruth::renderRefTruthSection(self);
         };
         self->renderConfigTabs("PPP (静态) 处理配置###ppp_static_cfg_", fileTab, onStart);
     }

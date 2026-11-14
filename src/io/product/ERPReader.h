@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GnssStruct.h"
+#include "TimeStruct.h"
 #include <string>
 #include <vector>
 
@@ -16,6 +16,10 @@ public:
     };
 
     bool read(const std::string &path);
+
+    /// append=true：把 path 里的 ERP 并入已有 data（按 MJD 合并、重排），
+    /// 用于跨日弧加载相邻多日 ERP。append=false 与 read(path) 等价。
+    bool read(const std::string &path, bool append);
 
     [[nodiscard]] bool empty() const { return data.empty(); }
 

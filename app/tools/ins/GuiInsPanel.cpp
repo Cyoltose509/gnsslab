@@ -31,4 +31,13 @@ namespace Tools::Ins {
         return t;
     }
 
+    std::shared_ptr<Solvers::Task> MakeInsVerifyTask() {
+        auto t = std::make_shared<InsVerifyTask>();
+        const auto &pm = AppConfig::PathMemory::instance();
+        t->imuPath = pm.get("ins_verify_imu");
+        t->refPath = pm.get("ins_verify_ref");
+        loadInsParams(t->par);
+        return t;
+    }
+
 }

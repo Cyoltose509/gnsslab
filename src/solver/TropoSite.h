@@ -1,8 +1,8 @@
 #pragma once
 
-#include "CoordStruct.h"
+#include "core/geom/CoordStruct.h"
 #include "TropoGrid.h"
-#include "Troposphere.h"
+#include "core/atmo/Troposphere.h"
 
 #include <Eigen/Eigen>
 
@@ -19,11 +19,12 @@ public:
     double zwd = 0.0;                 // 天顶湿延迟(m)
     double gradN = 0.0, gradE = 0.0;  // TRO 水平梯度(m)
     TropoGrid::Site grid;             // VMF3/GPT3 取用结果
+    Troposphere::GMF::Coef gmf;       // 没有格网产品时的 GMF 系数，每历元算一次
 
     void reset();
 
     void update(const TropoGrid &table, Troposphere::Map map, const Eigen::Vector3d &xyzEcef,
-                const CommonTime &epoch, const FrameInfo &frame = Frame::WGS84);
+                const CommonTime &epoch, const GeodeticFrame &frame = Frame::WGS84);
 
     [[nodiscard]] double latDeg() const;
     [[nodiscard]] double lonDeg() const;

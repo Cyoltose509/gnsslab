@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 #include <map>
-#include "GnssStruct.h"
+#include "core/obs/ObsStruct.h"
+#include "core/SatID.h"
 
 namespace QC {
     struct QCObsEpoch {

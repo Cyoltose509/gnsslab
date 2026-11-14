@@ -1,8 +1,10 @@
 #include "product/ATXReader.h"
-#include "CoordConvert.h"
+#include "FileUtils.h"
 #include "FileCache.h"
 #include "MathUtils.h"
-#include "TimeConvert.h"
+#include "TimeStruct.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -12,7 +14,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-    // ANTEX 是定宽格式：前 60 列是数据，第 61 列起是右对齐的记录名。
     std::string recordLabel(const std::string &line) {
         return line.size() > 60 ? Str::strip(line.substr(60)) : std::string();
     }
@@ -54,24 +55,34 @@ namespace {
         return a + (b.empty() ? "" : " " + b);
     }
 
+    bool rcvKeyMatches(const std::string &cand, const std::string &want) {
+        if (cand == want) return true;
+        const std::size_t sp = want.find(' ');
+        if (sp == std::string::npos) return false;
+        const std::string model = want.substr(0, sp);
+        if (cand == model) return true;
+        return cand.size() > model.size() && cand.compare(0, model.size(), model) == 0 &&
+               cand[model.size()] == ' ';
+    }
+
     bool parseAntexMjd(const std::string_view sv, double &mjd) {
         const char *q = sv.data();
         const char *const qe = q + sv.size();
         int y = 0, mo = 0, d = 0, hh = 0, mi = 0;
-        if (!Str::nextInt(q, qe, y) || !Str::nextInt(q, qe, mo) || !Str::nextInt(q, qe, d) ||
-            !Str::nextInt(q, qe, hh) || !Str::nextInt(q, qe, mi))
+        if (!Str::next(q, qe, y) || !Str::next(q, qe, mo) || !Str::next(q, qe, d) ||
+            !Str::next(q, qe, hh) || !Str::next(q, qe, mi))
             return false;
         double sec = 0.0;
-        (void) Str::nextDouble(q, qe, sec); // 秒可缺，缺了按 0 处理
+        (void) Str::next(q, qe, sec); // 秒可缺，缺了按 0 处理
         if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
-        mjd = static_cast<double>(Time::civilToYMD({y, mo, d})) +
+        mjd = static_cast<double>(YearMonthDay{y, mo, d}.toDays()) +
               static_cast<double>(UNIX_MJD);
         mjd += (static_cast<double>(hh) * 3600.0 + static_cast<double>(mi) * 60.0 + sec) / SEC_PER_DAY;
         return true;
     }
 }
 
-double PCVGrid::value(const double zenDeg, const double azDeg) const {
+double ATXReader::PCVGrid::value(const double zenDeg, const double azDeg) const {
     if (noazi.empty()) return 0.0;
     if (!std::isfinite(zenDeg) || !std::isfinite(azDeg)) return 0.0;
     const int n = static_cast<int>(noazi.size());
@@ -144,7 +155,7 @@ bool ATXReader::read(const std::string &path) {
             return e;
         };
         if (withPco) {
-            touch(curIsSat ? curBand : std::string()).pco = curPCO;
+            if (!curBand.empty()) touch(curBand).pco = curPCO;
             gotPCO = false;
         }
         if (withGrid && !curBand.empty()) touch(curBand).grid = curGrid;
@@ -152,7 +163,7 @@ bool ATXReader::read(const std::string &path) {
 
     std::vector<double> vals;
     vals.reserve(64);
-    const bool opened = Str::forEachLine(path, [&](const std::string_view sv) {
+    const bool opened = File::forEachLine(path, [&](const std::string_view sv) {
         std::string_view lab;
         if (sv.size() > 60) {
             if (const std::size_t a = sv.find_first_not_of(" \t", 60);
@@ -263,13 +274,13 @@ bool ATXReader::read(const std::string &path) {
             if (noazi) {
                 q += 5;
             } else {
-                if (double az = 0.0; !Str::nextDouble(q, qe, az)) return;
+                if (double az = 0.0; !Str::next(q, qe, az)) return;
                 if (q < qe && *q != ' ' && *q != '\t') return;
             }
 
             vals.clear();
             double x = 0.0;
-            while (Str::nextDouble(q, qe, x)) vals.push_back(x * 1e-3);
+            while (Str::next(q, qe, x)) vals.push_back(x * 1e-3);
             if (noazi) curGrid.noazi = vals;
             else if (!vals.empty()) curGrid.azi.push_back(vals);
         }
@@ -298,39 +309,53 @@ const ATXReader::Entry *ATXReader::pick(const std::vector<Entry> &v, const doubl
     return v.empty() ? nullptr : &v.front();
 }
 
+bool ATXReader::coversReceiver(const std::string &antType) const {
+    if (!tab) return false;
+    const std::string key = rcvKey(antType);
+    if (key.empty()) return false;
+    return std::any_of(tab->rcvEnt.begin(), tab->rcvEnt.end(), [&](const auto &p) {
+        return rcvKeyMatches(p.first, key);
+    });
+}
+
+std::vector<std::string> ATXReader::receiverTypes() const {
+    std::vector<std::string> v;
+    if (!tab) return v;
+    for (const auto &[k, e]: tab->rcvEnt) v.push_back(k);
+    return v;
+}
+
 Eigen::Vector3d ATXReader::getSatPCO(const SatID &sat, const std::string &band, const CommonTime &t) const {
     if (!tab) return {0, 0, 0};
     const auto it = tab->satEnt.find(sat);
     if (it == tab->satEnt.end()) return {0, 0, 0};
     const auto jt = it->second.find(band);
     if (jt == it->second.end()) return {0, 0, 0};
-    if (const Entry *e = pick(jt->second, static_cast<double>(Time::CommonToMJD(t).mjd)); e) return e->pco;
+    if (const Entry *e = pick(jt->second, static_cast<double>(t.toMJD().mjd)); e) return e->pco;
     return {0, 0, 0};
 }
 
 
-Eigen::Vector3d ATXReader::getRcvPCOENU(const std::string &rcvType, const CommonTime &t) const {
+Eigen::Vector3d ATXReader::getRcvPCOENU(const std::string &rcvType, const char sys,
+                                        const FreqCombo &def, const CommonTime &t) const {
     if (!tab) return {0, 0, 0};
     const std::string key = rcvKey(rcvType);
     if (key.empty()) return {0, 0, 0};
-    const double mjd = static_cast<double>(Time::CommonToMJD(t).mjd);
-    const auto lookup = [&](const std::string &k) -> Eigen::Vector3d {
-        const auto it = tab->rcvEnt.find(k);
-        if (it == tab->rcvEnt.end()) return Eigen::Vector3d::Zero();
-        const auto jt = it->second.find("");
-        if (jt == it->second.end()) return Eigen::Vector3d::Zero();
-        const Entry *e = pick(jt->second, mjd);
-        return e ? e->pco : Eigen::Vector3d::Zero();
+    const auto bands = atxBands(sys, def); //NOLINT
+    if (bands.first.empty() || bands.second.empty()) return {0, 0, 0};
+    const double mjd = static_cast<double>(t.toMJD().mjd);
+    const auto calc = [&](const BandEntries &e) {
+        return def.c1 * pcoAt(e, bands.first, mjd) + def.c2 * pcoAt(e, bands.second, mjd);
     };
-    Eigen::Vector3d neu = lookup(key);
+    Eigen::Vector3d neu = Eigen::Vector3d::Zero();
+    if (const auto it = tab->rcvEnt.find(key); it != tab->rcvEnt.end()) neu = calc(it->second);
     if (neu.squaredNorm() < 1e-18) {
-        // 型号全名对不上时退回「同型号（首段相同）」的第一条
-        for (const auto &[k, v]: tab->rcvEnt) {
-            if (k.size() > key.size() && k.compare(0, key.size(), key) == 0 && k[key.size()] == ' ') {
-                neu = lookup(k);
+        // 型号对、radome 不同也算命中：退回同型号的第一条标定
+        for (const auto &[k, v]: tab->rcvEnt)
+            if (rcvKeyMatches(k, key)) {
+                neu = calc(v);
                 break;
             }
-        }
     }
     if (neu.squaredNorm() < 1e-18) return {0, 0, 0};
     // ATX 存的是北东天 (N,E,U)，这里换回 E/N/U
@@ -338,7 +363,7 @@ Eigen::Vector3d ATXReader::getRcvPCOENU(const std::string &rcvType, const Common
 }
 
 void ATXReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const CommonTime &epoch,
-                            const FreqCombo &def, const Eigen::Matrix3d *satBody) const {
+                            const FreqCombo &def, const DCM *satBody) const {
     auto [b1, b2] = atxBands(sat.system, def);
     const Eigen::Vector3d pco1 = getSatPCO(sat, b1, epoch);
     const Eigen::Vector3d pco2 = getSatPCO(sat, b2, epoch);
@@ -347,17 +372,24 @@ void ATXReader::applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const Common
     const Eigen::Vector3d pco = def.c1 * pco1 + def.c2 * pco2;
     if (pco.squaredNorm() < 1e-12) return;
 
-    Eigen::Matrix3d M;
+    DCM M;
     if (satBody) {
         M = *satBody;
     } else {
         double gmst;
         Eigen::Vector3d rsun, rmoon;
         Geodesy::sunMoonECEF(epoch, rsun, rmoon, gmst);
-        M = Coord::ECEFToSVBodyDCM(pTx, rsun);
+        M = DCM::fromECEFToSVBody(pTx, rsun);
     }
     const Eigen::Vector3d pcoEcef = M.transpose() * pco;
     pTx += pcoEcef;
+}
+
+Eigen::Vector3d ATXReader::pcoAt(const BandEntries &tbl, const std::string &band, const double mjd) {
+    const auto it = tbl.find(band);
+    if (it == tbl.end()) return Eigen::Vector3d::Zero();
+    const Entry *e = pick(it->second, mjd);
+    return e ? e->pco : Eigen::Vector3d::Zero();
 }
 
 // 某天线在某频点、某历元下的 PCV 值（无该频点标定则 0）。
@@ -376,11 +408,19 @@ double ATXReader::rcvPCVIF(const std::string &rcvType, const char sys, const Fre
     if (!tab) return 0.0;
     const std::string key = rcvKey(rcvType);
     if (key.empty()) return 0.0;
-    const auto it = tab->rcvEnt.find(key);
-    if (it == tab->rcvEnt.end()) return 0.0;
-    const double mjd = static_cast<double>(Time::CommonToMJD(t).mjd);
-    const double p1 = pcvAt(it->second, b1, zenDeg, azDeg, mjd);
-    const double p2 = pcvAt(it->second, b2, zenDeg, azDeg, mjd);
+    const BandEntries *ent = nullptr;
+    if (const auto it = tab->rcvEnt.find(key); it != tab->rcvEnt.end())
+        ent = &it->second;
+    else
+        for (const auto &[k, v]: tab->rcvEnt)
+            if (rcvKeyMatches(k, key)) {
+                ent = &v;
+                break;
+            }
+    if (!ent) return 0.0;
+    const double mjd = static_cast<double>(t.toMJD().mjd);
+    const double p1 = pcvAt(*ent, b1, zenDeg, azDeg, mjd);
+    const double p2 = pcvAt(*ent, b2, zenDeg, azDeg, mjd);
     return def.c1 * p1 + def.c2 * p2;
 }
 
@@ -391,7 +431,7 @@ double ATXReader::satPCVIF(const SatID &sat, const FreqCombo &def, const double 
     if (!tab) return 0.0;
     const auto it = tab->satEnt.find(sat);
     if (it == tab->satEnt.end()) return 0.0;
-    const double mjd = static_cast<double>(Time::CommonToMJD(t).mjd);
+    const double mjd = static_cast<double>(t.toMJD().mjd);
     const double p1 = pcvAt(it->second, b1, nadirDeg, 0.0, mjd);
     const double p2 = pcvAt(it->second, b2, nadirDeg, 0.0, mjd);
     return def.c1 * p1 + def.c2 * p2;
@@ -476,7 +516,7 @@ bool ATXReader::validate(const std::string &path, std::string &detail) {
     if (const std::string lastLabel = recordLabel(last); lastLabel.find("END OF ANTENNA") == std::string::npos &&
                                                          lastLabel.find("END OF FILE") == std::string::npos) {
         detail = "文件末尾不是完整的收尾记录（缺 END OF ANTENNA / END OF FILE），"
-                 "疑似下载或拷贝被截断";
+                "疑似下载或拷贝被截断";
         return false;
     }
 

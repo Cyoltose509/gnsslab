@@ -1,4 +1,5 @@
 #include "ui/GuiColors.h"
+#include "FileUtils.h"
 #include "Task.h"
 
 #include <sstream>
@@ -13,6 +14,7 @@
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiParamPage.h"
 #include "solvers/view/GuiProductSection.h"
+#include "solvers/view/GuiRefTruth.h"
 #include "ui/FileDialog.h"
 
 namespace Solvers::RTK {
@@ -28,15 +30,8 @@ namespace Solvers::RTK {
             ImGui::InputDouble("Z##rtk_base_z", &task->baseXyz.z());
             ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button("从剪贴板获取##rtk_base_clip")) {
-                if (const char *c = ImGui::GetClipboardText()) {
-                    double val[3] = {};
-                    const int cnt = Str::scanDoubles(c, val, 3);
-                    if (cnt >= 1) task->baseXyz.x() = val[0];
-                    if (cnt >= 2) task->baseXyz.y() = val[1];
-                    if (cnt >= 3) task->baseXyz.z() = val[2];
-                }
-            }
+            if (const auto p = Helpers::clipboardXYZButton("rtk_base_clip"); p.count > 0)
+                for (int i = 0; i < p.count; i++) task->baseXyz[i] = p.xyz[i];
         }
 
         void persistBaseCoord(const Task *task) {
@@ -51,9 +46,10 @@ namespace Solvers::RTK {
     void Task::loadFromMemory() {
         const auto &pm = AppConfig::PathMemory::instance();
         baseObsPathBuf = pm.get("rtk_base");
-        roverObsPathBuf = pm.get("rtk_rover");
+        view.obsPathBuf = pm.get("rtk_rover");
         navPathBuf = pm.get("rtk_nav");
         Helpers::loadSolverParams(Mode::RTK, opts);
+        RefTruth::restore(this);
         rtEndpoints.resize(2);
         rtEndpoints[0].ip = pm.get("rtk_rt_base_ip", "47.114.134.129");
         rtEndpoints[0].port = pm.get("rtk_rt_base_port", "7190");
@@ -67,7 +63,7 @@ namespace Solvers::RTK {
             bool ok = parts.size() == 3;
             for (std::size_t i = 0; ok && i < 3; ++i) {
                 const char *cur = parts[i].c_str();
-                ok = Str::nextDouble(cur, cur + parts[i].size(), v[i]);
+                ok = Str::next(cur, cur + parts[i].size(), v[i]);
             }
             if (ok) baseXyz = Eigen::Vector3d(v[0], v[1], v[2]);
         }
@@ -78,33 +74,36 @@ namespace Solvers::RTK {
         const auto onStart = [self] {
             const auto &cfg = AppConfig::PathMemory::instance();
             cfg.set("rtk_base", self->baseObsPathBuf);
-            cfg.set("rtk_rover", self->roverObsPathBuf);
+            cfg.set("rtk_rover", self->view.obsPathBuf);
             cfg.set("rtk_nav", self->navPathBuf);
             Helpers::saveSolverParams(Mode::RTK, self->opts);
             persistBaseCoord(self);
+            RefTruth::persist(self);
 
-            if (const std::string inputErr = ObsSource::rtkInputError(
-                    self->baseObsPathBuf, self->roverObsPathBuf, self->navPathBuf);
+            if (const std::string inputErr = ObsSource::RTKInputError(
+                    self->baseObsPathBuf, self->view.obsPathBuf, self->navPathBuf);
                 !inputErr.empty()) {
                 ImGui::TextColored(UI::kColFail, "%s", inputErr.c_str());
             } else {
                 self->isRealtime = false;
-                self->filePath = self->roverObsPathBuf;
-                self->fileName = Str::baseName(self->roverObsPathBuf) + " / "
-                                + Str::baseName(self->baseObsPathBuf);
+                self->applyObsPath(self->view.obsPathBuf);
+                self->fileName = File::baseName(self->view.obsPathBuf) + " / "
+                                + File::baseName(self->baseObsPathBuf);
                 LOG_INFO << "[RTK] 开始解算: 基准=" << self->baseObsPathBuf
-                        << ", 流动站=" << self->roverObsPathBuf;
+                        << ", 流动站=" << self->view.obsPathBuf;
                 self->startFile();
             }
         };
         const auto fileTab = [self] {
             Helpers::fileRow("基准站观测文件", &self->baseObsPathBuf, "rtk_base", FileDialog::fObs, 3,
-                             {}, nullptr, &self->navPathBuf);
-            Helpers::fileRow("流动站观测文件", &self->roverObsPathBuf, "rtk_rover", FileDialog::fObs, 3,
-                             {}, nullptr, &self->navPathBuf);
-            Helpers::fileRow("广播星历 BRDC", &self->navPathBuf, "rtk_nav", FileDialog::fRnx, 2, {}, "rtk_base");
+                             {}, "rtk_base", &self->navPathBuf);
+            Helpers::fileRow("流动站观测文件", &self->view.obsPathBuf, "rtk_rover", FileDialog::fObs, 3,
+                             {}, "rtk_rover", &self->navPathBuf);
+            Helpers::fileRow("广播星历 BRDC", &self->navPathBuf, "rtk_nav", FileDialog::fRnx, 2, {}, "rtk_rover");
             ImGui::Separator();
             renderBaseCoordInput(self);
+            ImGui::Separator();
+            RefTruth::renderRefTruthSection(self);
         };
         const auto realtimeTab = [self] {
             const auto &cfg = AppConfig::PathMemory::instance();

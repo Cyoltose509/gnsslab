@@ -1,11 +1,12 @@
 #include "rinex/RINEXObsReader.h"
 
-#include "Const.h"
-#include "CoordConvert.h"
+#include "core/Const.h"
+#include "core/geom/CoordConvert.h"
 #include "StringUtils.h"
-#include "TimeConvert.h"
+#include "TimeStruct.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <sstream>
 
@@ -69,6 +70,12 @@ void RINEXObsReader::parseRINEXHeader() {
     if (haveAntDelta) {
         rinexHeader.antDeltaENU = Eigen::Vector3d(antDe, antDn, antDh);
     }
+    {
+        // GLONASS SLOT / FRQ # 只列首历元那几颗（IGS 的 RINEX3 常见），缺的星按广播星历的频率号补，
+        // 否则这些星的频率落到 k=0，相位换算和 IF 组合都会错（km 级）。
+        for (const auto &[prn, k]: gloSlots)
+            if (!mGloChan.count(prn)) mGloChan[prn] = k;
+    }
     afterHeader();
     isHeaderRead = true;
 }
@@ -102,7 +109,7 @@ ObsData RINEXObsReader::parseRINEXObs() {
     ObsData obsData;
     obsData.station = rinexHeader.station;
     obsData.epoch = currEpoch;
-    obsData.weekSecond = Time::CommonToWeekSecond(currEpoch);
+    obsData.weekSecond = currEpoch.toWeekSecond();
     obsData.satTypeValueData = std::move(stvData);
     obsData.satTypeLLI = std::move(lliData);
     obsData.antennaPosition = rinexHeader.antennaPosition;
@@ -192,45 +199,51 @@ void RINEXObsReader::decodeObsBlock(const SatID &sat, const std::string &buf,
     if (!typeLLI.empty()) lliOut[sat] = std::move(typeLLI);
 }
 
-// 线性扫描到第一个不早于 target 的历元。只做定位，不解码数据。
+// 分块扫到第一个不早于 target 的历元。只做定位，不解码数据。
 void RINEXObsReader::fastForwardToEpoch(const CommonTime &target) const {
     if (!pStream || !pStream->good()) return;
+    constexpr std::size_t kChunk = 64 * 1024;
     const std::streamoff startOff = pStream->tellg();
-    pStream->seekg(0, std::ios::end);
-    const std::streamoff endOff = pStream->tellg();
-    const std::streamoff remaining = endOff - startOff;
-    if (remaining <= 0) {
-        pStream->clear();
-        pStream->seekg(startOff);
-        return;
-    }
-    std::string all;
-    all.resize(static_cast<std::size_t>(remaining));
+    std::array<char, kChunk> buf{};
+    std::string carry;
+    std::streamoff pos = 0;
+    bool atEnd = false;
     pStream->seekg(startOff);
-    pStream->read(&all[0], remaining);
-    const auto readn = static_cast<std::size_t>(pStream->gcount());
-    pStream->clear();
-    if (readn == 0) {
-        pStream->seekg(startOff);
-        return;
-    }
-    all.resize(readn);
 
-    std::size_t lineStart = 0;
-    while (lineStart < readn) {
-        std::size_t nl = all.find('\n', lineStart);
-        if (nl == std::string::npos) nl = readn;
-        std::size_t end = nl;
-        if (end > lineStart && all[end - 1] == '\r') --end;
-        if (end > lineStart) {
-            if (const std::string one(all, lineStart, end - lineStart); isEpochLine(one)) {
-                if (const CommonTime t = epochTime(one); t >= target) {
-                    pStream->seekg(startOff + static_cast<std::streamoff>(lineStart));
+    while (!atEnd) {
+        pStream->read(buf.data(), kChunk);
+        const std::size_t n = static_cast<std::size_t>(pStream->gcount());
+        pStream->clear();
+        atEnd = n < kChunk;
+        carry.append(buf.data(), n);
+
+        std::size_t lineStart = 0;
+        while (true) {
+            const std::size_t nl = carry.find('\n', lineStart);
+            if (nl == std::string::npos) break;
+            std::size_t end = nl;
+            if (end > lineStart && carry[end - 1] == '\r') --end;
+            if (end > lineStart) {
+                if (const std::string one(carry, lineStart, end - lineStart); isEpochLine(one) && epochTime(one) >= target) {
+                    pStream->seekg(startOff + pos + static_cast<std::streamoff>(lineStart));
+                    return;
+                }
+            }
+            lineStart = nl + 1;
+        }
+        pos += static_cast<std::streamoff>(lineStart);
+        carry.erase(0, lineStart);
+
+        if (atEnd && !carry.empty()) {
+            std::size_t end = carry.size();
+            if (carry[end - 1] == '\r') --end;
+            if (end > 0) {
+                if (const std::string one(carry, 0, end); isEpochLine(one) && epochTime(one) >= target) {
+                    pStream->seekg(startOff + pos);
                     return;
                 }
             }
         }
-        lineStart = nl + 1;
     }
     pStream->seekg(startOff);
 }

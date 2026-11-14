@@ -4,8 +4,8 @@
 #include <memory>
 #include <vector>
 
-#include "GnssStruct.h"
-#include "EphemerisTable.h"
+#include "core/obs/ObsStruct.h"
+#include "core/geom/EphemerisTable.h"
 
 namespace Observer {
     class DualPair {

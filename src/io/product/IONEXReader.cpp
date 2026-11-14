@@ -4,8 +4,8 @@
 #include <fstream>
 #include <sstream>
 #include "MathUtils.h"
-#include "Const.h"
-#include "TimeConvert.h"
+#include "core/Const.h"
+#include "TimeStruct.h"
 
 namespace {
     constexpr int IONEX_FIELD_WIDTH = 5;
@@ -74,9 +74,9 @@ bool IONEXReader::read(const std::string &path) {
                 // 年月日齐了就直接建时刻，不必先折成年积日再交给 YDSTimeToCommonTime
                 // （那一步要自己维护月累积天数与闰年表，等于第二套格里历）
                 const CommonTime t =
-                        Time::CivilToCommon(CivilTime(y, mo, d, hh, mm, ss, TimeSystem::GPS));
+                        (CivilTime(y, mo, d, hh, mm, ss, TimeSystem::GPS)).toCommonTime();
                 cur.t = t;
-                const MJD m = Time::CommonToMJD(t);
+                const MJD m = t.toMJD();
                 cur.mjd = static_cast<double>(m.mjd);
             }
             continue;
@@ -148,8 +148,8 @@ double IONEXReader::interpolateMap(const TecMap &mp, const double latDeg, const 
 
 bool IONEXReader::getTec(const CommonTime &t, const double latDeg, const double lonDeg,
                          double &tec) const {
-    const auto b = Math::bracketSample(maps, static_cast<double>(Time::CommonToMJD(t).mjd),
-                                       [](const TecMap &mp) { return mp.mjd; });
+    const auto b = Math::bracketSample(maps, static_cast<double>(t.toMJD().mjd),
+                                       &TecMap::mjd);
     if (!b) return false;
     // 越界时 b->lo == b->hi，直接退化为端点那一张图的值
     tec = Math::lerp(interpolateMap(maps[b->lo], latDeg, lonDeg),

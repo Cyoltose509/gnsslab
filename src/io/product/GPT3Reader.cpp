@@ -2,8 +2,8 @@
 
 #include "FileCache.h"
 
-#include "Const.h"
-#include "TimeConvert.h"
+#include "core/Const.h"
+#include "TimeStruct.h"
 #include "StringUtils.h"
 
 #include <algorithm>
@@ -112,7 +112,7 @@ bool GPT3Reader::gridHeight(const double latRad, const double lonRad, double &hE
 bool GPT3Reader::at(const double mjd, const double latRad, const double lonRad, const double hEllM,
                   GPT3Values &v) const {
     if (!tab || tab->rows.empty()) return false;
-    const double doy = Time::MJDToDOY(mjd);
+    const double doy = MJD(mjd).toDOY();
 
     const double fy = doy / 365.25 * 2.0 * PI;
     const double hy = doy / 365.25 * 4.0 * PI;

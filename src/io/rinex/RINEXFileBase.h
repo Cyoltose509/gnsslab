@@ -1,7 +1,9 @@
 #pragma once
+#include <functional>
 #include <fstream>
 #include <string>
 #include <algorithm>
+#include <utility>
 #include "StringUtils.h"
 #include "Exception.h"
 
@@ -27,11 +29,34 @@ class RINEXFileBase {
 public:
     RINEXFileBase() = default;
 
+    RINEXFileBase(const RINEXFileBase &) = delete;
+
+    RINEXFileBase &operator=(const RINEXFileBase &) = delete;
+
+    /// 移动：连同已打开的流一起搬走；pStream 原本指着自家的流，搬到新家要重新指过去。
+    RINEXFileBase(RINEXFileBase &&other) noexcept
+        : pStream(other.pStream == &other.ownedStream ? &ownedStream : other.pStream),
+          pendingLine(std::move(other.pendingLine)),
+          pushedBack(other.pushedBack) {
+        ownedStream = std::move(other.ownedStream);
+        other.pStream = nullptr;
+    }
+
+    RINEXFileBase &operator=(RINEXFileBase &&other) noexcept {
+        if (this == &other) return *this;
+        ownedStream = std::move(other.ownedStream);
+        pStream = other.pStream == &other.ownedStream ? &ownedStream : other.pStream;
+        pendingLine = std::move(other.pendingLine);
+        pushedBack = other.pushedBack;
+        other.pStream = nullptr;
+        return *this;
+    }
+
     virtual ~RINEXFileBase() = default;
 
     void openFile(const std::string &path) {
         if (ownedStream.is_open()) ownedStream.close();
-        ownedStream.open(path, std::ios::in);
+        ownedStream.open(path, std::ios::in | std::ios::binary);
         if (!ownedStream) throw FFStreamError("can't open file: " + path);
         pStream = &ownedStream;
         pushedBack = false;
@@ -68,8 +93,7 @@ protected:
         std::replace(line.begin(), line.end(), 'D', 'e');
     }
 
-    template<class Cb>
-    void scanLabeledHeader(Cb &&cb) {
+    void scanLabeledHeader(const std::function<void(const std::string &, const std::string &)> &cb) {
         std::string line;
         while (true) {
             if (!nextLine(line)) throw FFStreamError("Unexpected EOF in RINEX header");

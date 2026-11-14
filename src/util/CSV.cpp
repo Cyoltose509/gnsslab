@@ -2,6 +2,7 @@
 
 #include <string>
 #include <sstream>
+#include <ostream>
 #include <iomanip>
 #include <fstream>
 #include <filesystem>
@@ -9,6 +10,9 @@
 
 namespace CSV {
     Writer::Writer(const char sep) : sep(sep) {
+    }
+
+    Writer::Writer(std::ostream &out, const char sep) : sep(sep), sink(&out) {
     }
 
     Writer &Writer::cell(const std::string &v) { return cellRaw(quote(v)); }
@@ -53,6 +57,10 @@ namespace CSV {
         lastCols = curCols;
         curCols = 0;
         first = true;
+        if (sink) {
+            *sink << buf;
+            buf.clear();
+        }
         return *this;
     }
 
@@ -60,20 +68,8 @@ namespace CSV {
 
     const std::string &Writer::str() const { return buf; }
 
-    bool Writer::save(const std::string &path, const bool withBom) const {
-        std::ofstream out(std::filesystem::path(path), std::ios::out | std::ios::binary);
-        if (!out) return false;
-        if (withBom) out.write("\xEF\xBB\xBF", 3);
-        out << buf;
-        return static_cast<bool>(out);
-    }
-
-    bool Writer::save(const std::wstring &path, const bool withBom) const {
-        std::ofstream out(std::filesystem::path(path), std::ios::out | std::ios::binary);
-        if (!out) return false;
-        if (withBom) out.write("\xEF\xBB\xBF", 3);
-        out << buf;
-        return static_cast<bool>(out);
+    void Writer::writeBom(std::ostream &out) {
+        out.write("\xEF\xBB\xBF", 3);
     }
 
     Writer &Writer::cellRaw(const std::string &s) {

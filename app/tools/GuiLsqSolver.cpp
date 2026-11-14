@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <cmath>
 
 namespace Tools::LsqSolver {
     static int s_NumObs = 4;
@@ -20,10 +21,12 @@ namespace Tools::LsqSolver {
 
     static bool s_AutoSolve = true;
     static bool s_Initialized = false;
+    static bool s_Solved = false;
 
     static void ResizeMatrices(int newObs, int newUnk) {
-        if (newObs < 1) newObs = 1;
-        if (newUnk < 1) newUnk = 1;
+        // 上限 64：法方程矩阵是 m×m 与 n×n，手滑输个 100000 会直接吃掉几十 GB
+        newObs = std::clamp(newObs, 1, 64);
+        newUnk = std::clamp(newUnk, 1, 64);
 
 
         const std::vector<double> oldH = s_H;
@@ -76,6 +79,8 @@ namespace Tools::LsqSolver {
         s_X = Eigen::VectorXd::Zero(s_NumUnk);
         s_Q = Eigen::MatrixXd::Zero(s_NumUnk, s_NumUnk);
         s_Sigma0 = 0;
+        s_Solved = false;
+        s_Error.clear();
     }
 
     static void Solve() {
@@ -123,6 +128,13 @@ namespace Tools::LsqSolver {
             s_X = solver.state;
             s_Q = solver.covMatrix;
             s_Sigma0 = solver.sigma0;
+            // 法方程奇异时 LSQ 会推出 inf/nan，界面上得说清楚，别让人当成有效解
+            if (!s_X.allFinite() || !s_Q.allFinite() || !std::isfinite(s_Sigma0)) {
+                s_Error = "法方程奇异或秩亏，无法求解";
+                s_Solved = false;
+            } else {
+                s_Solved = true;
+            }
         } catch (const std::exception &e) {
             s_Error = e.what();
         } catch (...) {
@@ -247,6 +259,8 @@ namespace Tools::LsqSolver {
 
         if (!s_Error.empty()) {
             ImGui::TextColored(UI::kColFail, "状态: %s", s_Error.c_str());
+        } else if (!s_Solved) {
+            ImGui::TextDisabled("尚未计算");
         } else {
             ImGui::Text("单位权中误差 (Sigma0): %.6f", s_Sigma0);
             if (ImGui::BeginTable("##result", 2,
@@ -256,9 +270,6 @@ namespace Tools::LsqSolver {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 if (ImGui::BeginTable("##X_res", 2, ImGuiTableFlags_Borders)) {
-
-
-                    ImGui::TableNextRow();
                     for (int j = 0; j < s_NumUnk; ++j) {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);

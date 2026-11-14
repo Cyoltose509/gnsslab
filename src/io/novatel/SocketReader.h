@@ -18,7 +18,7 @@ namespace NovAtel {
         void close() override;
 
         bool isConnected() const { return socketClient.isConnected(); }
-        bool isStale(const std::chrono::milliseconds ms) const { return socketClient.idleTooLong(ms); }
+        bool isStale(const Clock::milliseconds ms) const { return socketClient.idleTooLong(ms); }
 
         bool setReceiveTimeout(const int timeoutMs) { return socketClient.setReceiveTimeout(timeoutMs); }
 

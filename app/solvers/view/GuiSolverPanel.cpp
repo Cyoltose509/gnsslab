@@ -14,14 +14,17 @@
 #include "GuiSolverPanel.h"
 #include "imgui.h"
 #include "StringUtils.h"
+#include "core/geom/CoordConvert.h"
 #include "Log.h"
-#include "Const.h"
+#include "core/Const.h"
 #include "QCProcessor.h"
 #include "ui/FileDialog.h"
 #include "solvers/view/GuiCharts.h"
+#include "solvers/view/GuiExport.h"
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiPosTab.h"
 #include "solvers/view/QualityControl.h"
+#include "download/ui/Widgets.h"
 
 namespace Solvers::SolverPanel {
     void launchQC(View &view) {
@@ -64,10 +67,16 @@ namespace Solvers::SolverPanel {
     }
 
     static void fillStatusLine(Charts::PosTabView &v, const Core &core,
-                               const bool hasError, const bool busy, const int epochCount) {
+                               const bool hasError, const bool busy, const int epochCount,
+                               const std::string &liveMsg) {
         if (hasError) {
             v.statusText = std::string("状态: ") + core.errorMessage();
             v.statusColor = UI::kColFail;
+        } else if (!liveMsg.empty()) {
+            // 解算进行中：把逐帧推进的进度放到状态行，并带总历元数。
+            v.statusText = liveMsg;
+            if (epochCount > 0) v.statusText += "（共 " + std::to_string(epochCount) + " 个历元）";
+            v.statusColor = UI::kColInfo;
         } else if (epochCount > 0) {
             v.statusText = "解算：共 " + std::to_string(epochCount) + " 个历元"
                            + (busy ? "（进行中…）" : "");
@@ -82,6 +91,7 @@ namespace Solvers::SolverPanel {
 
     static void fillCurrentEpoch(Charts::PosTabView &v, Core &core, const int selectedIdx) {
         std::lock_guard lk(core.mutex);
+        std::lock_guard plk(core.view.plotMutex);
         auto &cur = core.epochs[selectedIdx];
 
         std::vector<int> visIdx;
@@ -104,8 +114,8 @@ namespace Solvers::SolverPanel {
                                                  _v.y = cur.satPos[oi][1];
                                                  _v.z = cur.satPos[oi][2];
                                              }
-                                             _v.codeRes = v.s.codeResidual(cur.satIds[oi], selectedIdx);
-                                             _v.phaseRes = v.s.phaseResidual(cur.satIds[oi], selectedIdx);
+                                             _v.codeRes = core.view.plotData.codeResidual(cur.satIds[oi], selectedIdx);
+                                             _v.phaseRes = core.view.plotData.phaseResidual(cur.satIds[oi], selectedIdx);
                                              return _v;
                                          });
         v.hasSatRows = true;
@@ -130,10 +140,8 @@ namespace Solvers::SolverPanel {
 
             const bool isRtkMode = core.mode == Mode::RTK;
             const bool isLeoMode = core.mode == Mode::LEO;
-            const bool canFixed = isRtkMode || isLeoMode ||
-                                  core.mode == Mode::PPPStatic ||
-                                  core.mode == Mode::PPPKinematic;
-            const bool isFixed = cur.isFixed(core.mode);
+            const bool canFixed = Solvers::modeFixesAmbiguities(core.mode);
+            const bool isFixed = canFixed && cur.isFixed(core.mode);
             v.hasFixed = isFixed;
 
             Eigen::Vector3d xyzFloat = r.xyzFloat;
@@ -157,23 +165,28 @@ namespace Solvers::SolverPanel {
                                           : r.xyz - core.refECEF;
             }
 
-            if (r.vel.squaredNorm() > 1e-4) {
-                v.hasVelDisp = true;
-                v.velDisp = r.vel;
-                v.sigmaVDisp = r.sigmaV;
-            }
+            v.velDisp = r.vel;
+            v.sigmaVDisp = r.sigmaV;
 
-            v.showRefTable = canFixed && (!isLeoMode || !core.view.leoRefTraj.empty());
+            // 有没有参考由调用方按 exportRefReady() 裁：无真值时 core.refECEF 是首历元自己的
+            // 位置，拿来当参考会显示一堆「看着像零残差」的 ENU。RTK 例外：它的参考是基准站
+            // 坐标（基线行已覆盖相对基准的信息），参考表只在挂了真值时才有意义。
+            v.showRefTable = isRtkMode ? core.truthReady()
+                                       : (!isLeoMode || !core.view.leoRefTraj.empty());
             v.isLeoRtn = isLeoMode;
-            v.refDisp = core.refECEF;
+            // RTK 挂了真值时逐历元参考在 ep.refECEF（与导出 REF 列同口径），否则用任务级参考。
+            const Eigen::Vector3d dispRef = isRtkMode && cur.refECEF.squaredNorm() > 1.0
+                                                ? cur.refECEF
+                                                : core.refECEF;
+            v.refDisp = dispRef;
             const Eigen::Vector3d xyzPrim = isFixed ? xyzFixed : xyzFloat;
-            v.abs3dDisp = Coord::XYZToENU(xyzPrim, core.refECEF).norm();
+            v.abs3dDisp = Coord::XYZToENU(xyzPrim, dispRef).norm();
             if (isLeoMode) {
                 v.rtnDisp = Eigen::Vector3d(cur.rtnR, cur.rtnT, cur.rtnN);
                 v.rtn3dDisp = std::sqrt(cur.rtnR * cur.rtnR + cur.rtnT * cur.rtnT + cur.rtnN * cur.rtnN);
             } else {
-                v.enuFloatDisp = Coord::XYZToENU(xyzFloat, core.refECEF);
-                v.enuFixedDisp = Coord::XYZToENU(xyzFixed, core.refECEF);
+                v.enuFloatDisp = Coord::XYZToENU(xyzFloat, dispRef);
+                v.enuFixedDisp = Coord::XYZToENU(xyzFixed, dispRef);
                 v.enuFloat3d = v.enuFloatDisp.norm();
                 v.enuFixed3d = v.enuFixedDisp.norm();
             }
@@ -182,6 +195,7 @@ namespace Solvers::SolverPanel {
             v.solveStatusColor = isFixed ? UI::kColPass : UI::kColWarn;
             v.solRatio = isRtkMode ? cur.rtkRatio : r.ratio;
             v.showSolveStatus = canFixed;
+
         } else {
             v.noSolveMsg = core.noEphSolve ? "无定位解（缺少星历文件）" : "无定位解";
         }
@@ -196,6 +210,8 @@ namespace Solvers::SolverPanel {
         {
             std::lock_guard plk(core.view.plotMutex);
             core.view.plotSeries.sync(core.view.plotData);
+            // 静态解画 ENU 误差散点，动态解画轨迹；切口径会重建散点，故放在画图之前。
+            core.view.plotSeries.setPlanTrack(!core.enPlanStatic());
         }
         auto &s = core.view.plotSeries;
         if (isDone && !s.hasResRange) {
@@ -219,7 +235,7 @@ namespace Solvers::SolverPanel {
         v.isRtk = core.mode == Mode::RTK;
         v.curSkyPts = currentSkyPoints(core, selectedIdx);
 
-        if (epochCount > 0 && s.data.solvedEpochs > 0) {
+        if (modeFixesAmbiguities(core.mode) && epochCount > 0 && s.data.solvedEpochs > 0) {
             v.showFixRate = true;
             char buf[64];
             std::snprintf(buf, sizeof buf, "固定率: %.1f%% (%d/%d)",
@@ -231,9 +247,10 @@ namespace Solvers::SolverPanel {
 
     static void fillLEO3D(Charts::PosTabView &v, Core &core) {
         std::lock_guard lk(core.mutex);
-        if (!core.view.hasLeo) return;
+        // LEO 三维轨迹只给 LEO 模式：PPP/SPP/RTK 即便误置了 hasLeo 也绝不能画轨迹图、吞掉 ENU。
+        if (!core.view.hasLeo || core.mode != Mode::LEO) return;
         v.show3d = true;
-        v.showRtn = !core.view.leoRefTraj.empty();
+        v.showRtn = !core.view.rtnTimes.empty();
         v.showRefEnu = false;
         v.leoPos3d = core.view.leoPos3d;
         copySampled(core.view.leoTraj, v.leoTraj);
@@ -256,31 +273,8 @@ namespace Solvers::SolverPanel {
         job->renderResult();
     }
 
-    void exportCSV(const std::shared_ptr<Task> &task) {
-        const std::string tag = modeLabel(task->mode);
-        std::string dn = Str::stripExt(Str::baseName(task->fileName));
-        dn += "_" + tag + "_result.csv";
-        if (dn.size() >= MAX_PATH) dn = tag + "_result.csv";
-        std::wstring path;
-        if (!FileDialog::saveCSV(dn, path)) return;
-        LOG_INFO << "[导出] CSV (" << tag << ") → "
-                << std::filesystem::path(path).string();
-
-        std::string csvText;
-        {
-            std::lock_guard lk(task->mutex);
-            std::ostringstream oss;
-            task->exportCSV(oss);
-            csvText = oss.str();
-        }
-        std::ofstream out(std::filesystem::path(path), std::ios::out | std::ios::binary);
-        if (!out) {
-            LOG_WARN << "[导出] 写入失败: " << std::filesystem::path(path).string();
-            return;
-        }
-        out << csvText;
-        if (!out)
-            LOG_WARN << "[导出] 写入失败: " << std::filesystem::path(path).string();
+    void openExport(const std::shared_ptr<Task> &task) {
+        ExportUI::open(task);
     }
 }
 
@@ -305,16 +299,29 @@ namespace Solvers {
         auto [epochCount, selectedIdx] = readEpochView();
         int selectedEpochLocal = selectedIdx;
 
+        // 解算进度文案统一落到结果页状态行（箭头所指「解算：共 N 个历元」处），逐帧更新更有“正在算”的感觉。
+        std::string liveMsg;
         if (!isRealtime && busy) {
-            ImGui::TextColored(UI::kColInfo,
-                               "正在处理 [%s]: 已解算 %d 历元",
-                               fileName.c_str(), epochCount);
+            const int cur = solveEpoch.load();
+            const auto phase = solvePhase.load();
+            if (cur <= 0)
+                liveMsg = "正在读取观测 / 加载星历与产品…";
+            else if (phase == Core::SolvePhase::Scan)
+                liveMsg = "正在扫描第 " + std::to_string(cur) + " 个历元";
+            else if (phase == Core::SolvePhase::Backward) {
+                // 前向完成、后向解算器正在重新初始化（重载星历/格网）时卡在 0 历元：明确提示，别让人以为卡死。
+                if (cur <= 0) liveMsg = "正向完成，准备反向滤波…";
+                else liveMsg = "正在反向解算第 " + std::to_string(cur) + " 个历元";
+            } else
+                liveMsg = "正在解算第 " + std::to_string(cur) + " 个历元";
         }
 
         if (ImGui::BeginTabBar("##qa_tabs")) {
             if (ImGui::BeginTabItem("定位解算")) {
                 Charts::PosTabView v(view.plotSeries, view.skyTracks);
                 v.epochCount = epochCount;
+                if (modeHasFilter(mode))
+                    v.filterDirectionText = std::string("滤波方向：") + filterLabel(opts.filter);
                 v.selectedEpoch = &selectedEpochLocal;
                 v.selectedSatIdx = &view.selectedSatIdx;
                 v.resMode = &view.resMode;
@@ -329,20 +336,29 @@ namespace Solvers {
                     view.plotData.refreshENU(ref);
                 };
                 v.showEnPlan = mode != Mode::LEO;
+                v.enPlanTrack = !enPlanStatic();
+                v.onPlanOriginChanged = [&](const Eigen::Vector3d &dEnu) {
+                    std::lock_guard plk(view.plotMutex);
+                    view.plotSeries.setPlanOrigin(Coord::ENUToXYZ(dEnu, view.plotSeries.planOrigin));
+                };
 
-                SolverPanel::fillStatusLine(v, *this, hasError, busy, epochCount);
+                SolverPanel::fillStatusLine(v, *this, hasError, busy, epochCount, liveMsg);
                 v.busy = busy;
+                v.solvingEpoch = busy && !isRealtime ? solveEpoch.load() - 1 : -1;
 
                 if (epochCount > 0) {
                     std::lock_guard lk(mutex);
                     view.ensureSkyTracks(epochs);
                 }
-                if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillCurrentEpoch(v, *this, selectedIdx);
+                // 卫星表按当前历元取残差，序列落后一格就全是空值；先同步序列再填表格。
                 if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillPlots(v, *this, selectedIdx, epochCount, isDone);
+                if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillCurrentEpoch(v, *this, selectedIdx);
+                // 参考表跟着参考走：真值就绪（或 RTK 的基准站坐标）才显示，SPP 挂上真值也照样有。
+                v.showRefTable = v.showRefTable && exportRefReady();
                 SolverPanel::fillLEO3D(v, *this);
 
-                v.onExportCSV = [&] {
-                    SolverPanel::exportCSV(shared_from_this());
+                v.onExport = [&] {
+                    SolverPanel::openExport(shared_from_this());
                 };
 
                 try {
@@ -361,7 +377,7 @@ namespace Solvers {
             }
             if (ImGui::BeginTabItem(view.qcTabLabel.c_str())) {
                 try {
-                    QualityControl::render(view, fileName);
+                    QualityControl::render(view, exportStem());
                 } catch (const std::exception &e) {
                     ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
                 } catch (...) {
@@ -384,5 +400,6 @@ namespace Solvers {
             }
             ImGui::EndTabBar();
         }
+        ExportUI::render();
     }
 }

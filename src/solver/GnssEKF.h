@@ -2,7 +2,7 @@
 
 
 
-#include "GnssStruct.h"
+#include "core/equ/EquStruct.h"
 #include "SolverKalman.h"
 
 class GnssEKF {
@@ -14,9 +14,28 @@ public:
 
     void timeUpdate(const VariableSet &varSet, VariableDataMap *csData = nullptr);
 
-    void measUpdate(EquSys &equSys);
+    /// 量测更新。`fullWeight` 给非空时按满阵权（双差站间相关）解，否则用方程标量权取对角。
+    void measUpdate(EquSys &equSys, const Eigen::MatrixXd *fullWeight = nullptr);
 
     void createIndex(const VariableSet &varSet);
+
+    /// 状态线性重参数化：x ← T·x，P ← T·P·Tᵀ，变量顺序同时切到 newOrder。
+    /// T 的列按重参数化前的 currentUnkSet 排，行按 newOrder 排；换模糊度基准（参考星切换）用它。
+    void reparameterize(const VariableSet &newOrder, const Eigen::MatrixXd &T);
+
+    /// 状态下标，变量不在本历元状态集里返回 -1。
+    [[nodiscard]] int indexOf(const Variable &v) const {
+        const auto it = currentIndexData.find(v);
+        return it == currentIndexData.end() ? -1 : it->second;
+    }
+
+    /// 多普勒速度量测更新：只挂速度三态，位置经协方差耦合微调。
+    /// 仅在状态集含 dVX/dVY/dVZ 时生效（SPP 滤波档），PPP 无速度态直接返回。
+    void updateVelocity(const Eigen::Vector3d &vel, const Eigen::Vector3d &sigma);
+
+    /// 后验速度，状态集无速度态时返回 false。
+    [[nodiscard]] bool posteriorVelocity(const std::string &station, Eigen::Vector3d &vel,
+                                         Eigen::Vector3d &sigma) const;
 
     static double getSolution(const Parameter &type,
                               const VariableSet &currentUnkSet,
@@ -26,6 +45,13 @@ public:
                                const Eigen::VectorXd &stateVec, double &out);
 
     [[nodiscard]] double getSolution(const Variable &var) const;
+
+    /// 本历元先验 x⁻（时间更新后、量测更新前）。线性化点与 prefit 的口径要按它对齐。
+    [[nodiscard]] double priorOf(const Variable &var) const;
+
+    /// 每条方程先验新息 σ = sqrt(diag(H·P⁻·Hᵀ))，按 equSys.obsEquData 顺序；不含观测噪声。
+    /// 抗差门限必须按它定：运动时先验位置本身差几十厘米，新息大是预测误差，不是粗差。
+    [[nodiscard]] Eigen::VectorXd priorInnovationStd(const EquSys &equSys) const;
 
     void forceValue(const Variable &var, const double v) { mForceValue[var] = v; }
 
@@ -38,13 +64,13 @@ public:
         hasSaved = true;
     }
 
-    void configure(const double posNoise, const bool hasTropo,
-                   const double ambNoise = 1.0E-8,
-                   const double clockNoise = 0.0) {
-        posProcNoise = posNoise;
+    void configure(const double posSigma, const bool hasTropo,
+                   const double ambSigma = 1.0E-8,
+                   const double clockSigma = 0.0) {
+        posProcSigma = posSigma;
         useTropo = hasTropo;
-        ambProcNoise = ambNoise;
-        clockProcNoise = clockNoise;
+        ambProcSigma = ambSigma;
+        clockProcSigma = clockSigma;
     }
 
     void reset() {
@@ -118,8 +144,7 @@ public:
     }
 
 
-    void shiftState(const Variable &var, const double delta) {
-        if (currentUnkSet.empty()) return;
+    void shiftState(const Variable &var, const double delta) {        if (currentUnkSet.empty()) return;
         if (const auto it = currentIndexData.find(var); it != currentIndexData.end()) {
             const int idx = it->second;
             kalmanFilter.xhat(idx) += delta;
@@ -166,8 +191,6 @@ public:
         }
     }
 
-    void setPosProcNoise(const double v) { posProcNoise = v; }
-
     virtual ~GnssEKF() = default;
 
     VariableSet currentUnkSet;
@@ -179,22 +202,29 @@ private:
 
     bool firstTime;
     bool useTropo = true;
-    double posProcNoise = 0.0;
+    double posProcSigma = 0.0;
 
 public:
-    double ambProcNoise = 1.0E-8;
-    double ambInitVar = 100.0;
-    double clockProcNoise = 0.0;
-    double ztdProcNoise = 1.0E-6;
-    double posVarFloor = 0.0;
-    Eigen::Vector3d posVarFloorVec = Eigen::Vector3d(0.0, 0.0, 0.0);
-    double ztdInitVar = 0.04;
+    // 以下全部为 σ 口径：使用点平方后进 P/Q 阵（原为方差口径，2026-11 统一转 σ）。
+    double ambProcSigma = 1.0E-4;
+    double ambInitSigma = 10.0;
+    double clockProcSigma = 0.0;
+    double ztdProcSigma = 1.0E-3;
+    double posFloorSigma = 0.0;
+    Eigen::Vector3d posFloorSigmaVec = Eigen::Vector3d(0.0, 0.0, 0.0);
+    double ztdInitSigma = 0.2;
     double ztdInitValue = 0.0;
-    double clockInitVar = 1.0E4;
+    double clockInitSigma = 100.0;
+    /// 常速度预测：accProcSigma>0 且状态含速度三态时，位置按 p+=v·dt 预测、速度增量按 a·dt；
+    /// 此时位置过程噪声只由加速度项给（标准 CV，Q 的位置-速度块含 ½a²Δt³ 交叉项），
+    /// posProcSigma 只在无速度态时生效。
+    double accProcSigma = 0.0;  // 加速度过程 σ (m/s²)
+    double velInitSigma = 10.0; // 速度状态初始 σ (m/s)
+    double motionDt = 0.0;      // 与上一历元的间隔 (s)，0 = 本历元不预测（首历元/断档）
+    bool velocityCoupled = false; // 本历元位置是否被速度预测耦合（＝常速度模型生效），速度量测经此影响位置
     Eigen::VectorXd solution; // 后验状态向量 x
     Eigen::MatrixXd covMatrix; // 后验协方差 P
     Eigen::VectorXd postfitResidual;
-    Eigen::Vector3d dxyz;
 
 private:
     Eigen::VectorXd xhat;
@@ -212,11 +242,11 @@ private:
 
 public:
 
-    double codeBiasProcNoise = 1.0E-8;
-    double codeBiasInitVar = 1.0;
-    double isbProcNoise = 0.0;
-    double isbInitVar = 0.0;
+    double codeBiasProcSigma = 1.0E-4;
+    double codeBiasInitSigma = 1.0;
+    double isbProcSigma = 0.0;
+    double isbInitSigma = 0.0;
 
-    double gloIfcbProcNoise = 1.0E-8;
-    double gloIfcbInitVar = 1.0;
+    double gloIfcbProcSigma = 1.0E-4;
+    double gloIfcbInitSigma = 1.0;
 };

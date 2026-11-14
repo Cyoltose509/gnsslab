@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <map>
@@ -15,10 +14,14 @@
 #include <vector>
 
 #include "Config.h"
-#include "Ephemeris.h"
-#include "GnssStruct.h"
+#include "core/geom/Ephemeris.h"
+#include "core/obs/ObsStruct.h"
+#include "core/equ/Result.h"
+#include "core/SatID.h"
 #include "Observer.h"
 #include "QCProcessor.h"
+#include "product/sp3/Reader.h"
+#include "util/Clock.h"
 
 class SPP;
 class RTK;
@@ -48,6 +51,17 @@ namespace Solvers {
 
         /// 展开成界面要的「类型 → 值」。
         [[nodiscard]] TypeValueMap of(std::size_t satIndex) const;
+    };
+
+    /// 统一参考真值：所有模式共用同一套「恒值 / 逐历元 SP3」数据面。
+    /// File 模式下 reader 在解算线程启动时读一次，commitEpoch 逐历元插值。
+    struct Truth {
+        RefForm form = RefForm::None;
+        Eigen::Vector3d fixed = Eigen::Vector3d::Zero();
+        std::string sp3Path;
+        SatID sat = SatID('L', 49);  // 真值 SP3 实际选中的星：loadTruth 取文件里第一颗 L 星
+        bool fileReady = false;
+        SP3::Reader reader;
     };
 
     struct Epoch {
@@ -106,6 +120,8 @@ namespace Solvers {
         /// 逐历元的 ECEF（实解 / 浮点解）：换 ENU 基准时据此重算。
         std::vector<Eigen::Vector3d> ecef;
         std::vector<Eigen::Vector3d> floatEcef;
+        /// 逐历元参考坐标：挂真值文件时每格对应自己的基准，换 ENU 基准时据此重算。
+        std::vector<Eigen::Vector3d> refs;
         std::vector<double> solvedFlags;
 
         std::vector<double> float_e, float_n, float_u;
@@ -127,10 +143,17 @@ namespace Solvers {
 
         void insert(int index, const Epoch &ep, const XYZ &refECEF, Mode mode);
 
+        /// 倒序滤波或融合覆盖主解后按 epochs 整段重建，推进 gen 让界面整段重拷。
+        void replaceAll(const std::vector<Epoch> &epochs, const XYZ &refECEF, Mode mode);
+
         /// 与整份拷贝等价，但只复制 `src` 第 `from` 格之后的部分。
         void appendFrom(const PlotData &src, std::size_t from);
 
         void refreshENU(const XYZ &refECEF);
+
+        /// 指定历元、指定卫星的残差：卫星表逐历元直读主表，不等图表副本的帧同步。
+        [[nodiscard]] double codeResidual(SatID sat, int idx) const;
+        [[nodiscard]] double phaseResidual(SatID sat, int idx) const;
 
         void clear();
     };
@@ -160,9 +183,13 @@ namespace Solvers {
         std::map<SatID, BrokenAxis> resAxisCode;
         std::map<SatID, BrokenAxis> resAxisPhase;
 
-        /// E-N 平面图的散点：只留已解算且有限的点，半径一并算好，界面每帧直接画。
+        /// E-N 平面图的散点：只留已出解且有限的点，半径一并算好，界面每帧直接画。
         std::vector<double> planE, planN;
         double planR = 1e-6;
+        /// 动态解：这张图是轨迹而不是 ENU 误差，坐标相对 planOrigin，拖拽中心只挪它。
+        bool planTrack = false;
+        Eigen::Vector3d planOrigin{0, 0, 0};
+        bool planOriginSet = false;
 
         bool hasResidual = false;
 
@@ -172,9 +199,11 @@ namespace Solvers {
 
         void sync(const PlotData &pp);
 
-        [[nodiscard]] double codeResidual(SatID sat, int idx) const;
+        /// 动态解切轨迹口径（静态解用 ENU 误差散点）。
+        void setPlanTrack(bool track);
 
-        [[nodiscard]] double phaseResidual(SatID sat, int idx) const;
+        /// 拖拽中心：只改这张图的显示原点，逐历元真值对比与 CSV 不动。
+        void setPlanOrigin(const Eigen::Vector3d &origin);
     };
 
     /// 解算页面的呈现状态
@@ -208,7 +237,7 @@ namespace Solvers {
         std::thread qcWorker;
         std::atomic<bool> qcComputing{false};
         std::atomic<bool> qcDirty{false};
-        std::chrono::steady_clock::time_point qcDirtyAt{};
+        Clock::Point qcDirtyAt{};
         int qcDirtyTick = 0;
         std::string qcTabLabel = "质量分析";
         std::vector<std::shared_ptr<QcTab> > extraQcTabs;
@@ -220,7 +249,12 @@ namespace Solvers {
 
         void ensureSkyTracks(const std::vector<Epoch> &epochs);
 
+        /// 主解被倒序/融合覆盖后按 epochs 重画 LEO 轨迹与 RTN 曲线。
+        void rebuildTruthTrails(const std::vector<Epoch> &epochs);
+
         int selectedEpoch = -1;
+        /// 上一历元的解算游标：选中历元若仍停在它上面（用户没拖走），就随游标一起移动。
+        int lastSolveCursor = -1;
         int selectedSatIdx = -1;
         int resMode = 0;
 
@@ -251,7 +285,8 @@ namespace Solvers {
 
         std::string filePath;
         std::string fileName;
-        bool isRINEX = false;
+        /// 观测文件的格式：读数、算不算自带星历、界面显示都问它。
+        Observer::Format obsFormat = Observer::Format::Unknown;
         bool isRealtime = false;
 
         std::atomic<State> state{State::Config};
@@ -280,15 +315,60 @@ namespace Solvers {
         std::atomic<bool> readDone{false};
         std::atomic<bool> solvingDone{false};
 
+        enum class SolvePhase { Forward, Scan, Backward };
+        /// 当前正在处理的第几个历元（1 起）；前向递增、后向递减、扫描递增。
+        std::atomic<int> solveEpoch{0};
+        std::atomic<SolvePhase> solvePhase{SolvePhase::Forward};
+
         std::vector<Epoch> epochs;
         XYZ refECEF{0, 0, 0};
         std::atomic<bool> initializedRefECEF{false};
+        Truth truth;
+
+        /// 解算所用精密轨道（SP3 头的 #cP）的参考框架。解继承产品的框架，标错就是白算。
+        /// `hasOrbitFrame = false` 表示产品没声明框架（广播星历解也算这一类），导出按 IGS14 写。
+        Frame::Ref orbitFrame = Frame::Ref::IGS14;
+        bool hasOrbitFrame = false;
 
         View view;
+
+        /// 按解算配置灌入真值形式；CLI 与 makeTask 走这里，GUI 直接改 truth。
+        void setupTruth(const SolverOptions &cfg);
+
+        /// 观测路径 → 运行态派生（filePath / fileName / obsFormat）与输入框缓冲 view.obsPathBuf。
+        /// CLI 的 applyConfig 与 GUI 的 beginFileSolve 共用这一个出口，改派生规则只改这里；
+        /// 派生形态特殊的模式（RTK 双站名）先调它再覆写 fileName。
+        void applyObsPath(const std::string &obsPath);
+
+        /// 解算线程启动前读一次 SP3 并选真值星；失败只记日志，不影响解算。
+        bool loadTruth();
+
+        /// 产品框架与真值框架不一致时警告一次：RTN/ENU 里含两个实现之间的系统差，不能算进模型误差。
+        void warnFrameMismatch() const;
+
+        /// 逐历元真值对比：恒值设 ENU 基准，文件插值给 Epoch::refECEF，
+        /// 动态模式共用参考轨迹，LEO 另给 RTN。
+        void applyTruthAtEpoch(Epoch &ep, int index);
+
+        /// 倒序趟结果写回后按同一参考轨道重算本历元真值派生量。
+        void refreshTruthAtEpoch(Epoch &ep, const CommonTime &epoch);
+
+        /// E-N 平面图口径：静态解画 ENU 误差散点，动态解画轨迹（中心可拖、只挪显示）。
+        [[nodiscard]] bool enPlanStatic() const {
+            return mode == Mode::PPPStatic || truth.form == RefForm::Fixed;
+        }
+
+        /// 真值基准是否就绪（恒值坐标有效或真值 SP3 已载入）：ENU / RTN / 3dRMS 全靠它才算得出误差。
+        [[nodiscard]] bool truthReady() const {
+            if (truth.form == RefForm::Fixed) return truth.fixed.squaredNorm() > 1.0;
+            return truth.form == RefForm::File && truth.fileReady;
+        }
 
         std::atomic<bool> hasNav{false};
         std::atomic<bool> noEphSolve{false};
 
+        /// 实时流端点（ip/port 字符串形式）：运行态唯一真相。GUI 实时页直接编辑它，
+        /// CLI 由 applyConfig 从 opts 的 ip/port 换算灌入；解算只认这里，不再回读 opts。
         std::vector<RealtimeEndpoint> rtEndpoints;
 
         bool waitNavReady();

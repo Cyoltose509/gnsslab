@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <future>
 #include <string>
@@ -10,7 +11,8 @@
 #include "SolverOptions.h"
 #include "core/IniFile.h"
 #include "StringUtils.h"
-#include "Troposphere.h"
+#include "core/atmo/Troposphere.h"
+#include "download/remote/http/Core.h"
 
 /// 精密产品的读取与派发
 namespace ProductLoad {
@@ -23,16 +25,23 @@ namespace ProductLoad {
         std::string tro, ionex, vmf, gpt3;
     };
 
-    inline std::function<Defaults(const std::string &scope)> &defaultsProvider() {
-        static std::function<Defaults(const std::string &scope)> provider;
-        return provider;
-    }
+    /// 取某模式的产品默认值；安装方（GUI 的 Application / CLI）在启动时填入。
+    std::function<Defaults(const std::string &scope)> &defaultsProvider();
+
+    /// 静态真值
+    using SiteTruthFetcher = std::function<bool(const std::string &site, int year, int doy, double xyz[3],
+                                                bool &fromCache, std::string &detail,
+                                                const Download::Http::ProgressCb &progress)>;
+
+    SiteTruthFetcher &siteTruthFetcher();
 
     /// 显式优先、缺项回落该模式的默认。
     inline Defaults resolve(const SolverOptions &opts, const std::string &scope) {
-        const auto [paths, tro, ionex, vmf, gpt3] = defaultsProvider() && !scope.empty()
-                                                         ? defaultsProvider()(scope)
-                                                         : Defaults{};
+        Defaults fallback;
+        if (!scope.empty()) {
+            if (const auto &provider = defaultsProvider()) fallback = provider(scope);
+        }
+        const auto [paths, tro, ionex, vmf, gpt3] = fallback;
         const auto pick = [](const std::string &explicitPath, const std::string &dflt) {
             return explicitPath.empty() ? dflt : explicitPath;
         };
@@ -51,12 +60,16 @@ namespace ProductLoad {
         return r;
     }
 
-    template<class Fn>
-    void launch(std::vector<std::future<bool> > &jobs, const char *tag,
-                const char *name, const std::string &path, Fn fn) {
+    inline void launch(std::vector<std::future<bool> > &jobs, const char *tag,
+                       const char *name, const std::string &path, const std::function<bool()> &fn) {
         if (path.empty()) return;
         jobs.emplace_back(std::async(std::launch::async, [tag, name, path, fn] {
-            const bool ok = fn();
+            bool ok = false;
+            try {
+                ok = fn();
+            } catch (const std::exception &e) {
+                LOG_ERROR << "[" << tag << "] 读取" << name << "异常: " << e.what();
+            }
             LOG_INFO << "[" << tag << "] 读取" << name << ": " << path << (ok ? "" : "[失败]");
             return ok;
         }));
@@ -106,7 +119,8 @@ namespace ProductLoad {
         launch(jobs, "PPP", "对流层格网 GPT3", d.gpt3, solver, &Solver::loadGPT3);
     }
 
-    inline bool fail(Solvers::Task *task) {
+    template<class TaskT>
+    inline bool fail(TaskT *task) {
         task->setError("产品加载失败：需(精密轨道SP3 或 广播星历BRDC)至少其一提供卫星位置；"
             "另检查 SP3/CLK/OSB/ATX 等路径是否正确");
         return false;
@@ -121,12 +135,24 @@ namespace ProductLoad {
     template<class Solver, class SysT>
     void core(Solver &solver, std::vector<std::future<bool> > &jobs, const char *tag,
               const Paths &paths, const SysT &systems) {
-        launch(jobs, tag, "精密轨道 SP3", paths.sp3, solver, &Solver::loadSP3);
-        launch(jobs, tag, "精密钟差 CLK", paths.clk, solver, &Solver::loadCLK, systems);
-        launch(jobs, tag, "广播星历 BRDC", paths.brdc, solver, &Solver::loadBRDC);
-        launch(jobs, tag, "码偏差 OSB", paths.osb, solver, &Solver::loadOSB);
-        launch(jobs, tag, "卫星姿态 ATT", paths.att, solver, &Solver::loadATT);
-        launch(jobs, tag, "地球自转 ERP", paths.erp, solver, &Solver::loadERP);
+        // 时间序列产品（SP3/CLK/BRDC/OSB/ATT/ERP）支持一次载入相邻多日多份、按历元合并，
+        // 覆盖跨 UTC 午夜的低轨弧；路径以 kIniListSep 分隔，空串不产生加载。
+        auto each = [](const std::string &joined, std::vector<std::string> &out) {
+            out = Str::split(joined, kIniListSep, false);
+        };
+        std::vector<std::string> sp3, clk, brdc, osb, att, erp;
+        each(paths.sp3, sp3);
+        each(paths.clk, clk);
+        each(paths.brdc, brdc);
+        each(paths.osb, osb);
+        each(paths.att, att);
+        each(paths.erp, erp);
+        for (const auto &p: sp3) launch(jobs, tag, "精密轨道 SP3", p, solver, &Solver::loadSP3);
+        for (const auto &p: clk) launch(jobs, tag, "精密钟差 CLK", p, solver, &Solver::loadCLK, systems);
+        for (const auto &p: brdc) launch(jobs, tag, "广播星历 BRDC", p, solver, &Solver::loadBRDC);
+        for (const auto &p: osb) launch(jobs, tag, "码偏差 OSB", p, solver, &Solver::loadOSB);
+        for (const auto &p: att) launch(jobs, tag, "卫星姿态 ATT", p, solver, &Solver::loadATT);
+        for (const auto &p: erp) launch(jobs, tag, "地球自转 ERP", p, solver, &Solver::loadERP);
         if (!paths.atx.empty())
             launch(jobs, tag, "天线文件 ATX", paths.atx, solver, &Solver::loadATX);
     }
@@ -136,7 +162,7 @@ namespace ProductLoad {
               const std::string &scope) {
         const Defaults d = resolve(task.opts, scope);
         if (task.opts.spp.applyAtx && d.paths.atx.empty())
-            LOG_WARN << "[" << tag << "] 未检测到 ATX 天线文件，本次按无 PCO/PCV 处理（参数页「天线改正」可点获取）";
+            LOG_WARN << "[" << tag << "] 未检测到 ATX 天线文件，本次按无 PCO/PCV 处理";
         core(solver, jobs, tag, d.paths, task.opts.systems);
     }
 }

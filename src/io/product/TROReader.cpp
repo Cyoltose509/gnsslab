@@ -2,6 +2,7 @@
 
 #include "MathUtils.h"
 #include "StringUtils.h"
+#include "TimeStruct.h"
 
 #include <algorithm>
 #include <fstream>
@@ -18,7 +19,7 @@ namespace {
             const int doy = std::stoi(parts[1]);
             const double sod = std::stod(parts[2]);
 
-            out = Time::YDSToCommon(YDSTime(year, doy, sod, TimeSystem::GPS));
+            out = (YDSTime(year, doy, sod, TimeSystem::GPS)).toCommonTime();
         } catch (...) {
             return false;
         }
@@ -60,7 +61,7 @@ bool TROReader::read(const std::string &path) {
 
         Record r;
         r.t = t;
-        const MJD m = Time::CommonToMJD(t);
+        const MJD m = t.toMJD();
         r.mjd = static_cast<double>(m.mjd);
         constexpr double MM = 1.0e-3;
         r.ztd = trotot * MM;
@@ -107,8 +108,8 @@ bool TROReader::getZTD(const std::string &station, const CommonTime &t,
     const std::vector<Record> *recs = findStation(station);
     if (recs == nullptr) return false;
 
-    const auto b = Math::bracketSample(*recs, static_cast<double>(Time::CommonToMJD(t).mjd),
-                                       [](const Record &r) { return r.mjd; });
+    const auto b = Math::bracketSample(*recs, static_cast<double>(t.toMJD().mjd),
+                                       &Record::mjd);
     if (!b) return false;
 
     const Record &lo = (*recs)[b->lo], &hi = (*recs)[b->hi];
@@ -128,8 +129,8 @@ bool TROReader::getTropoGrad(const std::string &station, const CommonTime &t,
         if (r.gradN != 0.0 || r.gradE != 0.0) { anyGrad = true; break; }
     if (!anyGrad) return false;
 
-    const auto b = Math::bracketSample(*recs, static_cast<double>(Time::CommonToMJD(t).mjd),
-                                       [](const Record &r) { return r.mjd; });
+    const auto b = Math::bracketSample(*recs, static_cast<double>(t.toMJD().mjd),
+                                       &Record::mjd);
     if (!b) return false;
 
     const Record &lo = (*recs)[b->lo], &hi = (*recs)[b->hi];

@@ -1,6 +1,6 @@
 #include "rinex/RINEXNavStore.h"
 #include "StringUtils.h"
-#include "TimeConvert.h"
+#include "TimeStruct.h"
 #include "Exception.h"
 #include "Log.h"
 
@@ -40,7 +40,7 @@ namespace {
                     break;
                 }
             }
-            if (hasDigit) out.push_back(Str::toDouble(s.substr(b, i - b)));
+            if (hasDigit) out.push_back(Str::toDouble(Str::sub(s, b, i - b)));
             else if (i == b) ++i; // 落单的非数值字符，跳过避免死循环
         }
         return out;
@@ -56,13 +56,13 @@ namespace {
             throw FFStreamError("导航首行为空");
         std::size_t p1 = convLine.find_first_of(" \t\r", p0);
         if (p1 == std::string::npos) p1 = convLine.size();
-        if (const std::string sat = convLine.substr(p0, p1 - p0); sat.size() >= 3 && std::isalpha(static_cast<unsigned char>(sat[0])))
+        if (const std::string sat = Str::sub(convLine, p0, p1 - p0); sat.size() >= 3 && std::isalpha(static_cast<unsigned char>(sat[0])))
             h.prn = SatID(sat).id;
         else
             h.prn = Str::toInt(sat);
 
         // 卫星号之后的 9 个数：历元 6 字段（年月日时分秒）+ 钟差 3 字段（a0 a1 a2）
-        const std::vector<double> v = extractNumbers(convLine.substr(p1));
+        const std::vector<double> v = extractNumbers(Str::sub(convLine, p1, std::string::npos));
         if (v.size() < 9)
             throw FFStreamError("导航首行字段不足 9 个: " + line);
 
@@ -83,7 +83,7 @@ namespace {
         }
 
         const CivilTime cvt(yr, mo, day, hr, min, sec, ts);
-        h.ct = Time::CivilToCommon(cvt);
+        h.ct = cvt.toCommonTime();
         if (ds != 0) h.ct += ds;
 
         h.a0 = v[6];
@@ -97,7 +97,7 @@ void RINEXNavStore::loadGPSEph(GPSEphem &eph, std::string &line) const {
     const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::GPS);
     eph.prn = prn;
 
-    const WeekSecond ws = Time::CommonToWeekSecond(ct);
+    const WeekSecond ws = ct.toWeekSecond();
     eph.toc = ws.sow;
     eph.week = ws.week;
 
@@ -119,47 +119,47 @@ void RINEXNavStore::loadGPSEph(GPSEphem &eph, std::string &line) const {
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        IODE = Str::toDouble(l.substr(4, 19));
-        Crs = Str::toDouble(l.substr(23, 19));
-        Delta_n = Str::toDouble(l.substr(42, 19));
-        M0 = Str::toDouble(l.substr(61, 19));
+        IODE = Str::toDouble(Str::sub(l, 4, 19));
+        Crs = Str::toDouble(Str::sub(l, 23, 19));
+        Delta_n = Str::toDouble(Str::sub(l, 42, 19));
+        M0 = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        Cuc = Str::toDouble(l.substr(4, 19));
-        ecc = Str::toDouble(l.substr(23, 19));
-        Cus = Str::toDouble(l.substr(42, 19));
-        sqrt_A = Str::toDouble(l.substr(61, 19));
+        Cuc = Str::toDouble(Str::sub(l, 4, 19));
+        ecc = Str::toDouble(Str::sub(l, 23, 19));
+        Cus = Str::toDouble(Str::sub(l, 42, 19));
+        sqrt_A = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        Toe = Str::toDouble(l.substr(4, 19));
-        Cic = Str::toDouble(l.substr(23, 19));
-        OMEGA_0 = Str::toDouble(l.substr(42, 19));
-        Cis = Str::toDouble(l.substr(61, 19));
+        Toe = Str::toDouble(Str::sub(l, 4, 19));
+        Cic = Str::toDouble(Str::sub(l, 23, 19));
+        OMEGA_0 = Str::toDouble(Str::sub(l, 42, 19));
+        Cis = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        i0 = Str::toDouble(l.substr(4, 19));
-        Crc = Str::toDouble(l.substr(23, 19));
-        omega = Str::toDouble(l.substr(42, 19));
-        OMEGA_DOT = Str::toDouble(l.substr(61, 19));
+        i0 = Str::toDouble(Str::sub(l, 4, 19));
+        Crc = Str::toDouble(Str::sub(l, 23, 19));
+        omega = Str::toDouble(Str::sub(l, 42, 19));
+        OMEGA_DOT = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        IDOT = Str::toDouble(l.substr(4, 19));
+        IDOT = Str::toDouble(Str::sub(l, 4, 19));
 
 
 
@@ -169,17 +169,17 @@ void RINEXNavStore::loadGPSEph(GPSEphem &eph, std::string &line) const {
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        URA = Str::toDouble(l.substr(4, 19));
-        SV_health = Str::toDouble(l.substr(23, 19));
-        TGD = Str::toDouble(l.substr(42, 19));
-        IODC = Str::toDouble(l.substr(61, 19));
+        URA = Str::toDouble(Str::sub(l, 4, 19));
+        SV_health = Str::toDouble(Str::sub(l, 23, 19));
+        TGD = Str::toDouble(Str::sub(l, 42, 19));
+        IODC = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        HOWtime = Str::toDouble(l.substr(4, 19));
+        HOWtime = Str::toDouble(Str::sub(l, 4, 19));
 
     }
 
@@ -220,7 +220,7 @@ void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
     const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::BDT);
     eph.prn = prn;
 
-    const WeekSecond ws = Time::CommonToWeekSecond(ct, TimeSystem::BDT);
+    const WeekSecond ws = ct.toWeekSecond();
     eph.toc = ws.sow;
     eph.week = ws.week;
 
@@ -239,40 +239,40 @@ void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        IODE = Str::toDouble(l.substr(4, 19));
-        Crs = Str::toDouble(l.substr(23, 19));
-        Delta_n = Str::toDouble(l.substr(42, 19));
-        M0 = Str::toDouble(l.substr(61, 19));
+        IODE = Str::toDouble(Str::sub(l, 4, 19));
+        Crs = Str::toDouble(Str::sub(l, 23, 19));
+        Delta_n = Str::toDouble(Str::sub(l, 42, 19));
+        M0 = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        Cuc = Str::toDouble(l.substr(4, 19));
-        ecc = Str::toDouble(l.substr(23, 19));
-        Cus = Str::toDouble(l.substr(42, 19));
-        sqrt_A = Str::toDouble(l.substr(61, 19));
+        Cuc = Str::toDouble(Str::sub(l, 4, 19));
+        ecc = Str::toDouble(Str::sub(l, 23, 19));
+        Cus = Str::toDouble(Str::sub(l, 42, 19));
+        sqrt_A = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        Toe = Str::toDouble(l.substr(4, 19));
-        Cic = Str::toDouble(l.substr(23, 19));
-        OMEGA_0 = Str::toDouble(l.substr(42, 19));
-        Cis = Str::toDouble(l.substr(61, 19));
+        Toe = Str::toDouble(Str::sub(l, 4, 19));
+        Cic = Str::toDouble(Str::sub(l, 23, 19));
+        OMEGA_0 = Str::toDouble(Str::sub(l, 42, 19));
+        Cis = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        i0 = Str::toDouble(l.substr(4, 19));
-        Crc = Str::toDouble(l.substr(23, 19));
-        omega = Str::toDouble(l.substr(42, 19));
-        OMEGA_DOT = Str::toDouble(l.substr(61, 19));
+        i0 = Str::toDouble(Str::sub(l, 4, 19));
+        Crc = Str::toDouble(Str::sub(l, 23, 19));
+        omega = Str::toDouble(Str::sub(l, 42, 19));
+        OMEGA_DOT = Str::toDouble(Str::sub(l, 61, 19));
     }
 
 
@@ -280,16 +280,16 @@ void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
     if (!nextLine(l6)) throw EndOfFile("nav data truncated");
     Str::stripTrailing(l6);
     fortranExponent(l6);
-    const double IDOT = Str::toDouble(l6.substr(4, 19));
+    const double IDOT = Str::toDouble(Str::sub(l6, 4, 19));
 
     std::string l7;
     if (!nextLine(l7)) throw EndOfFile("nav data truncated");
     Str::stripTrailing(l7);
     fortranExponent(l7);
-    const double URA = Str::toDouble(l7.substr(4, 19));
-    const double SatH1 = Str::toDouble(l7.substr(23, 19));
-    double tgdB1 = Str::toDouble(l7.substr(42, 19));
-    double tgdB2 = Str::toDouble(l7.substr(61, 19));
+    const double URA = Str::toDouble(Str::sub(l7, 4, 19));
+    const double SatH1 = Str::toDouble(Str::sub(l7, 23, 19));
+    double tgdB1 = Str::toDouble(Str::sub(l7, 42, 19));
+    double tgdB2 = Str::toDouble(Str::sub(l7, 61, 19));
     // 规范写秒；个别生产商用 1e-10 s 单位，按量级区分
     if (std::fabs(tgdB1) > 1e-4 || std::fabs(tgdB2) > 1e-4) {
         tgdB1 *= 1e-10;
@@ -300,7 +300,7 @@ void RINEXNavStore::loadBDSEph(BDSEphem &eph, std::string &line) const {
     if (!nextLine(l8)) throw EndOfFile("nav data truncated");
     Str::stripTrailing(l8);
     fortranExponent(l8);
-    const double AODC = Str::toDouble(l8.substr(23, 19));
+    const double AODC = Str::toDouble(Str::sub(l8, 23, 19));
 
     std::string extra;
     while (nextLine(extra)) {
@@ -338,7 +338,7 @@ void RINEXNavStore::loadGalEph(GalileoEphem &eph, std::string &line) const {
     const auto [prn, ct, a0, a1, a2] = parseNavHeader(line, version, TimeSystem::GAL);
     eph.prn = prn;
 
-    const WeekSecond ws = Time::CommonToWeekSecond(ct, TimeSystem::GAL);
+    const WeekSecond ws = ct.toWeekSecond();
     eph.toc = ws.sow;
     eph.week = ws.week;
 
@@ -360,47 +360,47 @@ void RINEXNavStore::loadGalEph(GalileoEphem &eph, std::string &line) const {
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        IODE = Str::toDouble(l.substr(4, 19));
-        Crs = Str::toDouble(l.substr(23, 19));
-        Delta_n = Str::toDouble(l.substr(42, 19));
-        M0 = Str::toDouble(l.substr(61, 19));
+        IODE = Str::toDouble(Str::sub(l, 4, 19));
+        Crs = Str::toDouble(Str::sub(l, 23, 19));
+        Delta_n = Str::toDouble(Str::sub(l, 42, 19));
+        M0 = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        Cuc = Str::toDouble(l.substr(4, 19));
-        ecc = Str::toDouble(l.substr(23, 19));
-        Cus = Str::toDouble(l.substr(42, 19));
-        sqrt_A = Str::toDouble(l.substr(61, 19));
+        Cuc = Str::toDouble(Str::sub(l, 4, 19));
+        ecc = Str::toDouble(Str::sub(l, 23, 19));
+        Cus = Str::toDouble(Str::sub(l, 42, 19));
+        sqrt_A = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        Toe = Str::toDouble(l.substr(4, 19));
-        Cic = Str::toDouble(l.substr(23, 19));
-        OMEGA_0 = Str::toDouble(l.substr(42, 19));
-        Cis = Str::toDouble(l.substr(61, 19));
+        Toe = Str::toDouble(Str::sub(l, 4, 19));
+        Cic = Str::toDouble(Str::sub(l, 23, 19));
+        OMEGA_0 = Str::toDouble(Str::sub(l, 42, 19));
+        Cis = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        i0 = Str::toDouble(l.substr(4, 19));
-        Crc = Str::toDouble(l.substr(23, 19));
-        omega = Str::toDouble(l.substr(42, 19));
-        OMEGA_DOT = Str::toDouble(l.substr(61, 19));
+        i0 = Str::toDouble(Str::sub(l, 4, 19));
+        Crc = Str::toDouble(Str::sub(l, 23, 19));
+        omega = Str::toDouble(Str::sub(l, 42, 19));
+        OMEGA_DOT = Str::toDouble(Str::sub(l, 61, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        IDOT = Str::toDouble(l.substr(4, 19));
+        IDOT = Str::toDouble(Str::sub(l, 4, 19));
     }
     // 第 4 列 BGD(E5b,E1) 本项目用不到（只有 E1/E5a 单频才需要 BGD(E5a,E1)）
     {
@@ -408,16 +408,16 @@ void RINEXNavStore::loadGalEph(GalileoEphem &eph, std::string &line) const {
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        SISA = Str::toDouble(l.substr(4, 19));
-        SV_health = Str::toDouble(l.substr(23, 19));
-        BGD_E5a_E1 = Str::toDouble(l.substr(42, 19));
+        SISA = Str::toDouble(Str::sub(l, 4, 19));
+        SV_health = Str::toDouble(Str::sub(l, 23, 19));
+        BGD_E5a_E1 = Str::toDouble(Str::sub(l, 42, 19));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        HOWtime = Str::toDouble(l.substr(4, 19));
+        HOWtime = Str::toDouble(Str::sub(l, 4, 19));
     }
 
 
@@ -465,30 +465,65 @@ void RINEXNavStore::loadGloEph(GlonassEphem &eph, const std::string &line) const
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        eph.X = Str::toDouble(l.substr(4, 19));
-        eph.vX = Str::toDouble(l.substr(23, 19));
-        eph.aX = Str::toDouble(l.substr(42, 19));
-        eph.health = static_cast<unsigned int>(Str::toDouble(l.substr(61, 19)));
+        eph.X = Str::toDouble(Str::sub(l, 4, 19));
+        eph.vX = Str::toDouble(Str::sub(l, 23, 19));
+        eph.aX = Str::toDouble(Str::sub(l, 42, 19));
+        eph.health = static_cast<unsigned int>(Str::toDouble(Str::sub(l, 61, 19)));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        eph.Y = Str::toDouble(l.substr(4, 19));
-        eph.vY = Str::toDouble(l.substr(23, 19));
-        eph.aY = Str::toDouble(l.substr(42, 19));
-        eph.freqNum = static_cast<int>(Str::toDouble(l.substr(61, 19)));
+        eph.Y = Str::toDouble(Str::sub(l, 4, 19));
+        eph.vY = Str::toDouble(Str::sub(l, 23, 19));
+        eph.aY = Str::toDouble(Str::sub(l, 42, 19));
+        eph.freqNum = static_cast<int>(Str::toDouble(Str::sub(l, 61, 19)));
     }
     {
         std::string l;
         if (!nextLine(l)) throw EndOfFile("nav data truncated");
         Str::stripTrailing(l);
         fortranExponent(l);
-        eph.Z = Str::toDouble(l.substr(4, 19));
-        eph.vZ = Str::toDouble(l.substr(23, 19));
-        eph.aZ = Str::toDouble(l.substr(42, 19));
+        eph.Z = Str::toDouble(Str::sub(l, 4, 19));
+        eph.vZ = Str::toDouble(Str::sub(l, 23, 19));
+        eph.aZ = Str::toDouble(Str::sub(l, 42, 19));
 
+    }
+}
+
+void RINEXNavStore::readGlonassSlots(const std::string &file, std::map<std::string, int> &out) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return;
+
+    double ver = 0.0;
+    std::string line;
+    while (std::getline(in, line)) {
+        Str::stripTrailing(line);
+        if (line.size() < 60) continue;
+        const std::string label = rinexLabel(line);
+        if (label == "RINEX VERSION / TYPE") ver = parseRinexVersionType(line).version;
+        else if (label == "END OF HEADER") break;
+    }
+
+    // GLONASS 导航记录固定 4 行，频率号在第 3 个数据行第 4 个字段。
+    while (std::getline(in, line)) {
+        Str::stripTrailing(line);
+        if (line.empty()) continue;
+        std::string prn;
+        if (ver >= 3.0) {
+            if (line.size() < 3 || line[0] != 'R') continue;
+            prn = Str::sub(line, 0, 3);
+        } else {
+            const std::string id = Str::strip(Str::sub(line, 0, 2));
+            if (id.empty() || !std::isdigit(static_cast<unsigned char>(id[0]))) continue;
+            prn = id.size() < 2 ? "R0" + id : "R" + id;
+        }
+        std::string d1, d2, d3;
+        if (!std::getline(in, d1) || !std::getline(in, d2) || !std::getline(in, d3)) break;
+        Str::stripTrailing(d2);
+        if (d2.size() < 80) continue;
+        out[prn] = static_cast<int>(Str::toDouble(Str::sub(d2, 61, 19)));
     }
 }
 
@@ -528,30 +563,30 @@ void RINEXNavStore::loadFile(const std::string &file, EphemerisTable &ephTable) 
             fileSys = tSys;
             fileType = "NAVIGATION";
         } else if (label == "PGM / RUN BY / DATE") {
-            fileProgram = Str::strip(line.substr(0, 20));
-            fileAgency = Str::strip(line.substr(20, 20));
-            date = Str::strip(line.substr(40, 20));
+            fileProgram = Str::strip(Str::sub(line, 0, 20));
+            fileAgency = Str::strip(Str::sub(line, 20, 20));
+            date = Str::strip(Str::sub(line, 40, 20));
         } else if (label == "COMMENT") {
-            commentList.push_back(Str::strip(line.substr(0, 60)));
+            commentList.push_back(Str::strip(Str::sub(line, 0, 60)));
         } else if (label == "IONOSPHERIC CORR") {
-            std::string type = Str::strip(line.substr(0, 4));
+            std::string type = Str::strip(Str::sub(line, 0, 4));
             std::vector<double> coeff;
             coeff.reserve(4);
             for (int i = 0; i < 4; i++)
-                coeff.push_back(Str::toDouble(line.substr(5 + 12 * i, 12)));
+                coeff.push_back(Str::toDouble(Str::sub(line, 5 + 12 * i, 12)));
             ionoCorrData[type] = coeff;
         } else if (label == "TIME SYSTEM CORR") {
             TimeSysCorr tsc{};
-            tsc.A0 = Str::toDouble(line.substr(5, 17));
-            tsc.A1 = Str::toDouble(line.substr(22, 16));
-            tsc.refSOW = Str::toInt(line.substr(38, 7));
-            tsc.refWeek = Str::toInt(line.substr(45, 5));
-            timeSysCorrData[Str::strip(line.substr(0, 4))] = tsc;
+            tsc.A0 = Str::toDouble(Str::sub(line, 5, 17));
+            tsc.A1 = Str::toDouble(Str::sub(line, 22, 16));
+            tsc.refSOW = Str::toInt(Str::sub(line, 38, 7));
+            tsc.refWeek = Str::toInt(Str::sub(line, 45, 5));
+            timeSysCorrData[Str::strip(Str::sub(line, 0, 4))] = tsc;
         } else if (label == "LEAP SECONDS") {
-            leapSeconds = Str::toInt(line.substr(0, 6));
-            leapDelta = Str::toInt(line.substr(6, 6));
-            leapWeek = Str::toInt(line.substr(12, 6));
-            leapDay = Str::toInt(line.substr(18, 6));
+            leapSeconds = Str::toInt(Str::sub(line, 0, 6));
+            leapDelta = Str::toInt(Str::sub(line, 6, 6));
+            leapWeek = Str::toInt(Str::sub(line, 12, 6));
+            leapDay = Str::toInt(Str::sub(line, 18, 6));
         } else if (label == "END OF HEADER") {
             break;
         }

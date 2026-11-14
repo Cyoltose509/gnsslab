@@ -2,11 +2,10 @@
 
 #include <windows.h>
 
-#include <cstdint>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
-#include <charconv>
-#include <limits>
+#include <stdexcept>
 
 namespace Str {
     std::string strip(std::string s) {
@@ -17,34 +16,12 @@ namespace Str {
         return s;
     }
 
-    bool startsWith(const std::string_view s, const std::string_view p) {
-        return s.size() >= p.size() && s.compare(0, p.size(), p) == 0;
+    std::string leadingAlpha(const std::string_view s) {        std::size_t n = 0;
+        while (n < s.size() && std::isalpha(static_cast<unsigned char>(s[n])) != 0) ++n;
+        return std::string(s.substr(0, n));
     }
 
-    namespace {
-        bool skipSpace(const char *&cur, const char *end) {
-            while (cur < end && (*cur == ' ' || *cur == '\t')) ++cur;
-            return cur < end;
-        }
-    }
 
-    bool nextInt(const char *&cur, const char *end, int &out) {
-        const char *p = cur;
-        if (!skipSpace(p, end)) return false;
-        const auto [ptr, ec] = std::from_chars(p, end, out);
-        if (ec != std::errc()) return false;
-        cur = ptr;
-        return true;
-    }
-
-    bool nextDouble(const char *&cur, const char *end, double &out) {
-        const char *p = cur;
-        if (!skipSpace(p, end)) return false;
-        const auto [ptr, ec] = std::from_chars(p, end, out);
-        if (ec != std::errc()) return false;
-        cur = ptr;
-        return true;
-    }
 
     int scanDoubles(const char *s, double *out, const int maxN) {
         int cnt = 0;
@@ -62,6 +39,22 @@ namespace Str {
         return cnt;
     }
 
+
+    int scanMeters(const char *s, double *out, const int maxN) {
+        const int n = scanDoubles(s, out, maxN);
+        if (n == 0 || s == nullptr) return n;
+        const std::string_view text(s);
+        double scale = 1.0;
+        if (text.find("mm") != std::string_view::npos || text.find("MM") != std::string_view::npos ||
+            text.find("毫米") != std::string_view::npos)
+            scale = 1.0E-3;
+        else if (text.find("cm") != std::string_view::npos || text.find("CM") != std::string_view::npos ||
+                 text.find("厘米") != std::string_view::npos)
+            scale = 1.0E-2;
+        if (scale != 1.0)
+            for (int i = 0; i < n; i++) out[i] *= scale;
+        return n;
+    }
 
     std::vector<std::string> split(const std::string_view s, const char sep, const bool keepEmpty) {
         std::vector<std::string> out;
@@ -94,7 +87,6 @@ namespace Str {
         return line;
     }
 
-
     std::string sub(const std::string &str, const std::size_t pos, const std::size_t len) {
         if (pos >= str.size()) return {};
         return str.substr(pos, (std::min)(len, str.size() - pos));
@@ -102,44 +94,23 @@ namespace Str {
 
     double toDouble(const std::string &str, const double defaultValue) {
         if (str.empty() || str.find_first_not_of(' ') == std::string::npos) {
-
             return defaultValue;
         }
 
         try {
             return std::stod(str);
         } catch ([[maybe_unused]] const std::invalid_argument &e) {
-
             return defaultValue;
         } catch ([[maybe_unused]] const std::out_of_range &e) {
-
-            return (std::numeric_limits<double>::max)();
+            return defaultValue; // 溢出与解析失败同责：不回 DBL_MAX 污染解算
         }
     }
 
     int toInt(const std::string &str) {
-        if (str.empty()) {
-            return 0;
-        }
-
-        std::size_t start = 0;
-        while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start]))) {
-            start++;
-        }
-
-        if (start == str.size()) {
-            return 0;
-        }
-
-        std::size_t end = str.size() - 1;
-        while (end > start && std::isspace(static_cast<unsigned char>(str[end]))) {
-            end--;
-        }
-
-        const std::string trimmedStr = str.substr(start, end - start + 1);
-
+        const std::string t = strip(str);
+        if (t.empty()) return 0;
         try {
-            return std::stoi(trimmedStr);
+            return std::stoi(t);
         } catch ([[maybe_unused]] const std::invalid_argument &e) {
             return 0;
         } catch ([[maybe_unused]] const std::out_of_range &e) {
@@ -167,9 +138,13 @@ namespace Str {
 
 
     bool endsWithIC(const std::string &s, const char *suf) {
-        const std::string ls = toLower(s);
-        const std::size_t sl = ls.size(), kl = std::strlen(suf);
-        return sl >= kl && ls.compare(sl - kl, kl, suf) == 0;
+        const std::size_t kl = std::strlen(suf);
+        if (s.size() < kl) return false;
+        for (std::size_t i = 0; i < kl; ++i) {
+            if (std::tolower(static_cast<unsigned char>(s[s.size() - kl + i]))
+                    != std::tolower(static_cast<unsigned char>(suf[i]))) return false;
+        }
+        return true;
     }
 
     std::string stripSuffixIC(std::string s, const char *suf) {
@@ -178,11 +153,6 @@ namespace Str {
     }
 
 
-    std::string baseName(const std::string &path) {
-        const std::size_t p = path.find_last_of("/\\");
-        return p == std::string::npos ? path : path.substr(p + 1);
-    }
-
     std::string sanitizeId(const std::string &s) {
         std::string r;
         r.reserve(s.size());
@@ -190,23 +160,11 @@ namespace Str {
         return r;
     }
 
-    std::string stripExt(const std::string &fn) {
-        const auto pos = fn.rfind('.');
-        return pos != std::string::npos && pos > 0 ? fn.substr(0, pos) : fn;
-    }
-
     std::string fmt4(const double x) {
         char b[32];
         std::snprintf(b, sizeof b, "%.4f", x);
         return b;
     }
-
-    std::string fmt3(const double x) {
-        char b[32];
-        std::snprintf(b, sizeof b, "%.3f", x);
-        return b;
-    }
-
 
     std::string fmtG(const double x) {
         char b[32];
@@ -244,37 +202,5 @@ namespace Str {
         std::wstring w(n > 0 ? n - 1 : 0, L'\0');
         if (n > 0) MultiByteToWideChar(CP_ACP, 0, s.c_str(), -1, &w[0], n);
         return w;
-    }
-
-    std::string fileContentHash(const std::string &path) {
-
-        auto fnv = [](const char *b, const std::size_t n, std::uint64_t h) {
-            for (std::size_t i = 0; i < n; ++i) {
-                h ^= static_cast<std::uint8_t>(b[i]);
-                h *= 1099511628211ULL;
-            }
-            return h;
-        };
-        std::ifstream f(path, std::ios::binary);
-        if (!f) return std::string("ERR:") + path;
-        std::uint64_t h = 1469598103934665603ULL;
-        f.seekg(0, std::ios::end);
-        const std::streamoff sz = f.tellg();
-        f.seekg(0);
-        h = fnv(reinterpret_cast<const char *>(&sz), sizeof(sz), h);
-        constexpr std::streamoff kBlock = 1 << 18;
-        std::vector<char> buf(kBlock);
-        if (const std::streamoff head = std::min(sz, kBlock); head > 0) {
-            f.read(buf.data(), head);
-            h = fnv(buf.data(), static_cast<std::size_t>(f.gcount()), h);
-        }
-        if (sz > 1 << 19) {
-            f.seekg(sz - kBlock);
-            f.read(buf.data(), kBlock);
-            h = fnv(buf.data(), static_cast<std::size_t>(f.gcount()), h);
-        }
-        char out[20];
-        std::snprintf(out, sizeof(out), "%016llx", static_cast<unsigned long long>(h));
-        return out;
     }
 }

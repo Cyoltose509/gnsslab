@@ -1,7 +1,7 @@
 #pragma once
 
+#include <cmath>
 #include <string>
-#include <iostream>
 #include <string_view>
 static constexpr double W_THRESHOLD = 3.29;
 ///  PI
@@ -51,8 +51,10 @@ constexpr long MS_PER_DAY = MS_PER_SEC * SEC_PER_DAY;
 /// Days per milliseconds.
 constexpr double DAY_PER_MS = 1.0 / MS_PER_DAY;
 
-/// Nominal mean angular velocity of the Earth (rad/s)
-constexpr double OMEGA_EARTH = 7.292115e-5;
+/// Earth rotation rate (rad/s), IS-GPS-200 定义值，与广播星历用的 ωe 同一个数。
+/// 课本 2.3.1 与讲义附录也按 7.292115147e-5 给；写成 WGS84 的 7.292115e-5 时，
+/// 2.0e-8 的相对偏差经 ζ 与哥氏项会把一小时纯惯导拉出 3.4 cm 高程差。
+constexpr double OMEGA_EARTH = 7.2921151467e-5;
 
 constexpr double RADIUS_EARTH = 6378137.0;
 // 天体/地球物理常数
@@ -100,13 +102,6 @@ constexpr double L2_FREQ_GPS = 1227.60e6;
 /// GPS L5 carrier frequency in Hz
 constexpr double L5_FREQ_GPS = 1176.45e6;
 
-/// GPS L1 carrier wavelength in meters
-constexpr double L1_WAVELENGTH_GPS = 0.190293672798;
-/// GPS L2 carrier wavelength in meters
-constexpr double L2_WAVELENGTH_GPS = 0.244210213425;
-/// GPS L5 carrier wavelength in meters
-constexpr double L5_WAVELENGTH_GPS = 0.254828048791;
-
 constexpr double L5_FREQ_BDS = 1176.450e6; /// B2a (BDS-3)
 constexpr double L8_FREQ_BDS = 1191.795e6; /// B2=B21+B2b/2
 constexpr double L7_FREQ_BDS = 1207.140e6; /// B2b (BDS-3/BDS-2)
@@ -114,25 +109,12 @@ constexpr double L6_FREQ_BDS = 1268.520e6; /// B3  (BDS-3/BDS-2)
 constexpr double L2_FREQ_BDS = 1561.098e6; /// B1I (BDS-3/BDS-2)
 constexpr double L1_FREQ_BDS = 1575.420e6; /// B1C (BDS-3)
 
-constexpr double L1_WAVELENGTH_BDS = C_MPS / L1_FREQ_BDS;
-constexpr double L2_WAVELENGTH_BDS = C_MPS / L2_FREQ_BDS;
-constexpr double L6_WAVELENGTH_BDS = C_MPS / L6_FREQ_BDS;
-constexpr double L7_WAVELENGTH_BDS = C_MPS / L7_FREQ_BDS;
-constexpr double L8_WAVELENGTH_BDS = C_MPS / L8_FREQ_BDS;
-constexpr double L5_WAVELENGTH_BDS = C_MPS / L5_FREQ_BDS;
-
 // ===== Galileo (CDMA，频率固定，与 GPS/BDS 同构) =====
 constexpr double L1_FREQ_GAL = 1575.420e6; /// E1
 constexpr double L5_FREQ_GAL = 1176.450e6; /// E5a
 constexpr double L7_FREQ_GAL = 1207.140e6; /// E5b
 constexpr double L6_FREQ_GAL = 1278.750e6; /// E6
 constexpr double L8_FREQ_GAL = 1191.795e6; /// E5 = (E5a+E5b)/2
-
-constexpr double L1_WAVELENGTH_GAL = C_MPS / L1_FREQ_GAL;
-constexpr double L5_WAVELENGTH_GAL = C_MPS / L5_FREQ_GAL;
-constexpr double L7_WAVELENGTH_GAL = C_MPS / L7_FREQ_GAL;
-constexpr double L6_WAVELENGTH_GAL = C_MPS / L6_FREQ_GAL;
-constexpr double L8_WAVELENGTH_GAL = C_MPS / L8_FREQ_GAL;
 
 // ===== GLONASS (FDMA，频率随通道号 k 偏移) =====
 // G1 = BASE1 + k*DFREQ1, G2 = BASE2 + k*DFREQ2 （k 即 RINEX "GLONASS SLOT / FRQ #" 给出的频率通道号）
@@ -153,36 +135,6 @@ inline double getGlonassFreq(const char band, const int channel) {
     }
 }
 
-constexpr double getWavelength(const char sys, const int &n) {
-    if (n == 0) {
-        std::cerr << "getWavelength():frequency no must be positive integer!" << std::endl;
-        exit(-1);
-    }
-
-    if (sys == 'G') {
-        if (n == 1) return L1_WAVELENGTH_GPS;
-        if (n == 2) return L2_WAVELENGTH_GPS;
-        if (n == 5) return L5_WAVELENGTH_GPS;
-    } else if (sys == 'C') {
-        if (n == 1) return L1_WAVELENGTH_BDS;
-        if (n == 2) return L2_WAVELENGTH_BDS;
-        if (n == 5) return L5_WAVELENGTH_BDS;
-        if (n == 7) return L7_WAVELENGTH_BDS;
-        if (n == 8) return L8_WAVELENGTH_BDS;
-        if (n == 6) return L6_WAVELENGTH_BDS;
-    } else if (sys == 'E') {
-        if (n == 1) return L1_WAVELENGTH_GAL;
-        if (n == 5) return L5_WAVELENGTH_GAL;
-        if (n == 7) return L7_WAVELENGTH_GAL;
-        if (n == 6) return L6_WAVELENGTH_GAL;
-        if (n == 8) return L8_WAVELENGTH_GAL;
-    } else {
-        std::cerr << "don't support system except GPS, Beidou and Galileo" << std::endl;
-    }
-
-    return 0.0;
-}
-
 constexpr double getFreq(const char sys, const int &n) {
     if (sys == 'G') {
         if (n == 1) return L1_FREQ_GPS;
@@ -201,8 +153,6 @@ constexpr double getFreq(const char sys, const int &n) {
         if (n == 7) return L7_FREQ_GAL;
         if (n == 6) return L6_FREQ_GAL;
         if (n == 8) return L8_FREQ_GAL;
-    } else {
-        std::cerr << "don't support system except GPS, Beidou and Galileo" << std::endl;
     }
     return 0.0;
 }

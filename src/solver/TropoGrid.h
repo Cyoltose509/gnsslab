@@ -1,7 +1,7 @@
 #pragma once
 
 #include "product/GPT3Reader.h"
-#include "Troposphere.h"
+#include "core/atmo/Troposphere.h"
 #include "product/VMF3Reader.h"
 
 #include <string>

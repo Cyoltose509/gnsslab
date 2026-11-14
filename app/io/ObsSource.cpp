@@ -1,115 +1,124 @@
 #include "ObsSource.h"
 
-#include "Exception.h"
-#include "Log.h"
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <filesystem>
+
+#include "download/local/ProductMeta.h"
+#include "io/rinex/RINEXNavStore.h"
 
 namespace ObsSource {
-    Puller makePull(const bool rinex, std::unique_ptr<NovAtel::LogReader> &oem,
-                    std::unique_ptr<RINEXObsReader> &rnx,
-                    std::fstream &fs, const std::string &path, const char *who,
-                    ObsData &cache, bool &cached,
-                    std::shared_ptr<EphemerisTable> &cacheEph, std::string &err) {
-        if (!rinex) {
-            oem = Observer::makeNovAtelReader(path);
-            if (!oem || !oem->open(path)) {
-                err = std::string("无法打开 ") + who + " NovAtel 日志";
-                return nullptr;
+    bool ObsPair::open(const std::string &basePath, const std::string &roverPath,
+                       const std::string &navPath) {
+        // 观测头的 GLONASS 槽位可能只列首历元那几颗，缺的按广播星历频率号补。
+        std::map<std::string, int> gloSlots;
+        if (!navPath.empty()) RINEXNavStore::readGlonassSlots(navPath, gloSlots);
+        if (!base.open(basePath, &err, &gloSlots)) {
+            err = "基准站: " + err;
+            return false;
+        }
+        if (!rover.open(roverPath, &err, &gloSlots)) {
+            err = "流动站: " + err;
+            return false;
+        }
+        return alignStart();
+    }
+
+    bool ObsPair::alignStart() {
+        try {
+            Observer::Item b, r;
+            if (!base.peek(b) || !rover.peek(r)) {
+                err = "观测文件里没有历元";
+                return false;
             }
-            if (oem->getNextEpoch(cache)) {
-                cached = true;
-                cacheEph = oem->ephSnapshot();
-            }
-            return [&oem, &cache, &cached, &cacheEph](ObsData &out, std::shared_ptr<EphemerisTable> &eph) -> bool {
-                if (cached) {
-                    out = cache;
-                    cached = false;
-                    eph = cacheEph;
-                    return true;
-                }
-                if (!oem->getNextEpoch(out)) return false;
-                eph = oem->ephSnapshot();
-                return true;
-            };
+            base.fastForward(r.obs.epoch);
+            rover.fastForward(b.obs.epoch);
+            return true;
+        } catch (const std::exception &e) {
+            err = std::string("读取首历元失败: ") + e.what();
+            return false;
         }
-        fs.open(path, std::ios::in);
-        if (!fs.is_open()) {
-            err = std::string("无法打开 ") + who + " RINEX 观测文件";
-            return nullptr;
-        }
-        rnx = Observer::makeRINEXReader(fs);
-        try { rnx->parseRINEXObs(); }
-        catch (...) {
-            err = std::string(who) + " RINEX 解析失败";
-            return nullptr;
-        }
-        return [&rnx](ObsData &out, std::shared_ptr<EphemerisTable> &eph) -> bool {
-            try { out = rnx->parseRINEXObs(); }
-            catch (const EndOfFile &) { return false; } catch (...) { return false; }
-            eph = nullptr;
+    }
+
+    Puller nextOf(Observer::ObsStream &s) {
+        return [&s](ObsData &out, Observer::DualPair::EphPtr &eph) {
+            Observer::Item it;
+            if (!s.next(it)) return false;
+            out = std::move(it.obs);
+            eph = std::move(it.eph);
             return true;
         };
     }
 
-    CommonTime probeRINEXFirstEpoch(const std::string &path, bool &ok) {
-        ok = false;
-        try {
-            std::fstream pf(path, std::ios::in);
-            if (!pf.is_open()) return CommonTime();
-            const auto pr = Observer::makeRINEXReader(pf);
-            const ObsData o = pr->parseRINEXObs();
-            ok = true;
-            return o.epoch;
-        } catch (...) { return CommonTime(); }
-    }
-
-    bool openDual(const bool baseRinex, const bool roverRinex,
-                  const std::string &basePath, const std::string &roverPath,
-                  Handles &h,
-                  Puller &nextBase, Puller &nextRover,
-                  std::string &err) {
-        nextBase = makePull(baseRinex, h.oemBase, h.rnxBase, h.fsBase, basePath, "基准站",
-                            h.baseCache, h.baseCached, h.baseCacheEph, err);
-        if (!nextBase) return false;
-        nextRover = makePull(roverRinex, h.oemRover, h.rnxRover, h.fsRover, roverPath, "流动站",
-                             h.roverCache, h.roverCached, h.roverCacheEph, err);
-        if (!nextRover) return false;
-        if (baseRinex) {
-            CommonTime t;
-            bool ok = false;
-            if (h.roverCached) { t = h.roverCache.epoch; ok = true; }
-            else if (roverRinex) t = probeRINEXFirstEpoch(roverPath, ok);
-            if (ok && h.rnxBase) h.rnxBase->fastForwardToEpoch(t);
-        }
-        if (roverRinex) {
-            CommonTime t;
-            bool ok = false;
-            if (h.baseCached) { t = h.baseCache.epoch; ok = true; }
-            else if (baseRinex) t = probeRINEXFirstEpoch(basePath, ok);
-            if (ok && h.rnxRover) h.rnxRover->fastForwardToEpoch(t);
-        }
-        return true;
-    }
-
-    std::string rtkInputError(const std::string &basePath, const std::string &roverPath,
+    std::string RTKInputError(const std::string &basePath, const std::string &roverPath,
                               const std::string &navPath) {
         if (basePath.empty() || roverPath.empty()) return "请先选择基准站与流动站观测文件";
         const auto fb = Observer::classifyObsPath(basePath);
         const auto fr = Observer::classifyObsPath(roverPath);
         if (fb == Observer::Format::Unknown || fr == Observer::Format::Unknown)
             return "无法识别观测文件格式";
-        if ((Observer::isRINEX(fb) || Observer::isRINEX(fr)) && navPath.empty())
-            return "RINEX 模式需要广播星历文件（任一观测文件为 RINEX 即需要）";
+        if (!Observer::carriesEph(fb) || !Observer::carriesEph(fr)) {
+            if (navPath.empty()) return "RINEX 观测需要广播星历文件（任一侧为 RINEX 即需要）";
+        }
         return {};
     }
 
     bool loadNav(const std::string &navPath, EphemerisTable &navTable, std::string &err) {
         RINEXNavStore nav;
         nav.loadFile(navPath, navTable);
-        if (navTable.gps.empty() && navTable.bds.empty()) {
+        if (navTable.empty()) {
             err = "广播星历为空";
             return false;
         }
         return true;
     }
 
+    std::vector<std::string> scanNavFiles(const std::string &obsPath) {
+        std::vector<std::string> result;
+        if (obsPath.size() < 4) return result;
+
+        const auto sameNoCase = [](const std::string &a, const std::string &b) {
+            if (a.size() != b.size()) return false;
+            for (std::size_t i = 0; i < a.size(); ++i)
+                if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                    std::tolower(static_cast<unsigned char>(b[i])))
+                    return false;
+            return true;
+        };
+        const auto exists = [&](const std::string &p) {
+            return !sameNoCase(p, obsPath) && std::filesystem::is_regular_file(std::filesystem::path(p));
+        };
+
+        if (const char tail = obsPath.back(); tail == 'O' || tail == 'o') {
+            const std::string base = obsPath.substr(0, obsPath.size() - 1);
+            for (const char *ext: {"N", "G", "C", "F", "E", "J", "I", "L"})
+                if (exists(base + ext)) result.push_back(base + ext);
+            return result;
+        }
+
+        const auto od = ProductMeta::parseObsDate(obsPath);
+        const auto dir = std::filesystem::path(obsPath).parent_path();
+        if (!od || dir.empty()) return result;
+        char stamp[16];
+        std::snprintf(stamp, sizeof stamp, "%04d%03d", od->year, od->doy);
+
+        std::error_code ec;
+        for (const auto &ent: std::filesystem::directory_iterator(dir, ec)) {
+            if (!ent.is_regular_file(ec)) continue;
+            const std::string name = ent.path().filename().string();
+            if (name.find(stamp) == std::string::npos) continue;
+            if (sameNoCase(ent.path().string(), obsPath)) continue;
+            if (const auto m = ProductMeta::parse(name);
+                m && m->type == ProductType::NAV)
+                result.push_back(ent.path().string());
+        }
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
+    std::string autoDetectNav(const std::string &obsPath) {
+        const auto cands = scanNavFiles(obsPath);
+        return cands.empty() ? std::string() : cands.front();
+    }
 }

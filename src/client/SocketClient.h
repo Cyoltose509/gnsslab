@@ -1,55 +1,21 @@
 #pragma once
-#include <string>
+#include <cstdint>
 #include <mutex>
-#include <chrono>
+#include <string>
 
+#include "util/Clock.h"
 
+/// Socket 句柄类型：Windows 上是 UINT_PTR，其他平台是 int。
+/// winsock2.h / windows.h 只允许出现在 SocketClient.cpp——放头文件里会把 Windows 头
+/// 拖进每个 include 方，MSVC 下引发 std::byte 歧义等冲突（此前逼得调用点在
+/// Realtime.cpp 顶上堆 COM_NO_WINDOWS_H / _HAS_STD_BYTE 创可贴）。
 #ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib,"WS2_32.lib")
-
-inline void init_winsock() {
-#ifdef _WIN32
-    static WSADATA wsaData{};
-    static std::once_flag flag;
-    std::call_once(flag, [] { WSAStartup(MAKEWORD(2, 2), &wsaData); });
-#endif
-}
-
-using SocketType = SOCKET;
-#define SOCKET_INVALID  INVALID_SOCKET
-
+using SocketType = std::uintptr_t;
+inline constexpr SocketType SOCKET_INVALID = static_cast<SocketType>(~0ull); // 即 INVALID_SOCKET
 #else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-
 using SocketType = int;
-#define SOCKET_INVALID  (-1)
+inline constexpr SocketType SOCKET_INVALID = -1;
 #endif
-
-
-inline void socket_close(SocketType s) {
-#ifdef _WIN32
-    closesocket(s);
-#else
-    ::close(s);
-#endif
-}
-
-inline int socket_connect(const SocketType s, const sockaddr *addr, const socklen_t len) {
-#ifdef _WIN32
-    return connect(s, addr, len);
-#else
-    return ::connect(s, addr, len);
-#endif
-}
-
-inline int socket_receive(const SocketType s, char *buf, const int len) {
-    return recv(s, buf, len, 0);
-}
 
 class SocketClient {
 public:
@@ -69,13 +35,13 @@ public:
 
     [[nodiscard]] bool isConnected() const;
 
-    [[nodiscard]] bool idleTooLong(const std::chrono::milliseconds ms) const {
-        return std::chrono::steady_clock::now() - lastRecvTime > ms;
+    [[nodiscard]] bool idleTooLong(const Clock::milliseconds ms) const {
+        return Clock::over(lastRecvTime, ms);
     }
 
 private:
     SocketType sock = SOCKET_INVALID;
     bool connected = false;
     int recvTimeoutMs = 0;
-    std::chrono::steady_clock::time_point lastRecvTime = std::chrono::steady_clock::now();
+    Clock::Point lastRecvTime = Clock::now();
 };

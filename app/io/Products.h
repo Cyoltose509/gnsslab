@@ -32,10 +32,6 @@ namespace AppConfig {
 
         [[nodiscard]] std::vector<std::string> VMF3Paths() const;
 
-        [[nodiscard]] std::vector<std::string> recent() const;
-
-        void addRecent(const std::string &path) const; //NOLINT
-
     private:
         [[nodiscard]] std::string key(const char *name) const;
 

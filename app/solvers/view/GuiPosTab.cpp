@@ -1,7 +1,8 @@
 #include "GuiPosTab.h"
+#include "GuiHelpers.h"
 
-#include "CoordConvert.h"
-#include "StringUtils.h"
+#include "core/Const.h"
+#include "core/geom/CoordConvert.h"
 #include <algorithm>
 #include <cstdio>
 #include <cfloat>
@@ -9,6 +10,7 @@
 #include <set>
 
 #include "implot.h"
+#include "ui/DragBar.h"
 #include "ui/GuiColors.h"
 
 namespace Solvers::Charts {
@@ -18,46 +20,30 @@ namespace Solvers::Charts {
             ImGui::SeparatorText(title);
         }
 
+        void renderFilterDirection(const PosTabView &v) {
+            if (v.filterDirectionText.empty()) return;
+            ImGui::TextDisabled("%s", v.filterDirectionText.c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("滤波方向在参数页选择；解算结果、图表与 CSV 都用这一档的解。\n后向先扫完整份文件再从末尾倒序滤波，融合再跑一遍前向并按协方差加权。");
+        }
 
         void renderStatusAndEpochNav(const PosTabView &v) {
-
             if (!v.statusText.empty())
                 ImGui::TextColored(v.statusColor, "%s", v.statusText.c_str());
             else if (v.epochCount > 0)
                 ImGui::TextColored(UI::kColPass, "处理完成: 共 %d 个历元", v.epochCount);
 
-
             if (v.selectedEpoch && v.epochCount > 0) {
-                int &se = *v.selectedEpoch;
-                if (se < 0) se = 0;
-                if (se >= v.epochCount) se = v.epochCount - 1;
-            }
-
-
-            if (v.epochCount > 0 && v.selectedEpoch) {
-                if (ImGui::Button("<<")) *v.selectedEpoch = 0;
-                ImGui::SameLine();
-                if (ImGui::Button("<")) { if (*v.selectedEpoch > 0) (*v.selectedEpoch)--; }
-                ImGui::SameLine();
-                ImGui::PushItemWidth(150);
-                int ep = *v.selectedEpoch + 1;
-                if (ImGui::SliderInt("##es", &ep, 1, v.epochCount)) *v.selectedEpoch = ep - 1;
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
-                if (ImGui::Button(">")) { if (*v.selectedEpoch < v.epochCount - 1) (*v.selectedEpoch)++; }
-                ImGui::SameLine();
-                if (ImGui::Button(">>")) *v.selectedEpoch = v.epochCount - 1;
-                ImGui::SameLine();
-                if (!v.epochInfo.empty())
-                    ImGui::TextDisabled("| %s", v.epochInfo.c_str());
-                if (v.showFixRate) {
-                    ImGui::SameLine();
-                    ImGui::Text("| %s", v.fixRateText.c_str());
-                }
+                char tail[128] = {};
+                if (v.showFixRate)
+                    std::snprintf(tail, sizeof tail, "%s", v.fixRateText.c_str());
+                Helpers::renderEpochNav(*v.selectedEpoch, v.epochCount,
+                                        v.epochInfo.empty() ? nullptr : v.epochInfo.c_str(),
+                                        v.showFixRate ? tail : nullptr);
             }
         }
 
-        // ENU 序列中已解算且有限点的均值；无有效点时返回空。
+        // ENU 序列中已出解且有限点的均值；无有效点时返回空。
         std::optional<Eigen::Vector3d> meanSolvedENU(const PosTabView &v) {
             double me = 0.0, mn = 0.0, mu = 0.0;
             int m = 0;
@@ -85,16 +71,12 @@ namespace Solvers::Charts {
                 if (ImGui::InputDouble("Y/m", &(*v.refECEF)[1])) changed = true;
                 ImGui::SameLine();
                 if (ImGui::InputDouble("Z/m", &(*v.refECEF)[2])) changed = true;
+                ImGui::PopItemWidth();
                 ImGui::SameLine();
-                if (ImGui::Button("剪贴板")) {
-                    if (const char *c = ImGui::GetClipboardText()) {
-                        double val[3] = {};
-                        const int cnt = Str::scanDoubles(c, val, 3);
-                        if (cnt >= 1) (*v.refECEF)[0] = val[0];
-                        if (cnt >= 2) (*v.refECEF)[1] = val[1];
-                        if (cnt >= 3) (*v.refECEF)[2] = val[2];
-                        changed = cnt >= 1;
-                    }
+                if (const Helpers::PasteResult p = Helpers::clipboardXYZButton("pos_ref_clip");
+                    p.count > 0) {
+                    for (int i = 0; i < p.count; i++) (*v.refECEF)[i] = p.xyz[i];
+                    changed = true;
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("取均值")) {
@@ -121,7 +103,7 @@ namespace Solvers::Charts {
                     ImGui::TableSetupColumn("伪距(m)");
                     ImGui::TableSetupColumn("载波(cyc)");
                     ImGui::TableSetupColumn("Doppler(Hz)");
-                    ImGui::TableSetupColumn("强度");
+                    ImGui::TableSetupColumn("强度", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
                     std::set<std::string> freqs;
                     for (auto &[t, vv]: v.detailObs) if (t.size() > 1) freqs.insert(t.substr(1));
@@ -154,86 +136,151 @@ namespace Solvers::Charts {
         }
 
 
-        void renderPosTables(const PosTabView &v) {
-            ImGui::SeparatorText("位置");
+        /// 「格式」列的口径：坐标在地心直角↔大地坐标之间换，基线换站心 ENU，速度换 NED。
+        enum class RowKind { Coord, Baseline, Velocity };
 
-            if (ImGui::BeginTable("##coord", 6, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        constexpr const char *kFmtCoord[] = {"XYZ", "BLH"};
+        constexpr const char *kFmtBase[] = {"XYZ", "ENU"};
+        constexpr const char *kFmtVel[] = {"XYZ", "NED"};
+
+        /// 各行各记一份显示偏好，跨任务共用（换任务不必重选）。
+        struct DispFmt {
+            int coordFloat = 0;
+            int coordFixed = 0;
+            int baseFloat = 0;
+            int baseFixed = 0;
+            int vel = 0;
+        };
+
+        DispFmt g_dispFmt;
+
+        /// 一行三个分量的显示文本：按所选口径换算，单位写在格子里（长度 m、角度 °）。
+        void componentText(const Eigen::Vector3d &p, const RowKind kind, const int sel,
+                           const Eigen::Vector3d &anchor, std::string (&out)[3]) {
+            char buf[64];
+            if (kind == RowKind::Coord && sel == 1) {
+                const BLH blh = Coord::XYZToBLH(p, Frame::WGS84);
+                std::snprintf(buf, sizeof buf, "%.8f°", blh.B() * RAD_TO_DEG);
+                out[0] = buf;
+                std::snprintf(buf, sizeof buf, "%.8f°", blh.L() * RAD_TO_DEG);
+                out[1] = buf;
+                std::snprintf(buf, sizeof buf, "%.4fm", blh.H());
+                out[2] = buf;
+                return;
+            }
+            // 矢量换站心系只转不挪：给锚点加上矢量再求相对锚点的分量，等于只作用旋转矩阵。
+            Eigen::Vector3d c = p;
+            if (kind == RowKind::Baseline && sel == 1 && anchor.squaredNorm() > 1.0)
+                c = Coord::XYZToENU(XYZ(p + anchor), XYZ(anchor));
+            else if (kind == RowKind::Velocity && sel == 1 && anchor.squaredNorm() > 1.0e12)
+                c = Coord::XYZToNED(XYZ(p + anchor), XYZ(anchor));
+            for (int i = 0; i < 3; ++i) {
+                std::snprintf(buf, sizeof buf, "%.4fm", c[i]);
+                out[i] = buf;
+            }
+        }
+
+        void renderPosTables(const PosTabView &v) {
+            ImGui::SeparatorText("坐标 / 速度");
+
+            // 分量列 Stretch 吸收剩余宽度：表格始终铺满容器（右侧不留白），也不会围出空列；
+            // 其余列按内容自适应（换字体/DPI 不裁字）。
+            const float pad = ImGui::GetStyle().CellPadding.x * 2.0f;
+            const float wFmt = ImGui::CalcTextSize("XYZ").x + ImGui::GetFrameHeight() + pad;
+            if (ImGui::BeginTable("##coord", 7, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders
+                                                 | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("数据");
-                ImGui::TableSetupColumn("X/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                ImGui::TableSetupColumn("Y/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                ImGui::TableSetupColumn("Z/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                ImGui::TableSetupColumn("长度/m", ImGuiTableColumnFlags_WidthFixed, 78);
-                ImGui::TableSetupColumn("σ/m", ImGuiTableColumnFlags_WidthFixed, 78);
+                ImGui::TableSetupColumn("分量1", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("分量2", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("分量3", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("长度/m");
+                ImGui::TableSetupColumn("σ/m");
+                ImGui::TableSetupColumn("格式", ImGuiTableColumnFlags_WidthFixed, wFmt);
                 ImGui::TableHeadersRow();
-                auto row = [&](const char *label, const Eigen::Vector3d &p,
+                auto row = [&](const char *label, const Eigen::Vector3d &p, int &sel, const RowKind kind,
+                               const char *const *opts, const int nOpts, const Eigen::Vector3d &anchor,
                                const char *lenTxt, const char *sigTxt) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::Text("%s", label);
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%.4f", p[0]);
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::Text("%.4f", p[1]);
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::Text("%.4f", p[2]);
+                    ImGui::TextUnformatted(label);
+                    std::string txt[3];
+                    componentText(p, kind, sel, anchor, txt);
+                    for (int i = 0; i < 3; ++i) {
+                        ImGui::TableSetColumnIndex(1 + i);
+                        ImGui::TextUnformatted(txt[i].c_str());
+                    }
                     ImGui::TableSetColumnIndex(4);
-                    if (lenTxt && *lenTxt) ImGui::Text("%s", lenTxt);
+                    if (lenTxt && *lenTxt) ImGui::TextUnformatted(lenTxt);
                     else ImGui::TextDisabled("-");
                     ImGui::TableSetColumnIndex(5);
-                    if (sigTxt && *sigTxt) ImGui::Text("%s", sigTxt);
+                    if (sigTxt && *sigTxt) ImGui::TextUnformatted(sigTxt);
                     else ImGui::TextDisabled("-");
+                    ImGui::TableSetColumnIndex(6);
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::PushID(label);
+                    ImGui::Combo("##fmt", &sel, opts, nOpts);
+                    ImGui::PopID();
                 };
                 char b1[64], b2[64];
+                // 速度/基线换站心系要在解算位置上算，取浮点解优先、固定解兜底。
+                const Eigen::Vector3d anchor =
+                        v.xyzFloatDisp.squaredNorm() > 1.0e12 ? v.xyzFloatDisp : v.xyzFixedDisp;
                 std::snprintf(b1, sizeof b1, "%.3f", v.sigmaFloatDisp);
-                row("坐标-float", v.xyzFloatDisp, "", b1);
+                row("坐标-float", v.xyzFloatDisp, g_dispFmt.coordFloat, RowKind::Coord,
+                    kFmtCoord, 2, anchor, "", b1);
                 if (v.hasFixed) {
                     std::snprintf(b1, sizeof b1, "%.3f", v.sigmaFixedDisp);
-                    row("坐标-fixed", v.xyzFixedDisp, "", b1);
+                    row("坐标-fixed", v.xyzFixedDisp, g_dispFmt.coordFixed, RowKind::Coord,
+                        kFmtCoord, 2, anchor, "", b1);
                 }
                 if (v.hasBaseline) {
                     std::snprintf(b1, sizeof b1, "%.4f", v.baseFloatDisp.norm());
-                    row("基线-float", v.baseFloatDisp, b1, "");
+                    row("基线-float", v.baseFloatDisp, g_dispFmt.baseFloat, RowKind::Baseline,
+                        kFmtBase, 2, v.refDisp, b1, "");
                     if (v.hasFixed) {
                         std::snprintf(b1, sizeof b1, "%.4f", v.baseFixedDisp.norm());
-                        row("基线-fixed", v.baseFixedDisp, b1, "");
+                        row("基线-fixed", v.baseFixedDisp, g_dispFmt.baseFixed, RowKind::Baseline,
+                            kFmtBase, 2, v.refDisp, b1, "");
                     }
                 }
-                if (v.hasVelDisp) {
-                    std::snprintf(b1, sizeof b1, "%.4f", v.velDisp.norm());
-                    std::snprintf(b2, sizeof b2, "%.3f", v.sigmaVDisp);
-                    row("速度", v.velDisp, b1, b2);
-                }
+                const bool velValid = v.velDisp.squaredNorm() > 1e-12;
+                std::snprintf(b1, sizeof b1, "%.4f", v.velDisp.norm());
+                std::snprintf(b2, sizeof b2, "%.3f", v.sigmaVDisp);
+                row("速度", v.velDisp, g_dispFmt.vel, RowKind::Velocity, kFmtVel, 2, anchor,
+                    velValid ? b1 : "", velValid && v.sigmaVDisp > 0.0 ? b2 : "");
                 ImGui::EndTable();
             }
 
 
             if (v.showRefTable) {
                 ImGui::SeparatorText("参考");
-                if (ImGui::BeginTable("##ref", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                if (ImGui::BeginTable("##ref", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders
+                                                   | ImGuiTableFlags_RowBg)) {
                     ImGui::TableSetupColumn("数据");
                     if (v.isLeoRtn) {
-                        ImGui::TableSetupColumn("R/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                        ImGui::TableSetupColumn("T/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                        ImGui::TableSetupColumn("N/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                        ImGui::TableSetupColumn("R/m", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("T/m", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("N/m", ImGuiTableColumnFlags_WidthStretch);
                     } else {
-                        ImGui::TableSetupColumn("X/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                        ImGui::TableSetupColumn("Y/m", ImGuiTableColumnFlags_WidthFixed, 92);
-                        ImGui::TableSetupColumn("Z/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                        // 行里既有 XYZ 也有 ENU，表头只写「分量」，单位落到格子里。
+                        ImGui::TableSetupColumn("分量1", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("分量2", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("分量3", ImGuiTableColumnFlags_WidthStretch);
                     }
-                    ImGui::TableSetupColumn("RMS/m", ImGuiTableColumnFlags_WidthFixed, 92);
+                    ImGui::TableSetupColumn("RMS/m");
                     ImGui::TableHeadersRow();
                     auto rrow = [&](const char *label, const Eigen::Vector3d &p, const double rms) {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::Text("%s", label);
+                        ImGui::TextUnformatted(label);
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%.4f", p[0]);
+                        ImGui::Text("%.4fm", p[0]);
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::Text("%.4f", p[1]);
+                        ImGui::Text("%.4fm", p[1]);
                         ImGui::TableSetColumnIndex(3);
-                        ImGui::Text("%.4f", p[2]);
+                        ImGui::Text("%.4fm", p[2]);
                         ImGui::TableSetColumnIndex(4);
-                        ImGui::Text("%.4f", rms);
+                        ImGui::Text("%.4fm", rms);
                     };
                     if (v.isLeoRtn) {
                         rrow("参考", v.refDisp, v.rtn3dDisp);
@@ -255,14 +302,14 @@ namespace Solvers::Charts {
             {
                 ImGui::SeparatorText("其他");
                 if (const int nC = v.isRtk ? 5 : 6;
-                    ImGui::BeginTable("##dop", nC,
-                                      ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                    ImGui::TableSetupColumn("PDOP");
-                    ImGui::TableSetupColumn("GDOP");
-                    ImGui::TableSetupColumn("HDOP");
-                    ImGui::TableSetupColumn("VDOP");
-                    if (!v.isRtk) ImGui::TableSetupColumn("TDOP");
-                    ImGui::TableSetupColumn("卫星数");
+                    ImGui::BeginTable("##dop", nC, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    // 值都短，均匀铺满一行即可。
+                    ImGui::TableSetupColumn("PDOP", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("GDOP", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("HDOP", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("VDOP", ImGuiTableColumnFlags_WidthStretch);
+                    if (!v.isRtk) ImGui::TableSetupColumn("TDOP", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("卫星数", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
 
                     ImGui::TableNextRow();
@@ -278,20 +325,28 @@ namespace Solvers::Charts {
                     if (!v.isRtk) set("%.2f", v.tdop);
                     ImGui::TableSetColumnIndex(ci++);
                     ImGui::Text("%d/%d", v.numSatsResult, v.numObs);
+                    ImGui::EndTable();
+                }
 
-                    if (v.showSolveStatus) {
+                // 解状态/ratio 放同一张表里会塞进 PDOP 那格，文字直接溢出到相邻列。
+                if (v.showSolveStatus) {
+                    const float wKey = ImGui::CalcTextSize("ratio值").x + pad;
+                    if (ImGui::BeginTable("##solstat", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders
+                                                         | ImGuiTableFlags_RowBg)) {
+                        ImGui::TableSetupColumn("项", ImGuiTableColumnFlags_WidthFixed, wKey);
+                        ImGui::TableSetupColumn("值", ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::Text("解状态");
+                        ImGui::TextUnformatted("解状态");
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("ratio值");
+                        ImGui::TextColored(v.solveStatusColor, "%s", v.solStatShort.c_str());
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextColored(v.solveStatusColor, "%s", v.solStatShort.c_str());
+                        ImGui::TextUnformatted("ratio值");
                         ImGui::TableSetColumnIndex(1);
                         ImGui::Text("%.2f", v.solRatio);
+                        ImGui::EndTable();
                     }
-                    ImGui::EndTable();
                 }
             }
         }
@@ -307,26 +362,36 @@ namespace Solvers::Charts {
             ImGui::TableSetColumnIndex(0);
             if (ImGui::BeginChild("##sat")) {
                 sectionHeader("卫星概览");
-                if (v.hasSatRows) renderSatelliteTable(v.satRows, *v.selectedSatIdx);
+                if (v.hasSatRows && v.selectedSatIdx) renderSatelliteTable(v.satRows, *v.selectedSatIdx);
                 renderObsDetailTable(v);
             }
             ImGui::EndChild();
 
             ImGui::TableSetColumnIndex(1);
             if (ImGui::BeginChild("##res")) {
-                sectionHeader("位置 (WGS84)");
+                sectionHeader("解算结果");
+                constexpr float btnH = 40.0f;
+                const float foot = v.onExport ? btnH + ImGui::GetStyle().ItemSpacing.y : 0.0f;
                 if (v.solved) {
-                    if (ImGui::BeginChild("##restbl", ImVec2(0, -52), ImGuiChildFlags_Borders)) renderPosTables(v);
+                    // 表格按内容定宽，右栏一窄就横向滚动，别把最后一列裁掉。
+                    if (ImGui::BeginChild("##restbl", ImVec2(0, -foot), ImGuiChildFlags_Borders,
+                                          ImGuiWindowFlags_HorizontalScrollbar))
+                        renderPosTables(v);
                     ImGui::EndChild();
-                    if (v.onExportCSV) {
-                        const bool canExport = v.epochCount > 0;
-                        if (!canExport) ImGui::BeginDisabled();
-                        if (ImGui::Button("导出 CSV", ImVec2(-FLT_MIN, 40))) v.onExportCSV();
-                        if (!canExport) ImGui::EndDisabled();
-                    }
                 } else {
                     ImGui::TextColored(UI::kColFail, "%s",
                                        v.noSolveMsg.empty() ? "无定位解" : v.noSolveMsg.c_str());
+                    // 本历元无解也留着导出入口：别的历元可能解出来了，或者要留一份「全排除」的记录。
+                    if (v.onExport) {
+                        const float gap = ImGui::GetContentRegionAvail().y - foot;
+                        if (gap > 0.0f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + gap);
+                    }
+                }
+                if (v.onExport) {
+                    const bool canExport = v.epochCount > 0;
+                    if (!canExport) ImGui::BeginDisabled();
+                    if (ImGui::Button("导出…", ImVec2(-FLT_MIN, btnH))) v.onExport();
+                    if (!canExport) ImGui::EndDisabled();
                 }
             }
             ImGui::EndChild();
@@ -347,7 +412,8 @@ namespace Solvers::Charts {
                 ImGui::EndChild();
                 return;
             }
-            if (ImPlot::BeginPlot("E-N 平面图", ImVec2(-1, -1), ImPlotFlags_NoLegend | ImPlotFlags_NoBoxSelect)) {
+            if (ImPlot::BeginPlot(v.enPlanTrack ? "E-N 轨迹图" : "E-N 平面图", ImVec2(-1, -1),
+                                  ImPlotFlags_NoLegend | ImPlotFlags_NoBoxSelect)) {
                 const int m = static_cast<int>(xe.size());
                 const double r = v.s.planR;
                 ImPlot::SetupAxes("E (m) ", "N (m) ");
@@ -374,10 +440,23 @@ namespace Solvers::Charts {
                     *v.selectedEpoch < static_cast<int>(v.p.enu_e.size()) &&
                     *v.selectedEpoch < static_cast<int>(v.p.solvedFlags.size()) &&
                     v.p.solvedFlags[*v.selectedEpoch] > 0.5) {
-                    const double ce = v.p.enu_e[*v.selectedEpoch];
-                    const double cn = *v.selectedEpoch < static_cast<int>(v.p.enu_n.size())
-                                         ? v.p.enu_n[*v.selectedEpoch] : 0.0;
-                    if (std::isfinite(ce) && std::isfinite(cn)) {
+                    const int cur = *v.selectedEpoch;
+                    double ce = 0.0, cn = 0.0;
+                    bool valid = false;
+                    if (v.enPlanTrack) {
+                        const auto &xyz = v.p.ecef;
+                        if (cur < static_cast<int>(xyz.size()) && xyz[cur].squaredNorm() > 1e12) {
+                            const ENU enu = Coord::XYZToENU(xyz[cur], v.s.planOrigin);
+                            ce = enu.E();
+                            cn = enu.N();
+                            valid = true;
+                        }
+                    } else {
+                        ce = v.p.enu_e[cur];
+                        cn = cur < static_cast<int>(v.p.enu_n.size()) ? v.p.enu_n[cur] : 0.0;
+                        valid = true;
+                    }
+                    if (valid && std::isfinite(ce) && std::isfinite(cn)) {
                         ImPlotSpec hs;
                         hs.Marker = ImPlotMarker_Circle;
                         hs.MarkerSize = 7.5f;
@@ -397,11 +476,16 @@ namespace Solvers::Charts {
                 ImPlot::DragLineY(99, &cy, ImVec4(0.95f, 0.6f, 0.1f, 0.55f), 1.0f,
                                   ImPlotDragToolFlags_NoInputs);
                 if (!held) {
-                    if (wasHeld && v.refECEF && (std::abs(cx) > 1e-9 || std::abs(cy) > 1e-9)) {
-
-                        const Eigen::Vector3d oldRef = *v.refECEF;
-                        *v.refECEF = Coord::ENUToXYZ(Eigen::Vector3d(cx, cy, 0.0), oldRef);
-                        if (v.onRefChanged) v.onRefChanged();
+                    if (wasHeld && (std::abs(cx) > 1e-9 || std::abs(cy) > 1e-9)) {
+                        if (v.enPlanTrack) {
+                            // 轨迹图拖中心只挪显示原点，ENU 误差、RTN 与 CSV 一律不动。
+                            if (v.onPlanOriginChanged)
+                                v.onPlanOriginChanged(Eigen::Vector3d(cx, cy, 0.0));
+                        } else if (v.refECEF) {
+                            const Eigen::Vector3d oldRef = *v.refECEF;
+                            *v.refECEF = Coord::ENUToXYZ(Eigen::Vector3d(cx, cy, 0.0), oldRef);
+                            if (v.onRefChanged) v.onRefChanged();
+                        }
                     }
                     cx = 0.0;
                     cy = 0.0;
@@ -415,16 +499,19 @@ namespace Solvers::Charts {
         void renderEnuConvergence(const PosTabView &v) {
             if (v.epochCount > 0 && !v.s.axis.kept.empty() && !v.show3d &&
                 !v.p.enu_e.empty() && !v.p.enu_n.empty() && !v.p.enu_u.empty()) {
-                sectionHeader("ENU 收敛轨迹 / E-N 平面图");
+                sectionHeader(v.enPlanTrack ? "ENU 误差序列 / E-N 轨迹图" : "ENU 收敛轨迹 / E-N 平面图");
 
                 const ImGuiStyle &style = ImGui::GetStyle();
-                float rowH = ImGui::GetContentRegionAvail().y - style.ItemSpacing.y;
-                rowH = std::max(280.0f, std::min(rowH, 720.0f));
+                const float defH = std::clamp(ImGui::GetContentRegionAvail().y - style.ItemSpacing.y,
+                                              280.0f, 720.0f);
+                float &rowH = UI::dragHeight("spp_enu_row", defH);
                 bool newed = v.s.newed;
                 if (!v.showEnPlan) {
                     renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
                                   *v.selectedEpoch, newed,
-                                  v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH);
+                                  v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH,
+                                  v.solvingEpoch);
+                    UI::heightGrip("##enuGrip", rowH, 180.0f, 1200.0f);
                     return;
                 }
                 const float availX = ImGui::GetContentRegionAvail().x;
@@ -440,7 +527,8 @@ namespace Solvers::Charts {
                         ImGui::TableSetColumnIndex(0);
                         renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
                                       *v.selectedEpoch, newed,
-                                      v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH);
+                                      v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH,
+                                  v.solvingEpoch);
                         ImGui::TableSetColumnIndex(1);
 
                         renderENPlanView(v, rowH);
@@ -451,15 +539,18 @@ namespace Solvers::Charts {
                     renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
                                   *v.selectedEpoch, newed,
                                   v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount,
-                                  std::max(220.0f, rowH * 0.55f));
+                                  std::max(220.0f, rowH * 0.55f), v.solvingEpoch);
                     renderENPlanView(v, std::min(rowH, 380.0f));
                 }
+                UI::heightGrip("##enuGrip", rowH, 180.0f, 1200.0f);
             }
         }
 
 
         void renderSkyResidualRow(const PosTabView &v) {
-            const float rowH = std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f));
+            float &rowH = UI::dragHeight(
+                "spp_sky_row",
+                std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f)));
             if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
                 ImGui::TableSetupColumn("Sky", ImGuiTableColumnFlags_WidthStretch, 0.33f);
                 ImGui::TableSetupColumn("Res", ImGuiTableColumnFlags_WidthStretch, 0.67f);
@@ -473,7 +564,7 @@ namespace Solvers::Charts {
                     if (v.show3d)
                         renderLeo3D(v.leoPos3d, v.leoTraj, v.leoRefTraj, fillH);
                     else
-                        renderSkyplot(v.skyTracks, v.curSkyPts, 460.0f);
+                        renderSkyplot(v.skyTracks, v.curSkyPts, std::min(fillH, 640.0f));
                 }
                 ImGui::EndChild();
 
@@ -489,17 +580,18 @@ namespace Solvers::Charts {
                         renderSatResidualPlot(v.p.satResVals, v.p.satResPhaseVals,
                                               v.s.resAxisCode, v.s.resAxisPhase, v.resMode,
                                               *v.selectedEpoch, v.epochCount, rnewed,
-                                              &ylo, &yhi, &plo, &phi, 0.0f);
+                                              &ylo, &yhi, &plo, &phi, 0.0f, v.solvingEpoch);
                     }
                     ImGui::EndChild();
                 }
                 ImGui::EndTable();
             }
+            UI::heightGrip("##skyGrip", rowH, 200.0f, 1200.0f);
         }
 
 
-        void renderDopPlot(const PosTabView &v, const bool newed) {
-            if (ImPlot::BeginPlot("DOP", ImVec2(-1, 350))) {
+        void renderDopPlot(const PosTabView &v, const bool newed, const float plotH) {
+            if (ImPlot::BeginPlot("DOP", ImVec2(-1, plotH))) {
                 ImPlot::SetupAxes("Epoch", "DOP");
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 const BrokenAxis &br = v.s.axis;
@@ -516,8 +608,10 @@ namespace Solvers::Charts {
                 plotOne("VDOP", v.p.vdops);
                 if (!v.isRtk)
                     plotOne("TDOP", v.p.tdops);
-                if (n > 0)
+                if (n > 0) {
+                    solveCursor(v.solvingEpoch);
                     epochCursor(3, v.selectedEpoch, v.epochCount);
+                }
                 ImPlot::EndPlot();
             }
         }
@@ -528,6 +622,7 @@ namespace Solvers::Charts {
             if (v.showSigmaDop && v.epochCount > 0 && !v.s.axis.kept.empty()) {
                 sectionHeader("σ / 精度 (P·V·DOP)");
                 const bool newed = v.s.newed;
+                float &ph = UI::dragHeight("spp_sigma_row", 350.0f);
 
                 struct Col {
                     const char *name;
@@ -546,16 +641,16 @@ namespace Solvers::Charts {
                         for (int c = 0; c < static_cast<int>(cols.size()); ++c)
                             ImGui::TableSetupColumn(cols[c].name, ImGuiTableColumnFlags_WidthStretch,
                                                     1.0f / static_cast<float>(cols.size()));
-                        ImGui::TableNextRow();
+                        ImGui::TableNextRow(ImGuiTableRowFlags_None, ph);
                         for (int k = 0; k < static_cast<int>(cols.size()); ++k) {
                             ImGui::TableSetColumnIndex(k);
                             if (cols[k].isDop) {
-                                renderDopPlot(v, newed);
+                                renderDopPlot(v, newed, ph);
                                 continue;
                             }
                             const bool sigPWithFloat = cols[k].name == std::string("SigmaP")
                                                        && v.hasFloatSeries && !v.p.sigmaPFloatVals.empty();
-                            if (ImPlot::BeginPlot(cols[k].name, ImVec2(-1, 350),
+                            if (ImPlot::BeginPlot(cols[k].name, ImVec2(-1, ph),
                                                   sigPWithFloat ? ImPlotFlags_None : ImPlotFlags_NoLegend)) {
                                 ImPlot::SetupAxes("Epoch", "m");
                                 ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
@@ -573,12 +668,15 @@ namespace Solvers::Charts {
                                         ImPlot::PlotLine("SigmaP(浮点)", br.t.data(), ff.data(), nSigma, fspec);
                                     }
                                 }
-                                if (nSigma > 0)
+                                if (nSigma > 0) {
+                                    solveCursor(v.solvingEpoch);
                                     epochCursor(3, v.selectedEpoch, v.epochCount);
+                                }
                                 ImPlot::EndPlot();
                             }
                         }
                         ImGui::EndTable();
+                        UI::heightGrip("##sigmaGrip", ph, 160.0f, 1200.0f);
                     }
                 }
             }
@@ -588,7 +686,8 @@ namespace Solvers::Charts {
         void renderRtnDeviation(const PosTabView &v) {
             if (!v.showRtn || v.rtnTimes.empty()) return;
             sectionHeader("R/T/N/3D 偏差");
-            if (ImPlot::BeginPlot("R/T/N/3D 偏差", ImVec2(-1, 380))) {
+            float &ph = UI::dragHeight("spp_rtn_row", 380.0f);
+            if (ImPlot::BeginPlot("R/T/N/3D 偏差", ImVec2(-1, ph))) {
                 ImPlot::SetupAxes("Epoch", "偏差 (m)");
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 BrokenAxis br;
@@ -602,10 +701,12 @@ namespace Solvers::Charts {
                     ImPlot::PlotLine("T", br.t.data(), rrt.data(), nRtn);
                     ImPlot::PlotLine("N", br.t.data(), rrn.data(), nRtn);
                     ImPlot::PlotLine("3D", br.t.data(), rd3.data(), nRtn);
+                    solveCursor(v.solvingEpoch);
                 }
                 epochCursor(2, v.selectedEpoch, v.epochCount);
                 ImPlot::EndPlot();
             }
+            UI::heightGrip("##rtnGrip", ph, 160.0f, 1200.0f);
         }
 
     }
@@ -613,12 +714,13 @@ namespace Solvers::Charts {
     void renderPositioningTab(const PosTabView &v) {
         renderStatusAndEpochNav(v);
         renderRefECEFInput(v);
+        renderFilterDirection(v);
 
         ImGui::Separator();
 
         if (v.epochCount == 0) {
             if (!v.busy)
-                ImGui::TextDisabled("无解算历元（未解出任何历元，请检查观测文件与产品是否匹配）。");
+                ImGui::TextDisabled("无解算历元。");
             return;
         }
 

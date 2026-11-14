@@ -1,8 +1,8 @@
 #include "product/VMF3Reader.h"
 
-#include "Const.h"
+#include "core/Const.h"
 #include "MathUtils.h" // Math::lerp（时次一维混合）
-#include "TimeConvert.h"
+#include "TimeStruct.h"
 
 #include <algorithm>
 #include <fstream>
@@ -17,7 +17,7 @@ namespace {
         double sec = 0.0;
         if (std::istringstream is(line.substr(p + 6)); !(is >> y >> mo >> d >> hh >> mi >> sec)) return false;
         if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
-        const double jd = Time::YMDToJD({y, mo, d});
+        const double jd = YearMonthDay{y, mo, d}.toJD();
         mjd = jd - MJD_TO_JD + (hh + mi / 60.0 + sec / 3600.0) / 24.0;
         return std::isfinite(mjd);
     }

@@ -1,4 +1,5 @@
 #include "product/CLKReader.h"
+#include "TimeStruct.h"
 #include "MathUtils.h"
 #include <algorithm>
 #include <StringUtils.h>
@@ -9,6 +10,14 @@ bool CLKReader::read(const std::string &path) {
 }
 
 bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys) {
+    return read(path, allowedSys, false);
+}
+
+bool CLKReader::read(const std::string &path, bool append) {
+    return read(path, {}, append);
+}
+
+bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys, bool append) {
     bool headerEnd = false;
     std::map<SatID, std::vector<Record> > tmp;
 
@@ -16,7 +25,7 @@ bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys) 
     try {
         openFile(path);
     } catch (const FFStreamError &) {
-        return false;
+        return !data.empty();
     }
 
     std::string line;
@@ -44,29 +53,42 @@ bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys) 
 
         int y, mo, d, h, mi, nfields;
         double s, bias, drift = 0.0;
-        if (!Str::nextInt(p, qe, y) || !Str::nextInt(p, qe, mo) || !Str::nextInt(p, qe, d) ||
-            !Str::nextInt(p, qe, h) || !Str::nextInt(p, qe, mi) || !Str::nextDouble(p, qe, s) ||
-            !Str::nextInt(p, qe, nfields) || !Str::nextDouble(p, qe, bias))
+        if (!Str::next(p, qe, y) || !Str::next(p, qe, mo) || !Str::next(p, qe, d) ||
+            !Str::next(p, qe, h) || !Str::next(p, qe, mi) || !Str::next(p, qe, s) ||
+            !Str::next(p, qe, nfields) || !Str::next(p, qe, bias))
             continue;
-        (void) Str::nextDouble(p, qe, drift); // 漂移率可缺，缺了保持 0
+        (void) Str::next(p, qe, drift); // 漂移率可缺，缺了保持 0
 
         const CivilTime ct(y, mo, d, h, mi, s, TimeSystem::GPS);
-        const Record rec{Time::CivilToCommon(ct), bias, drift};
+        const Record rec{ct.toCommonTime(), bias, drift};
         tmp[sat].push_back(rec);
     }
-    if (tmp.empty()) return false;
+    // 一条都没解析出来：追加档保持原样算成功，整份重读档必须报失败，
+    // 否则换了文件却沿用上一份的内容，调用方看不出错。
+    if (tmp.empty()) return append && !data.empty();
+
+    if (append) {
+        for (auto &[sat, recs]: tmp) {
+            auto &dst = data[sat];
+            dst.insert(dst.end(), recs.begin(), recs.end());
+        }
+    } else {
+        relTimes.clear();
+        data = std::move(tmp);
+    }
 
     relTimes.clear();
-    for (const auto &[sat, recs]: tmp) {
+    for (auto &[sat, recs]: data) {
         std::vector<double> &rt = relTimes[sat];
         rt.reserve(recs.size());
         if (!recs.empty()) {
+            std::sort(recs.begin(), recs.end(),
+                      [](const Record &a, const Record &b) { return a.t < b.t; });
             const CommonTime t0 = recs[0].t;
             for (const auto &r: recs) rt.push_back(r.t - t0);
         }
     }
-    data = std::move(tmp);
-    return true;
+    return !data.empty();
 }
 
 double CLKReader::getClockBias(const SatID &sat, const CommonTime &t) const {
