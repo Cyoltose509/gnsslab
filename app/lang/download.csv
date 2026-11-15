@@ -95,7 +95,7 @@ dl.truth.no_sinex,没有获取到该日的 SINEX,No SINEX available for that day
 dl.truth.read_failed,读 {0} 失败：{1},Failed to read {0}: {1}
 dl.truth.read_failed_unknown,读 {0} 失败（未知异常）,Failed to read {0} (unknown exception)
 dl.truth.sinex_parse_failed,取回的 SINEX 片段解析失败：{0},Failed to parse the fetched SINEX fragment: {0}
-dl.truth.site_from_stream,已从 {0} 获取 {1} 站{{Coordinate}}（只读压缩流前 {2} KB）,Obtained {{Coordinate}} of station {1} from {0} (read only the first {2} KB of the compressed stream)
+dl.truth.site_from_stream,已从 {0} 获取 {1} 站{{Coordinate}},Obtained {{Coordinate}} of station {1} from {0}
 dl.truth.site_too_short,{{Site}}名不足 4 字符：{0},{{Site}} name shorter than 4 characters: {0}
 dl.truth.solution_stamp,（{0}:{1} 解）,(solution {0}:{1})
 dl.truth.tried_all,已试 {0} 个{{AnalysisCenter}}的 SINEX，都没有 {1} 站,Tried SINEX from {0} {{AnalysisCenter}}; none contains station {1}

@@ -302,7 +302,7 @@ namespace Download::Catalog {
                     SinexReader reader;
                     if (std::string err; reader.readString(text, err) && reader.hasStation(want))
                         if (block = stationEstimateBlock(text, want); !block.empty()) {
-                            detail = I18n::tr("dl.truth.site_from_stream", name, want, have >> 10);
+                            detail = I18n::tr("dl.truth.site_from_stream", name, want);
                             std::filesystem::remove(gz, ec);
                             return true;
                         }
