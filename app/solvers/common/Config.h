@@ -4,6 +4,7 @@
 #include <string>
 
 #include "SolverOptions.h"
+#include "i18n/I18n.h"
 
 namespace Solvers {
     enum class Mode { SPP, PPPStatic, PPPKinematic, LEO, RTK, INS };
@@ -66,13 +67,14 @@ namespace Solvers {
         }
     }
 
-    constexpr const char *filterLabel(const SolverOptions::FilterMode m) {
+    /// 档位显示名随语言变，因此不是 constexpr；表里只存档位，渲染时再取名字。
+    inline const char *filterLabel(const SolverOptions::FilterMode m) {
         using SM = SolverOptions::FilterMode;
         switch (m) {
-            case SM::LSQ: return "逐历元最小二乘";
-            case SM::Backward: return "后向滤波";
-            case SM::Both: return "前向 + 后向";
-            default: return "前向滤波";
+            case SM::LSQ: return I18n::trc("filter.lsq");
+            case SM::Backward: return I18n::trc("filter.backward");
+            case SM::Both: return I18n::trc("filter.forward_backward");
+            default: return I18n::trc("filter.forward");
         }
     }
 
@@ -87,14 +89,13 @@ namespace Solvers {
 
     struct FilterChoice {
         SolverOptions::FilterMode mode;
-        const char *label;
     };
 
     inline constexpr FilterChoice kFilterChoices[] = {
-        {SolverOptions::FilterMode::LSQ, filterLabel(SolverOptions::FilterMode::LSQ)},
-        {SolverOptions::FilterMode::Forward, filterLabel(SolverOptions::FilterMode::Forward)},
-        {SolverOptions::FilterMode::Backward, filterLabel(SolverOptions::FilterMode::Backward)},
-        {SolverOptions::FilterMode::Both, filterLabel(SolverOptions::FilterMode::Both)},
+        {SolverOptions::FilterMode::LSQ},
+        {SolverOptions::FilterMode::Forward},
+        {SolverOptions::FilterMode::Backward},
+        {SolverOptions::FilterMode::Both},
     };
 
     inline std::string sysSetToString(const std::set<char> &s) {

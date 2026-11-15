@@ -1,8 +1,7 @@
-#include "download/local/ProductMeta.h"
+#include "download/local/FileMeta.h"
 #include "FileUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "StringUtils.h"
-#include "util/Clock.h"
 
 #include <regex>
 #include <cstdio>
@@ -32,7 +31,7 @@ namespace {
         return letters.find(tok[2]) != std::string_view::npos;
     }
 
-    std::optional<ProductMeta> parseRINEX2ShortName(const std::string &filename) {
+    std::optional<FileMeta> parseRINEX2ShortName(const std::string &filename) {
         std::string base = File::baseName(filename);
         for (;;) {
             const std::string cut = stripArchiveSuffix(base);
@@ -64,7 +63,7 @@ namespace {
         else if (t == 'n' || t == 'g') type = ProductType::NAV;
         else return std::nullopt;
 
-        ProductMeta m;
+        FileMeta m;
         m.filename = filename;
         m.type = type;
         m.year = year;
@@ -74,7 +73,7 @@ namespace {
         return m;
     }
 
-    std::optional<ProductMeta> parseDorisSP3(const std::string &filename) {
+    std::optional<FileMeta> parseDorisSP3(const std::string &filename) {
         if (Str::toLower(filename).find(".sp3") == std::string::npos) return std::nullopt;
 
         static const std::regex re(R"(\.b(\d{2})(\d{3})\.e(\d{2})(\d{3})\.)");
@@ -92,7 +91,7 @@ namespace {
         const long end = YearMonthDay{endYear, 1, 1}.toDays() + endDoy - 1;
         if (end < start) return std::nullopt;
 
-        ProductMeta m;
+        FileMeta m;
         m.filename = filename;
         m.type = ProductType::LEO_SP3;
         m.year = year;
@@ -122,8 +121,8 @@ namespace {
     }
 }
 
-std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
-    ProductMeta m;
+std::optional<FileMeta> FileMeta::parse(const std::string &filename) {
+    FileMeta m;
     m.filename = filename;
 
     if (const std::string lowAll = Str::toLower(filename); lowAll.find("vmf") != std::string::npos) {
@@ -245,12 +244,12 @@ std::optional<ProductMeta> ProductMeta::parse(const std::string &filename) {
     return m;
 }
 
-std::optional<ProductMeta> ProductMeta::parseInDir(const std::string &filename, const ProductType dirType,
+std::optional<FileMeta> FileMeta::parseInDir(const std::string &filename, const ProductType dirType,
                                                    const int dateYear, const int dateDoy) {
     if (dirType == ProductType::Unknown) return parse(filename);
     if (!acceptsAs(dirType, filename)) return std::nullopt;
 
-    ProductMeta m = parse(filename).value_or(ProductMeta{});
+    FileMeta m = parse(filename).value_or(FileMeta{});
     m.filename = filename;
     m.type = dirType;
     if (m.spanDays > 1 && !m.covers(dateYear, dateDoy)) return std::nullopt;
@@ -263,156 +262,14 @@ std::optional<ProductMeta> ProductMeta::parseInDir(const std::string &filename, 
     return m;
 }
 
-std::string ProductMeta::typeDir(const ProductType t) {
-    switch (t) {
-        case ProductType::NAV: return "nav";
-        case ProductType::ORB: return "sp3";
-        case ProductType::CLK: return "clk";
-        case ProductType::ERP: return "erp";
-        case ProductType::ION: return "ionex";
-        case ProductType::TRO: return "tro";
-        case ProductType::OSB: return "osb";
-        case ProductType::VMF: return "vmf";
-        case ProductType::ATT: return "att";
-        case ProductType::OBS: return "rinex";
-        case ProductType::LEO_OBS: return "leo_obs";
-        case ProductType::LEO_SP3: return "leo_sp3";
-        case ProductType::SNX: return "ref_truth/snx";
-        default: return "other";
-    }
-}
-
-ProductType ProductMeta::typeFromDir(const std::string &dir) {
-    for (int i = 0; i < kStoredTypeCount; ++i) {
-        if (const auto t = static_cast<ProductType>(i); dir == typeDir(t)) return t;
-    }
-    return ProductType::Unknown;
-}
-
-ProductType ProductMeta::typeFromIniKey(const std::string &iniKey) {
-    const std::string s = Str::toLower(iniKey);
-    if (s.find("sp3") != std::string::npos) return ProductType::ORB;
-    if (s.find("clk") != std::string::npos) return ProductType::CLK;
-    if (s.find("erp") != std::string::npos) return ProductType::ERP;
-    if (s.find("ionex") != std::string::npos ||
-        s.find("ion") != std::string::npos)
-        return ProductType::ION;
-    if (s.find("tro") != std::string::npos) return ProductType::TRO;
-    if (s.find("osb") != std::string::npos ||
-        s.find("bia") != std::string::npos)
-        return ProductType::OSB;
-    if (s.find("brdc") != std::string::npos ||
-        s.find("nav") != std::string::npos)
-        return ProductType::NAV;
-    return ProductType::Unknown;
-}
-
-std::string ProductMeta::doyToDateStr(const int year, const int doy) {
-    const auto ymd = YearMonthDay::fromDOY(year, doy);
-    if (!ymd) return "";
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", ymd->year, ymd->month, ymd->day);
-    return buf;
-}
-
-std::optional<ObsDate> ProductMeta::parseObsDate(const std::string &obsPath) {
-    std::string f = Str::stripSuffixIC(File::baseName(obsPath), ".gz");
-    if (f.empty()) return std::nullopt;
-
-    // 1) RINEX3 长名：_YYYYDDDHHMM_
-    static const std::regex re3(R"(_(\d{4})(\d{3})\d{4}_)");
-    if (std::smatch m; std::regex_search(f, m, re3)) {
-        const int year = Str::toInt(m[1].str());
-        const int doy = Str::toInt(m[2].str());
-        return ObsDate{year, doy, GPSWeek(year, doy), 0.0, ObsDateFrom::Name};
-    }
-
-    if (f.rfind("merged_", 0) == 0) {
-        static const std::regex reMerged(R"(_(\d{4})_(\d{3})(?:\.|$))");
-        if (std::smatch m; std::regex_search(f, m, reMerged)) {
-            const int year = Str::toInt(m[1].str());
-            const int doy = Str::toInt(m[2].str());
-            if (year >= 1980 && doy >= 1 && doy <= 366)
-                return ObsDate{year, doy, GPSWeek(year, doy), 0.0, ObsDateFrom::Name};
-        }
-    }
-
-    // RINEX2 短名：ssssDDD0.YYO
-    if (const auto dot = f.find_last_of('.'); dot != std::string::npos && dot + 3 <= f.size()) {
-        if (const std::string suf = f.substr(dot + 1); suf.size() >= 3 &&
-                                                       std::isdigit(static_cast<unsigned char>(suf[0])) &&
-                                                       std::isdigit(static_cast<unsigned char>(suf[1])) &&
-                                                       std::isalpha(static_cast<unsigned char>(suf[2]))) {
-            const int yy = Str::toInt(suf.substr(0, 2));
-            const int year = yy < 80 ? 2000 + yy : 1900 + yy;
-            const std::string base = f.substr(0, dot);
-            for (const std::size_t back: {static_cast<std::size_t>(4), static_cast<std::size_t>(3)}) {
-                if (base.size() < back) continue;
-                if (const std::string d3 = base.substr(base.size() - back, 3); std::all_of(d3.begin(), d3.end(),
-                                                                                           [](const unsigned char c) {
-                                                                                               return std::isdigit(c);
-                                                                                           })) {
-                    if (const int doy = Str::toInt(d3); doy >= 1 && doy <= 366)
-                        return ObsDate{year, doy, GPSWeek(year, doy), 0.0, ObsDateFrom::Name};
-                }
-            }
-        }
-    }
-
-    // 路径里任意位置的 YYYYMMDD（观测目录常按年月日分层）
-    static const std::regex reDate(R"((\d{8}))");
-    for (auto it = std::sregex_iterator(obsPath.begin(), obsPath.end(), reDate);
-         it != std::sregex_iterator(); ++it) {
-        const std::string s = (*it)[1].str();
-        const int y = Str::toInt(s.substr(0, 4));
-        const int mo = Str::toInt(s.substr(4, 2));
-        const int da = Str::toInt(s.substr(6, 2));
-        if (const int doy = YearMonthDay{y, mo, da}.toDOY(); y >= 1980 && doy > 0)
-            return ObsDate{y, doy, GPSWeek(y, doy), 0.0, ObsDateFrom::Name};
-    }
-
-    // 名字里认不出日期：读文件内容（头里的 TIME OF FIRST OBS → 首历元），GPS 周也一并拿到
-    if (Observer::ObsDate d; Observer::probeObsDate(obsPath, d))
-        return ObsDate{d.year, d.doy, d.week > 0 ? d.week : GPSWeek(d.year, d.doy), d.sow, d.from};
-
-    // 兜底：下载库目录 <类型>/<年>/<年积日>。
-    static const std::regex reStore(R"((?:^|[\\/])([A-Za-z_]+)[\\/](\d{4})[\\/](\d{3})[\\/])");
-    if (std::smatch m; std::regex_search(obsPath, m, reStore) &&
-                       typeFromDir(m[1].str()) != ProductType::Unknown) {
-        const int y = Str::toInt(m[2].str());
-        const int d = Str::toInt(m[3].str());
-        if (y >= 1980 && d >= 1 && d <= 366)
-            return ObsDate{y, d, GPSWeek(y, d), 0.0, ObsDateFrom::Name};
-    }
-    return std::nullopt;
-}
-
-ObsDate ProductMeta::defaultObsDate() {
-    // 默认取昨天：产品当天多半还没发全
-    const std::tm tm = Clock::localTime(Clock::wallNow() - Clock::hours(24));
-    const int year = tm.tm_year + 1900;
-    const int doy = YearMonthDay{year, tm.tm_mon + 1, tm.tm_mday}.toDOY();
-    return ObsDate{year, doy > 0 ? doy : 1, GPSWeek(year, doy > 0 ? doy : 1), 0.0, ObsDateFrom::Name};
-}
-
-
-int ProductMeta::GPSWeek(const int year, const int doy) {
-    if (doy < 1 || doy > 366) return 0;
-
-
-    const long days = YearMonthDay{year, 1, 1}.toDays() + doy - 1 - YearMonthDay{1980, 1, 6}.toDays();
-    if (days < 0) return 0;
-    return static_cast<int>(days / 7);
-}
-
-bool ProductMeta::covers(const int _year, const int _doy) const {
-    if (this->year < 1980 || this->doy < 1 || this->spanDays < 1) return false;
-    const long start = YearMonthDay{this->year, 1, 1}.toDays() + this->doy - 1;
-    const long day = YearMonthDay{_year, 1, 1}.toDays() + _doy - 1;
+bool FileMeta::covers(const int y, const int d) const {
+    if (year < 1980 || doy < 1 || spanDays < 1) return false;
+    const long start = YearMonthDay{year, 1, 1}.toDays() + doy - 1;
+    const long day = YearMonthDay{y, 1, 1}.toDays() + d - 1;
     return day >= start && day <= start + spanDays - 1;
 }
 
-std::string ProductMeta::productLineOf(const std::string &filename) {
+std::string FileMeta::productLineOf(const std::string &filename) {
     const std::string name = Str::toUpper(Str::stripSuffixIC(File::baseName(filename), ".gz"));
     if (name.size() < 9 || name[3] != '0') return {};
     const std::string center = Str::leadingAlpha(name);

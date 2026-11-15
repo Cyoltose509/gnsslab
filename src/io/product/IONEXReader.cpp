@@ -5,7 +5,7 @@
 #include <sstream>
 #include "MathUtils.h"
 #include "core/Const.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 namespace {
     constexpr int IONEX_FIELD_WIDTH = 5;

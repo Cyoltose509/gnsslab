@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "download/remote/Fetcher.h"
+#include "i18n/I18n.h"
 
 namespace Download::Widgets {
     void dateRow(int &year, int &month, int &day, const char *id, const char *quickLabel,
@@ -53,7 +54,7 @@ namespace Download::Widgets {
         std::function<void(const Fetcher::Match &, const std::string &local)> onClick;
 
         std::function<std::string(bool selected)> localHint =
-            [](bool) { return std::string("（点击可重新下载 · 右键管理）"); };
+            [](bool) { return I18n::tr("dl.ui.hint.redownload"); };
     };
 
     struct ListResult {

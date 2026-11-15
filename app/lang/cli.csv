@@ -1,0 +1,52 @@
+key,ZH-CN,EN
+cli.args.extra,只接受一个 ini 路径，多余参数: {0},Only one ini path is accepted; extra argument: {0}
+cli.args.unused_fetch,警告: --{0} 没有被读取（拼写错误，或本次用不到）,"Warning: --{0} was not read (typo, or not needed this run)"
+cli.args.unused_solver,警告: --{0} 没有被读取（拼写错误，或当前模式不用它）,"Warning: --{0} was not read (typo, or unused by this mode)"
+cli.export.done,已写入 {0}（{1}，解算 {2} {{Epoch}}）,"Wrote {0} ({1}, {2} {{Epoch}} solved)"
+cli.fetch.anonymous,（匿名）,(anonymous)
+cli.fetch.auth.gui,GUI 本地记录,GUI local record
+cli.fetch.auth_from,Earthdata 账号来自 {0}{1},Earthdata account from {0}{1}
+cli.fetch.auth_hint,提示: CDDIS / Earthdata 源需要账号，[earthdata] user / pass 与 GUI 本地记录都没填全，相关源会失败,"Hint: CDDIS / Earthdata sources need an account; [earthdata] user / pass and the GUI local record are both incomplete, so those sources will fail"
+cli.fetch.bad_date,日期 {0} 不认识（YYYY-DDD 或 YYYY-DDD..DDD），跳过,"Date {0} not recognised (YYYY-DDD or YYYY-DDD..DDD), skipped"
+cli.fetch.bad_sat,{{Satellite}}名 {0} 不认识（S6A | S6B | Swarm A/B/C | COSMIC-2 | GRACE-FO）,{{Satellite}} name {0} not recognised (S6A | S6B | Swarm A/B/C | COSMIC-2 | GRACE-FO)
+cli.fetch.bad_type,类型 {0} 不认识（nav sp3 clk erp ionex tro osb vmf att obs leo_obs leo_sp3 snx）,Type {0} not recognised (nav sp3 clk erp ionex tro osb vmf att obs leo_obs leo_sp3 snx)
+cli.fetch.cached,（本地{{Cache}}）,(local {{Cache}})
+cli.fetch.downloading,正在{{Download}} {0},{{Download}}ing {0}
+cli.fetch.err_suffix,；{0},; {0}
+cli.fetch.failed,获取失败 {0}：{1},Fetch failed {0}: {1}
+cli.fetch.fetching_sinex,正在获取 {0} 的 SINEX,Fetching SINEX for {0}
+cli.fetch.match_suffix,（match ={0}）, (match ={0})
+cli.fetch.no_date,没有可用的日期（[fetch] date 或 --date，写 YYYY-DDD）,"No usable date ([fetch] date or --date, write YYYY-DDD)"
+cli.fetch.no_dc,{0} {1}-{2}：没有命中指定数据中心的源,{0} {1}-{2}: no source matches the requested data centre
+cli.fetch.no_match,{0} {1}-{2}：源里没有匹配的文件,{0} {1}-{2}: no matching file in the source
+cli.fetch.no_mission,{0} {1}-{2}：源表里没有 {3},{0} {1}-{2}: source table has no {3}
+cli.fetch.no_mission_sat,{0} {1}-{2}：源表里没有 {3} 的{{Satellite}},{0} {1}-{2}: source table has no {3} {{Satellite}}
+cli.fetch.no_source,{0} {1}-{2}：没有可用数据源,{0} {1}-{2}: no available data source
+cli.fetch.no_type,没有给出要下的类型（[fetch] type 或 --type，如 sp3 / obs / leo_sp3）,"No product type given ([fetch] type or --type, e.g. sp3 / obs / leo_sp3)"
+cli.fetch.paused,已暂停 {0},Paused {0}
+cli.fetch.site_failed,{0} {1}-{2}：{3},{0} {1}-{2}: {3}
+cli.fetch.site_ok,{0} {1}-{2} {{Coordinate}} ({3}){4}  {5},{0} {1}-{2} {{Coordinate}} ({3}){4}  {5}
+cli.fetch.summary,完成，成功 {0} 项,"Done, {0} succeeded"
+cli.fetch.update_failed,失败：{0},Failed: {0}
+cli.fetch.updating,更新 {0} …,Updating {0} …
+cli.fields.unknown,{0} 里的 {1} 不是已知字段，忽略,"{0}: unknown field {1}, ignored"
+cli.format.unknown,[output] format = {0} 不认识（csv|pos|sp3|orb|traj|kml|sbet），按 csv 导出,[output] format = {0} not recognised (csv|pos|sp3|orb|traj|kml|sbet); exporting csv
+cli.format.unsupported,{0} 不支持 {1} 导出，按 csv 导出,{0} cannot export {1}; exporting csv
+cli.ini.unreadable,无法读取 ini: {0},Cannot read ini: {0}
+cli.lang.unknown,语言码 {0} 不认识，按默认语言继续,Unknown language code {0}; continuing with the default
+cli.mode.unknown,[solver] mode = {0} 不认识（spp | ppp_static | ppp_kin | rtk | leo | ins）,[solver] mode = {0} not recognised (spp | ppp_static | ppp_kin | rtk | leo | ins)
+cli.pos_form.unknown,[output] pos_form = {0} 不认识（blh|ecef|enu），按 blh 写,[output] pos_form = {0} not recognised (blh|ecef|enu); writing blh
+cli.ref.file_missing,[ref] 文件不存在: {0}，本趟按无参考{{Truth}}解,[ref] file not found: {0}; solving without a reference {{Truth}}
+cli.ref.file_no_sp3,[ref] form = file 但 sp3 为空，本趟不做参考对比（x/y/z 一并忽略）,[ref] form = file but sp3 is empty; no reference comparison this run (x/y/z ignored too)
+cli.ref.file_text,文件 {0},File {0}
+cli.ref.fixed_no_xyz,[ref] form = fixed 但 x/y/z 全 0，本趟不做参考对比,[ref] form = fixed but x/y/z are all zero; no reference comparison this run
+cli.ref.fixed_text,"恒值 ({0}, {1}, {2})","Fixed ({0}, {1}, {2})"
+cli.ref.form_unknown,[ref] form = {0} 不认识（auto | fixed | file），按 auto,[ref] form = {0} not recognised (auto | fixed | file); using auto
+cli.ref.line,参考{{Truth}}={0},Reference {{Truth}}={0}
+cli.ref.no_file,{0} 不接参考{{Truth}}文件，[ref] sp3 被忽略,{0} takes no reference {{Truth}} file; [ref] sp3 ignored
+cli.ref.no_fixed,{0} 不接恒值参考{{Truth}}，[ref] x/y/z 被忽略,{0} takes no fixed reference {{Truth}}; [ref] x/y/z ignored
+cli.ref.no_fixed_hint,（动态{{Deviation}}请给 sp3）, (give sp3 for a kinematic {{Deviation}})
+cli.ref.none_text,无（只解算，不出{{Deviation}}）,"None (solve only, no {{Deviation}})"
+cli.sp3_sat.bad,[output] sp3_sat = {0} 不是 3 字符（SP3 的{{Satellite}}号占 3 列），按 L01 写,[output] sp3_sat = {0} is not 3 characters (SP3 {{Satellite}} ids take 3 columns); writing L01
+cli.summary.no_nav,(无),(none)
+cli.task.error,错误: {0},Error: {0}

@@ -141,7 +141,7 @@ namespace QC {
         /// 清空状态；nominalInterval <= 0 时用首个采样间隔自推。
         void reset(double nominalInterval = 0.0);
 
-        void feed(const QCObsEpoch &epoch);
+        void feed(const QCObsEpoch &epoch) const;
 
         /// 结算尾部未定型历元；文件读完、实时结束时调用一次。
         void finish();

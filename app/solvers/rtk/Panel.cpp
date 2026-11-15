@@ -16,11 +16,13 @@
 #include "solvers/view/GuiProductSection.h"
 #include "solvers/view/GuiRefTruth.h"
 #include "ui/FileDialog.h"
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace Solvers::RTK {
     namespace {
         void renderBaseCoordInput(Task *task) {
-            ImGui::Checkbox("手动指定基站坐标 (ECEF/m)", &task->useBaseCoord);
+            ImGui::Checkbox(I18n::trc("rtk.manual_base"), &task->useBaseCoord);
             if (!task->useBaseCoord) return;
             ImGui::PushItemWidth(200);
             ImGui::InputDouble("X##rtk_base_x", &task->baseXyz.x());
@@ -89,17 +91,17 @@ namespace Solvers::RTK {
                 self->applyObsPath(self->view.obsPathBuf);
                 self->fileName = File::baseName(self->view.obsPathBuf) + " / "
                                 + File::baseName(self->baseObsPathBuf);
-                LOG_INFO << "[RTK] 开始解算: 基准=" << self->baseObsPathBuf
-                        << ", 流动站=" << self->view.obsPathBuf;
+                LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start_file", self->baseObsPathBuf,
+                                                                self->view.obsPathBuf);
                 self->startFile();
             }
         };
         const auto fileTab = [self] {
-            Helpers::fileRow("基准站观测文件", &self->baseObsPathBuf, "rtk_base", FileDialog::fObs, 3,
+            Helpers::fileRow(I18n::trc("rtk.base_obs_file"), &self->baseObsPathBuf, "rtk_base", FileDialog::fObs(),
                              {}, "rtk_base", &self->navPathBuf);
-            Helpers::fileRow("流动站观测文件", &self->view.obsPathBuf, "rtk_rover", FileDialog::fObs, 3,
+            Helpers::fileRow(I18n::trc("rtk.rover_obs_file"), &self->view.obsPathBuf, "rtk_rover", FileDialog::fObs(),
                              {}, "rtk_rover", &self->navPathBuf);
-            Helpers::fileRow("广播星历 BRDC", &self->navPathBuf, "rtk_nav", FileDialog::fRnx, 2, {}, "rtk_rover");
+            Helpers::fileRow(I18n::trc("BroadcastEphemeris"), &self->navPathBuf, "rtk_nav", FileDialog::fRnx(), {}, "rtk_rover");
             ImGui::Separator();
             renderBaseCoordInput(self);
             ImGui::Separator();
@@ -107,7 +109,7 @@ namespace Solvers::RTK {
         };
         const auto realtimeTab = [self] {
             const auto &cfg = AppConfig::PathMemory::instance();
-            self->renderRealtimeConfig({"基准站", "流动站"},
+            self->renderRealtimeConfig({I18n::tr("BaseStation"), I18n::tr("Rover")},
                 [self, &cfg] {
                     const std::string &bip = self->rtEndpoints[0].ip;
                     const std::string &bport = self->rtEndpoints[0].port;
@@ -124,13 +126,13 @@ namespace Solvers::RTK {
                     self->mode = Mode::RTK;
                     self->fileName = bip + ":" + bport + " / " + rip + ":" + rport;
                     self->filePath = self->fileName;
-                    LOG_INFO << "[RTK] 开始实时解算: base=" << bip << ":" << bport
-                            << ", rover=" << rip << ":" << rport;
+                    LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start_rt", bip + ":" + bport,
+                                                                  rip + ":" + rport);
 
                     self->startRealtime();
                 },
                 [self] { renderBaseCoordInput(self); });
         };
-        self->renderConfigTabs("RTK 处理配置###rtk_cfg_", fileTab, onStart, realtimeTab);
+        self->renderConfigTabs(UI::idLabel("rtk.cfg_tab", "###rtk_cfg_"), fileTab, onStart, realtimeTab);
     }
 }

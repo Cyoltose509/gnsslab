@@ -4,13 +4,15 @@
 
 #include "Log.h"
 #include "core/PathMemory.h"
-#include "io/Products.h"
+#include "io/ProductPaths.h"
 #include "imgui.h"
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiParamPage.h"
 #include "solvers/view/GuiProductSection.h"
 #include "solvers/view/GuiRefTruth.h"
 #include "ui/FileDialog.h"
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace Solvers::PPPKinematic {
     void Task::loadFromMemory() {
@@ -18,26 +20,26 @@ namespace Solvers::PPPKinematic {
         view.obsPathBuf = pm.get("ppp_kin_obs");
         Helpers::loadSolverParams(Mode::PPPKinematic, opts);
         RefTruth::restore(this);
-        AppConfig::Products::of(modeKey(Mode::PPPKinematic)).load();
+        AppConfig::ProductPaths::of(modeKey(Mode::PPPKinematic)).load();
     }
 
     void Task::renderConfigPanel() {
         auto *self = this;
-        auto &prod = AppConfig::Products::of(modeKey(Mode::PPPKinematic));
+        auto &prod = AppConfig::ProductPaths::of(modeKey(Mode::PPPKinematic));
         const auto onStart = [self] {
             self->renderFileStart("ppp_kin_obs", true,
                 [self] { RefTruth::persist(self); }, [self] {
-                    LOG_INFO << "[PPP (动态)] 开始解算: 观测=" << self->view.obsPathBuf
-                            << ", 格式=" << Observer::formatName(self->obsFormat);
+                    LOG_INFO << "[PPPKinematic] " << I18n::tr("log.start2", self->view.obsPathBuf,
+                                                                      Observer::formatName(self->obsFormat));
                 });
         };
         const auto fileTab = [self, &prod] {
-            Helpers::fileRow("观测文件", &self->view.obsPathBuf, "ppp_kin_obs",
-                             FileDialog::fObs, 3, {}, "ppp_kin_obs", &prod.brdc);
+            Helpers::fileRow(I18n::trc("ObservationFile"), &self->view.obsPathBuf, "ppp_kin_obs",
+                             FileDialog::fObs(), {}, "ppp_kin_obs", &prod.nav);
             Helpers::renderProductSection(prod, "ppp_kin_obs", true);
             ImGui::Separator();
             RefTruth::renderRefTruthSection(self);
         };
-        self->renderConfigTabs("PPP (动态) 处理配置###ppp_kin_cfg_", fileTab, onStart);
+        self->renderConfigTabs(UI::idLabel("ppp.cfg_tab_kinematic", "###ppp_kin_cfg_"), fileTab, onStart);
     }
 }

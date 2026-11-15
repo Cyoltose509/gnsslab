@@ -7,81 +7,29 @@ class SolverKalman {
 public:
     SolverKalman() = default;
 
-    SolverKalman(const Eigen::VectorXd &initialState,
-                 const Eigen::MatrixXd &initialErrorCovariance)
-            : xhat(initialState), P(initialErrorCovariance) {
-        xhatminus = Eigen::VectorXd::Zero(initialState.size());
-        Pminus = Eigen::MatrixXd::Zero(initialErrorCovariance.rows(), initialErrorCovariance.cols());
+    SolverKalman(const Eigen::VectorXd &X0,
+                 const Eigen::MatrixXd &Dx0)
+            : Xhat(X0), Dx(Dx0) {
+        Xminus = Eigen::VectorXd::Zero(X0.size());
+        Dp = Eigen::MatrixXd::Zero(Dx0.rows(), Dx0.cols());
     }
 
-    virtual void reset(const Eigen::VectorXd &initialState,
-                 const Eigen::MatrixXd &initialErrorCovariance);
+    void reset(const Eigen::VectorXd &X0, const Eigen::MatrixXd &Dx0);
 
-    virtual int compute(const Eigen::MatrixXd &phiMatrix,
-                        const Eigen::MatrixXd &qMatrix,
-                        const Eigen::VectorXd &mVector,
-                        const Eigen::MatrixXd &hMatrix,
-                        const Eigen::MatrixXd &wMatrix) ;
+    int predict(const Eigen::MatrixXd &Phi, const Eigen::MatrixXd &Dw);
 
-    virtual int timeUpdate(const Eigen::MatrixXd &phiMatrix,
-                           const Eigen::MatrixXd &qMatrix)  {
-        return predict(phiMatrix, xhat, qMatrix);
-    }
+    int predict(const Eigen::MatrixXd &Phi,
+                const Eigen::MatrixXd &B,
+                const Eigen::VectorXd &U,
+                const Eigen::MatrixXd &Dw);
 
-    virtual int measUpdate(const Eigen::VectorXd &mVector,
-                           const Eigen::MatrixXd &hMatrix,
-                           const Eigen::MatrixXd &wMatrix)  {
-        return correct(mVector, hMatrix, wMatrix);
-    }
+    int correct(const Eigen::VectorXd &Z,
+                const Eigen::MatrixXd &H,
+                const Eigen::MatrixXd &W);
 
-    virtual int measUpdate(const Eigen::VectorXd &mVector,
-                           const Eigen::MatrixXd &hMatrix,
-                           const Eigen::MatrixXd &wMatrix,
-                           const Eigen::VectorXd &mVectorAug,
-                           const Eigen::MatrixXd &hMatrixAug,
-                           const Eigen::MatrixXd &wMatrixAug)  {
-        const int numMeas = static_cast<int>(mVector.size());
-        const int numUnks = static_cast<int>(hMatrix.cols());
-        const int numAug = static_cast<int>(mVectorAug.size());
-        const int numMeasExt = numMeas + numAug;
-
-        Eigen::VectorXd mVectorExt = Eigen::VectorXd::Zero(numMeasExt);
-        mVectorExt.head(numMeas) = mVector;
-        mVectorExt.tail(numAug) = mVectorAug;
-
-        Eigen::MatrixXd hMatrixExt = Eigen::MatrixXd::Zero(numMeasExt, numUnks);
-        hMatrixExt.block(0, 0, numMeas, numUnks) = hMatrix;
-        hMatrixExt.block(numMeas, 0, numAug, numUnks) = hMatrixAug;
-
-        Eigen::MatrixXd wMatrixExt = Eigen::MatrixXd::Zero(numMeasExt, numMeasExt);
-        wMatrixExt.block(0, 0, numMeas, numMeas) = wMatrix;
-        wMatrixExt.block(numMeas, numMeas, numAug, numAug) = wMatrixAug;
-
-        return correct(mVectorExt, hMatrixExt, wMatrixExt);
-    }
-
-    virtual ~SolverKalman() = default;
-
-    Eigen::VectorXd xhat;
-    Eigen::MatrixXd P;
-    Eigen::VectorXd xhatminus;
-    Eigen::MatrixXd Pminus;
+    Eigen::VectorXd Xhat;
+    Eigen::MatrixXd Dx;
+    Eigen::VectorXd Xminus;
+    Eigen::MatrixXd Dp;
     Eigen::VectorXd postfitResidual;
-
-private:
-    virtual int predict(const Eigen::MatrixXd &phiMatrix,
-                        const Eigen::VectorXd &previousState,
-                        const Eigen::MatrixXd &qMatrix) ;
-
-    virtual int predict(const Eigen::MatrixXd &phiMatrix,
-                        const Eigen::VectorXd &previousState,
-                        const Eigen::MatrixXd &controlMatrix,
-                        const Eigen::VectorXd &controlInput,
-                        const Eigen::MatrixXd &qMatrix) ;
-
-    virtual int correct(const Eigen::VectorXd &mVector,
-                        const Eigen::MatrixXd &hMatrix,
-                        const Eigen::MatrixXd &wMatrix) ;
 };
-
-

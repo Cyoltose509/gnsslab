@@ -9,8 +9,8 @@
 namespace Download {
     /// 版本型产品
     struct VersionedProduct {
-        const char *id;       // 稳定标识
-        const char *label;    // 界面显示名
+        const char *id;       // 稳定标识，同时是 auxdata/ 下的目录名
+        ProductType type;     // 产品身份：界面名与日志名都取 typeLabel(type)
         const char *indexUrl; // 远端目录
         const char *pattern;  // 在索引正文中匹配文件名的正则，第 1 组为版本号
         const char *fallback; // 正则无命中时的固定文件名

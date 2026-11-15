@@ -14,9 +14,11 @@
 #include "io/Observer.h"
 #include "rinex/RINEXNavStore.h"
 #include "product/sp3/Reader.h"
-#include "io/ProductLoad.h"
+#include "io/ProductPaths.h"
+#include "io/ProductReader.h"
 #include "solvers/common/Realtime.h"
 #include "util/CSV.h"
+#include "i18n/I18n.h"
 
 namespace Solvers {
     namespace {
@@ -77,7 +79,35 @@ namespace Solvers {
     }
 
     std::string Task::navPath() const {
-        return ProductLoad::resolve(opts, modeKey(mode)).paths.brdc;
+        return AppConfig::ProductPaths::of(modeKey(mode)).resolved(opts).nav;
+    }
+
+    ProductReader::Loaded Task::productsFor(const AppConfig::ProductPaths &d, const std::string &tag,
+                                            const std::set<char> &systems,
+                                            const std::vector<ProductType> &wanted) {
+        const auto &pa = d;
+        std::string key = tag + '|' + filePath;
+        for (const std::string *s: {&pa.nav, &pa.sp3, &pa.clk, &pa.osb, &pa.att, &pa.erp, &pa.atx,
+                                    &pa.tro, &pa.ion, &pa.vmf, &pa.gpt3}) {
+            key += '|';
+            key += *s;
+        }
+        for (const char c: systems) key += c;
+        key += '|';
+        for (const auto id: wanted) key += std::to_string(static_cast<int>(id)) + ',';
+        if (!prodCache || key != prodCacheKey) {
+            const auto loaded = ProductReader::load(d, tag, systems, wanted);
+            prodCache = loaded.prod;
+            prodCacheReadOk = loaded.readOk;
+            prodCacheKey = key;
+        }
+        return {prodCache, prodCacheReadOk};
+    }
+
+    bool Task::requireOrbit(const std::string &sp3, const std::string &brdc) {
+        if (!sp3.empty() || !brdc.empty()) return true;
+        setError(I18n::tr("pl.err.no_orbit"));
+        return false;
     }
 
     int Task::readObsToQueue() {
@@ -100,10 +130,9 @@ namespace Solvers {
             return failRead(std::string(src.formatName()) + " parse err: " + e.what());
         }
         if (src.hitEpochLimit())
-            LOG_WARN << src.formatName() << " 历元数触及上限，后续历元未读取: " << filePath;
+            LOG_WARN << src.formatName() << I18n::tr("task.log.epoch_limit", filePath);
         if (ok == 0)
-            setError(std::string(src.formatName()) + " 无历元: " + filePath +
-                     "（文件是否被取消/解压失败/选错文件？）");
+            setError(I18n::tr("task.err.no_epoch", src.formatName(), filePath));
         // 只置位不清零：BRDC 可能已由 initSolver 装进求解器，本文件 0 历元不代表没有星历
         if (src.carriesEph() && ok > 0) hasNav = true;
         finishRead();
@@ -180,18 +209,18 @@ namespace Solvers {
 
     void Task::readBody() {
         try {
-            LOG_INFO << modeLabel(mode) << " 读取文件: " << filePath;
+            LOG_INFO << modeLabel(mode) << I18n::tr("task.log.reading", filePath);
             if (readObsToQueue() >= 0) view.endQCInput();
         } catch (const std::exception &e) {
             failRead(e.what());
         } catch (...) {
-            failRead("读取发生未知异常");
+            failRead(I18n::trc("task.err.read_unknown"));
         }
         loading = false;
     }
 
     void Task::solveBody() {
-        setError("任务未实现文件解算");
+        setError(I18n::trc("task.err.not_implemented"));
         finishSolving();
     }
 
@@ -305,13 +334,14 @@ namespace Solvers {
         if (!ep.solved) return;
 
         const Result &res = ep.sppResult;
-        const Eigen::Vector3d ref = exportRef(ep);
+        const Eigen::Vector3d ref = ep.refECEF;
+        const bool hasRef = ref.squaredNorm() > 1.0;
         const Eigen::Vector3d xyz = res.xyz;
         const Eigen::Vector3d xyzFloat = res.xyzFloat.squaredNorm() > 1.0e12 ? res.xyzFloat : xyz;
         row.set(F::X, xyz.x());
         row.set(F::Y, xyz.y());
         row.set(F::Z, xyz.z());
-        if (ref.squaredNorm() > 1.0) {
+        if (hasRef) {
             row.set(F::RefX, ref.x());
             row.set(F::RefY, ref.y());
             row.set(F::RefZ, ref.z());
@@ -344,7 +374,7 @@ namespace Solvers {
         row.set(F::Xf, xyzFloat.x());
         row.set(F::Yf, xyzFloat.y());
         row.set(F::Zf, xyzFloat.z());
-        if (ref.squaredNorm() > 1.0) {
+        if (hasRef) {
             const ENU enu = Coord::XYZToENU(xyzFloat, ref);
             row.set(F::Ef, enu.E());
             row.set(F::Nf, enu.N());
@@ -355,7 +385,7 @@ namespace Solvers {
             row.set(F::Xk, res.xyzFixed.x());
             row.set(F::Yk, res.xyzFixed.y());
             row.set(F::Zk, res.xyzFixed.z());
-            if (ref.squaredNorm() > 1.0) {
+            if (hasRef) {
                 const ENU enu = Coord::XYZToENU(res.xyzFixed, ref);
                 row.set(F::Ek, enu.E());
                 row.set(F::Nk, enu.N());
@@ -379,8 +409,6 @@ namespace Solvers {
         row.set(F::SigmaV, res.sigmaV);
         row.set(F::Sats, ep.numSatsResult > 0 ? ep.numSatsResult : res.numSats);
         row.set(F::Ratio, ep.rtkRatio > 0.0 ? ep.rtkRatio : res.ratio);
-        // 逐轴标准差（滤波协方差的 ECEF 三轴转到站心）：任何模式的 CSV 列表都不列它，
-        // 只作为内部通道喂 .pos 的 sdn/sde/sdu；缺轴用 sigmaP 均分兜底。
         {
             const double fallback = res.sigmaP > 0.0 ? res.sigmaP / std::sqrt(3.0) : 0.0;
             double se = 0.0, sn = 0.0, su = 0.0;
@@ -395,70 +423,57 @@ namespace Solvers {
             row.set(F::SigmaN, sn > 0.0 ? sn : fallback);
             row.set(F::SigmaU, su > 0.0 ? su : fallback);
         }
-        if (ep.refECEF.squaredNorm() > 1.0) {
+        if (hasRef) {
             row.set(F::R, ep.rtnR);
             row.set(F::T, ep.rtnT);
             row.set(F::Nrtn, ep.rtnN);
         }
     }
 
-    Eigen::Vector3d Task::exportRef(const Epoch &ep) const {
-        // 只有挂真值时 applyTruthAtEpoch 才会写 Epoch::refECEF；成员 refECEF 在无真值时
-        // 是「首历元自己的位置」或用户拖的显示基准，拿它算 ENU 会得到伪误差。
-        return ep.refECEF;
-    }
-
-    bool Task::exportRefReady() const { return truthReady(); }
 
     std::vector<Export::Col> Task::exportFields(const Export::Format) const {
         return {};
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
-        // 只有 CSV 按列写出，其余格式（POS/SP3/ORB/KML…）的列集对输出没有意义。
         return fmt == Export::Format::CSV ? exportFields(fmt) : std::vector<Export::Col>{};
     }
 
     void Task::writeCSVMeta(CSV::Writer &w) const {
-        CSV::Meta m{w, "参数配置", "开", "关"};
+        CSV::Meta m{w, I18n::trc("export.meta.sheet"), I18n::trc("export.meta.flag.on"),
+                    I18n::trc("export.meta.flag.off")};
 
-        w.row("类别", "项目", "值");
-        m.item("解算", "模式", modeLabel(mode));
-        m.item("解算", "参考框架", hasOrbitFrame ? Frame::refName(orbitFrame) : "未声明(导出按 IGS14)");
-        m.item("解算", "结果历元数", std::to_string(exportCount()));
-        if (modeHasFilter(mode)) m.item("解算", "滤波方向", filterLabel(opts.filter));
+        w.row(I18n::trc("dl.ui.col.category"), I18n::trc("ins.verify.col.item"), I18n::trc("common.value"));
+        const char *solve = I18n::trc("common.solution");
+        const char *files = I18n::trc("export.meta.cat.files");
+        m.item(solve, I18n::trc("common.mode"), modeLabel(mode));
+        m.item(solve, I18n::trc("export.meta.frame"),
+               hasOrbitFrame ? Frame::refName(orbitFrame) : I18n::trc("export.meta.val.frame_default"));
+        m.item(solve, I18n::trc("export.meta.result_epochs"), std::to_string(exportCount()));
+        if (modeHasFilter(mode)) m.item(solve, I18n::trc("param.filter_dir"), filterKey(opts.filter));
 
-        const auto p = ProductLoad::resolve(opts, modeKey(mode));
-        m.item("参与文件", "观测文件", filePath);
-        m.item("参与文件", "基准站观测", opts.basePath);
-        m.item("参与文件", "流动站观测", opts.roverPath);
-        m.item("参与文件", "广播星历 BRDC", p.paths.brdc);
-        m.item("参与文件", "精密轨道 SP3", p.paths.sp3);
-        m.item("参与文件", "精密钟差 CLK", p.paths.clk);
-        m.item("参与文件", "码偏差 OSB", p.paths.osb);
-        m.item("参与文件", "卫星姿态 ATT", p.paths.att);
-        m.item("参与文件", "地球自转 ERP", p.paths.erp);
-        m.item("参与文件", "天线文件 ATX", p.paths.atx);
-        m.item("参与文件", "对流层 TRO", p.tro);
-        m.item("参与文件", "电离层 IONEX", p.ionex);
-        m.item("参与文件", "映射函数格网 VMF3", p.vmf);
-        m.item("参与文件", "对流层格网 GPT3", p.gpt3);
-        m.item("参与文件", "参考真值 SP3", truth.sp3Path);
-        m.item("参与文件", "辅助文件", opts.aux);
-        m.item("参与文件", "IMU 文件", opts.ins.imuPath);
+        const auto p = AppConfig::ProductPaths::of(modeKey(mode)).resolved(opts);
+        m.item(files, I18n::trc("ObservationFile"), filePath);
+        m.item(files, I18n::trc("rtk.base_obs_file"), opts.basePath);
+        m.item(files, I18n::trc("rtk.rover_obs_file"), opts.roverPath);
+        for (const auto &it: ProductReader::describe(p)) m.item(files, typeLabel(it.type), *it.path);
+        m.item(files, I18n::trc("export.meta.file.truth_sp3"), truth.sp3Path);
+        m.item(files, I18n::trc("export.meta.file.aux"), opts.aux);
+        m.item(files, I18n::trc("export.meta.file.imu"), opts.ins.imuPath);
 
-        m.num("采样间隔 (s，0=按文件)", opts.sampleInterval);
-        m.text("参与星座", sysSetToString(opts.systems).c_str());
-        m.num("截止高度角 (°)", opts.cutoffDeg);
-        m.integer("最大历元数 (0=不限)", maxEpochs);
-        m.text("参考真值形式", truth.form == RefForm::Fixed ? "恒值 XYZ"
-                              : truth.form == RefForm::File ? "逐历元 SP3" : "无");
+        m.num(I18n::trc("param.sample_interval"), opts.sampleInterval);
+        m.text(I18n::trc("param.constellations"), sysSetToString(opts.systems).c_str());
+        m.num(I18n::trc("param.elev_cutoff"), opts.cutoffDeg);
+        m.integer(I18n::trc("export.meta.max_epochs"), maxEpochs);
+        m.text(I18n::trc("export.meta.ref_form"), truth.form == RefForm::Fixed ? I18n::trc("export.meta.val.fixed")
+                                                   : truth.form == RefForm::File ? I18n::trc("export.meta.val.file")
+                                                                                 : I18n::trc("common.none"));
         if (truth.fixed.squaredNorm() > 1.0)
-            m.xyz("参考真值 XYZ", truth.fixed.x(), truth.fixed.y(), truth.fixed.z());
+            m.xyz(I18n::trc("export.meta.ref_xyz"), truth.fixed.x(), truth.fixed.y(), truth.fixed.z());
         if (truth.form == RefForm::File && truth.fileReady)
-            m.integer("参考真值 SP3 星号", truth.sat.id);
+            m.integer(I18n::trc("export.meta.ref_prn"), truth.sat.id);
 
-        writeCsvParams(m);
+        writeCSVParams(m);
         w.blank();
     }
 

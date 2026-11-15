@@ -8,8 +8,8 @@
 #include <Eigen/Core>
 
 #include "core/SatID.h"
-#include "TimeStruct.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
+#include "core/TimeStruct.h"
 
 typedef std::map<std::string, double> TypeValueMap;
 

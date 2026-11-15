@@ -15,8 +15,10 @@
 
 #include "core/Const.h"
 #include "core/PathMemory.h"
+#include "core/SiteTruth.h"
 #include "io/SinexReader.h"
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
+#include "io/ObsDate.h"
 #include "download/remote/SourceTable.h"
 #include "download/remote/Fetcher.h"
 #include "download/local/Store.h"
@@ -24,12 +26,14 @@
 #include "download/remote/Catalog.h"
 #include "download/ui/Widgets.h"
 #include "imgui.h"
-#include "io/ProductLoad.h"
+#include "io/ProductReader.h"
 #include "solvers/common/Task.h"
 #include "solvers/view/GuiHelpers.h"
 #include "ui/FileDialog.h"
 #include "ui/GuiColors.h"
 #include "StringUtils.h"
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace Solvers::RefTruth {
     namespace {
@@ -105,7 +109,7 @@ namespace Solvers::RefTruth {
                 // 下载中再点 = 暂停
                 task->refFetchCancel = true;
                 std::lock_guard lk(task->refFetchMtx);
-                task->refFetchStatus = "正在暂停…";
+                task->refFetchStatus = I18n::trc("ref.pausing");
                 task->refFetchLevel = Task::RefStatusLevel::Warn;
                 return;
             }
@@ -130,30 +134,30 @@ namespace Solvers::RefTruth {
                 Eigen::Vector3d xyz{0, 0, 0};
                 int year = 0, doy = 0;
                 if (!SinexReader::obsStationAndDOY(obs, station, year, doy)) {
-                    status = "未知站点";
+                    status = I18n::trc("ref.unknown_station");
                     level = Task::RefStatusLevel::Warn;
                 } else if (doy <= 0) {
-                    status = "无法确定观测日期";
+                    status = I18n::trc("ref.no_date");
                 } else {
                     {
                         std::lock_guard lk(task->refFetchMtx);
-                        task->refFetchCurrent = "SINEX 里 " + station + " 站的坐标行";
+                        task->refFetchCurrent = I18n::tr("ref.fetch.sinex_station", station);
                     }
                     double v[3]{0, 0, 0};
                     bool cached = false;
                     std::string file;
                     const Download::Http::ProgressCb cb = refProgressCb(task, true);
-                    const bool ok = ProductLoad::siteTruthFetcher()
-                                        ? ProductLoad::siteTruthFetcher()(station, year, doy, v, cached, file, cb)
+                    const bool ok = SiteTruth::fetcher()
+                                        ? SiteTruth::fetcher()(station, year, doy, v, cached, file, cb)
                                         : Download::Catalog::ensureSiteTruth(station, year, doy, v, cached, file, cb);
                     if (ok) {
                         xyz = Eigen::Vector3d(v[0], v[1], v[2]);
                         got = true;
                         // 缓存命中也带上站点名，跨期复用时一眼可辨
-                        status = cached ? "本机已有 " + station + " 站坐标" : file;
+                        status = cached ? I18n::tr("ref.fetch.cached_station", station) : file;
                         level = Task::RefStatusLevel::Pass;
                     } else {
-                        status = file.empty() ? "获取站点坐标失败" : file;
+                        status = file.empty() ? I18n::trc("ref.fetch.failed") : file;
                     }
                 }
                 std::lock_guard lk(task->refFetchMtx);
@@ -162,7 +166,7 @@ namespace Solvers::RefTruth {
                 task->refFetchGot = 0.0;
                 task->refFetchCurrent.clear();
                 if (task->refFetchCancel.load()) {
-                    task->refFetchStatus = "已暂停";
+                    task->refFetchStatus = I18n::trc("ref.paused");
                     task->refFetchLevel = Task::RefStatusLevel::Warn;
                 } else {
                     if (got) {
@@ -186,7 +190,7 @@ namespace Solvers::RefTruth {
                 // 下载中再点 = 暂停
                 task->refFetchCancel = true;
                 std::lock_guard lk(task->refFetchMtx);
-                task->refFetchStatus = "正在暂停…";
+                task->refFetchStatus = I18n::trc("ref.pausing");
                 task->refFetchLevel = Task::RefStatusLevel::Warn;
                 return;
             }
@@ -210,23 +214,23 @@ namespace Solvers::RefTruth {
                 std::string status;
                 Task::RefStatusLevel level = Task::RefStatusLevel::Fail;
                 std::string path;
-                const auto date = ProductMeta::parseObsDate(obs);
+                const auto date = parseObsDate(obs);
                 if (!date) {
-                    status = "无法确定观测日期";
+                    status = I18n::trc("ref.no_date");
                 } else {
                     const int year = date->year;
                     const int doy = date->doy;
                     const auto have = Download::Store::truthFiles(year, doy);
-                    const std::string local = have.empty() ? std::string{} : bestTruth(obs, have, year, doy);
+                    const std::string local = bestTruth(obs, have, year, doy);
                     if (!local.empty()) {
-                        status = "本机已有 " + File::baseName(local);
+                        status = I18n::tr("common.local_exist", File::baseName(local));
                         level = Task::RefStatusLevel::Pass;
                         path = local;
                     } else if (mission.empty()) {
-                        status = "无法识别该文件的低轨卫星对象";
+                        status = I18n::trc("ref.leo.unknown_object");
                     } else if (const auto files = Download::Fetcher::resolve(
                                    Download::SourceTable::LEOTruths(name, year, doy), year, doy); files.empty()) {
-                        status = "没有 " + mission + " 的轨道源";
+                        status = I18n::tr("ref.orbit.no_source", mission);
                     } else {
                         const std::string dir = Download::Store::dateDir(ProductType::LEO_SP3, year, doy);
                         std::error_code ec;
@@ -262,22 +266,22 @@ namespace Solvers::RefTruth {
                             if (r.ok) anyOk = true;
                         }
                         if (task->refFetchCancel.load()) {
-                            status = "已暂停";
+                            status = I18n::trc("ref.paused");
                             level = Task::RefStatusLevel::Warn;
                         } else if (anyOk) {
                             // 只有这轮确实下回来东西，本机清单才可能变化，才值得重扫一遍；
                             // 全部失败时清单与开头那次相同，直接落到「获取失败」。
                             const auto now = Download::Store::truthFiles(year, doy);
-                            if (const std::string use = now.empty() ? std::string{} : bestTruth(obs, now, year, doy);
+                            if (const std::string use = bestTruth(obs, now, year, doy);
                                 !use.empty()) {
-                                status = "已获取 " + File::baseName(use);
+                                status = I18n::tr("ref.fetch.got", File::baseName(use));
                                 level = Task::RefStatusLevel::Pass;
                                 path = use;
                             } else {
-                                status = "没有获取到 " + mission + " 的轨道";
+                                status = I18n::tr("ref.orbit.not_found", mission);
                             }
                         } else {
-                            status = "在 " + Download::Http::nameOfUrl(files.front()) + " 获取失败";
+                            status = I18n::tr("ref.fetch.failed_at", Download::Http::nameOfUrl(files.front()));
                         }
                     }
                 }
@@ -329,10 +333,10 @@ namespace Solvers::RefTruth {
             const auto buttonW = [&style](const char *text) {
                 return ImGui::CalcTextSize(text).x + style.FramePadding.x * 2.0f;
             };
-            const float reserve = buttonW("浏览") + style.ItemSpacing.x
-                                  + std::max(buttonW("获取"), buttonW("暂停")) + style.ItemSpacing.x;
+            const float reserve = buttonW(I18n::trc("common.browse")) + style.ItemSpacing.x
+                                  + std::max(buttonW(I18n::trc("common.fetch")), buttonW(I18n::trc("ref.pause"))) + style.ItemSpacing.x;
 
-            ImGui::Text("SP3 文件:");
+            ImGui::Text(I18n::trc("ref.sp3_file"));
             ImGui::PushItemWidth(-reserve);
             const std::string before = task->truth.sp3Path;
             Helpers::inputTextStd("##ref_sp3_path", &task->truth.sp3Path);
@@ -340,14 +344,14 @@ namespace Solvers::RefTruth {
                 std::error_code ec;
                 const bool has = !task->truth.sp3Path.empty()
                                  && std::filesystem::exists(task->truth.sp3Path, ec);
-                if (ImGui::MenuItem("从资源管理器打开", nullptr, false, has)) {
+                if (ImGui::MenuItem(I18n::trc("common.open_explorer"), nullptr, false, has)) {
                     if (!Download::Store::revealFile(task->truth.sp3Path)) {
                         std::lock_guard lk(task->refFetchMtx);
-                        task->refFetchStatus = "打开资源管理器失败";
+                        task->refFetchStatus = I18n::trc("ref.open_explorer_failed");
                         task->refFetchLevel = Task::RefStatusLevel::Fail;
                     }
                 }
-                if (ImGui::MenuItem("彻底删除…", nullptr, false, has))
+                if (ImGui::MenuItem(I18n::trc("common.delete_permanent"), nullptr, false, has))
                     Download::Widgets::askDelete({task->truth.sp3Path});
                 ImGui::EndPopup();
             }
@@ -357,8 +361,8 @@ namespace Solvers::RefTruth {
 
             const auto &pm = AppConfig::PathMemory::instance();
             ImGui::SameLine();
-            if (ImGui::Button("浏览##ref_sp3")) {
-                if (std::wstring wpath; ShowOpenFileDialog(wpath, FileDialog::fSp3, 2)) {
+            if (ImGui::Button(UI::idLabel("common.browse", "##ref_sp3"))) {
+                if (std::wstring wpath; FileDialog::open(wpath, FileDialog::fSp3())) {
                     task->truth.sp3Path = Str::wideToACP(wpath);
                     pm.set(SP3Key(task->mode), task->truth.sp3Path);
                 }
@@ -367,12 +371,12 @@ namespace Solvers::RefTruth {
             ImGui::SameLine();
             const auto [fetching, pct, totalBytes, gotBytes,
                 status, current, level] = fetchUIState(task);
-            if (ImGui::Button(fetching ? "暂停##ref_sp3" : "获取##ref_sp3")) startSP3Fetch(task);
+            if (ImGui::Button(UI::idLabel(fetching ? "ref.pause" : "common.fetch", "##ref_sp3"))) startSP3Fetch(task);
             if (ImGui::IsItemHovered() && !fetching)
-                ImGui::SetTooltip("按观测文件联网获取精密轨道");
+                ImGui::SetTooltip(I18n::trc("ref.fetch_sp3_tip"));
 
             if (fetching)
-                Download::Widgets::renderProgress("正在下载", current,
+                Download::Widgets::renderProgress("ref.downloading", current,
                                                   pct >= 0 ? pct / 100.0 : -1.0, gotBytes, totalBytes);
             if (!fetching && !task->truth.sp3Path.empty() && pm.get(SP3Key(task->mode)) != task->truth.sp3Path)
                 pm.set(SP3Key(task->mode), task->truth.sp3Path);
@@ -407,9 +411,9 @@ namespace Solvers::RefTruth {
             }
 
             ImGui::SameLine();
-            if (ImGui::Button(fetching ? "暂停##ref_fetch" : "联网获取##ref_fetch")) startXYZFetch(task);
+            if (ImGui::Button(UI::idLabel(fetching ? "ref.pause" : "ref.fetch_online", "##ref_fetch"))) startXYZFetch(task);
             if (fetching)
-                Download::Widgets::renderProgress("正在下载", current,
+                Download::Widgets::renderProgress("ref.downloading", current,
                                                   pct >= 0 ? pct / 100.0 : -1.0, gotBytes, totalBytes);
 
             if (!status.empty())
@@ -426,25 +430,25 @@ namespace Solvers::RefTruth {
 
             std::string note;
             if (r.obsPath != task->view.obsPathBuf) {
-                note = "观测文件已更换，结果没有套用";
+                note = I18n::trc("ref.note.obs_changed");
             } else if (r.form == RefForm::Fixed) {
                 if (task->truth.form == RefForm::File) {
-                    note = "已改用真值文件，恒值坐标没有套用";
+                    note = I18n::trc("ref.note.switched_file");
                 } else if (task->truth.fixed != r.prevXyz) {
-                    note = "坐标已被手动改过，没有覆盖";
+                    note = I18n::trc("ref.note.coord_manual");
                 } else {
                     task->truth.fixed = r.xyz;
-                    if (task->truth.form == RefForm::None) note = "坐标已取到，勾选「参考真值」后生效";
+                    if (task->truth.form == RefForm::None) note = I18n::trc("ref.note.coord_ready");
                 }
             } else if (r.form == RefForm::File) {
                 if (task->truth.form == RefForm::Fixed) {
-                    note = "已改用恒值坐标，轨道文件没有套用";
+                    note = I18n::trc("ref.note.switched_fixed");
                 } else if (task->truth.sp3Path != r.prevSp3Path) {
-                    note = "轨道路径已被手动改过，没有覆盖";
+                    note = I18n::trc("ref.note.orbit_manual");
                 } else {
                     task->truth.sp3Path = r.sp3Path;
                     AppConfig::PathMemory::instance().set(SP3Key(task->mode), r.sp3Path);
-                    if (task->truth.form == RefForm::None) note = "轨道已取到，勾选「参考真值文件」后生效";
+                    if (task->truth.form == RefForm::None) note = I18n::trc("ref.note.orbit_ready");
                 }
             }
             if (!note.empty()) {
@@ -468,10 +472,10 @@ namespace Solvers::RefTruth {
         if (!fixedOk && task->truth.form == RefForm::Fixed) task->truth.form = RefForm::None;
 
         const char *title = fixedOk && fileOk
-                                ? "参考真值"
+                                ? I18n::trc("ref.truth")
                                 : fixedOk
-                                      ? "参考真值 (ECEF/m)"
-                                      : "参考真值文件 (SP3)";
+                                      ? I18n::trc("ref.truth_ecef")
+                                      : I18n::trc("ref.truth_file");
         bool use = task->truth.form != RefForm::None;
         if (ImGui::Checkbox(title, &use))
             task->truth.form = use ? (fixedOk ? RefForm::Fixed : RefForm::File) : RefForm::None;
@@ -480,9 +484,9 @@ namespace Solvers::RefTruth {
 
         if (fixedOk && fileOk) {
             const bool byFile = task->truth.form == RefForm::File;
-            if (ImGui::RadioButton("恒值##ref_form", !byFile)) task->truth.form = RefForm::Fixed;
+            if (ImGui::RadioButton(UI::idLabel("ref.form_fixed", "##ref_form"), !byFile)) task->truth.form = RefForm::Fixed;
             ImGui::SameLine();
-            if (ImGui::RadioButton("真值文件##ref_form", byFile)) task->truth.form = RefForm::File;
+            if (ImGui::RadioButton(UI::idLabel("common.truth_file", "##ref_form"), byFile)) task->truth.form = RefForm::File;
         }
 
         if (task->truth.form == RefForm::File) {

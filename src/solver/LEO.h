@@ -9,7 +9,7 @@
 #include <Eigen/Eigen>
 
 
-class LEO : public PPP::Kinematic {
+class LEO : public PPPKinematic {
 public:
     LEO() {
         setTropo(false);
@@ -29,24 +29,8 @@ public:
     ~LEO() override = default;
 
 
-    /// 接收机天线改正的两段（机体系 m）：质心→天线参考点 ARP、ARP→天线相位中心（PCO）。
-    /// 两段来源不同（产品头/任务表 与 天线标定），分开记才知道缺的是哪一段；进观测方程的是合成矢量。
-    struct AntennaOffset {
-        Eigen::Vector3d comToArp = Eigen::Vector3d::Zero();
-        Eigen::Vector3d pco = Eigen::Vector3d::Zero();
-        bool hasArp = false;
-        bool hasPco = false;
-
-        [[nodiscard]] bool any() const { return hasArp || hasPco; }
-
-        [[nodiscard]] Eigen::Vector3d total() const { return comToArp + pco; }
-    };
-
     /// 取值编排在 app 层，这里只管接过来用；缺的段落按 0 处理并落日志。
     void setAntennaOffset(const AntennaOffset &offset, const std::string &source);
-
-    /// 接管另一份同配置解算器已读好的产品，外加天线改正（后向趟免二次读盘）。
-    void adoptProducts(SPP &src) override;
 
     bool processEpoch(ObsData &obs) override;
 
@@ -64,9 +48,6 @@ protected:
     void bootstrapFirstEpoch(ObsData &obsData) override;
 
 private:
-    AntennaOffset mAnt; // 质心→ARP 与 ARP→APC，机体系
-    std::string mAntSrc; // 两段各自的出处
-
     mutable Eigen::Vector3d mLastGoodAnchor = Eigen::Vector3d::Zero(); // 质量门控重锚定：最近一个可信锚点
     mutable bool mSppGood = true; // 本历元 SPP 重锚定质量是否达标
     mutable bool mGeomWeak = false; // 本历元码观测几何不足以定轨

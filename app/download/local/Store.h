@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
 
 namespace Download::Store {
     struct LocalFile {
@@ -25,6 +25,26 @@ namespace Download::Store {
 
     /// 扫一遍 downloads/ 下的日期产品目录与 auxdata/，按路径排序。
     std::vector<BrowseEntry> browse();
+
+    /// 同一类型多个候选时的打分：分析中心 × 延迟等级，分数高的更适合解算
+    struct Candidate {
+        std::string path;
+        std::string name;
+        std::string center;   // 分析中心
+        std::string latency;  // 延迟等级 FIN / RAP / ULT
+        int score = 0;        // 越大越好
+        std::string groupKey;
+        std::string slot;
+    };
+
+    /// 解析不出类型、或类型不符的路径不进候选
+    std::vector<Candidate> rank(const std::vector<std::string> &paths, ProductType t);
+
+    /// 选该类型最优的一份；无候选时回退首条路径，空输入返回空串。
+    std::string bestPath(const std::vector<std::string> &paths, ProductType t);
+
+    /// 时次组类型（如 VMF）：最优组的全部时次路径都要；无候选返回原列表。
+    std::vector<std::string> bestPaths(const std::vector<std::string> &paths, ProductType t);
 
     /// 批量彻底删除的结果。
     struct Removal {

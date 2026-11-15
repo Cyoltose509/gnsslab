@@ -7,6 +7,7 @@
 
 #include "core/geom/EphemerisTable.h"
 #include "Exception.h"
+#include "i18n/I18n.h"
 #include "core/obs/ObsStruct.h"
 
 #include "novatel/LogReader.h"
@@ -21,11 +22,11 @@ namespace Observer {
         Unknown
     };
 
-    [[nodiscard]] constexpr const char *formatName(const Format f) {
+    [[nodiscard]] inline const char *formatName(const Format f) {
         switch (f) {
             case Format::RINEX: return "RINEX";
             case Format::NovAtel: return "NovAtel";
-            default: return "未知";
+            default: return I18n::trc("io.obs.format_unknown");
         }
     }
 

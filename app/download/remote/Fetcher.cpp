@@ -1,6 +1,7 @@
 #include "download/remote/Fetcher.h"
 
 #include "download/local/Unpack.h"
+#include "i18n/I18n.h"
 #include "download/remote/http/Core.h"
 #include "download/local/Store.h"
 
@@ -69,7 +70,7 @@ namespace Download::Fetcher {
         struct PostJob {
             std::string remoteName;
             std::string local;
-            ProductMeta meta;
+            FileMeta meta;
         };
 
         struct State {
@@ -104,7 +105,7 @@ namespace Download::Fetcher {
         State g;
 
         void publishScan(const std::string &key, const std::string &url,
-                         std::vector<ProductMeta> &&parsed,
+                         std::vector<FileMeta> &&parsed,
                          std::map<std::string, std::string> &&urls, std::string note = {}) {
             std::lock_guard lk(g.mtx);
             DirCache &dc = g.dirs[key];
@@ -124,10 +125,10 @@ namespace Download::Fetcher {
                 if (!Http::probeFile(job.url, exists, err, &g.scanStop)) return false;
                 if (!exists) {
                     publishScan(job.key, job.url, {}, {},
-                                "服务端没有 " + job.probeName + "（HTTP 404），该日可能尚未发布");
+                                I18n::tr("dl.fetch.no_server_file", job.probeName));
                     return true;
                 }
-                ProductMeta m;
+                FileMeta m;
                 m.filename = job.probeName;
                 m.type = job.type;
                 m.year = job.year;
@@ -140,10 +141,10 @@ namespace Download::Fetcher {
             std::vector<std::string> raw;
             std::map<std::string, std::string> fulls;
             if (!Http::listDir(job.url, raw, err, &g.scanStop, &fulls)) return false;
-            std::vector<ProductMeta> parsed;
+            std::vector<FileMeta> parsed;
             for (const auto &n: raw) {
                 if (!job.namePrefix.empty() && n.rfind(job.namePrefix, 0) != 0) continue;
-                if (auto m = ProductMeta::parseInDir(n, job.type, job.year, job.doy))
+                if (auto m = FileMeta::parseInDir(n, job.type, job.year, job.doy))
                     parsed.push_back(*m);
             }
             publishScan(job.key, job.url, std::move(parsed), std::move(fulls));
@@ -179,7 +180,7 @@ namespace Download::Fetcher {
                     } catch (const std::exception &e) {
                         err = e.what();
                     } catch (...) {
-                        err = "扫描异常";
+                        err = I18n::tr("dl.fetch.scan_failed");
                     }
                     if (attempt + 1 < attempts)
                         Clock::sleep(Clock::milliseconds(800));
@@ -190,7 +191,7 @@ namespace Download::Fetcher {
                 if (dc.pending > 0) --dc.pending;
                 if (ok) ++dc.srcOk;
                 else if (dc.err.empty()) dc.err = err;
-                if (g.scanQueue.empty() && !hasPendingLocked()) g.status = "就绪";
+                if (g.scanQueue.empty() && !hasPendingLocked()) g.status = I18n::trc("dl.status.ready");
             }
         }
 
@@ -203,7 +204,7 @@ namespace Download::Fetcher {
 
         /// 缺哪一路就把哪一路排进队列
         void ensureScan(const std::vector<SourceTable::Dir> &dirs, const int year, const int doy,
-                        const char *scanText) {
+                        const char *scanTextKey) {
             startScanWorkers();
             const bool canFallback = Http::hasEarthdata();
             std::lock_guard lk(g.mtx);
@@ -222,12 +223,12 @@ namespace Download::Fetcher {
             }
             if (fresh.empty()) return;
             g.scanQueue.insert(g.scanQueue.begin(), fresh.begin(), fresh.end());
-            g.status = scanText;
+            g.status = I18n::trc(scanTextKey);
             g.scanCv.notify_all();
         }
 
-        ProductMeta metaFromPending(const Pending &p) {
-            ProductMeta m;
+        FileMeta metaFromPending(const Pending &p) {
+            FileMeta m;
             m.type = p.type;
             m.datacenter = p.datacenter;
             m.year = p.year;
@@ -276,7 +277,7 @@ namespace Download::Fetcher {
                 int epochs = 0;
             };
             std::vector<Merged> done;
-            if (stage) stage("合并分片…");
+            if (stage) stage(I18n::trc("dl.fetch.merging"));
             if (onFrac) onFrac(0.0f);
             for (std::size_t gi = 0; gi < groups.size(); ++gi) {
                 const auto &[key, files] = groups[gi];
@@ -287,7 +288,7 @@ namespace Download::Fetcher {
                     std::error_code rc;
                     fs::rename(files.front(), out, rc);
                     if (rc) {
-                        LOG_WARN << "[下载] 单片改名失败：" << rc.message();
+                        LOG_WARN << "[DL] " << I18n::tr("dl.fetch.rename_part_failed", rc.message());
                         return;
                     }
                     done.push_back({{}, 0});
@@ -295,11 +296,11 @@ namespace Download::Fetcher {
                     std::string err;
                     const int n = RINEX::mergeObsFiles(files, out, err);
                     if (n <= 0) {
-                        LOG_ERROR << "[下载] 合并观测失败（" << key << "）：" << err << "；保留全部分片";
+                        LOG_ERROR << "[DL] " << I18n::tr("dl.fetch.merge_obs_failed", key, err);
                         return;
                     }
                     if (!err.empty())
-                        LOG_WARN << "[下载] " << key << "：" << err;
+                        LOG_WARN << "[DL] " << I18n::tr("dl.fetch.merge_note", key, err);
                     done.push_back({files, n});
                 }
                 if (onFrac) onFrac(static_cast<float>(gi + 1) / static_cast<float>(groups.size()));
@@ -309,10 +310,11 @@ namespace Download::Fetcher {
                     std::error_code rc;
                     fs::remove(src, rc);
                     if (rc)
-                        LOG_WARN << "[下载] 删除分片失败 " << src << "：" << rc.message();
+                        LOG_WARN << "[DL] " << I18n::tr("dl.fetch.remove_part_failed", src,
+                                                        rc.message());
                 }
             }
-            LOG_INFO << "[下载] 展开目录 " << dir << " 合并为 " << groups.size() << " 份观测，原始分片已删除";
+            LOG_INFO << "[DL] " << I18n::tr("dl.fetch.merged_obs", dir, groups.size());
         }
 
         struct Sp3Epoch {
@@ -353,7 +355,7 @@ namespace Download::Fetcher {
             }
             if (files.empty()) return 0;
             std::sort(files.begin(), files.end());
-            if (stage) stage("合并分片…");
+            if (stage) stage(I18n::trc("dl.fetch.merging"));
 
             std::map<std::string, std::vector<Sp3Fragment> > groups;
             std::string headC, headD;
@@ -430,19 +432,19 @@ namespace Download::Fetcher {
                 std::error_code rc;
                 fs::remove(f, rc);
             }
-            LOG_INFO << "[下载] " << dir << " 的轨道分片拼成 " << merged << " 份，分片已删除";
+            LOG_INFO << "[DL] " << I18n::tr("dl.fetch.merged_orb", dir, merged);
             return merged;
         }
 
         /// 下载完的落地：解外层压缩/归档展开
-        bool settleTo(const std::string &local, const ProductMeta &meta,
+        bool settleTo(const std::string &local, const FileMeta &meta,
                       const Unpack::Progress &onFrac, const std::function<void(const std::string &)> &stage,
                       std::string &main, std::string &err) {
-            if (stage) stage("解压中…");
+            if (stage) stage(I18n::trc("dl.fetch.inflating"));
             const auto [settled, members] = Unpack::settle(local, onFrac);
             main = settled;
             if (main.empty()) {
-                err = "解包失败";
+                err = I18n::tr("dl.fetch.unpack_failed");
                 return false;
             }
             std::error_code dirEc;
@@ -459,13 +461,13 @@ namespace Download::Fetcher {
         /// 下载到正式文件名
         bool downloadTo(const Pending &p, const Http::ProgressCb &progress,
                         const std::atomic<bool> *cancel, std::string &local, std::string &log) {
-            const ProductMeta m = metaFromPending(p);
+            const FileMeta m = metaFromPending(p);
             local = Store::datePath(m.type, m.year, m.doy, m.filename);
             const std::string part = local + ".part";
             std::error_code ec;
             std::filesystem::create_directories(Store::dateDir(m.type, m.year, m.doy), ec);
 
-            LOG_INFO << "[下载] 开始 " << m.filename << " ← " << p.url;
+            LOG_INFO << "[DL] " << I18n::tr("dl.fetch.start", m.filename, p.url);
             if (!Http::downloadFile(p.url, part, progress, [&log](const std::string &s) { log = s; },
                                     5, 60, cancel))
                 return false;
@@ -478,7 +480,7 @@ namespace Download::Fetcher {
                                            std::filesystem::copy_options::overwrite_existing, cpEc);
                 if (!cpEc) std::filesystem::remove(part, mvEc);
                 if (cpEc) {
-                    log = "改名失败: " + cpEc.message();
+                    log = I18n::tr("dl.fetch.rename_failed", cpEc.message());
                     return false;
                 }
             }
@@ -504,13 +506,15 @@ namespace Download::Fetcher {
                 {
                     std::lock_guard lk(g.mtx);
                     g.status = ok
-                                   ? "完成: " + std::filesystem::path(main).filename().string()
-                                   : "落地失败: " + err;
+                                   ? I18n::tr("dl.status.done",
+                                              std::filesystem::path(main).filename().string())
+                                   : I18n::tr("dl.status.settle_failed", err);
                 }
                 if (ok)
-                    LOG_INFO << "[下载] 后台处理完成 " << std::filesystem::path(main).filename().string();
+                    LOG_INFO << "[DL] " << I18n::tr("dl.fetch.post_done",
+                                                    std::filesystem::path(main).filename().string());
                 else
-                    LOG_ERROR << "[下载] 后台处理失败 " << job.remoteName << " — " << err;
+                    LOG_ERROR << "[DL] " << I18n::tr("dl.fetch.post_failed", job.remoteName, err);
             }
         }
 
@@ -523,7 +527,7 @@ namespace Download::Fetcher {
 
         void enqueuePost(PostJob job) {
             ensurePostWorker();
-            setPostStage(job.remoteName, "排队解压…");
+            setPostStage(job.remoteName, I18n::trc("dl.fetch.queued"));
             {
                 std::lock_guard lk(g.postQmtx);
                 g.postQueue.push_back(std::move(job));
@@ -532,7 +536,7 @@ namespace Download::Fetcher {
         }
 
         void runDownload(const Pending &p) {
-            const ProductMeta m = metaFromPending(p);
+            const FileMeta m = metaFromPending(p);
             const std::string remote = p.url;
             const auto cancel = std::make_shared<std::atomic<bool> >(false);
             {
@@ -564,7 +568,7 @@ namespace Download::Fetcher {
             if (ok) {
                 // 解压/合并交给后台队列：几百个成员逐个落明文会占住这条下载通道。
                 enqueuePost({m.filename, local, m});
-                log = "下载完成，后台解压中…";
+                log = I18n::tr("dl.fetch.background_inflate");
             }
 
             g.dlActiveCount.fetch_sub(1);
@@ -572,16 +576,15 @@ namespace Download::Fetcher {
                 std::lock_guard lk(g.mtx);
                 g.dlActive.erase(remote);
                 g.dlCancel.erase(remote);
-                g.status = paused
-                               ? "已暂停  " + m.filename
-                               : (ok ? "下载成功  " : "下载失败  ") + log;
+                if (paused) g.status = I18n::tr("dl.status.paused", m.filename);
+                else g.status = I18n::tr(ok ? "dl.status.ok" : "dl.status.failed", log);
             }
             if (paused)
-                LOG_INFO << "[下载] 已暂停 " << m.filename << "（保留断点）";
+                LOG_INFO << "[DL] " << I18n::tr("dl.fetch.paused_keep", m.filename);
             else if (ok)
-                LOG_INFO << "[下载] 完成 " << m.filename;
+                LOG_INFO << "[DL] " << I18n::tr("dl.fetch.done", m.filename);
             else
-                LOG_ERROR << "[下载] 失败 " << m.filename << " — " << log;
+                LOG_ERROR << "[DL] " << I18n::tr("dl.fetch.failed", m.filename, log);
         }
 
         void dlWorker() {
@@ -632,7 +635,7 @@ namespace Download::Fetcher {
             for (const auto &lf: cachedLocal(t, year, doy)) {
                 // 名字自报了日期却覆盖不到所查日的（上一版把 S6A 次日文件错放进当日目录）不进列表；
                 // 只认 stamped 的名字，无日期的老名字与归档目录照旧按目录日算。
-                if (const auto pm = ProductMeta::parse(lf.name);
+                if (const auto pm = FileMeta::parse(lf.name);
                     pm && pm->stamped && !pm->covers(year, doy))
                     continue;
                 if (!have.insert(Store::localNameFor(lf.name)).second) continue;
@@ -665,7 +668,7 @@ namespace Download::Fetcher {
     }
 
     Snapshot collect(const std::vector<SourceTable::Dir> &dirs, const SourceTable::Query &q) {
-        ensureScan(dirs, q.year, q.doy, q.scanText);
+        ensureScan(dirs, q.year, q.doy, q.scanTextKey);
 
         Snapshot out;
         {
@@ -738,15 +741,15 @@ namespace Download::Fetcher {
             for (const auto &n: names) {
                 if (!d.namePrefix.empty() && n.rfind(d.namePrefix, 0) != 0) continue;
                 // 名字自带起止时刻却覆盖不到当天，或认不出类型：都不是这一天的文件
-                if (!ProductMeta::parseInDir(n, d.type, year, doy)) continue;
+                if (!FileMeta::parseInDir(n, d.type, year, doy)) continue;
                 if (const auto fu = fullUrls.find(n); fu != fullUrls.end()) files.push_back(fu->second);
                 else if (slashDir) files.push_back(d.url + n);
             }
         }
         if (listErr)
             *listErr = failed > 0
-                           ? std::to_string(failed) + " 个源列目录失败（首个: " + firstFailedHost + " " +
-                                 firstFailedErr + "）"
+                           ? I18n::tr("dl.fetch.list_dirs_failed", failed, firstFailedHost,
+                                      firstFailedErr)
                            : std::string();
         return files;
     }
@@ -754,7 +757,7 @@ namespace Download::Fetcher {
     void enqueue(const Pending &p) {
         {
             std::lock_guard lk(g.mtx);
-            g.status = "下载中…";
+            g.status = I18n::tr("dl.status.downloading");
         }
         {
             std::lock_guard lk(g.dlQmtx);
@@ -772,7 +775,7 @@ namespace Download::Fetcher {
         std::string log, local;
         if (!downloadTo(p, progress, cancel, local, log)) {
             r.paused = cancel != nullptr && cancel->load();
-            r.err = log.empty() ? "下载中断" : log;
+            r.err = log.empty() ? I18n::tr("dl.fetch.interrupted") : log;
             return r;
         }
         if (!settleTo(local, metaFromPending(p), unpack, stage, r.path, r.err)) return r;

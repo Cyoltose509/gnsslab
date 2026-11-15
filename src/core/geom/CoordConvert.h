@@ -3,7 +3,7 @@
 #include "core/geom/CoordStruct.h"
 #include "core/geom/Ephemeris.h"
 #include <Eigen/Eigen>
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include <cmath>
 
 

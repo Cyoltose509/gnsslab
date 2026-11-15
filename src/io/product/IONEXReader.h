@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include <string>
 #include <vector>
 

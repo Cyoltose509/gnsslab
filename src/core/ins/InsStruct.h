@@ -7,6 +7,7 @@
 
 #include "core/Const.h"
 #include "core/geom/Attitude.h"
+#include "i18n/I18n.h"
 
 
 struct ImuScale {
@@ -105,16 +106,16 @@ inline double imuMedianDt(const ImuLog &log, const double fallback = 0.005) {
 inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
     ImuScaleGuess r;
     if (staticLog.size() < 200) {
-        r.note = "静置段样本太少（不足 200 个）";
+        r.note = I18n::tr("ins.scale.too_few");
         return r;
     }
     if (!(g > 0.0)) {
-        r.note = "当地重力加速度 g 不是有效正数";
+        r.note = I18n::tr("ins.scale.bad_g");
         return r;
     }
     const double dt = imuMedianDt(staticLog, 0.0);
     if (!(dt > 1e-4) || dt > 0.1) {
-        r.note = "时间戳间隔异常";
+        r.note = I18n::tr("ins.scale.bad_dt");
         return r;
     }
     double sum = 0.0, sum2 = 0.0;
@@ -128,14 +129,14 @@ inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
     }
     const double mean = sum / static_cast<double>(n);
     if (mean <= 0.0) {
-        r.note = "加计三轴无输出";
+        r.note = I18n::tr("ins.scale.no_accel");
         return r;
     }
     const double var = sum2 / static_cast<double>(n) - mean * mean;
     if (const double sd = std::sqrt(var > 0.0 ? var : 0.0); sd / mean > 0.02) {
-        char buf[128];
-        std::snprintf(buf, sizeof buf, "这段不是静置（|f| 起伏 %.1f %%）", 100.0 * sd / mean);
-        r.note = buf;
+        char pct[32];
+        std::snprintf(pct, sizeof pct, "%.1f", 100.0 * sd / mean);
+        r.note = I18n::tr("ins.scale.not_static", pct);
         return r;
     }
 
@@ -158,18 +159,15 @@ inline ImuScaleGuess guessImuScale(const ImuLog &staticLog, const double g) {
     }
     if (r.matches >= 1 && allSame) {
         r.model = hit;
-        if (r.matches > 1) r.note = "有 " + std::to_string(r.matches) + " 个型号当量相同，取 " + hit->name;
+        if (r.matches > 1) r.note = I18n::tr("ins.scale.multi_model", r.matches, hit->name);
         return r;
     }
-    char buf[176];
-    if (r.matches == 0) {
-        std::snprintf(buf, sizeof buf, "反推当量 %.6g (m/s)/LSB（%.0f Hz）与内置型号表全都不符",
-                      r.accelMpsPerLsb, r.rateHz);
-    } else {
-        std::snprintf(buf, sizeof buf, "反推当量 %.6g (m/s)/LSB（%.0f Hz）有 %d 个当量不同的型号都相符",
-                      r.accelMpsPerLsb, r.rateHz, r.matches);
-    }
-    r.note = buf;
+    char scale[32];
+    char hz[32];
+    std::snprintf(scale, sizeof scale, "%.6g", r.accelMpsPerLsb);
+    std::snprintf(hz, sizeof hz, "%.0f", r.rateHz);
+    r.note = r.matches == 0 ? I18n::tr("ins.scale.no_model", scale, hz)
+                            : I18n::tr("ins.scale.multi_match", scale, hz, r.matches);
     r.model = nullptr;
     return r;
 }

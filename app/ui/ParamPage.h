@@ -9,6 +9,7 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
+#include "i18n/I18n.h"
 
 namespace UI::ParamPage {
 
@@ -27,7 +28,7 @@ namespace UI::ParamPage {
 
     template <class T>
     struct Traits {
-        static_assert(kDependentFalse<T>, "ParamPage 只支持 int / bool / double / std::string");
+        static_assert(kDependentFalse<T>, "ParamPage only supports int / bool / double / std::string");
     };
 
     template <>
@@ -182,7 +183,7 @@ namespace UI::ParamPage {
         for (const auto &group: groups)
             for (const auto &f: group.fields)
                 if ((!f.show || f.show(state)) && f.label && *f.label)
-                    maxLabel = std::max(maxLabel, ImGui::CalcTextSize(f.label).x);
+                    maxLabel = std::max(maxLabel, ImGui::CalcTextSize(I18n::trc(f.label)).x);
         labelWidth = maxLabel + ImGui::GetStyle().ItemSpacing.x * 2.0f;
         bool firstGroup = true;
         for (const auto &group: groups) {
@@ -214,7 +215,7 @@ namespace UI::ParamPage {
             if (!rowDrawn) drawRow();
         }
         ImGui::Spacing();
-        if (ImGui::Button("恢复默认设置", ImVec2(160, 0)))
+        if (ImGui::Button(I18n::trc("param.reset_defaults"), ImVec2(160, 0)))
             forEach(groups, [&](const Field<S> &f) { f.reset(state, def); });
         //drawWidthHandle();
     }

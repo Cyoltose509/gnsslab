@@ -1,6 +1,6 @@
 #pragma once
 #include "core/SatID.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "core/obs/FreqCombo.h"
 #include "core/geom/Geodesy.h"
 #include <map>

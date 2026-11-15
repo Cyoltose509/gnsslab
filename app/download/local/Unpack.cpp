@@ -1,6 +1,7 @@
 #include "download/local/Unpack.h"
 
 #include "Log.h"
+#include "i18n/I18n.h"
 #include "StringUtils.h"
 #include "io/CRXDecoder.h"
 
@@ -56,7 +57,7 @@ namespace Download::Unpack {
                 archive_read_support_format_raw(a);
             }
             if (archive_read_open_filename(a, path.c_str(), 65536) != ARCHIVE_OK) {
-                LOG_WARN << "[解包] 打不开 " << path << "：" << archive_error_string(a);
+                LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.open_failed", path, archive_error_string(a));
                 archive_read_free(a);
                 return nullptr;
             }
@@ -103,7 +104,7 @@ namespace Download::Unpack {
                 const la_ssize_t n = archive_read_data(a, buf.data(), buf.size());
                 if (n == 0) return true;
                 if (n < 0) {
-                    LOG_WARN << "[解包] 读出失败：" << archive_error_string(a);
+                    LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.read_failed", archive_error_string(a));
                     return false;
                 }
                 fo.write(buf.data(), n);
@@ -124,7 +125,7 @@ namespace Download::Unpack {
 
             archive_entry *entry = nullptr;
             if (archive_read_next_header(a, &entry) != ARCHIVE_OK) {
-                LOG_WARN << "[解包] " << path << " 不是完整的压缩流：" << archive_error_string(a);
+                LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.incomplete", path, archive_error_string(a));
                 archive_read_free(a);
                 return path;
             }
@@ -142,12 +143,12 @@ namespace Download::Unpack {
             std::error_code ec;
             if (!ok || fo.fail()) {
                 fs::remove(out, ec);
-                LOG_WARN << "[解包] 解压失败，保留压缩包：" << path;
+                LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.inflate_failed", path);
                 return path;
             }
             bp.finish();
             fs::remove(path, ec);
-            if (!quiet) LOG_INFO << "[解包] " << path << " → " << out;
+            if (!quiet) LOG_INFO << "[UNPACK] " << path << " → " << out;
             return out;
         }
 
@@ -165,7 +166,7 @@ namespace Download::Unpack {
                 std::error_code ec;
                 fs::create_directories(dir, ec);
                 if (ec) {
-                    LOG_WARN << "[解包] 建展开目录失败 " << dir << "：" << ec.message();
+                    LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.mkdir_failed", dir, ec.message());
                     return s;
                 }
                 const Progress expand = cb && *cb
@@ -183,10 +184,12 @@ namespace Download::Unpack {
 
                 std::error_code rmEc;
                 fs::remove(s.main, rmEc);
-                if (rmEc) LOG_WARN << "[解包] 归档删除失败，保留 " << s.main << "：" << rmEc.message();
+                if (rmEc)
+                    LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.remove_failed", s.main, rmEc.message());
                 s.main = dir.substr(0, dir.size() - 1);
                 if (!quiet)
-                    LOG_INFO << "[解包] " << path << " → 目录 " << s.main << "（" << s.members.size() << " 个文件）";
+                    LOG_INFO << "[UNPACK] " << I18n::tr("dl.unpack.expanded_dir", path, s.main,
+                                                       s.members.size());
                 return s;
             }
 
@@ -196,12 +199,12 @@ namespace Download::Unpack {
             CRXDecoder decoder;
 
             if (std::string err; !decoder.decode(s.main, rnx, err)) {
-                LOG_WARN << "[解包] Hatanaka 还原失败，保留原文件：" << err;
+                LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.hatanaka_failed", err);
                 return s;
             }
             std::error_code ec;
             fs::remove(s.main, ec);
-            if (!quiet) LOG_INFO << "[解包] 已还原 RINEX 观测文件：" << rnx;
+            if (!quiet) LOG_INFO << "[UNPACK] " << I18n::tr("dl.unpack.recovered_rinex", rnx);
             s.main = rnx;
             return s;
         }
@@ -260,7 +263,7 @@ namespace Download::Unpack {
         if (!a) return {};
         archive_entry *entry = nullptr;
         if (archive_read_next_header(a, &entry) != ARCHIVE_OK) {
-            LOG_WARN << "[解包] " << path << " 不是完整的压缩流：" << archive_error_string(a);
+            LOG_WARN << "[UNPACK] " << I18n::tr("dl.unpack.incomplete", path, archive_error_string(a));
             archive_read_free(a);
             return {};
         }
@@ -315,7 +318,7 @@ namespace Download::Unpack {
             return path;
         }
         if (!keepArchive) fs::remove(path, ec);
-        LOG_INFO << "[解包] 压缩流片段 " << path << " → " << out << "（" << size << " 字节）";
+        LOG_INFO << "[UNPACK] " << I18n::tr("dl.unpack.stream_part", path, out, size);
         return out;
     }
 
@@ -361,7 +364,7 @@ namespace Download::Unpack {
         bp.finish();
         archive_read_free(a);
 
-        LOG_INFO << "[解包] 展开 " << archivePath << " → " << out.size() << " 个文件";
+        LOG_INFO << "[UNPACK] " << I18n::tr("dl.unpack.expanded_files", archivePath, out.size());
         return out;
     }
 

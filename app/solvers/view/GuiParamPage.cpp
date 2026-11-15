@@ -2,7 +2,7 @@
 #include "GuiParamPage.h"
 
 #include "core/PathMemory.h"
-#include "io/Products.h"
+#include "io/ProductPaths.h"
 #include "core/atmo/Troposphere.h"
 #include "solvers/common/Config.h"
 #include "ui/ParamPage.h"
@@ -13,6 +13,8 @@
 #include <array>
 #include <string>
 #include <vector>
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 template<>
 struct UI::ParamPage::Traits<Troposphere::Map> {
@@ -86,7 +88,7 @@ namespace {
         return f;
     }
 
-    const char *filterItem(void *, const int idx) { return Solvers::kFilterChoices[idx].label; }
+    const char *filterItem(void *, const int idx) { return Solvers::filterLabel(Solvers::kFilterChoices[idx].mode); }
 
     /// 滤波方向下拉：档位表与 `smooth` 键共用一套词表；渲染时把存档里的未知档归一到第一档。
     SolverField comboFilter(const char *label) {
@@ -116,23 +118,23 @@ namespace {
 
     SolverGroup obsGroup(const bool withPhaseSigma) {
         SolverGroup g{
-            "观测模型", {
-                field("码 σ (m)", "CodeSigma", &SPPConfig::codeSigma, &SolverOptions::spp),
+            "param.group.obs_model", {
+                field("param.code_sigma", "CodeSigma", &SPPConfig::codeSigma, &SolverOptions::spp),
             }
         };
         if (withPhaseSigma)
-            g.fields.push_back(field("相位 σ (m)", "PhaseSigma", &SPPConfig::phaseSigma, &SolverOptions::spp));
-        g.fields.push_back(field("高度角加权下限 (sinE，0=跟随截止角)", "minSinElev", &SPPConfig::minSinElev,
+            g.fields.push_back(field("param.phase_sigma", "PhaseSigma", &SPPConfig::phaseSigma, &SolverOptions::spp));
+        g.fields.push_back(field("param.elev_weight_floor", "minSinElev", &SPPConfig::minSinElev,
                                  &SolverOptions::spp));
         return g;
     }
 
     SolverField systemsField() {
         SolverField f;
-        f.label = "参与星座";
+        f.label = "param.constellations";
         f.key = "systems";
         f.draw = [](SolverOptions &o) {
-            UI::ParamPage::beginField("参与星座", false);
+            UI::ParamPage::beginField("param.constellations", false);
             bool first = true;
             for (const auto &[ch, name]: Solvers::Helpers::kConstellations) {
                 if (!first) ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x * 2.0f);
@@ -157,97 +159,96 @@ namespace {
         return f;
     }
 
-    /// 解算设置：滤波方向只对有跨历元状态的模式出现，档数按模式给（RTK 两档，其余四档）。
+    /// 解算设置：采样/星座/高度角；滤波方向对所有有跨历元状态的模式统一放这。
     SolverGroup obsConditionGroup(const Solvers::Mode mode) {
         SolverGroup g{
-            "解算设置", {
-                field("采样间隔 (s，0=按文件)", "interval", &SolverOptions::sampleInterval,
+            "param.group.solve", {
+                field("param.sample_interval", "interval", &SolverOptions::sampleInterval,
                       between(0.0, 3600.0)),
                 systemsField(),
-                field("截止高度角 (°)", "cutoff", &SolverOptions::cutoffDeg, between(0.0, 90.0)),
+                field("param.elev_cutoff", "cutoff", &SolverOptions::cutoffDeg, between(0.0, 90.0)),
             }
         };
-        // RTK 的滤波档跟 σ 一起放在「滤波（浮点解）」组，其余模式的滤波方向归到解算设置
-        if (Solvers::modeHasFilter(mode) && mode != Solvers::Mode::RTK)
-            g.fields.push_back(comboFilter("滤波方向 (仅文件生效)"));
+        if (Solvers::modeHasFilter(mode)) g.fields.push_back(comboFilter("param.filter_dir"));
         return g;
     }
 
     void renderAutoProduct(const char *productId, const bool enabled,
-                           const char *offText = "已关闭") {
+                           const char *offText = "param.auto_off") {
         constexpr ImVec4 kGreen(0.35f, 0.85f, 0.45f, 1.0f);
         constexpr ImVec4 kAmber(0.95f, 0.75f, 0.25f, 1.0f);
 
         if (!enabled) {
-            ImGui::TextDisabled("%s", offText);
+            ImGui::TextDisabled("%s", I18n::trc(offText));
             return;
         }
 
         if (const auto st = Download::Catalog::updateStatus(productId); st.phase == Download::Catalog::UpdateStatus::Downloading) {
-            Download::Widgets::renderProgress("正在下载", st.file, st.progress, st.gotBytes, st.totalBytes);
+            Download::Widgets::renderProgress("ref.downloading", st.file, st.progress, st.gotBytes, st.totalBytes);
             return;
         }
 
         if (const auto inst = Download::Store::active(productId)) {
-            ImGui::TextColored(kGreen, "自动读取 %s", inst->file.c_str());
+            ImGui::TextColored(kGreen, "%s", I18n::tr("param.auto_loaded", inst->file).c_str());
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s\n版本 %s，%s 更新", inst->path.c_str(),
-                                  inst->version.c_str(), inst->fetchedAt.c_str());
+                ImGui::SetTooltip("%s", I18n::tr("param.auto_version", inst->path, inst->version,
+                                                 inst->fetchedAt).c_str());
             return;
         }
 
         const auto *meta = Download::Catalog::find(productId);
-        ImGui::TextColored(kAmber, "未检测到 %s", meta ? meta->label : productId);
+        ImGui::TextColored(kAmber, "%s", I18n::tr("param.not_found", meta ? typeLabel(meta->type)
+                                                                         : productId).c_str());
         ImGui::SameLine();
-        if (ImGui::SmallButton(("获取##get_" + std::string(productId)).c_str()))
+        if (ImGui::SmallButton(UI::idLabel("common.check", "##get_", productId)))
             Download::Catalog::checkNow(productId);
     }
 
     SolverGroup corrGroup() {
         return SolverGroup{
-            "改正模型", {
-                flag("天线改正", "applyAtx", &SPPConfig::applyAtx, &SolverOptions::spp),
-                flag("相位缠绕", "applyWindup", &SPPConfig::applyWindup, &SolverOptions::spp),
-                flag("固体潮", "applySolidTide", &SPPConfig::applySolidTide, &SolverOptions::spp),
+            "param.group.correction", {
+                flag("AntennaCorrection", "applyAtx", &SPPConfig::applyAtx, &SolverOptions::spp),
+                flag("param.phase_windup", "applyWindup", &SPPConfig::applyWindup, &SolverOptions::spp),
+                flag("param.solid_tide", "applySolidTide", &SPPConfig::applySolidTide, &SolverOptions::spp),
             }
         };
     }
 
     SolverGroup tropoGroup(const Solvers::Mode mode, const bool withGrad, const bool withZtd = false) {
-        SolverGroup g{"对流层", {}};
+        SolverGroup g{"Troposphere", {}};
         if (withGrad)
-            g.fields.push_back(flag("对流层梯度", "useTroGrad", &SPPConfig::useTroGrad, &SolverOptions::spp));
-        g.fields.push_back(comboTropoMap("映射函数", "tropoMap", &SolverOptions::spp, &SPPConfig::tropoMap));
+            g.fields.push_back(flag("param.tropo_gradient", "useTroGrad", &SPPConfig::useTroGrad, &SolverOptions::spp));
+        g.fields.push_back(comboTropoMap("MappingFunction", "tropoMap", &SolverOptions::spp, &SPPConfig::tropoMap));
         if (withZtd) {
-            g.title = "对流层 / ZTD";
-            g.fields.push_back(field("ZTD 初值 (m)", "ztdInitValue", &SPPConfig::ztdInitValue, &SolverOptions::spp));
-            g.fields.push_back(field("ZTD 初始 σ", "ZtdInitSigma", &SPPConfig::ztdInitSigma, &SolverOptions::spp));
-            g.fields.push_back(field("ZTD 过程 σ", "ZtdProcSigma", &SPPConfig::ztdProcSigma, &SolverOptions::spp));
-            g.fields.push_back(field("ZTD 先验 σ", "ztdPriorSigma", &SPPConfig::ztdPriorSigma,
+            g.title = "param.group.tropo_ztd";
+            g.fields.push_back(field("param.ztd_init", "ztdInitValue", &SPPConfig::ztdInitValue, &SolverOptions::spp));
+            g.fields.push_back(field("param.ztd_init_sigma", "ZtdInitSigma", &SPPConfig::ztdInitSigma, &SolverOptions::spp));
+            g.fields.push_back(field("param.ztd_proc_sigma", "ZtdProcSigma", &SPPConfig::ztdProcSigma, &SolverOptions::spp));
+            g.fields.push_back(field("param.ztd_prior_sigma", "ztdPriorSigma", &SPPConfig::ztdPriorSigma,
                                      &SolverOptions::spp));
-            g.fields.push_back(field("ZTD 约束 σ", "troZtdSigma", &SPPConfig::troZtdSigma, &SolverOptions::spp));
+            g.fields.push_back(field("param.ztd_constraint_sigma", "troZtdSigma", &SPPConfig::troZtdSigma, &SolverOptions::spp));
         }
         g.row = [mode](const SolverOptions &o) {
             constexpr ImVec4 kGreen(0.35f, 0.85f, 0.45f, 1.0f);
             constexpr ImVec4 kAmber(0.95f, 0.75f, 0.25f, 1.0f);
             if (o.spp.tropoMap == Troposphere::Map::VMF3) {
-                const auto &prod = AppConfig::Products::of(Solvers::modeKey(mode));
+                const auto &prod = AppConfig::ProductPaths::of(Solvers::modeKey(mode));
                 if (const auto &vmf = prod.vmf; vmf.empty()) {
-                    ImGui::TextColored(kAmber, "已选 VMF3 但缺 VMF3 格网文件，将回落 GMF");
+                    ImGui::TextColored(kAmber, "%s", I18n::trc("param.vmf3_missing"));
                     return;
                 }
                 const int n = static_cast<int>(prod.VMF3Paths().size());
-                ImGui::TextColored(kGreen, "已加载 VMF3 格网（%d 个文件）", n);
+                ImGui::TextColored(kGreen, "%s", I18n::tr("param.vmf3_loaded", n).c_str());
                 if (n < 4)
-                    ImGui::TextColored(kAmber, "仅 %d/4 时次：时间向线性插值退化为单历元", n);
-                renderAutoProduct(Download::Catalog::kGPT3ID, true, "已关闭：只出 ah/aw，不做原生 zhd/zwd 抬升");
+                    ImGui::TextColored(kAmber, "%s", I18n::tr("param.vmf3_partial", n).c_str());
+                renderAutoProduct(Download::Catalog::kGPT3ID, true, "param.gpt3_off_ahaw");
                 return;
             }
             if (o.spp.tropoMap == Troposphere::Map::GPT3) {
-                renderAutoProduct(Download::Catalog::kGPT3ID, true, "已关闭：不使用 GPT3 格网");
+                renderAutoProduct(Download::Catalog::kGPT3ID, true, "param.gpt3_off");
                 return;
             }
-            ImGui::TextDisabled("Hopfield/NMF/GMF：无需外部格网");
+            ImGui::TextDisabled("%s", I18n::trc("param.no_grid_needed"));
         };
         g.rowAfterKey = "tropoMap";
         return g;
@@ -255,32 +256,32 @@ namespace {
 
     SolverGroup filterIterGroup() {
         return {
-            "滤波更新", {
-                field("滤波更新最少卫星数 (0=不限)", "minSatsForUpdate", &SPPConfig::minSatsForUpdate,
+            "param.group.filter_update", {
+                field("param.min_sats_update", "minSatsForUpdate", &SPPConfig::minSatsForUpdate,
                       &SolverOptions::spp),
-                field("钟差过程 σ", "ClockProcSigma", &SPPConfig::clockProcSigma, &SolverOptions::spp),
+                field("param.clock_proc_sigma", "ClockProcSigma", &SPPConfig::clockProcSigma, &SolverOptions::spp),
             }
         };
     }
 
     SolverGroup arGroup() {
         return {
-            "模糊度与 AR", {
-                flag("使用 AR 固定", "useAR", &SPPConfig::useAR, &SolverOptions::spp),
-                field("模糊度初始 σ", "AmbInitSigma", &SPPConfig::ambInitSigma, &SolverOptions::spp),
-                field("模糊度过程 σ", "AmbProcSigma", &SPPConfig::ambProcSigma, &SolverOptions::spp),
-                field("Ratio 阈值", "arRatioThreshold", &SPPConfig::arRatioThreshold, &SolverOptions::spp),
+            "param.group.ambiguity", {
+                flag("param.use_ar", "useAR", &SPPConfig::useAR, &SolverOptions::spp),
+                field("param.amb_init_sigma", "AmbInitSigma", &SPPConfig::ambInitSigma, &SolverOptions::spp),
+                field("param.amb_proc_sigma", "AmbProcSigma", &SPPConfig::ambProcSigma, &SolverOptions::spp),
+                field("param.ratio_threshold", "arRatioThreshold", &SPPConfig::arRatioThreshold, &SolverOptions::spp),
             }
         };
     }
 
     SolverGroup codeBiasGroup() {
         return {
-            "码偏差 / GLONASS IFCB", {
-                field("码偏过程 σ", "CodeBiasProcSigma", &SPPConfig::codeBiasProcSigma, &SolverOptions::spp),
-                field("码偏初始 σ", "CodeBiasInitSigma", &SPPConfig::codeBiasInitSigma, &SolverOptions::spp),
-                field("GLO IFCB 过程 σ", "GloIfcbProcSigma", &SPPConfig::gloIfcbProcSigma, &SolverOptions::spp),
-                field("GLO IFCB 初始 σ", "GloIfcbInitSigma", &SPPConfig::gloIfcbInitSigma, &SolverOptions::spp),
+            "param.group.code_bias", {
+                field("param.code_bias_proc_sigma", "CodeBiasProcSigma", &SPPConfig::codeBiasProcSigma, &SolverOptions::spp),
+                field("param.code_bias_init_sigma", "CodeBiasInitSigma", &SPPConfig::codeBiasInitSigma, &SolverOptions::spp),
+                field("param.glo_ifcb_proc_sigma", "GloIfcbProcSigma", &SPPConfig::gloIfcbProcSigma, &SolverOptions::spp),
+                field("param.glo_ifcb_init_sigma", "GloIfcbInitSigma", &SPPConfig::gloIfcbInitSigma, &SolverOptions::spp),
             }
         };
     }
@@ -289,15 +290,15 @@ namespace {
     /// 每个模式各存各的值，前缀不同，互不影响。
     SolverGroup posGroup(const bool leo) {
         SolverGroup g{
-            "位置 / σ", {
-                field("位置过程 σ", "PosProcSigma", &SolverOptions::posProcSigma),
+            "param.group.position", {
+                field("param.pos_proc_sigma", "PosProcSigma", &SolverOptions::posProcSigma),
             }
         };
-        g.fields.push_back(field("首历元位置 σ", "FirstEpochPosSigma", &SPPConfig::firstEpochPosSigma,
+        g.fields.push_back(field("param.first_epoch_pos_sigma", "FirstEpochPosSigma", &SPPConfig::firstEpochPosSigma,
                                  &SolverOptions::spp));
         if (leo) {
-            g.fields.push_back(field("运动检测阈值", "motionThresh", &SolverOptions::motionThresh));
-            g.fields.push_back(field("SPP 预测阈值", "sppVsPredThresh", &SolverOptions::sppVsPredThresh));
+            g.fields.push_back(field("param.motion_threshold", "motionThresh", &SolverOptions::motionThresh));
+            g.fields.push_back(field("param.spp_pred_threshold", "sppVsPredThresh", &SolverOptions::sppVsPredThresh));
         }
         return g;
     }
@@ -305,37 +306,48 @@ namespace {
     /// SPP 的位置/速度状态模型：加速度 σ>0 时状态含速度三态，位置按常速度预测。
     SolverGroup sppMotionGroup() {
         return {
-            "位置 / 速度", {
-                field("位置过程 σ (m，仅加速度=0 用)", "PosProcSigma", &SolverOptions::posProcSigma),
-                field("加速度过程 σ (m/s)", "AccProcSigma", &SolverOptions::accProcSigma),
-                field("速度初始 σ (m/s)", "VelInitSigma", &SolverOptions::velInitSigma),
-                field("钟差过程 σ (m)", "ClockProcSigma", &SPPConfig::clockProcSigma, &SolverOptions::spp),
+            "param.group.pos_vel", {
+                field("param.pos_proc_sigma_accel", "PosProcSigma", &SolverOptions::posProcSigma),
+                field("param.acc_proc_sigma", "AccProcSigma", &SolverOptions::accProcSigma),
+                field("param.vel_init_sigma", "VelInitSigma", &SolverOptions::velInitSigma),
+                field("param.clock_proc_sigma_m", "ClockProcSigma", &SPPConfig::clockProcSigma, &SolverOptions::spp),
             }
         };
     }
 
-    SolverGroup slipGroup() {
-        return {
-            "周跳探测", {
-                flag("使用周跳探测", "useCycleSlip", &SPPConfig::useCycleSlip, &SolverOptions::spp),
-                field("GF 周跳阈值倍数", "gfSlipMult", &SPPConfig::gfSlipMult, &SolverOptions::spp),
-            }
-        };
+    /// 周跳组：SPP 家族走 SPPConfig；RTK 走 RTKConfig，多一个 GF 开关。
+    SolverGroup slipGroup(const bool rtk) {
+        SolverGroup g{"param.group.cycle_slip", {}};
+        if (rtk) {
+            g.fields.push_back(flag("param.use_cycle_slip", "useCycleSlip", &RTKConfig::useCycleSlip,
+                                    &SolverOptions::rtk));
+            g.fields.push_back(flag("param.use_gf_slip", "useGfCycleSlip", &RTKConfig::useGfCycleSlip,
+                                    &SolverOptions::rtk));
+            g.fields.push_back(field("param.gf_slip_mult", "gfSlipMult", &RTKConfig::gfSlipMult,
+                                     &SolverOptions::rtk));
+            return g;
+        }
+        g.fields.push_back(flag("param.use_cycle_slip", "useCycleSlip", &SPPConfig::useCycleSlip,
+                                &SolverOptions::spp));
+        g.fields.push_back(field("param.gf_slip_mult", "gfSlipMult", &SPPConfig::gfSlipMult,
+                                 &SolverOptions::spp));
+        return g;
     }
 
-    SolverGroup healthGroup() {
-        return {
-            "卫星可用性", {
-                flag("剔除电文标记不健康的卫星", "useHealth", &SPPConfig::useHealth, &SolverOptions::spp),
-            }
-        };
+    SolverGroup healthGroup(const bool rtk) {
+        SolverGroup g{"param.group.sat_availability", {}};
+        if (rtk) g.fields.push_back(flag("param.drop_unhealthy", "useHealth", &RTKConfig::useHealth,
+                                         &SolverOptions::rtk));
+        else g.fields.push_back(flag("param.drop_unhealthy", "useHealth", &SPPConfig::useHealth,
+                                     &SolverOptions::spp));
+        return g;
     }
 
     SolverGroup isbGroup() {
         return {
-            "系统间偏差 (ISB)", {
-                field("ISB 过程 σ", "IsbProcSigma", &SPPConfig::isbProcSigma, &SolverOptions::spp),
-                field("ISB 初始 σ", "IsbInitSigma", &SPPConfig::isbInitSigma, &SolverOptions::spp),
+            "param.group.isb", {
+                field("param.isb_proc_sigma", "IsbProcSigma", &SPPConfig::isbProcSigma, &SolverOptions::spp),
+                field("param.isb_init_sigma", "IsbInitSigma", &SPPConfig::isbInitSigma, &SolverOptions::spp),
             }
         };
     }
@@ -388,14 +400,14 @@ namespace {
     }
 
     SolverField insInitialPosField() {
-        SolverField f = insVec3Field("初始位置 BLH (°/°/m)", {"lat", "lon", "h"},
+        SolverField f = insVec3Field("param.ins_init_pos", {"lat", "lon", "h"},
                                      {"φ", "λ", "h"}, {&INSConfig::latDeg, &INSConfig::lonDeg, &INSConfig::hM});
         f.show = [](const SolverOptions &) { return false; };   // 只在文件页渲染
         return f;
     }
 
     SolverField insInitialVelField() {
-        SolverField f = insVec3Field("初始速度 vNED (m/s)", {"vn", "ve", "vd"},
+        SolverField f = insVec3Field("param.ins_init_vel", {"vn", "ve", "vd"},
                                      {"vN", "vE", "vD"}, {&INSConfig::vN, &INSConfig::vE, &INSConfig::vD});
         f.show = [](const SolverOptions &) { return false; };
         return f;
@@ -403,29 +415,29 @@ namespace {
 
     const std::vector<SolverGroup> &insSchema() {
         static const std::vector<SolverGroup> s = {
-            {"初始状态（BLH / vNED）", {
+            {"param.group.ins_init_state", {
                 insInitialPosField(),
                 insInitialVelField(),
             }},
-            {"初始姿态", {
-                flag("指定初始姿态角（不勾则自动粗对准）", "specify_att", &INSConfig::specifyAttitude,
+            {"InitialAttitude", {
+                flag("param.ins_specify_attitude", "specify_att", &INSConfig::specifyAttitude,
                      &SolverOptions::ins),
-                insManualAttitude(field("手填横滚 (°)", "roll", &INSConfig::rollDeg, &SolverOptions::ins)),
-                insManualAttitude(field("手填俯仰 (°)", "pitch", &INSConfig::pitchDeg, &SolverOptions::ins)),
-                insManualAttitude(field("手填航向 (°)", "heading", &INSConfig::headingDeg,
+                insManualAttitude(field("param.ins_roll", "roll", &INSConfig::rollDeg, &SolverOptions::ins)),
+                insManualAttitude(field("param.ins_pitch", "pitch", &INSConfig::pitchDeg, &SolverOptions::ins)),
+                insManualAttitude(field("param.ins_heading", "heading", &INSConfig::headingDeg,
                                         &SolverOptions::ins)),
             }},
-            {"解码当量（0 = 自动：型号自描述 / 开头静置段反推）", {
-                insScaleField("加计 (m/s)/LSB", "accel_lsb", &ImuScale::accelMpsPerLsb),
-                insScaleField("陀螺 rad/LSB", "gyro_lsb", &ImuScale::gyroRadPerLsb),
-                insScaleField("采样率 (Hz)", "rate_hz", &ImuScale::rateHz),
+            {"param.group.decode_scale", {
+                insScaleField("param.decode_accel", "accel_lsb", &ImuScale::accelMpsPerLsb),
+                insScaleField("param.decode_gyro", "gyro_lsb", &ImuScale::gyroRadPerLsb),
+                insScaleField("param.decode_rate", "rate_hz", &ImuScale::rateHz),
             }},
-            {"零速修正（默认解算）", {
-                field("比力判静止容差 (m/s²)", "zupt_accel_tol", &INSConfig::zuptAccelTol,
+            {"param.group.zupt", {
+                field("param.zupt_accel_tol", "zupt_accel_tol", &INSConfig::zuptAccelTol,
                       &SolverOptions::ins),
-                field("角速度容差 (rad/s)", "zupt_gyro_tol", &INSConfig::zuptGyroTol,
+                field("param.zupt_gyro_tol", "zupt_gyro_tol", &INSConfig::zuptGyroTol,
                       &SolverOptions::ins),
-                field("连续静止时长 (s)", "zupt_hold", &INSConfig::zuptHoldSec,
+                field("param.zupt_hold", "zupt_hold", &INSConfig::zuptHoldSec,
                       &SolverOptions::ins),
             }},
         };
@@ -439,7 +451,7 @@ namespace {
             sppMotionGroup(),
             tropoGroup(Solvers::Mode::SPP, false),
             isbGroup(),
-            healthGroup(),
+            healthGroup(false),
         };
         static const std::vector pppStatic = {
             obsConditionGroup(Solvers::Mode::PPPStatic),
@@ -450,9 +462,9 @@ namespace {
             tropoGroup(Solvers::Mode::PPPStatic, true, true),
             codeBiasGroup(),
             posGroup(false),
-            slipGroup(),
+            slipGroup(false),
             isbGroup(),
-            healthGroup(),
+            healthGroup(false),
         };
         static const std::vector pppKinematic = {
             obsConditionGroup(Solvers::Mode::PPPKinematic),
@@ -463,9 +475,9 @@ namespace {
             tropoGroup(Solvers::Mode::PPPKinematic, true, true),
             codeBiasGroup(),
             posGroup(false),
-            slipGroup(),
+            slipGroup(false),
             isbGroup(),
-            healthGroup(),
+            healthGroup(false),
         };
         static const std::vector leo = {
             obsConditionGroup(Solvers::Mode::LEO),
@@ -475,47 +487,41 @@ namespace {
             arGroup(),
             codeBiasGroup(),
             posGroup(true),
-            slipGroup(),
+            slipGroup(false),
             isbGroup(),
-            healthGroup(),
+            healthGroup(false),
         };
         static const std::vector<SolverGroup> rtk = {
             obsConditionGroup(Solvers::Mode::RTK),
             {
-                "模糊度与 AR", {
-                flag("使用 AR 固定", "useAR", &RTKConfig::useAR, &SolverOptions::rtk),
-                flag("完整协方差", "fullCovariance", &RTKConfig::fullCovariance, &SolverOptions::rtk),
-                field("Ratio 阈值", "arThreshold", &RTKConfig::arThreshold, &SolverOptions::rtk),
-                }
-            },
-            {
-                "滤波（浮点解）", {
-                    comboFilter("滤波方向"),
-                    field("位置过程 σ (m)", "PosProcSigma", &SolverOptions::posProcSigma),
-                    field("模糊度过程 σ (周)", "AmbProcSigma", &RTKConfig::ambProcSigma, &SolverOptions::rtk),
-                    field("模糊度初始 σ (周)", "AmbInitSigma", &RTKConfig::ambInitSigma, &SolverOptions::rtk),
-                }
-            },
-            {
-                "周跳探测", {
-                    flag("使用周跳探测", "useCycleSlip", &RTKConfig::useCycleSlip, &SolverOptions::rtk),
-                    flag("使用 GF 周跳", "useGfCycleSlip", &RTKConfig::useGfCycleSlip, &SolverOptions::rtk),
-                    field("GF 周跳阈值倍数", "gfSlipMult", &RTKConfig::gfSlipMult, &SolverOptions::rtk),
-                }
-            },
-            {
-                "观测模型", {
-                    rtkPhaseWeight("相位高度角加权下限 (sinE)", "phaseWeightMinSinElev", &Weight::minSinElev,
+                "param.group.obs_model", {
+                    rtkPhaseWeight("param.phase_weight_floor", "phaseWeightMinSinElev", &Weight::minSinElev,
                                    between(1e-6, 1.0)),
-                    field("伪距:相位 σ 比", "CodeOverPhaseSigma", &RTKConfig::codeOverPhaseSigma, &SolverOptions::rtk),
-                    field("双差最少卫星数", "minSats", &RTKConfig::minSats, &SolverOptions::rtk),
-                    rtkPhaseWeight("相位高度角模型 a", "phaseWeightA", &Weight::a),
-                    rtkPhaseWeight("相位高度角模型 b", "phaseWeightB", &Weight::b),
+                    field("param.code_phase_sigma_ratio", "CodeOverPhaseSigma", &RTKConfig::codeOverPhaseSigma, &SolverOptions::rtk),
+                    field("param.dd_min_sats", "minSatsForUpdate", &RTKConfig::minSats, &SolverOptions::rtk),
+                    rtkPhaseWeight("param.phase_weight_a", "phaseWeightA", &Weight::a),
+                    rtkPhaseWeight("param.phase_weight_b", "phaseWeightB", &Weight::b),
                 }
             },
             {
-                "参考星选择", {
-                    flag("排除北斗 GEO 参考星", "excludeGeoRef", &RTKConfig::excludeGeoRef, &SolverOptions::rtk),
+                "param.group.ambiguity", {
+                    flag("param.use_ar", "useAR", &RTKConfig::useAR, &SolverOptions::rtk),
+                    flag("param.full_covariance", "fullCovariance", &RTKConfig::fullCovariance, &SolverOptions::rtk),
+                    field("param.ratio_threshold", "arRatioThreshold", &RTKConfig::arThreshold, &SolverOptions::rtk),
+                }
+            },
+            {
+                "param.group.filter_float", {
+                    field("param.pos_proc_sigma_m", "PosProcSigma", &SolverOptions::posProcSigma),
+                    field("param.amb_proc_sigma_cycle", "AmbProcSigma", &RTKConfig::ambProcSigma, &SolverOptions::rtk),
+                    field("param.amb_init_sigma_cycle", "AmbInitSigma", &RTKConfig::ambInitSigma, &SolverOptions::rtk),
+                }
+            },
+            slipGroup(true),
+            healthGroup(true),
+            {
+                "param.group.ref_sat", {
+                    flag("param.exclude_geo_ref", "excludeGeoRef", &RTKConfig::excludeGeoRef, &SolverOptions::rtk),
                 }
             },
         };
@@ -547,12 +553,12 @@ void Solvers::Helpers::loadSolverParams(const Mode mode, SolverOptions &opts) {
 }
 
 void Solvers::Helpers::renderInsInitialState(SolverOptions &opts) {
-    UI::ParamPage::labelWidth = (ImGui::CalcTextSize("初始速度 vNED (m/s)").x
+    UI::ParamPage::labelWidth = (ImGui::CalcTextSize("param.ins_init_vel").x
                                  + ImGui::GetStyle().ItemSpacing.x * 2.0f);
 
     // 初始位置 BLH（与验证工具、GNSS 各模式同款，不再用 ECEF XYZ）
     {
-        ImGui::Text("初始位置 (BLH)");
+        ImGui::TextUnformatted(I18n::trc("param.ins_init_pos_short"));
         double *slot[3] = {&opts.ins.latDeg, &opts.ins.lonDeg, &opts.ins.hM};
         const char *lab[3] = {"φ (°N)", "λ (°E)", "h (m)"};
         ImGui::PushItemWidth(140);
@@ -569,7 +575,7 @@ void Solvers::Helpers::renderInsInitialState(SolverOptions &opts) {
 
     // 初始速度 vNED
     {
-        ImGui::Text("初始速度 (vNED)");
+        ImGui::TextUnformatted(I18n::trc("param.ins_init_vel_short"));
         double *slot[3] = {&opts.ins.vN, &opts.ins.vE, &opts.ins.vD};
         const char *lab[3] = {"vN", "vE", "vD"};
         ImGui::PushItemWidth(140);
@@ -585,10 +591,10 @@ void Solvers::Helpers::renderInsInitialState(SolverOptions &opts) {
     }
 
     // 是否指定初始姿态：勾选→手填三姿态角；不勾→从开头静止段自动粗对准（默认）
-    ImGui::Checkbox("指定初始姿态角（不勾则自动粗对准）", &opts.ins.specifyAttitude);
+    ImGui::Checkbox(I18n::trc("param.ins_specify_attitude"), &opts.ins.specifyAttitude);
     if (opts.ins.specifyAttitude) {
         double *slot[3] = {&opts.ins.rollDeg, &opts.ins.pitchDeg, &opts.ins.headingDeg};
-        const char *lab[3] = {"横滚 roll (°)", "俯仰 pitch (°)", "航向 heading (°)"};
+        const char *lab[3] = {"param.att_roll", "param.att_pitch", "param.att_heading"};
         ImGui::PushItemWidth(140);
         for (int i = 0; i < 3; ++i) {
             if (i) ImGui::SameLine();

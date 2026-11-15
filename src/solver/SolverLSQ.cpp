@@ -1,6 +1,6 @@
 #include "SolverLSQ.h"
 
-void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const bool computeCov) {
+void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &W, const bool computeCov) {
     // 仅在变量集合内容变化时重建索引缓存，避免每次求解 O(n) 线性扫描
     if (m_varSetCache != equSys.varSet) {
         m_varSetCache = equSys.varSet;
@@ -16,11 +16,11 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const
     if (prefit.size() != numObs) {
         prefit.resize(numObs);
     }
-    if (hMatrix.rows() != numObs || hMatrix.cols() != numUnk) {
-        hMatrix.resize(numObs, numUnk);
+    if (H.rows() != numObs || H.cols() != numUnk) {
+        H.resize(numObs, numUnk);
     }
     prefit.setZero();
-    hMatrix.setZero();
+    H.setZero();
 
     // ---- 组装设计矩阵 H 和观测值向量 prefit ----
     int iobs = 0;
@@ -28,35 +28,32 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const
         prefit(iobs) = data.prefit;
 
         for (const auto &[var, value]: data.varCoeffData) {
-            hMatrix(iobs, getIndex(var)) = value;
+            H(iobs, getIndex(var)) = value;
         }
         iobs++;
     }
 
-    if (prefit.size() != hMatrix.rows()) {
-        throw InvalidSolver("prefit size don't equal with rows of hMatrix");
-    }
-    if (weightMatrix.rows() != numObs || weightMatrix.cols() != numObs) {
-        throw InvalidSolver("weightMatrix size mismatch hMatrix rows");
+    if (W.rows() != numObs || W.cols() != numObs) {
+        throw InvalidSolver("W size mismatch H rows");
     }
 
-    const Eigen::MatrixXd N = hMatrix.transpose() * weightMatrix * hMatrix;
-    const Eigen::VectorXd b = hMatrix.transpose() * weightMatrix * prefit;
+    const Eigen::MatrixXd N = H.transpose() * W * H;
+    const Eigen::VectorXd b = H.transpose() * W * prefit;
 
     try {
         // 缓存分解供 computeCovariance() 复用；computeCov=false 时跳过协方差阵 O(n³) 计算。
         mLastDecomp.compute(N);
         state = mLastDecomp.solve(b);
         if (computeCov)
-            covMatrix = mLastDecomp.solve(Eigen::MatrixXd::Identity(N.rows(), N.cols()));
+            Q = mLastDecomp.solve(Eigen::MatrixXd::Identity(N.rows(), N.cols()));
         mHasDecomp = true;
     } catch (...) {
         throw InvalidSolver("Eigen::LDLT failed, matrix singular or ill-conditioned");
     }
 
-    v = prefit - hMatrix * state;
+    v = prefit - H * state;
     if (const int dof = numObs - numUnk; dof > 0) {
-        const Eigen::VectorXd Wv = weightMatrix * v;
+        const Eigen::VectorXd Wv = W * v;
         sigma0 = std::sqrt((v.array() * Wv.array()).sum() / dof);
     } else {
         sigma0 = 1.0; // 方程数刚好等于未知数，无法估计 sigma0
@@ -66,7 +63,7 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, const
 void SolverLSQ::computeCovariance() {
     if (!mHasDecomp) return;  // 尚未求解过，无分解可复用
     const int n = static_cast<int>(mLastDecomp.rows());
-    covMatrix = mLastDecomp.solve(Eigen::MatrixXd::Identity(n, n));
+    Q = mLastDecomp.solve(Eigen::MatrixXd::Identity(n, n));
 }
 
 double SolverLSQ::getSolution(const Parameter &type,
@@ -75,7 +72,7 @@ double SolverLSQ::getSolution(const Parameter &type,
     auto varIt = currentUnkSet.begin();
     int index = 0;
     while (varIt != currentUnkSet.end()) {
-        if (varIt->getParaType() == type) {
+        if (varIt->par == type) {
             return stateVec(index);
         }
         index++;

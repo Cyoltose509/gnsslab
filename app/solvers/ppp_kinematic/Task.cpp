@@ -7,7 +7,7 @@
 
 namespace Solvers::PPPKinematic {
     std::unique_ptr<::SPP> Task::makeSolver() {
-        return std::make_unique<::PPP::Kinematic>();
+        return std::make_unique<::PPPKinematic>();
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

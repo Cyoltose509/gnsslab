@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "core/obs/ObsStruct.h"
 #include "core/geom/CoordConvert.h"
 #include "novatel/LogReader.h"
@@ -10,6 +10,7 @@
 
 #include "Log.h"
 #include "MathUtils.h"
+#include "i18n/I18n.h"
 #include "StringUtils.h"
 
 namespace NovAtel {
@@ -42,12 +43,12 @@ namespace NovAtel {
     void LogReader::noteRangeFormat(const bool full) {
         if (full) {
             if (mSeenFullRange.exchange(true)) return;
-            LOG_INFO << "观测格式：RANGE（未量化）"
-                    << (mSeenCmpRange ? "；与 RANGECMP 并存时以 RANGE 为准" : "");
+            LOG_INFO << I18n::trc("log.novatel.range")
+                    << (mSeenCmpRange ? I18n::trc("log.novatel.range_cmp_pref") : "");
             return;
         }
         if (mSeenCmpRange.exchange(true)) return;
-        LOG_INFO << "观测格式：RANGECMP（伪距 1/128 m、相位 1/256 周量化）";
+        LOG_INFO << I18n::trc("log.novatel.rangecmp");
     }
 
     bool LogReader::crcExam(const std::vector<std::uint8_t> &message) {

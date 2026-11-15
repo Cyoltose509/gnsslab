@@ -14,21 +14,23 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "i18n/I18n.h"
 
 namespace Tools::Ins {
 
     InsVerifyTask::InsVerifyTask() {
-        fileName = "INS 算法验证";
+        fileName = "ins-verify";
+        nameKey = "gui.menu.tools.ins_verify";
     }
 
     void InsVerifyTask::startVerify() {
         saveInsParams(par);
         if (imuPath.empty()) {
-            setError("请先选择 IMU 增量文件（IMU.bin）。");
+            setError(I18n::tr("ins.verify.err.no_imu"));
             return;
         }
         if (refPath.empty()) {
-            setError("请先选择参考轨迹文件（PureINS.bin）。");
+            setError(I18n::tr("ins.verify.err.no_ref"));
             return;
         }
         beginRun(*this);
@@ -82,7 +84,7 @@ namespace Tools::Ins {
         }
         v.finish();
         if (v.report.compared == 0) {
-            abortRun(*this, "参考轨迹与 IMU 时段没有交集，未产生任何比对点。");
+            abortRun(*this, I18n::tr("ins.verify.err.no_overlap"));
             return;
         }
         // 末批可能不足 2048 点，收尾再发一次完整报告（含 pass 判定）。
@@ -95,26 +97,29 @@ namespace Tools::Ins {
         }
         chartDirty.store(true);
 
-        char summary[256];
-        std::snprintf(summary, sizeof summary,
-                      "比对 %zu 点（%zu 条 IMU 增量）：dLat %.2e° dLon %.2e° dh %.4f m dV %.2e m/s，%s",
-                      report.compared, report.imuEpochs, report.maxLatDeg, report.maxLonDeg,
-                      report.maxHM, report.maxV, report.pass ? "全部在容差内" : "有超差项");
-        LOG_INFO << "[" << fileName << "] " << summary;
+        char dLat[32], dLon[32], dh[32], dV[32];
+        std::snprintf(dLat, sizeof dLat, "%.2e", report.maxLatDeg);
+        std::snprintf(dLon, sizeof dLon, "%.2e", report.maxLonDeg);
+        std::snprintf(dh, sizeof dh, "%.4f", report.maxHM);
+        std::snprintf(dV, sizeof dV, "%.2e", report.maxV);
+        LOG_INFO << "[" << fileName << "] "
+                 << I18n::tr("ins.verify.log.summary", report.compared, report.imuEpochs, dLat, dLon,
+                             dh, dV, report.pass ? I18n::tr("ins.verify.within_tol")
+                                                 : I18n::tr("ins.verify.over_tol"));
 
         finishRun(*this);
     }
 
     void InsVerifyTask::renderConfigPanel() {
-        renderInsConfig("INS 算法验证配置###cfg_", *this, "开始验证",
+        renderInsConfig("ins.verify.window_title", *this, "ins.verify.start",
                         [&] {
-                            Solvers::Helpers::fileRow("IMU 增量文件", &imuPath, "ins_verify_imu", FileDialog::fBin, 2,
-                                             nullptr);
-                            Solvers::Helpers::fileRow("参考轨迹文件", &refPath, "ins_verify_ref", FileDialog::fBin, 2,
-                                             nullptr);
+                            Solvers::Helpers::fileRow(I18n::trc("ins.verify.file_imu"), &imuPath,
+                                                      "ins_verify_imu", FileDialog::fBin(), nullptr);
+                            Solvers::Helpers::fileRow(I18n::trc("ins.verify.file_ref"), &refPath,
+                                                      "ins_verify_ref", FileDialog::fBin(), nullptr);
                             ImGui::Spacing();
-                            ImGui::TextDisabled("IMU.bin 每条 7 个 double（t, Δθ×3, Δv×3），");
-                            ImGui::TextDisabled("PureINS.bin 每条 10 个 double（t, φ, λ, h, v×3, 姿态×3）。");
+                            ImGui::TextDisabled("%s", I18n::trc("ins.verify.hint.imu"));
+                            ImGui::TextDisabled("%s", I18n::trc("ins.verify.hint.ref"));
                         },
                         [&] { renderInsParams(par); }, [this] { startVerify(); });
     }
@@ -128,10 +133,10 @@ namespace Tools::Ins {
         }
 
         if (running) {
-            ImGui::TextColored(kColInfo, "正在比对 [%s]：第 %lld 个历元", fileName.c_str(),
-                               static_cast<long long>(sampleCount.load()));
+            ImGui::TextColored(kColInfo, "%s",
+                               I18n::tr("ins.verify.comparing", displayName(), sampleCount.load()).c_str());
             ImGui::SameLine();
-            if (ImGui::Button("停止验证")) stop = true;
+            if (ImGui::Button(I18n::trc("ins.verify.stop"))) stop = true;
         }
 
         ::Ins::VerifyReport rep;
@@ -145,8 +150,11 @@ namespace Tools::Ins {
         // 进行中只显示实时进度，不下结论（rep.pass 由 finish() 在结束时才置位）；
         // 完成后才显示 pass/fail。图与表只要 valid 就画（与标定/对准一致，边算边画）。
         if (running && valid) {
-            ImGui::TextColored(kColInfo, "比对进行中：已比对 %zu 点，最大水平偏差 %.4f m、速度 %.2e m/s。",
-                               rep.compared, rep.maxHorizontalM, rep.maxV);
+            char hm[32], vv[32];
+            std::snprintf(hm, sizeof hm, "%.4f", rep.maxHorizontalM);
+            std::snprintf(vv, sizeof vv, "%.2e", rep.maxV);
+            ImGui::TextColored(kColInfo, "%s",
+                               I18n::tr("ins.verify.progress", rep.compared, hm, vv).c_str());
         } else if (valid) {
             std::string bad;
             auto mark = [&bad](const bool over, const char *name) {
@@ -154,40 +162,42 @@ namespace Tools::Ins {
                 if (!bad.empty()) bad += "、";
                 bad += name;
             };
-            mark(rep.maxLatDeg > rep.tol.latLonDeg, "纬度");
-            mark(rep.maxLonDeg > rep.tol.latLonDeg, "经度");
-            mark(rep.maxHM > rep.tol.hM, "高程");
-            mark(rep.maxV > rep.tol.vMps, "速度");
-            mark(rep.maxRollDeg > rep.tol.attDeg, "横滚");
-            mark(rep.maxPitchDeg > rep.tol.attDeg, "俯仰");
-            mark(rep.maxHeadingDeg > rep.tol.attDeg, "航向");
-            if (bad.empty()) ImGui::TextColored(UI::kColPass, "全部指标在容差内");
-            else ImGui::TextColored(UI::kColFail, "超差项：%s", bad.c_str());
+            mark(rep.maxLatDeg > rep.tol.latLonDeg, I18n::trc("Latitude"));
+            mark(rep.maxLonDeg > rep.tol.latLonDeg, I18n::trc("Longitude"));
+            mark(rep.maxHM > rep.tol.hM, I18n::trc("Height"));
+            mark(rep.maxV > rep.tol.vMps, I18n::trc("Velocity"));
+            mark(rep.maxRollDeg > rep.tol.attDeg, I18n::trc("Roll"));
+            mark(rep.maxPitchDeg > rep.tol.attDeg, I18n::trc("Pitch"));
+            mark(rep.maxHeadingDeg > rep.tol.attDeg, I18n::trc("Heading"));
+            if (bad.empty())
+                ImGui::TextColored(UI::kColPass, "%s", I18n::trc("ins.verify.all_within_tol"));
+            else ImGui::TextColored(UI::kColFail, "%s",
+                                    I18n::tr("ins.verify.over_items", bad).c_str());
         }
 
         if (!valid) {
-            ImGui::TextDisabled("（尚无验证结果）");
+            ImGui::TextDisabled("%s", I18n::trc("ins.verify.no_result"));
             return;
         }
 
-        ImGui::SeparatorText("数据概况");
+        ImGui::SeparatorText(I18n::trc("ins.verify.sep.data"));
         if (ImGui::BeginTable("##verify_sum", 4,
                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
-            ImGui::TableSetupColumn("项目");
-            ImGui::TableSetupColumn("数值");
-            ImGui::TableSetupColumn("项目");
-            ImGui::TableSetupColumn("数值");
+            ImGui::TableSetupColumn(I18n::trc("ins.verify.col.item"));
+            ImGui::TableSetupColumn(I18n::trc("ins.verify.col.value"));
+            ImGui::TableSetupColumn(I18n::trc("ins.verify.col.item"));
+            ImGui::TableSetupColumn(I18n::trc("ins.verify.col.value"));
             ImGui::TableHeadersRow();
 
             auto kv = [](const char *k1, const char *v1, const char *k2, const char *v2) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(k1);
+                ImGui::TextUnformatted(I18n::trc(k1));
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(v1);
                 ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(k2);
+                ImGui::TextUnformatted(I18n::trc(k2));
                 ImGui::TableSetColumnIndex(3);
                 ImGui::TextUnformatted(v2);
             };
@@ -199,33 +209,34 @@ namespace Tools::Ins {
             std::snprintf(b4, sizeof b4, "%.3f s", rep.t0);
             std::snprintf(b5, sizeof b5, "%.3f s", rep.t1);
             std::snprintf(b6, sizeof b6, "%.1f min", (rep.t1 - rep.t0) / 60.0);
-            kv("IMU 增量历元", b1, "参考轨迹历元", b2);
-            kv("比对点数", b3, "起始时标", b4);
-            kv("截止时标", b5, "时长", b6);
+            kv("ins.verify.kv.imu_epochs", b1, "ins.verify.kv.ref_epochs", b2);
+            kv("ins.verify.kv.compared", b3, "ins.verify.kv.start", b4);
+            kv("ins.verify.kv.end", b5, "ins.verify.kv.duration", b6);
             ImGui::EndTable();
         }
         ImGui::Spacing();
 
-        ImGui::SeparatorText("与参考轨迹的最大偏差");
+        ImGui::SeparatorText(I18n::trc("ins.verify.sep.max_dev"));
         if (ImGui::BeginTable("##verify_err", 4,
                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
-            ImGui::TableSetupColumn("量");
-            ImGui::TableSetupColumn("最大偏差");
-            ImGui::TableSetupColumn("容差");
-            ImGui::TableSetupColumn("判定");
+            ImGui::TableSetupColumn(I18n::trc("ins.calib.col.qty"));
+            ImGui::TableSetupColumn(I18n::trc("ins.verify.col.max_dev"));
+            ImGui::TableSetupColumn(I18n::trc("Tolerance"));
+            ImGui::TableSetupColumn(I18n::trc("ins.verify.col.verdict"));
             ImGui::TableHeadersRow();
 
             auto row = [](const char *label, const char *val, const char *tol, const bool over) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(label);
+                ImGui::TextUnformatted(I18n::trc(label));
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(val);
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(tol);
                 ImGui::TableSetColumnIndex(3);
-                ImGui::TextColored(over ? kColFail : kColPass, "%s", over ? "超差" : "通过");
+                ImGui::TextColored(over ? kColFail : kColPass, "%s",
+                                   over ? I18n::trc("ins.verify.over") : I18n::trc("ins.verify.pass"));
             };
 
             auto sci = [](char *buf, const std::size_t n, const double v) {
@@ -239,39 +250,40 @@ namespace Tools::Ins {
             char v5[64], t5[64], v6[64], t6[64], v7[64], t7[64];
             sci(v1, sizeof v1, rep.maxLatDeg);
             sci(t1, sizeof t1, rep.tol.latLonDeg);
-            row("纬度最大偏差 (°)", v1, t1, rep.maxLatDeg > rep.tol.latLonDeg);
+            row("ins.verify.row.lat", v1, t1, rep.maxLatDeg > rep.tol.latLonDeg);
             sci(v2, sizeof v2, rep.maxLonDeg);
             sci(t2, sizeof t2, rep.tol.latLonDeg);
-            row("经度最大偏差 (°)", v2, t2, rep.maxLonDeg > rep.tol.latLonDeg);
+            row("ins.verify.row.lon", v2, t2, rep.maxLonDeg > rep.tol.latLonDeg);
             fixed(v3, sizeof v3, rep.maxHM, "%.4f");
             fixed(t3, sizeof t3, rep.tol.hM, "%.4f");
-            row("高程 (m)", v3, t3, rep.maxHM > rep.tol.hM);
+            row("common.height_m", v3, t3, rep.maxHM > rep.tol.hM);
             sci(v4, sizeof v4, rep.maxV);
             sci(t4, sizeof t4, rep.tol.vMps);
-            row("速度三分量最大 (m/s)", v4, t4, rep.maxV > rep.tol.vMps);
+            row("ins.verify.row.velocity", v4, t4, rep.maxV > rep.tol.vMps);
             sci(v5, sizeof v5, rep.maxRollDeg);
             sci(t5, sizeof t5, rep.tol.attDeg);
-            row("横滚 (°)", v5, t5, rep.maxRollDeg > rep.tol.attDeg);
+            row("export.col.roll", v5, t5, rep.maxRollDeg > rep.tol.attDeg);
             sci(v6, sizeof v6, rep.maxPitchDeg);
             sci(t6, sizeof t6, rep.tol.attDeg);
-            row("俯仰 (°)", v6, t6, rep.maxPitchDeg > rep.tol.attDeg);
+            row("export.col.pitch", v6, t6, rep.maxPitchDeg > rep.tol.attDeg);
             sci(v7, sizeof v7, rep.maxHeadingDeg);
             sci(t7, sizeof t7, rep.tol.attDeg);
-            row("航向 (°)", v7, t7, rep.maxHeadingDeg > rep.tol.attDeg);
+            row("export.col.heading", v7, t7, rep.maxHeadingDeg > rep.tol.attDeg);
             ImGui::EndTable();
         }
-        ImGui::TextDisabled("书里写的是「1.0e-7 deg 的量级」「1.0e-5~1.0e-4 m/s 的量级」，这里按量级上界取阈值。");
-        ImGui::TextDisabled("水平偏差折成米后最大 %.4f m，仅作直观附注，不参与判定。", rep.maxHorizontalM);
+        ImGui::TextDisabled("%s", I18n::trc("ins.verify.note.tol"));
+        ImGui::TextDisabled("%s", I18n::tr("ins.verify.note.horizontal",
+                                           rep.maxHorizontalM).c_str());
         ImGui::Spacing();
 
         {
             ImGui::BeginDisabled(!done);
-            const bool s1 = ImGui::Button("导出逐点误差 CSV", ImVec2(200, 0));
+            const bool s1 = ImGui::Button(I18n::trc("ins.verify.export.points"), ImVec2(200, 0));
             ImGui::SameLine();
-            const bool s2 = ImGui::Button("导出汇总 CSV", ImVec2(150, 0));
+            const bool s2 = ImGui::Button(I18n::trc("ins.align.export.summary"), ImVec2(150, 0));
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
             ImGui::EndDisabled();
-            if (!done && hovered) ImGui::SetTooltip("验证完成后才能导出。");
+            if (!done && hovered) ImGui::SetTooltip("%s", I18n::trc("ins.verify.export_hint"));
             if (s1) exportSampleCSV();
             if (s2) exportSummaryCSV();
         }
@@ -309,23 +321,25 @@ namespace Tools::Ins {
                                const std::vector<double> &c,
                                const char *n1, const char *n2, const char *n3) {
             if (tx.empty()) {
-                ImGui::TextDisabled("（无数据）");
+                ImGui::TextDisabled("%s", I18n::trc("ins.no_data"));
                 return;
             }
             const int n = static_cast<int>(tx.size());
-            if (ImPlot::BeginPlot(title, ImVec2(-1, kFileChartH))) {
-                ImPlot::SetupAxes("时间 t (s)", yLabel);
+            if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kFileChartH))) {
+                ImPlot::SetupAxes(I18n::trc("ins.chart.x_time"), I18n::trc(yLabel));
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 fitXToLatest(chartNew, tx.back());
-                ImPlot::PlotLine(n1, tx.data(), a.data(), n, lineSpec(kColX));
-                ImPlot::PlotLine(n2, tx.data(), b.data(), n, lineSpec(kColY));
-                ImPlot::PlotLine(n3, tx.data(), c.data(), n, lineSpec(kColZ));
+                ImPlot::PlotLine(I18n::trc(n1), tx.data(), a.data(), n, lineSpec(kColX));
+                ImPlot::PlotLine(I18n::trc(n2), tx.data(), b.data(), n, lineSpec(kColY));
+                ImPlot::PlotLine(I18n::trc(n3), tx.data(), c.data(), n, lineSpec(kColZ));
                 ImPlot::EndPlot();
             }
         };
-        drawErrPlot("位置误差", "m", dn, de, du, "北 N", "东 E", "天 U");
-        drawErrPlot("速度误差", "m/s", vn, ve, vd, "vN", "vE", "vD");
-        drawErrPlot("姿态误差", "°", dr, dp, dh, "横滚", "俯仰", "航向");
+        drawErrPlot("ins.verify.chart.pos", "ins.verify.unit.m", dn, de, du, "ins.verify.chart.north",
+                    "ins.verify.chart.east", "ins.verify.chart.up");
+        drawErrPlot("ins.verify.chart.vel", "ins.verify.unit.mps", vn, ve, vd, "vN", "vE", "vD");
+        drawErrPlot("ins.verify.chart.att", "ins.verify.unit.deg", dr, dp, dh,
+                    "Roll", "Pitch", "Heading");
     }
 
     void InsVerifyTask::exportSampleCSV() {
@@ -335,7 +349,7 @@ namespace Tools::Ins {
             s = report.series;
         }
         if (s.empty()) {
-            setError("尚无验证结果，无法导出。请先完成一次验证。");
+            setError(I18n::tr("ins.verify.err.no_result"));
             return;
         }
         exportCSVDialog(*this, "ins_verify_samples.csv", "ins_verify_samples.csv", [&](CSV::Writer &w) {
@@ -355,34 +369,36 @@ namespace Tools::Ins {
             rep = report;
         }
         if (rep.compared == 0) {
-            setError("尚无验证结果，无法导出。请先完成一次验证。");
+            setError(I18n::tr("ins.verify.err.no_result"));
             return;
         }
         exportCSVDialog(*this, "ins_verify_summary.csv", "ins_verify_summary.csv", [&](CSV::Writer &w) {
-            w.row("项目", "数值", "容差", "判定");
+            w.row(I18n::trc("ins.verify.col.item"), I18n::trc("ins.verify.col.value"),
+                  I18n::trc("Tolerance"), I18n::trc("ins.verify.col.verdict"));
             auto line = [&](const char *name, const CSV::FixedNum v, const CSV::FixedNum tol, const bool over) {
-                w.row(name, v, tol, over ? "超差" : "通过");
+                w.row(name, v, tol, over ? I18n::trc("ins.verify.over") : I18n::trc("ins.verify.pass"));
             };
             auto lineSci = [&](const char *name, const double v, const double tol, const bool over) {
-                w.row(name, CSV::sci(v, 3), CSV::sci(tol, 1), over ? "超差" : "通过");
+                w.row(name, CSV::sci(v, 3), CSV::sci(tol, 1), over ? I18n::trc("ins.verify.over") : I18n::trc("ins.verify.pass"));
             };
-            lineSci("纬度最大偏差 (°)", rep.maxLatDeg, rep.tol.latLonDeg,
+            lineSci(I18n::trc("ins.verify.row.lat"), rep.maxLatDeg, rep.tol.latLonDeg,
                     rep.maxLatDeg > rep.tol.latLonDeg);
-            lineSci("经度最大偏差 (°)", rep.maxLonDeg, rep.tol.latLonDeg,
+            lineSci(I18n::trc("ins.verify.row.lon"), rep.maxLonDeg, rep.tol.latLonDeg,
                     rep.maxLonDeg > rep.tol.latLonDeg);
-            line("高程 (m)", CSV::fx(rep.maxHM, 5), CSV::fx(rep.tol.hM, 4), rep.maxHM > rep.tol.hM);
-            lineSci("速度 (m/s)", rep.maxV, rep.tol.vMps, rep.maxV > rep.tol.vMps);
-            lineSci("横滚 (°)", rep.maxRollDeg, rep.tol.attDeg, rep.maxRollDeg > rep.tol.attDeg);
-            lineSci("俯仰 (°)", rep.maxPitchDeg, rep.tol.attDeg, rep.maxPitchDeg > rep.tol.attDeg);
-            lineSci("航向 (°)", rep.maxHeadingDeg, rep.tol.attDeg, rep.maxHeadingDeg > rep.tol.attDeg);
+            line(I18n::trc("common.height_m"), CSV::fx(rep.maxHM, 5), CSV::fx(rep.tol.hM, 4), rep.maxHM > rep.tol.hM);
+            lineSci(I18n::trc("ins.verify.csv.max_v"), rep.maxV, rep.tol.vMps, rep.maxV > rep.tol.vMps);
+            lineSci(I18n::trc("export.col.roll"), rep.maxRollDeg, rep.tol.attDeg, rep.maxRollDeg > rep.tol.attDeg);
+            lineSci(I18n::trc("export.col.pitch"), rep.maxPitchDeg, rep.tol.attDeg, rep.maxPitchDeg > rep.tol.attDeg);
+            lineSci(I18n::trc("export.col.heading"), rep.maxHeadingDeg, rep.tol.attDeg, rep.maxHeadingDeg > rep.tol.attDeg);
             w.blank();
-            w.row("水平偏差折米最大值 (m)", CSV::fx(rep.maxHorizontalM, 4));
-            w.row("IMU 增量历元", std::to_string(rep.imuEpochs));
-            w.row("参考轨迹历元", std::to_string(rep.refEpochs));
-            w.row("比对点数", std::to_string(rep.compared));
-            w.row("起始时标 (s)", CSV::fx(rep.t0, 3));
-            w.row("截止时标 (s)", CSV::fx(rep.t1, 3));
-            w.row("结论", rep.pass ? "指导书判据全部满足" : "有超差项");
+            w.row(I18n::trc("ins.verify.csv.horizontal_max"), CSV::fx(rep.maxHorizontalM, 4));
+            w.row(I18n::trc("ins.verify.kv.imu_epochs"), std::to_string(rep.imuEpochs));
+            w.row(I18n::trc("ins.verify.kv.ref_epochs"), std::to_string(rep.refEpochs));
+            w.row(I18n::trc("ins.verify.kv.compared"), std::to_string(rep.compared));
+            w.row(I18n::trc("ins.verify.csv.t0"), CSV::fx(rep.t0, 3));
+            w.row(I18n::trc("ins.verify.csv.t1"), CSV::fx(rep.t1, 3));
+            w.row(I18n::trc("common.conclusion"),
+                  rep.pass ? I18n::trc("ins.verify.csv.all_pass") : I18n::trc("ins.verify.over_tol"));
         });
     }
 }

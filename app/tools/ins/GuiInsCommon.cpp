@@ -3,6 +3,7 @@
 #include "ui/ParamPage.h"
 
 #include <algorithm>
+#include "i18n/I18n.h"
 
 namespace Tools::Ins {
     namespace {
@@ -18,9 +19,9 @@ namespace Tools::Ins {
 
         const std::vector<Group<CalibParams> > &calibSchema() {
             static const std::vector<Group<CalibParams> > s = {
-                {"站点 / 转台", {
-                    field("当地重力加速度 g (m/s²)", "g", &CalibParams::g, between(1.0, 12.0)),
-                    field("转台精确转角 α (°)", "turnAngleDeg", &CalibParams::turnAngleDeg,
+                {"ins.param.group.station_turntable", {
+                    field("ins.param.g", "g", &CalibParams::g, between(1.0, 12.0)),
+                    field("ins.param.turn_angle", "turnAngleDeg", &CalibParams::turnAngleDeg,
                           between(1.0, 3600.0)),
                 }},
             };
@@ -30,12 +31,12 @@ namespace Tools::Ins {
 
         const std::vector<Group<AlignParams> > &alignSchema() {
             static const std::vector<Group<AlignParams> > s = {
-                {"站点", {
-                    field("当地纬度 φ (°N)", "latDeg", &AlignParams::latDeg, between(-90.0, 90.0)),
-                    field("当地重力加速度 g (m/s²)", "g", &AlignParams::g, between(1.0, 12.0)),
+                {"Site", {
+                    field("ins.param.lat", "latDeg", &AlignParams::latDeg, between(-90.0, 90.0)),
+                    field("ins.param.g", "g", &AlignParams::g, between(1.0, 12.0)),
                 }},
-                {"解算窗口", {
-                    field("滑窗长度 (历元)", "win", &AlignParams::win, between(2.0, 20000.0)),
+                {"ins.param.group.window", {
+                    field("ins.param.win", "win", &AlignParams::win, between(2.0, 20000.0)),
                 }},
             };
             return s;
@@ -44,23 +45,25 @@ namespace Tools::Ins {
 
         const std::vector<Group<VerifyParams> > &verifySchema() {
             static const std::vector<Group<VerifyParams> > s = {
-                {"初始位置", {
-                    field("纬度 φ (°N)", "vLatDeg", &VerifyParams::latDeg, between(-90.0, 90.0)),
-                    field("经度 λ (°E)", "vLonDeg", &VerifyParams::lonDeg, between(-180.0, 180.0)),
-                    field("高程 h (m)", "vHM", &VerifyParams::hM, between(-2000.0, 100000.0)),
+                {"ins.param.group.init_pos", {
+                    field("ins.param.v_lat", "vLatDeg", &VerifyParams::latDeg, between(-90.0, 90.0)),
+                    field("ins.param.v_lon", "vLonDeg", &VerifyParams::lonDeg, between(-180.0, 180.0)),
+                    field("ins.param.v_h", "vHM", &VerifyParams::hM, between(-2000.0, 100000.0)),
                 }},
-                {"初始速度 (m/s, NED)", {
-                    field("北向 vN", "vVN", &VerifyParams::vN, between(-1000.0, 1000.0)),
-                    field("东向 vE", "vVE", &VerifyParams::vE, between(-1000.0, 1000.0)),
-                    field("地向 vD", "vVD", &VerifyParams::vD, between(-1000.0, 1000.0)),
+                {"ins.param.group.init_vel", {
+                    field("ins.param.v_vn", "vVN", &VerifyParams::vN, between(-1000.0, 1000.0)),
+                    field("ins.param.v_ve", "vVE", &VerifyParams::vE, between(-1000.0, 1000.0)),
+                    field("ins.param.v_vd", "vVD", &VerifyParams::vD, between(-1000.0, 1000.0)),
                 }},
-                {"初始姿态 (°)", {
-                    field("横滚 roll", "vRollDeg", &VerifyParams::rollDeg, between(-360.0, 360.0)),
-                    field("俯仰 pitch", "vPitchDeg", &VerifyParams::pitchDeg, between(-90.0, 90.0)),
-                    field("航向 heading", "vHeadingDeg", &VerifyParams::headingDeg, between(-360.0, 360.0)),
+                {"ins.param.group.init_att", {
+                    field("ins.param.v_roll", "vRollDeg", &VerifyParams::rollDeg, between(-360.0, 360.0)),
+                    field("ins.param.v_pitch", "vPitchDeg", &VerifyParams::pitchDeg, between(-90.0, 90.0)),
+                    field("ins.param.v_heading", "vHeadingDeg", &VerifyParams::headingDeg,
+                          between(-360.0, 360.0)),
                 }},
-                {"时间", {
-                    field("起始时刻 tow (s)", "vStartTow", &VerifyParams::startTime, between(0.0, 1000000.0)),
+                {"ins.param.group.time", {
+                    field("ins.param.v_start_tow", "vStartTow", &VerifyParams::startTime,
+                          between(0.0, 1000000.0)),
                 }},
             };
             return s;
@@ -69,9 +72,9 @@ namespace Tools::Ins {
 
         const char *alertTitle(const AlertLevel lv) {
             switch (lv) {
-                case AlertLevel::Error: return "错误";
-                case AlertLevel::Warn: return "注意";
-                default: return "提示";
+                case AlertLevel::Error: return I18n::trc("ins.alert.error");
+                case AlertLevel::Warn: return I18n::trc("ins.alert.warn");
+                default: return I18n::trc("ins.alert.info");
             }
         }
     }
@@ -148,8 +151,7 @@ namespace Tools::Ins {
                     return true;
                 }
                 if (info.model->type == recordModel->type) return true;
-                conflict = "选中的文件混用了不同 IMU 型号（" + std::string(recordModel->name) + " 与 " +
-                           info.model->name + "），当量无法统一。请按型号分两批标定。";
+                conflict = I18n::tr("ins.scale.model_conflict", recordModel->name, info.model->name);
                 return false;
             case RecordScale::UnknownType:
                 if (unknownType < 0) unknownType = info.type;
@@ -180,55 +182,52 @@ namespace Tools::Ins {
     }
 
     std::string ScaleResolution::failMessage() const {
-        if (unknownType >= 0)
-            return "记录里的 IMU Type=" + std::to_string(unknownType) + " 不在内置型号表内，无法确定解码当量。";
-        if (!note.empty()) return "记录里没有 IMU 型号自描述，也无法用静置段反推当量：" + note + "。";
-        return "记录里没有 IMU 型号自描述，也没有可用的静置段反推当量。";
+        if (unknownType >= 0) return I18n::tr("ins.scale.unknown_type", unknownType);
+        if (!note.empty()) return I18n::tr("ins.scale.no_selftype_note", note);
+        return I18n::tr("ins.scale.no_selftype");
     }
 
     std::string ScaleResolution::describe() const {
         switch (src) {
-            case ScaleSource::Record: return modelName + "（Type=" + std::to_string(modelType) + "）";
-            case ScaleSource::Guess: return modelName + "（量级反推）";
-            case ScaleSource::Manual: return "用户手填当量";
+            case ScaleSource::Record: return I18n::tr("ins.scale.record_label", modelName, modelType);
+            case ScaleSource::Guess: return I18n::tr("ins.scale.guess_describe", modelName);
+            case ScaleSource::Manual: return I18n::tr("ins.scale.manual");
             default: return {};
         }
     }
 
     std::string ScaleResolution::recordLabel() const {
         if (!recordModel) return {};
-        return std::string(recordModel->name) + "（Type=" + std::to_string(recordModel->type) + "）";
+        return I18n::tr("ins.scale.record_label", recordModel->name, recordModel->type);
     }
 
     ScaleNotice ScaleResolution::notice(const bool settled) const {
         if (!settled) {
             if (!recordModel) return {};
-            return {true, AlertLevel::Info, "当量来源：记录自描述的 " + recordLabel() + "。"};
+            return {true, AlertLevel::Info, I18n::tr("ins.scale.src_record_short", recordLabel())};
         }
         if (!known()) {
-            std::string t = "未能确定解码当量，|f| 与 |ω| 的模长校验不可用";
-            if (unknownType >= 0)
-                t += "：记录里的 IMU Type=" + std::to_string(unknownType) + " 不在内置型号表内";
-            else if (!note.empty())
-                t += "：静置段反推当量失败，" + note;
-            return {true, AlertLevel::Warn, t + "。"};
+            std::string t = I18n::tr("ins.scale.unknown_head");
+            if (unknownType >= 0) t += I18n::tr("ins.scale.unknown_why_type", unknownType);
+            else if (!note.empty()) t += I18n::tr("ins.scale.unknown_why_guess", note);
+            return {true, AlertLevel::Warn, t + I18n::tr("ins.punct.period")};
         }
         bool weak = src != ScaleSource::Record;
         std::string t;
         switch (src) {
-            case ScaleSource::Record: t = "当量来源：记录自描述的 " + recordLabel();
+            case ScaleSource::Record: t = I18n::tr("ins.scale.src_record", recordLabel());
                 break;
-            case ScaleSource::Guess: t = "当量来源：由静置段量级反推的 " + modelName;
+            case ScaleSource::Guess: t = I18n::tr("ins.scale.src_guess", modelName);
                 break;
-            case ScaleSource::Manual: t = "当量来源：用户按手册手填";
+            case ScaleSource::Manual: t = I18n::tr("ins.scale.src_manual");
                 break;
             default: return {};
         }
         if (noType > 0) {
-            t += "；本批有 " + std::to_string(noType) + " 个文件没有 IMU 型号自描述，已按上述当量处理。";
+            t += I18n::tr("ins.scale.no_type_note", noType);
             weak = true;
         } else {
-            t += "。";
+            t += I18n::tr("ins.punct.period");
         }
         return {true, weak ? AlertLevel::Warn : AlertLevel::Info, t};
     }
@@ -276,7 +275,7 @@ namespace Tools::Ins {
     }
 
     std::string ScaleIdentifier::failText() const {
-        return res.failMessage() + "请在下方填入这台设备手册上的解码当量后重算。";
+        return res.failMessage() + I18n::tr("ins.scale.fill_manual_hint");
     }
 
     bool ScaleIdentifier::mixedModel() const {
@@ -284,7 +283,7 @@ namespace Tools::Ins {
     }
 
     std::string ScaleIdentifier::failureMessage(const std::string &path) const {
-        return mixedModel() ? res.conflict : "无法打开 IMU 日志：" + path;
+        return mixedModel() ? res.conflict : I18n::tr("ins.err.open_imu", path);
     }
 
     void keepManualScaleFor(ScaleFallback &sf, const std::string &sig) {
@@ -295,21 +294,20 @@ namespace Tools::Ins {
     bool drawScaleFallback(ScaleFallback &sf, const bool allowSkip) {
         if (!sf.asked.load(std::memory_order_acquire)) {
             if (sf.accepted.load(std::memory_order_relaxed) &&
-                ImGui::SmallButton("修改手填当量…##kf_edit")) {
+                ImGui::SmallButton((std::string(I18n::trc("ins.scale.edit_manual")) +
+                                    "##kf_edit").c_str())) {
                 sf.accepted.store(false, std::memory_order_relaxed);
                 sf.asked.store(true, std::memory_order_release);
             }
             return false;
         }
-        drawAlert(AlertLevel::Warn,
-                  sf.reason.empty()
-                      ? "无法自动确定解码当量：记录里没有 IMU 型号，静置段量级也反推不出唯一型号。"
-                      : sf.reason.c_str());
-        ImGui::TextDisabled("请按这台设备手册填写解码当量，然后点「以此当量重算」。");
+        drawAlert(AlertLevel::Warn, sf.reason.empty() ? I18n::trc("ins.scale.no_guess")
+                                                      : sf.reason.c_str());
+        ImGui::TextDisabled("%s", I18n::trc("ins.scale.manual_panel_hint"));
         ImGui::Spacing();
         auto field = [](const char *id, const char *label, const char *unit, std::atomic<double> &v,
                         const char *fmt) {
-            ImGui::TextUnformatted(label);
+            ImGui::TextUnformatted(I18n::trc(label));
             ImGui::SameLine(160.0f);
             ImGui::SetNextItemWidth(140.0f);
             double val = v.load(std::memory_order_relaxed);
@@ -317,14 +315,14 @@ namespace Tools::Ins {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", unit);
         };
-        field("##kf_a", "加计当量 k_a", "(m/s)/LSB", sf.accelMpsPerLsb, "%.6e");
-        field("##kf_g", "陀螺当量 k_g", "°/LSB", sf.gyroDegPerLsb, "%.6e");
-        field("##kf_r", "采样率", "Hz", sf.rateHz, "%.3f");
+        field("##kf_a", "ins.scale.k_a", "(m/s)/LSB", sf.accelMpsPerLsb, "%.6e");
+        field("##kf_g", "ins.scale.k_g", "°/LSB", sf.gyroDegPerLsb, "%.6e");
+        field("##kf_r", "SamplingRate", "Hz", sf.rateHz, "%.3f");
         ImGui::Spacing();
 
         bool retry = false;
         ImGui::BeginDisabled(!sf.scale().known());
-        if (ImGui::Button("以此当量重算", ImVec2(160, 0))) {
+        if (ImGui::Button(I18n::trc("ins.scale.recount"), ImVec2(160, 0))) {
             sf.accepted.store(true, std::memory_order_relaxed);
             sf.asked.store(false, std::memory_order_release);
             retry = true;
@@ -332,7 +330,7 @@ namespace Tools::Ins {
         ImGui::EndDisabled();
         if (allowSkip) {
             ImGui::SameLine();
-            if (ImGui::Button("跳过当量校验", ImVec2(150, 0)))
+            if (ImGui::Button(I18n::trc("ins.scale.skip_check"), ImVec2(150, 0)))
                 sf.asked.store(false, std::memory_order_release);
         }
         ImGui::Spacing();
@@ -396,12 +394,12 @@ namespace Tools::Ins {
                        const std::vector<double> &a, const std::vector<double> &b,
                        const std::vector<double> &c, const bool chartNew) {
         if (t.empty() || a.empty()) {
-            ImGui::TextDisabled("（无数据）");
+            ImGui::TextDisabled("%s", I18n::trc("ins.no_data"));
             return;
         }
         const int n = static_cast<int>(t.size());
-        if (ImPlot::BeginPlot(title, ImVec2(-1, kFileChartH))) {
-            ImPlot::SetupAxes("时间 t (s)", "值");
+        if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kFileChartH))) {
+            ImPlot::SetupAxes(I18n::trc("ins.chart.x_time"), I18n::trc("common.value"));
             ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
             const double xmax = t.back() - t.front();
             fitXToLatest(chartNew, xmax);
@@ -414,11 +412,13 @@ namespace Tools::Ins {
 
     void drawScaleBars(const char *title, const bool ready, const double v[3], const ImVec4 &fill,
                        const char *fmt) {
-        if (ImPlot::BeginPlot(title, ImVec2(-1, kChartHeight))) {
+        if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kChartHeight))) {
             if (ready) {
-                ImPlot::SetupAxes("轴", "值", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+                ImPlot::SetupAxes(I18n::trc("ins.chart.x_axis"), I18n::trc("common.value"),
+                                  ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
             } else {
-                ImPlot::SetupAxes("轴", "值", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+                ImPlot::SetupAxes(I18n::trc("ins.chart.x_axis"), I18n::trc("common.value"),
+                                  ImPlotAxisFlags_None, ImPlotAxisFlags_None);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, -1.0, 1.0, ImPlotCond_Always);
             }
             ImPlot::SetupAxisLimits(ImAxis_X1, -0.6, 2.6, ImPlotCond_Always);
@@ -430,14 +430,14 @@ namespace Tools::Ins {
                 bs.FillColor = fill;
                 bs.LineColor = ImVec4(0.55f, 0.75f, 1.00f, 1.0f);
                 bs.LineWeight = 1.0f;
-                ImPlot::PlotBars("值", xs, v, 3, 0.5, bs);
+                ImPlot::PlotBars(I18n::trc("common.value"), xs, v, 3, 0.5, bs);
                 for (int k = 0; k < 3; ++k) {
                     char buf[32];
                     std::snprintf(buf, sizeof(buf), fmt, v[k]);
                     ImPlot::PlotText(buf, xs[k], v[k]);
                 }
             } else {
-                ImPlot::PlotText("计算中", 1.0, 0.0);
+                ImPlot::PlotText(I18n::trc("ins.chart.computing"), 1.0, 0.0);
             }
             ImPlot::EndPlot();
         }
@@ -446,7 +446,7 @@ namespace Tools::Ins {
     void vec3Row(const char *label, const double x, const double y, const double z, const char *fmt) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(label);
+        ImGui::TextUnformatted(I18n::trc(label));
         ImGui::TableSetColumnIndex(1);
         ImGui::Text(fmt, x);
         ImGui::TableSetColumnIndex(2);
@@ -467,7 +467,6 @@ namespace Tools::Ins {
             nr += s[i].roll;
         }
         const auto m = static_cast<double>(s.size() - lo);
-        if (m <= 0) return;
         ny /= m;
         np /= m;
         nr /= m;

@@ -1,0 +1,30 @@
+key,ZH-CN,EN
+common.all,全部,All
+common.browse,浏览,Browse
+common.cancel,取消,Cancel
+common.check,检查,Check
+common.clear,清空,Clear
+common.conclusion,结论,Conclusion
+common.data,数据,Data
+common.date,日期,Date
+common.delete_permanent,彻底删除…,Delete permanently…
+common.export,导出…,Export…
+common.fetch,获取,Fetch
+common.file,文件,File
+common.height_m,{{Height}} (m),{{Height}} (m)
+common.local_exist,本机已有 {0},Already present locally: {0}
+common.mode,模式,Mode
+common.none,无,None
+common.open_explorer,从资源管理器打开,Open in File Explorer
+common.params,参数,Parameters
+common.reference,参考,Reference
+common.select_all,全选,Select all
+common.solution,解算,Solution
+common.solution_state,解状态,Solution state
+common.state,状态,Status
+common.status,状态: {0},Status: {0}
+common.system,系统,System
+common.today,今天,Today
+common.truth_file,{{Truth}}文件,{{Truth}} file
+common.unknown,未识别,Unknown
+common.value,值,Value

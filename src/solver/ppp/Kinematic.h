@@ -1,12 +1,10 @@
 #pragma once
 
-#include "Core.h"
+#include "Static.h"
 
-namespace PPP {
-
-class Kinematic : public Core {
+class PPPKinematic : public PPPStatic {
 public:
-    Kinematic() {
+    PPPKinematic() {
         mRequirePhaseForIF = true;
         mKinematic = true;
         mReanchorEveryEpoch = true;
@@ -15,7 +13,7 @@ public:
         ekf.clockInitSigma = 1.0E4;
     }
 
-    ~Kinematic() override = default;
+    ~PPPKinematic() override = default;
 
     bool processEpoch(ObsData &obs) override;
 
@@ -35,5 +33,3 @@ protected:
     bool mHasPrev = false;
     double mDivergeJumpThresh = 500.0;
 };
-
-}

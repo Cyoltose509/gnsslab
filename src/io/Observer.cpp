@@ -8,8 +8,8 @@
 #include "StringUtils.h"
 #include "novatel/AsciiReader.h"
 #include "novatel/BinaryReader.h"
-#include "time/TimeStruct.h"
-#include "time/TimeStruct.h"
+#include "core/TimeStruct.h"
+#include "i18n/I18n.h"
 
 namespace {
     using Observer::DateFrom;
@@ -150,7 +150,7 @@ namespace Observer {
         double version = 0.0;
         {
             std::ifstream in(fpath, std::ios::binary);
-            if (!in) return fail("打不开观测文件");
+            if (!in) return fail(I18n::trc("io.obs.open_failed"));
             const Sniff snack = sniffObsStream(in);
             if (snack.asciiLog) {
                 fmt = Format::NovAtel;
@@ -161,10 +161,10 @@ namespace Observer {
                 fmt = novatelSuffix(fpath) ? Format::NovAtel : Format::Unknown;
             }
         }
-        if (fmt == Format::Unknown) return fail("无法识别观测文件格式");
+        if (fmt == Format::Unknown) return fail(I18n::trc("io.err.bad_format"));
 
         if (fmt == Format::RINEX) {
-            if (version <= 0.0) return fail("RINEX 头里没有观测类的 VERSION / TYPE");
+            if (version <= 0.0) return fail(I18n::trc("io.obs.rinex_no_version"));
             rnx = makeRINEXReader(version);
             if (gloSlots) rnx->gloSlots = *gloSlots;
             try {
@@ -179,7 +179,7 @@ namespace Observer {
         oem = makeNovAtelReader(fpath);
         if (!oem || !oem->open(fpath)) {
             oem.reset();
-            return fail("打不开 NovAtel 日志");
+            return fail(I18n::trc("io.obs.novatel_open_failed"));
         }
         return true;
     }

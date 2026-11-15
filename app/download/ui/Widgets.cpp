@@ -1,13 +1,15 @@
 #include "download/ui/Widgets.h"
 #include "FileUtils.h"
 
-#include "download/local/ProductMeta.h"
+#include "download/local/FileMeta.h"
+#include "core/TimeStruct.h"
 #include "download/local/Store.h"
 
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include "ui/DatePicker.h"
+#include "i18n/I18n.h"
 #include "ui/GuiColors.h"
 
 #include "imgui.h"
@@ -41,31 +43,32 @@ namespace Download::Widgets {
                 if (!ImGui::BeginPopupModal("##confirmDel", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
                     return false;
 
-                ImGui::TextColored(UI::kColFail, "%s", "彻底删除");
+                ImGui::TextColored(UI::kColFail, "%s", I18n::trc("dl.ui.delete_permanent_title"));
                 if (paths.size() == 1) {
-                    ImGui::TextUnformatted("将永久移除以下本地文件：");
+                    ImGui::TextUnformatted(I18n::trc("dl.ui.remove_one"));
                     ImGui::TextDisabled("%s", paths.front().c_str());
                 } else {
-                    ImGui::Text("将永久移除 %zu 个本地文件，共 %s：", paths.size(), sizeText(bytes).c_str());
+                    ImGui::TextUnformatted(I18n::tr("dl.ui.remove_many", paths.size(),
+                                                    sizeText(bytes)).c_str());
                     constexpr std::size_t kMaxShown = 8;
                     for (std::size_t i = 0; i < paths.size() && i < kMaxShown; ++i)
                         ImGui::TextDisabled("%s", File::baseName(paths[i]).c_str());
                     if (paths.size() > kMaxShown)
-                        ImGui::TextDisabled("…另有 %zu 个", paths.size() - kMaxShown);
+                        ImGui::TextDisabled("%s", I18n::tr("dl.ui.and_more",
+                                                           paths.size() - kMaxShown).c_str());
                 }
                 ImGui::Spacing();
-                if (ImGui::Button("删除", ImVec2(100, 0))) {
+                if (ImGui::Button(I18n::trc("dl.ui.delete"), ImVec2(100, 0))) {
                     if (const auto r = Store::removeFiles(paths); r.failed == 0)
-                        Fetcher::setStatus("已彻底删除 " + std::to_string(r.removed) + " 个本地文件");
+                        Fetcher::setStatus(I18n::tr("dl.ui.deleted_count", r.removed));
                     else
-                        Fetcher::setStatus("已彻底删除 " + std::to_string(r.removed) + " 个，" +
-                                          std::to_string(r.failed) + " 个删除失败（可能被占用）");
+                        Fetcher::setStatus(I18n::tr("dl.ui.deleted_partial", r.removed, r.failed));
                     deleted = true;
                     paths.clear();
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("取消", ImVec2(90, 0))) {
+                if (ImGui::Button(I18n::trc("common.cancel"), ImVec2(90, 0))) {
                     paths.clear();
                     ImGui::CloseCurrentPopup();
                 }
@@ -86,19 +89,20 @@ namespace Download::Widgets {
             return Store::findLocal(m.m.type, m.m.year, m.m.doy, m.m.filename);
         }
         std::string tooltipOf(const Fetcher::Match &mt, const std::string &local, const std::string &hint) {
-            const ProductMeta &m = mt.m;
+            const FileMeta &m = mt.m;
             std::string tip = Store::localNameFor(m.filename);
-            const std::string span = "\n覆盖 " + std::to_string(m.spanDays) + " 天（起始 " +
-                                     ProductMeta::doyToDateStr(m.year, m.doy) + "）  采样 " +
-                                     (m.interval.empty() ? "-" : m.interval);
+            const std::string span = I18n::tr("dl.ui.tip_span", m.spanDays,
+                                              DOYToDateText(m.year, m.doy),
+                                              m.interval.empty() ? "-" : m.interval);
             const std::string remote = mt.remoteUrl();
-            const std::string source = remote.empty() ? "" : "\n来源：" + remote;
+            const std::string source = remote.empty() ? std::string()
+                                                      : I18n::tr("dl.ui.tip_source", remote);
             if (local.empty()) {
-                tip += span + source + "\n本地：无（点击下载）";
+                tip += span + source + I18n::tr("dl.ui.tip_no_local");
             } else if (remote.empty()) {
-                tip += "\n本地：" + local + "\n远端列表未列出（仅本地）";
+                tip += I18n::tr("dl.ui.tip_local_only", local);
             } else {
-                tip += span + source + "\n本地：" + local;
+                tip += span + source + I18n::tr("dl.ui.tip_local", local);
                 if (!hint.empty()) tip += "\n" + hint;
             }
             return tip;
@@ -158,11 +162,10 @@ namespace Download::Widgets {
         void fileContextMenu(const std::string &localPath) {
             bool ask = false;
             if (ImGui::BeginPopupContextItem("##fileCtx")) {
-                if (ImGui::MenuItem("从资源管理器打开"))
-                    Fetcher::setStatus(Store::revealFile(localPath)
-                                          ? "已在资源管理器中定位文件"
-                                          : "打开资源管理器失败（文件可能已被移除）");
-                if (ImGui::MenuItem("彻底删除…")) ask = true;
+                if (ImGui::MenuItem(I18n::trc("common.open_explorer")))
+                    Fetcher::setStatus(Store::revealFile(localPath) ? I18n::tr("dl.ui.revealed")
+                                                                    : I18n::tr("dl.ui.reveal_failed"));
+                if (ImGui::MenuItem(I18n::trc("common.delete_permanent"))) ask = true;
                 ImGui::EndPopup();
             }
             if (ask) askDelete({localPath});
@@ -172,11 +175,11 @@ namespace Download::Widgets {
         void downloadingContextMenu(const std::string &remote, const std::string &partPath) {
             bool ask = false;
             if (ImGui::BeginPopupContextItem("##dlCtx")) {
-                if (ImGui::MenuItem("从资源管理器打开"))
+                if (ImGui::MenuItem(I18n::trc("common.open_explorer")))
                     Fetcher::setStatus(Store::revealFile(partPath)
-                                          ? "已在资源管理器中定位临时文件"
-                                          : "定位失败（临时文件可能还未落盘）");
-                if (ImGui::MenuItem("彻底删除（取消下载）…")) ask = true;
+                                               ? I18n::tr("dl.ui.revealed_temp")
+                                               : I18n::tr("dl.ui.reveal_temp_failed"));
+                if (ImGui::MenuItem(I18n::trc("dl.ui.delete_cancel_dl"))) ask = true;
                 ImGui::EndPopup();
             }
             if (ask) {
@@ -189,7 +192,7 @@ namespace Download::Widgets {
     void dateRow(int &year, int &month, int &day, const char *id, const char *quickLabel,
                  void (*quick)(int &, int &, int &), const bool showWeek) {
         ImGui::PushID(id);
-        ImGui::TextUnformatted("日期");
+        ImGui::TextUnformatted(I18n::trc("common.date"));
         ImGui::SameLine();
         UI::DatePicker::button(year, month, day);
 
@@ -198,11 +201,14 @@ namespace Download::Widgets {
             if (ImGui::SmallButton(quickLabel)) quick(year, month, day);
         }
         const int doy = YearMonthDay{year, month, day}.toDOY();
+        char doyText[8];
+        std::snprintf(doyText, sizeof doyText, "%03d", doy);
         ImGui::SameLine();
         if (showWeek)
-            ImGui::TextDisabled("年积日 %03d   第 %d 周", doy, ProductMeta::GPSWeek(year, doy));
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.doy_week", doyText,
+                                               GPSWeek(year, doy)).c_str());
         else
-            ImGui::TextDisabled("年积日 %03d", doy);
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.doy", doyText).c_str());
         ImGui::PopID();
     }
 
@@ -221,17 +227,17 @@ namespace Download::Widgets {
 
     void typeChips(std::vector<unsigned char> &on) {
         if (on.size() != static_cast<std::size_t>(kDateTypeCount)) on.assign(kDateTypeCount, 1);
-        ImGui::TextUnformatted("产品类型");
-        chipWrap([](const int i) { return kTypeLabels[i]; }, on);
+        ImGui::TextUnformatted(I18n::trc("dl.ui.product_type"));
+        chipWrap([](const int i) { return typeLabel(static_cast<ProductType>(i)); }, on);
     }
 
     bool progressLine(const Fetcher::Snapshot &snap) {
         const auto [active, done, total, status] = Fetcher::progress();
         if (snap.scanning) {
-            ImGui::Text("扫描中 %d/%d", snap.scanned, snap.total);
+            ImGui::TextUnformatted(I18n::tr("dl.ui.scanning", snap.scanned, snap.total).c_str());
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
-                ImGui::TextUnformatted("正在读取的目录");
+                ImGui::TextUnformatted(I18n::trc("dl.ui.reading_dirs"));
                 ImGui::Separator();
                 int shown = 0;
                 for (const auto &s: snap.sources) {
@@ -244,7 +250,7 @@ namespace Download::Widgets {
             return true;
         }
         if (active > 0) {
-            ImGui::Text("下载中  已完成 %d/%d  %s", done, total, status.c_str());
+            ImGui::TextUnformatted(I18n::tr("dl.ui.downloading_done", done, total, status).c_str());
             return true;
         }
         return false;
@@ -253,7 +259,7 @@ namespace Download::Widgets {
     void failedSources(const Fetcher::Snapshot &snap) {
         if (snap.scanning || snap.failed <= 0) return;
         ImGui::SameLine();
-        ImGui::TextColored(UI::kColFail, "· %d 路目录没取回", snap.failed);
+        ImGui::TextColored(UI::kColFail, "%s", I18n::tr("dl.ui.dirs_failed", snap.failed).c_str());
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             for (const auto &s: snap.sources) {
@@ -264,7 +270,7 @@ namespace Download::Widgets {
             ImGui::EndTooltip();
         }
         ImGui::SameLine();
-        if (ImGui::SmallButton("重试")) Fetcher::retryFailed();
+        if (ImGui::SmallButton(I18n::trc("dl.ui.retry"))) Fetcher::retryFailed();
     }
 
     void downloadChip(const char *label, const float frac, const float width, const char *tip,
@@ -288,24 +294,25 @@ namespace Download::Widgets {
     }
 
     void stateFilterChips(const char *scope, int *v) {
-        static const char *labels[3] = {"全部", "已下载", "未下载"};
+        static const char *keys[3] = {"common.all", "dl.ui.filter_done", "dl.ui.filter_todo"};
         ImGui::PushID(scope);
         for (int i = 0; i < 3; ++i) {
             if (i) ImGui::SameLine();
-            if (tagChip(labels[i], *v == i)) *v = i;
+            if (tagChip(I18n::trc(keys[i]), *v == i)) *v = i;
         }
         ImGui::PopID();
     }
 
     void searchBox(const char *id, char *buf, const int size) {
         ImGui::PushID(id);
-        ImGui::TextUnformatted("搜索");
+        ImGui::TextUnformatted(I18n::trc("dl.ui.search"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::InputTextWithHint("##find", "文件名关键字…", buf, static_cast<std::size_t>(size));
+        ImGui::InputTextWithHint("##find", I18n::trc("dl.ui.find_hint"), buf,
+                                 static_cast<std::size_t>(size));
         if (*buf) {
             ImGui::SameLine();
-            if (ImGui::SmallButton("清空")) buf[0] = '\0';
+            if (ImGui::SmallButton(I18n::trc("common.clear"))) buf[0] = '\0';
         }
         ImGui::PopID();
     }
@@ -333,7 +340,7 @@ namespace Download::Widgets {
 
     std::string progressText(const char *verb, const std::string &file, const double frac,
                             const double gotBytes, const double totalBytes, const double speed) {
-        std::string s = verb;
+        std::string s = I18n::tr(verb);
         if (!file.empty()) s += " " + file;
         if (frac >= 0.0) {
             const int pct = static_cast<int>(std::round(frac * 100.0));
@@ -387,7 +394,8 @@ namespace Download::Widgets {
         res.shown = static_cast<int>(keep);
 
         if (keep == 0) {
-            ImGui::TextDisabled("%s", opt.scanning ? "扫描中…" : "当前筛选下没有匹配的文件。");
+            ImGui::TextDisabled("%s", opt.scanning ? I18n::trc("dl.ui.scanning_ellipsis")
+                                                   : I18n::trc("dl.ui.no_match"));
             if (!opt.scanning)
                 for (const auto &n: opt.notes)
                     if (!n.empty()) ImGui::TextDisabled("  %s", n.c_str());
@@ -399,7 +407,7 @@ namespace Download::Widgets {
         std::vector<std::pair<const char *, std::vector<std::size_t> > > groups;
         if (opt.grouping == Grouping::ByType) {
             groups.resize(kDateTypeCount);
-            for (int t = 0; t < kDateTypeCount; ++t) groups[t].first = kTypeLabels[t];
+            for (int t = 0; t < kDateTypeCount; ++t) groups[t].first = typeLabel(static_cast<ProductType>(t));
             std::vector<std::size_t> other;
             for (std::size_t i = 0; i < keep; ++i) {
                 if (const int t = dateTypeIndex(matches[i].m.type); t >= 0) groups[t].second.push_back(i);
@@ -431,7 +439,7 @@ namespace Download::Widgets {
             const float gap = ImGui::GetStyle().ItemSpacing.x;
             for (std::size_t i: idx) {
                 const Fetcher::Match &m = matches[i];
-                const ProductMeta &meta = m.m;
+                const FileMeta &meta = m.m;
                 const Row &row = rows[i];
 
                 std::string label = Store::localNameFor(meta.filename);
@@ -453,18 +461,22 @@ namespace Download::Widgets {
 
                 ImGui::PushID(m.m.filename.c_str());
                 if (downloading) {
-                    std::string size = totalBytes > 0.0
-                                           ? "大小 " + sizeText(static_cast<long long>(totalBytes))
-                                           : std::string("总量未知");
-                    size += " · 已下载 " + sizeText(static_cast<long long>(gotBytes));
+                    std::string size =
+                            totalBytes > 0.0
+                                ? I18n::tr("dl.ui.size_of",
+                                           sizeText(static_cast<long long>(totalBytes)))
+                                : I18n::tr("dl.ui.size_unknown");
+                    size += I18n::tr("dl.ui.size_got", sizeText(static_cast<long long>(gotBytes)));
                     if (speed > 0.0) size += " · " + sizeText(static_cast<long long>(speed)) + "/s";
                     if (speed > 0.0 && totalBytes > gotBytes) {
                         const double left = (totalBytes - gotBytes) / speed;
-                        size += left >= 3600.0 ? " · 约 " + std::to_string(static_cast<int>(left / 3600.0)) + " 小时"
-                                : left >= 60.0 ? " · 约 " + std::to_string(static_cast<int>(left / 60.0)) + " 分钟"
-                                               : " · 约 " + std::to_string(static_cast<int>(left)) + " 秒";
+                        size += left >= 3600.0
+                                    ? I18n::tr("dl.ui.eta_hours", static_cast<int>(left / 3600.0))
+                                    : left >= 60.0
+                                          ? I18n::tr("dl.ui.eta_minutes", static_cast<int>(left / 60.0))
+                                          : I18n::tr("dl.ui.eta_seconds", static_cast<int>(left));
                     }
-                    const std::string tip = label + "\n" + size + "\n下载中…（左键暂停 · 右键管理）";
+                    const std::string tip = label + "\n" + size + I18n::tr("dl.ui.tip_downloading");
                     downloadChip(label.c_str(), frac, w, tip.c_str());
                     if (ImGui::IsItemClicked()) Fetcher::pauseDownload(m.remoteUrl());
                     downloadingContextMenu(m.remoteUrl(),
@@ -515,8 +527,10 @@ namespace Download::Widgets {
 
         const bool narrowed = o.stateFilter != 0 || (o.find && *o.find);
         if (!progressLine(snap)) {
-            if (narrowed) ImGui::Text("共 %d / %d 个%s", res.shown, res.total, noun);
-            else ImGui::Text("共 %d 个%s", res.shown, noun);
+            if (narrowed)
+                ImGui::TextUnformatted(I18n::tr("dl.ui.total_narrowed", res.shown, res.total,
+                                                noun).c_str());
+            else ImGui::TextUnformatted(I18n::tr("dl.ui.total_count", res.shown, noun).c_str());
         }
         failedSources(snap);
         return res;

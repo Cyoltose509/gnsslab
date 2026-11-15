@@ -1,7 +1,7 @@
 #include "rinex/RINEXObsReader.h"
 
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -28,7 +28,7 @@ namespace {
             if (t2 == "L2") return "L2W";
         }
         std::string r = t2;
-        if (r.size() == 2) r += r[1] == '1' ? 'C' : r[1] == '2' ? 'W' : 'X';
+        r += r[1] == '1' ? 'C' : r[1] == '2' ? 'W' : 'X';
         return r;
     }
 

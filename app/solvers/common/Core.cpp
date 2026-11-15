@@ -9,12 +9,13 @@
 #include "core/geom/CoordConvert.h"
 #include "FileUtils.h"
 #include "Log.h"
-#include "RTK.h"
+#include "solver/rtk/RTK.h"
 #include "SPP.h"
 #include "solvers/leo/Task.h"
 #include "solvers/ppp_kinematic/Task.h"
 #include "solvers/ppp_static/Task.h"
 #include "solvers/spp/Task.h"
+#include "i18n/I18n.h"
 
 namespace Solvers {
     namespace {
@@ -206,7 +207,7 @@ namespace Solvers {
         rtkRatio = r.ratio;
         rtkBaseFloat = rtk.mBaselineFloat;
         if (r.stat == 1) rtkFixedBaseline = rtk.mBaselineFixed;
-        rtkFloatXyz = rtk.mBaseXyz + rtk.mBaselineFloat;
+        rtkFloatXyz = rtk.mBase + rtk.mBaselineFloat;
         fillSatFields(rtk.satElevData, rtk.satAzimData, rtk.satPVTTransTime, rtk.mUsedSats);
     }
 
@@ -557,7 +558,7 @@ namespace Solvers {
             case Mode::PPPKinematic: return PPPKinematic::defaultOptions();
             case Mode::LEO: return LEO::defaultOptions();
             case Mode::RTK: {
-                // 其余模式缺省前向滤波，RTK 缺省逐历元 LSQ：滤波档只改善浮点解，固定率略降
+                // 其余模式缺省前向滤波，RTK 缺省逐历元重置：跨历元滤波只改善浮点解，固定率略降
                 SolverOptions o;
                 o.filter = SolverOptions::FilterMode::LSQ;
                 return o;
@@ -615,7 +616,7 @@ namespace Solvers {
             truth.reader.read(truth.sp3Path);
             const auto &data = truth.reader.getData();
             if (data.empty()) {
-                LOG_WARN << "[参考真值] SP3 无轨道记录: " << truth.sp3Path;
+                LOG_WARN << "[REF] " << I18n::tr("core.log.sp3_no_orbit", truth.sp3Path);
                 return false;
             }
             // 真值 SP3 一般只含一颗 LEO 星，直接取第一颗 L 星；
@@ -628,29 +629,29 @@ namespace Solvers {
                 }
             if (truth.sat.id < 0) truth.sat = SatID('L', data.begin()->first.id);
             truth.fileReady = true;
-            LOG_INFO << "[参考真值] SP3 已加载: " << truth.sp3Path
-                     << ", 真值星 " << truth.sat.system << truth.sat.id;
+            LOG_INFO << "[REF] " << I18n::tr("core.log.sp3_loaded", truth.sp3Path,
+                                                     std::string(1, truth.sat.system) +
+                                                     std::to_string(truth.sat.id));
             return true;
         } catch (const std::exception &e) {
-            LOG_ERROR << "[参考真值] SP3 读取失败 " << truth.sp3Path << ": " << e.what();
+            LOG_ERROR << "[REF] " << I18n::tr("core.log.sp3_failed", truth.sp3Path, e.what());
             return false;
         } catch (...) {
-            LOG_ERROR << "[参考真值] SP3 读取失败: " << truth.sp3Path;
+            LOG_ERROR << "[REF] " << I18n::tr("core.log.sp3_failed_no_msg", truth.sp3Path);
             return false;
         }
     }
 
     void Core::warnFrameMismatch() const {
         if (!hasOrbitFrame) {
-            LOG_INFO << "[参考框架] 没有产品轨道框架声明（广播星历，或 SP3 头没写），导出按 IGS14 记";
+            LOG_INFO << "[FRAME] " << I18n::tr("core.log.frame_undeclared");
             return;
         }
-        LOG_INFO << "[参考框架] 解所在框架 " << Frame::refName(orbitFrame);
+        LOG_INFO << "[FRAME] " << I18n::tr("core.log.frame_of_solution", Frame::refName(orbitFrame));
         if (truth.form != RefForm::File || !truth.fileReady || !truth.reader.hasFrame) return;
         if (truth.reader.frame == orbitFrame) return;
-        LOG_WARN << "[参考框架] 产品轨道在 " << Frame::refName(orbitFrame)
-                 << "，参考真值在 " << Frame::refName(truth.reader.frame)
-                 << "：R/T/N 与 ENU 差里含两个实现之间的系统差（厘米级），别全算进模型误差";
+        LOG_WARN << "[FRAME] " << I18n::tr("core.log.frame_mismatch", Frame::refName(orbitFrame),
+                                                Frame::refName(truth.reader.frame));
     }
 
     void Core::applyTruthAtEpoch(Epoch &ep, const int index) {

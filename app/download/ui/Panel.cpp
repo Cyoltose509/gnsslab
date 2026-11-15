@@ -7,10 +7,11 @@
 #include "download/remote/http/Core.h"
 #include "download/ui/Widgets.h"
 #include "download/remote/Catalog.h"
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
 #include "download/local/Store.h"
 
-#include "io/ProductLoad.h"
+#include "io/ProductReader.h"
+#include "ui/FileDialog.h"
 
 #include "core/PathMemory.h"
 #include "ui/DatePicker.h"
@@ -18,7 +19,7 @@
 #include "ui/GuiColors.h"
 
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "Log.h"
 #include "util/Clock.h"
 
@@ -36,6 +37,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "i18n/I18n.h"
 
 namespace Download::Panel {
     namespace {
@@ -90,11 +92,12 @@ namespace Download::Panel {
         Widgets::typeChips(typeOn);
         Widgets::searchBox("dateFind", prod.find, sizeof prod.find);
 
-        ImGui::TextUnformatted("本地状态");
+        ImGui::TextUnformatted(I18n::trc("dl.ui.local_state"));
         ImGui::SameLine();
         Widgets::stateFilterChips("##dateState", &prod.stateFilter);
 
-        Widgets::dateRow(prod.year, prod.month, prod.day, "date", "今天", UI::DatePicker::today, true);
+        Widgets::dateRow(prod.year, prod.month, prod.day, "date", I18n::trc("common.today"),
+                         UI::DatePicker::today, true);
 
         ImGui::Separator();
 
@@ -105,7 +108,7 @@ namespace Download::Panel {
             if (typeOn[i]) q.types.insert(static_cast<ProductType>(i));
 
         if (q.types.empty()) {
-            ImGui::TextDisabled("先勾选上面的产品类型。");
+            ImGui::TextDisabled("%s", I18n::trc("dl.ui.pick_type_first"));
             return;
         }
 
@@ -116,15 +119,16 @@ namespace Download::Panel {
         opt.stateFilter = prod.stateFilter;
         opt.find = prod.find;
         opt.onClick = enqueueDownload;
-        Widgets::remoteList(snap, opt, "##files", "匹配文件");
+        Widgets::remoteList(snap, opt, "##files", I18n::trc("dl.ui.matched_files"));
     }
 
     void State::renderObsTab() {
         if (!obs.isSet()) obs.today();
-        Widgets::dateRow(obs.year, obs.month, obs.day, "obs", "今天", UI::DatePicker::today, false);
+        Widgets::dateRow(obs.year, obs.month, obs.day, "obs", I18n::trc("common.today"),
+                         UI::DatePicker::today, false);
         Widgets::searchBox("obsFind", obs.find, sizeof obs.find);
 
-        ImGui::TextUnformatted("本地状态");
+        ImGui::TextUnformatted(I18n::trc("dl.ui.local_state"));
         ImGui::SameLine();
         Widgets::stateFilterChips("##obsState", &obs.stateFilter);
 
@@ -132,7 +136,7 @@ namespace Download::Panel {
         q.types = {ProductType::OBS};
         q.year = obs.year;
         q.doy = obs.doy();
-        q.scanText = "读取观测目录…";
+        q.scanTextKey = "dl.status.reading_obs";
 
         const auto snap = Fetcher::collect(SourceTable::IGS(q.types, q.year, q.doy), q);
 
@@ -141,15 +145,16 @@ namespace Download::Panel {
         opt.stateFilter = obs.stateFilter;
         opt.find = obs.find;
         opt.onClick = enqueueDownload;
-        Widgets::remoteList(snap, opt, "##obsFiles", "观测文件");
+        Widgets::remoteList(snap, opt, "##obsFiles", I18n::trc("ObservationFile"));
     }
 
     void State::renderLeoTab() {
         if (!leo.isSet()) leo.today();
-        Widgets::dateRow(leo.year, leo.month, leo.day, "leo", "今天", UI::DatePicker::today, false);
+        Widgets::dateRow(leo.year, leo.month, leo.day, "leo", I18n::trc("common.today"),
+                         UI::DatePicker::today, false);
         Widgets::searchBox("leoFind", leo.find, sizeof leo.find);
 
-        ImGui::TextUnformatted("本地状态");
+        ImGui::TextUnformatted(I18n::trc("dl.ui.local_state"));
         ImGui::SameLine();
         Widgets::stateFilterChips("##leoState", &leo.stateFilter);
 
@@ -157,7 +162,7 @@ namespace Download::Panel {
         q.types = {ProductType::LEO_OBS};
         q.year = leo.year;
         q.doy = leo.doy();
-        q.scanText = "读取低轨观测目录…";
+        q.scanTextKey = "dl.status.reading_leo_obs";
 
         const auto snap = Fetcher::collect(SourceTable::LEOObs(q.year, q.doy), q);
 
@@ -166,15 +171,16 @@ namespace Download::Panel {
         opt.stateFilter = leo.stateFilter;
         opt.find = leo.find;
         opt.onClick = enqueueDownload;
-        Widgets::remoteList(snap, opt, "##leoFiles", "低轨观测文件");
+        Widgets::remoteList(snap, opt, "##leoFiles", I18n::trc("dl.ui.leo_obs_files"));
     }
 
     void State::renderRefTab() {
         if (!ref.isSet()) ref.today();
-        Widgets::dateRow(ref.year, ref.month, ref.day, "ref", "今天", UI::DatePicker::today, false);
+        Widgets::dateRow(ref.year, ref.month, ref.day, "ref", I18n::trc("common.today"),
+                         UI::DatePicker::today, false);
         Widgets::searchBox("refFind", ref.find, sizeof ref.find);
 
-        ImGui::TextUnformatted("本地状态");
+        ImGui::TextUnformatted(I18n::trc("dl.ui.local_state"));
         ImGui::SameLine();
         Widgets::stateFilterChips("##refState", &ref.stateFilter);
 
@@ -182,7 +188,7 @@ namespace Download::Panel {
         q.types = {ProductType::SNX, ProductType::LEO_SP3};
         q.year = ref.year;
         q.doy = ref.doy();
-        q.scanText = "读取参考真值目录…";
+        q.scanTextKey = "dl.status.reading_truth";
 
         const auto snap = Fetcher::collect(SourceTable::refTruth(q.year, q.doy), q);
 
@@ -191,55 +197,55 @@ namespace Download::Panel {
         opt.stateFilter = ref.stateFilter;
         opt.find = ref.find;
         opt.onClick = enqueueDownload;
-        Widgets::remoteList(snap, opt, "##refFiles", "真值文件");
+        Widgets::remoteList(snap, opt, "##refFiles", I18n::trc("common.truth_file"));
     }
 
     void State::openImportDialog(const VersionedProduct &p) {
-        const GuiFileFilter filters[2] = {
-            {Str::ACPToWide(p.label), p.exts},
-            {L"所有文件", {L"*"}},
-        };
+        const std::vector<GuiFileFilter> filters = {{Str::ACPToWide(typeLabel(p.type)), p.exts},
+                                                    FileDialog::all()};
 
         std::wstring wpath;
-        if (!ShowOpenFileDialog(wpath, filters, 2)) return;
+        if (!FileDialog::open(wpath, filters)) return;
 
         const std::string path = Str::wideToACP(wpath);
         const auto [ok, file, version, detail] = Catalog::importLocal(p, path);
         importOk = ok;
         importMsg = ok
-                        ? File::baseName(path) + " → " + version + "/" + file + "（" + detail + "）"
-                        : "导入失败：" + detail + "　（" + File::baseName(path) + "）";
+                        ? I18n::tr("dl.ui.import_ok", File::baseName(path), version, file, detail)
+                        : I18n::tr("dl.ui.import_failed", detail, File::baseName(path));
         if (ok)
-            Catalog::noteImported(p.id, version, file, "已导入本地文件");
+            Catalog::noteImported(p.id, version, file, I18n::tr("dl.ui.imported_local"));
     }
 
     void State::renderAuxTab() {
         const auto &cfg = AppConfig::PathMemory::instance();
         bool autoOn = Catalog::updatesEnabled();
-        if (ImGui::Checkbox("启动时自动检查并更新", &autoOn)) {
+        if (ImGui::Checkbox(I18n::trc("dl.ui.autosync"), &autoOn)) {
             Catalog::setUpdatesEnabled(autoOn);
             cfg.set("dl_autosync", autoOn ? "1" : "0");
         }
         ImGui::SameLine();
-        if (ImGui::Button("全部检查更新"))
+        if (ImGui::Button(I18n::trc("dl.ui.check_all")))
             Catalog::checkNow();
 
         ImGui::Separator();
 
         constexpr ImGuiTableFlags tf = ImGuiTableFlags_SizingStretchProp |
-                                       ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH;
+                                       ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInner |
+                                       ImGuiTableFlags_Resizable;
         if (ImGui::BeginTable("##aux", 5, tf)) {
-            ImGui::TableSetupColumn("产品");
-            ImGui::TableSetupColumn("本地");
-            ImGui::TableSetupColumn("远端最新");
-            ImGui::TableSetupColumn("状态");
-            ImGui::TableSetupColumn("操作", ImGuiTableColumnFlags_WidthFixed, 210.0f);
+            ImGui::TableSetupColumn(I18n::trc("Product"));
+            ImGui::TableSetupColumn(I18n::trc("dl.ui.col.local"));
+            ImGui::TableSetupColumn(I18n::trc("dl.ui.col.remote"));
+            ImGui::TableSetupColumn(I18n::trc("common.state"));
+            ImGui::TableSetupColumn(I18n::trc("dl.ui.col.action"),
+                                    ImGuiTableColumnFlags_WidthFixed, 210.0f);
             ImGui::TableHeadersRow();
 
             for (const auto &p: Catalog::kProducts) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(p.label);
+                ImGui::TextUnformatted(typeLabel(p.type));
 
                 const auto inst = Store::active(p.id);
                 const auto [phase, version, file, detail, progress, gotBytes, totalBytes] =
@@ -249,15 +255,15 @@ namespace Download::Panel {
                 if (inst) {
                     ImGui::TextColored(UI::kColPass, "%s", inst->file.c_str());
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s\n版本 %s，%s 更新", inst->path.c_str(),
-                                          inst->version.c_str(), inst->fetchedAt.c_str());
+                        ImGui::SetTooltip("%s", I18n::tr("dl.ui.installed_tip", inst->path,
+                                                         inst->version, inst->fetchedAt).c_str());
                 } else {
-                    ImGui::TextDisabled("未安装");
+                    ImGui::TextDisabled("%s", I18n::trc("dl.ui.not_installed"));
                 }
 
                 ImGui::TableSetColumnIndex(2);
                 if (phase == Catalog::UpdateStatus::Checking)
-                    ImGui::TextDisabled("检查中…");
+                    ImGui::TextDisabled("%s", I18n::trc("dl.ui.checking"));
                 else if (!version.empty())
                     ImGui::TextUnformatted(file.c_str());
                 else
@@ -267,18 +273,24 @@ namespace Download::Panel {
                 switch (phase) {
                     case Catalog::UpdateStatus::Downloading: {
                         char tip[192];
-                        if (totalBytes > 0.0)
-                            std::snprintf(tip, sizeof tip, "%s\n%.1f / %.1f MB（中断可续传）",
-                                          file.c_str(), gotBytes / 1048576.0,
+                        char mb[48];
+                        if (totalBytes > 0.0) {
+                            std::snprintf(mb, sizeof mb, "%.1f / %.1f MB", gotBytes / 1048576.0,
                                           totalBytes / 1048576.0);
-                        else
-                            std::snprintf(tip, sizeof tip, "%s\n已收 %.1f MB", file.c_str(),
-                                          gotBytes / 1048576.0);
+                            std::snprintf(tip, sizeof tip, "%s",
+                                          I18n::tr("dl.ui.dl_progress_tip", file, mb).c_str());
+                        } else {
+                            std::snprintf(mb, sizeof mb, "%.1f MB", gotBytes / 1048576.0);
+                            std::snprintf(tip, sizeof tip, "%s",
+                                          I18n::tr("dl.ui.dl_got_tip", file, mb).c_str());
+                        }
                         Widgets::downloadChip(file.c_str(), progress, -1.0f, tip);
                         break;
                     }
                     case Catalog::UpdateStatus::Ready:
-                        ImGui::TextColored(UI::kColPass, "%s", detail.empty() ? "就绪" : detail.c_str());
+                        ImGui::TextColored(UI::kColPass, "%s",
+                                           detail.empty() ? I18n::trc("dl.status.ready")
+                                                          : detail.c_str());
                         break;
                     case Catalog::UpdateStatus::Error:
                         ImGui::TextColored(UI::kColFail, "%s", detail.c_str());
@@ -292,12 +304,14 @@ namespace Download::Panel {
                 const bool busy = phase == Catalog::UpdateStatus::Checking ||
                                   phase == Catalog::UpdateStatus::Downloading;
                 ImGui::BeginDisabled(busy);
-                if (ImGui::SmallButton(("检查##chk_" + std::string(p.id)).c_str()))
+                if (ImGui::SmallButton((std::string(I18n::trc("common.check")) + "##chk_" + p.id)
+                                               .c_str()))
                     Catalog::checkNow(p.id);
                 ImGui::EndDisabled();
 
                 ImGui::SameLine();
-                if (ImGui::SmallButton(("选取本地文件##imp_" + std::string(p.id)).c_str()))
+                if (ImGui::SmallButton((std::string(I18n::trc("dl.ui.pick_local")) + "##imp_" +
+                                        p.id).c_str()))
                     openImportDialog(p);
             }
             ImGui::EndTable();
@@ -327,7 +341,7 @@ namespace Download::Panel {
 
         Widgets::searchBox("localFind", localFind, sizeof localFind);
         ImGui::SameLine();
-        if (ImGui::Button("刷新")) localDirty = true;
+        if (ImGui::Button(I18n::trc("dl.ui.refresh"))) localDirty = true;
 
         const std::string needle = Str::toUpper(std::string(localFind));
         std::vector<const Store::BrowseEntry *> shown;
@@ -339,19 +353,22 @@ namespace Download::Panel {
         }
 
         constexpr ImGuiTableFlags tf = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg |
-                                       ImGuiTableFlags_BordersInnerH;
+                                       ImGuiTableFlags_BordersInner | ImGuiTableFlags_Resizable;
 
         ImGui::BeginChild("##localFiles", ImVec2(0, -30), ImGuiChildFlags_Borders);
         if (shown.empty()) {
-            ImGui::TextDisabled("%s", localFiles.empty()
-                                          ? "本地还没有下载任何文件。"
-                                          : "当前筛选下没有匹配的文件。");
+            ImGui::TextDisabled("%s", localFiles.empty() ? I18n::trc("dl.ui.no_local_files")
+                                                        : I18n::trc("dl.ui.no_match"));
         } else if (ImGui::BeginTable("##localTable", 5, tf)) {
             ImGui::TableSetupColumn("##pick", ImGuiTableColumnFlags_WidthFixed, 26.0f);
-            ImGui::TableSetupColumn("文件");
-            ImGui::TableSetupColumn("类别", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-            ImGui::TableSetupColumn("日期", ImGuiTableColumnFlags_WidthFixed, 86.0f);
-            ImGui::TableSetupColumn("大小", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+            ImGui::TableSetupColumn(I18n::trc("common.file"), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn(I18n::trc("dl.ui.col.category"),
+                                    ImGuiTableColumnFlags_WidthStretch, 1.6f);
+            ImGui::TableSetupColumn(I18n::trc("common.date"), ImGuiTableColumnFlags_WidthStretch,
+                                    1.0f);
+            ImGui::TableSetupColumn(I18n::trc("dl.ui.col.size"), ImGuiTableColumnFlags_WidthStretch,
+                                    0.9f);
+            ImGui::TableHeadersRow();
 
             for (const auto *e: shown) {
                 ImGui::PushID(e->path.c_str());
@@ -366,22 +383,18 @@ namespace Download::Panel {
 
                 ImGui::TableSetColumnIndex(1);
                 if (ImGui::Selectable(e->name.c_str()))
-                    Fetcher::setStatus(Store::revealFile(e->path)
-                                          ? "已在资源管理器中定位文件"
-                                          : "打开资源管理器失败（文件可能已被移除）");
+                    Fetcher::setStatus(Store::revealFile(e->path) ? I18n::tr("dl.ui.revealed")
+                                                                  : I18n::tr("dl.ui.reveal_failed"));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e->path.c_str());
                 if (ImGui::BeginPopupContextItem("##localCtx")) {
-                    if (ImGui::MenuItem("彻底删除…")) Widgets::askDelete({e->path});
+                    if (ImGui::MenuItem(I18n::trc("common.delete_permanent")))
+                        Widgets::askDelete({e->path});
                     ImGui::EndPopup();
                 }
 
                 ImGui::TableSetColumnIndex(2);
-                if (e->aux) {
-                    const auto *p = Catalog::find(e->category);
-                    ImGui::TextDisabled("%s", p ? p->label : e->category.c_str());
-                } else {
-                    ImGui::TextDisabled("%s", e->category.c_str());
-                }
+                const auto *meta = e->aux ? Catalog::find(e->category) : nullptr;
+                ImGui::TextDisabled("%s", meta ? typeLabel(meta->type) : I18n::trc(e->category));
 
                 ImGui::TableSetColumnIndex(3);
                 ImGui::TextDisabled("%s", e->stamp.c_str());
@@ -412,22 +425,24 @@ namespace Download::Panel {
                     allOn = false;
                     break;
                 }
-            if (ImGui::Checkbox("全选", &allOn)) {
+            if (ImGui::Checkbox(I18n::trc("common.select_all"), &allOn)) {
                 for (const auto *e: shown) {
                     if (allOn) localSel.insert(e->path);
                     else localSel.erase(e->path);
                 }
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("共 %zu 个 · %s", shown.size(), Widgets::sizeText(shownBytes).c_str());
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.total_count", shown.size(),
+                                               Widgets::sizeText(shownBytes)).c_str());
             if (selCount > 0) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("已选 %d · %s", selCount, Widgets::sizeText(selBytes).c_str());
+                ImGui::TextDisabled("%s", I18n::tr("dl.ui.selected_count", selCount,
+                                                   Widgets::sizeText(selBytes)).c_str());
             }
 
             ImGui::SameLine();
             ImGui::BeginDisabled(selCount == 0);
-            if (ImGui::SmallButton("删除选中")) {
+            if (ImGui::SmallButton(I18n::trc("dl.ui.delete_selected"))) {
                 std::vector<std::string> ps;
                 ps.reserve(localSel.size());
                 for (const auto &p: localSel) ps.push_back(p);
@@ -437,7 +452,7 @@ namespace Download::Panel {
 
             ImGui::SameLine();
             ImGui::BeginDisabled(localFiles.empty());
-            if (ImGui::SmallButton("删除全部")) {
+            if (ImGui::SmallButton(I18n::trc("dl.ui.delete_all"))) {
                 std::vector<std::string> ps;
                 ps.reserve(localFiles.size());
                 for (const auto &e: localFiles) ps.push_back(e.path);
@@ -455,7 +470,7 @@ namespace Download::Panel {
 
         bool shown = open;
         ImGui::SetNextWindowSize(ImVec2(900, 560), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("产品下载", &shown)) {
+        if (!ImGui::Begin(I18n::trc("dl.ui.window_title"), &shown)) {
             ImGui::End();
             open = shown;
             return;
@@ -463,17 +478,17 @@ namespace Download::Panel {
 
         if (ImGui::BeginTabBar("##dl_tabs")) {
             const std::pair<Page, const char *> tabs[] = {
-                {Page::Date, "日精密产品"},
-                {Page::Obs, "观测文件"},
-                {Page::Leo, "低轨卫星"},
-                {Page::Ref, "参考真值"},
-                {Page::Aux, "辅助数据"},
-                {Page::Local, "本地文件"},
+                {Page::Date, "dl.tab.date"},
+                {Page::Obs, "ObservationFile"},
+                {Page::Leo, "dl.tab.leo"},
+                {Page::Ref, "ref.truth"},
+                {Page::Aux, "dl.tab.aux"},
+                {Page::Local, "dl.tab.local"},
             };
             for (const auto &[id, label]: tabs) {
                 // 点击落在一个尚未选中的页签上时，BeginTabItem 当帧返回 false（选中排到下一帧），
                 // 所以「取点击」必须在 if 之前，只有 EndTabItem 才受返回值约束。
-                const bool selected = ImGui::BeginTabItem(label);
+                const bool selected = ImGui::BeginTabItem(I18n::trc(label));
                 const bool clicked = ImGui::IsItemClicked();
                 if (selected) ImGui::EndTabItem();
                 if (clicked) page = id;
@@ -526,38 +541,36 @@ namespace Download::Panel {
         }
 
         ImGui::SetNextWindowSize(ImVec2(520, 240), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Earthdata 账号", p_open)) {
+        if (!ImGui::Begin(I18n::trc("dl.ui.earthdata_title"), p_open)) {
             ImGui::End();
             return;
         }
 
-        ImGui::TextWrapped("CDDIS 需要 NASA Earthdata Login 账号。账号密码以明文保存在 "
-                           "gnsslab.ini，仅对 cddis.nasa.gov、"
-                           "earthdata.nasa.gov 的请求生效。");
+        ImGui::TextWrapped("%s", I18n::trc("dl.ui.earthdata_note"));
         ImGui::Spacing();
-        ImGui::TextDisabled("没有账号？前往");
+        ImGui::TextDisabled("%s", I18n::trc("dl.ui.no_account"));
         ImGui::SameLine();
-        ImGui::TextLinkOpenURL("注册", "https://urs.earthdata.nasa.gov/");
+        ImGui::TextLinkOpenURL(I18n::trc("dl.ui.register"), "https://urs.earthdata.nasa.gov/");
         ImGui::Spacing();
 
-        ImGui::InputText("账号", g.user, sizeof(g.user));
-        ImGui::InputText("密码", g.pass, sizeof(g.pass));
+        ImGui::InputText(I18n::trc("dl.ui.account"), g.user, sizeof(g.user));
+        ImGui::InputText(I18n::trc("dl.ui.password"), g.pass, sizeof(g.pass));
         ImGui::Spacing();
 
-        if (ImGui::Button("保存")) {
+        if (ImGui::Button(I18n::trc("dl.ui.save"))) {
             const auto &pm = AppConfig::PathMemory::instance();
             pm.set(Earthdata::kUserKey, g.user);
             pm.set(Earthdata::kPassKey, g.pass);
             pm.flush();
             Http::setEarthdata(g.user, g.pass);
-            g.status = "已保存到 gnsslab.ini，当前会话已生效";
+            g.status = I18n::tr("dl.ui.saved_ini");
             g.statusOk = true;
-            LOG_INFO << "[Earthdata] 账号配置已保存";
+            LOG_INFO << "[EARTHDATA] " << I18n::tr("dl.ui.earthdata_saved");
         }
 
         ImGui::SameLine();
         ImGui::BeginDisabled(g.busy);
-        if (ImGui::Button("测试连接")) {
+        if (ImGui::Button(I18n::trc("dl.ui.test_conn"))) {
             Http::setEarthdata(g.user, g.pass);
             g.cancel = false;
             g.busy = true;
@@ -568,16 +581,16 @@ namespace Download::Panel {
                     const bool ok = Http::checkEarthdata(kEarthdataProbeUrl, msg, &s_earthdata.cancel);
                     return EarthdataProbe{ok, msg};
                 } catch (const std::exception &e) {
-                    return EarthdataProbe{false, std::string("测试连接异常: ") + e.what()};
+                    return EarthdataProbe{false, I18n::tr("dl.ui.test_error", e.what())};
                 } catch (...) {
-                    return EarthdataProbe{false, "测试连接发生未知异常"};
+                    return EarthdataProbe{false, I18n::tr("dl.ui.test_error_unknown")};
                 }
             });
         }
         ImGui::EndDisabled();
         if (g.busy) {
             ImGui::SameLine();
-            ImGui::TextDisabled("正在连接 CDDIS…");
+            ImGui::TextDisabled("%s", I18n::trc("dl.ui.connecting_cddis"));
         }
 
         if (!g.status.empty()) {

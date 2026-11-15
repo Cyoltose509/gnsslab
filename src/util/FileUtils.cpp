@@ -1,8 +1,10 @@
 #include "FileUtils.h"
+#include "i18n/I18n.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include "i18n/I18n.h"
 
 namespace File {
     bool safeWrite(const std::filesystem::path &path,
@@ -10,13 +12,13 @@ namespace File {
                    std::string &error, const bool binary) {
         std::ofstream out(path, binary ? std::ios::out | std::ios::binary : std::ios::out);
         if (!out) {
-            error = "写入失败：" + path.string() + "（目录不存在或无写权限）";
+            error = I18n::tr("util.file.write_no_dir", path.string());
             return false;
         }
         write(out);
         out.flush();
         if (!out) {
-            error = "写入失败：" + path.string() + "（文件被占用或磁盘已满）";
+            error = I18n::tr("util.file.write_busy", path.string());
             return false;
         }
         return true;

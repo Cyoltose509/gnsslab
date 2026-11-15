@@ -19,7 +19,7 @@ public:
     double zuptHoldSec = 0.5;    // 连续判静时长 (s)，init 时按采样率换算成样本数
     double gravity = 0.0;        // 初始位置正常重力 (m/s^2)；resolveScale/align 前可直填，init 按初始位置重算
 
-    // ---- 解码当量（resolveScale 后有效） ----
+    // ---- 当量（resolveScale 后有效） ----
     ImuScale scale;
     std::string scaleName;                       // 命中的 IMU 型号名（手填时为空）
     ImuScaleSource scaleSource = ImuScaleSource::Record;

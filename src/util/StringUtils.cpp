@@ -42,7 +42,7 @@ namespace Str {
 
     int scanMeters(const char *s, double *out, const int maxN) {
         const int n = scanDoubles(s, out, maxN);
-        if (n == 0 || s == nullptr) return n;
+        if (n == 0) return n;
         const std::string_view text(s);
         double scale = 1.0;
         if (text.find("mm") != std::string_view::npos || text.find("MM") != std::string_view::npos ||
@@ -93,7 +93,7 @@ namespace Str {
     }
 
     double toDouble(const std::string &str, const double defaultValue) {
-        if (str.empty() || str.find_first_not_of(' ') == std::string::npos) {
+        if (str.find_first_not_of(' ') == std::string::npos) {
             return defaultValue;
         }
 

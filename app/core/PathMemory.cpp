@@ -59,7 +59,7 @@ namespace AppConfig {
     void PathMemory::set(const std::string &key, const std::string &val) const {
         IniFile &f = file();
         const std::string cur = f.get("paths", key);
-        if (val.empty() || isBlank(val)) {
+        if (isBlank(val)) {
             if (cur.empty()) return;
             f.erase("paths", key);
         } else {

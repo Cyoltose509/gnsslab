@@ -5,6 +5,7 @@
 
 #include "core/Const.h"
 #include "core/geom/Geodesy.h"
+#include "i18n/I18n.h"
 
 namespace {
     /// IMU.bin：t, Δθ(3), Δv(3)。
@@ -28,19 +29,19 @@ Ins::Verifier::Verifier(const std::string &imuPath, const std::string &refPath, 
     report.tol = opt.tol;
     m_refRec.resize(kRefStride);
     if (!m_imu.open(imuPath, kImuStride) || m_imu.bad()) {
-        m_error = m_imu.error().empty() ? "无法打开 IMU 增量文件：" + imuPath : m_imu.error();
+        m_error = m_imu.error().empty() ? I18n::tr("ins.verify.err.imu_open", imuPath) : m_imu.error();
         return;
     }
     if (!m_ref.open(refPath, kRefStride) || m_ref.bad()) {
-        m_error = m_ref.error().empty() ? "无法打开参考轨迹文件：" + refPath : m_ref.error();
+        m_error = m_ref.error().empty() ? I18n::tr("ins.verify.err.ref_open", refPath) : m_ref.error();
         return;
     }
     if (m_imu.empty()) {
-        m_error = "IMU 增量文件里没有完整的 7 列记录（t, Δθ×3, Δv×3）：" + imuPath;
+        m_error = I18n::tr("ins.verify.err.imu_columns", imuPath);
         return;
     }
     if (m_ref.empty()) {
-        m_error = "参考轨迹文件里没有完整的 10 列记录（t, φ, λ, h, v×3, 姿态×3）：" + refPath;
+        m_error = I18n::tr("ins.verify.err.ref_columns", refPath);
         return;
     }
     report.refEpochs = m_ref.count();
@@ -57,7 +58,7 @@ Ins::Verifier::Verifier(const std::string &imuPath, const std::string &refPath, 
         }
     }
     if (!found || m_imu.consumed() >= m_imu.count()) {
-        m_error = "IMU 文件在起始时刻之后不足两条记录，无法推进机械编排。";
+        m_error = I18n::tr("ins.verify.err.imu_short");
         return;
     }
 
@@ -74,7 +75,7 @@ Ins::Verifier::Verifier(const std::string &imuPath, const std::string &refPath, 
         }
     }
     if (!m_refPending) {
-        m_error = "参考轨迹全部早于 IMU 起始时刻，没有可比对的数据。";
+        m_error = I18n::tr("ins.verify.err.ref_early");
         return;
     }
     m_ready = true;
@@ -178,7 +179,7 @@ bool Ins::verifySample(const std::string &imuPath, const std::string &refPath, c
     }
     v.finish();
     if (v.report.compared == 0) {
-        error = "参考轨迹与 IMU 时段没有交集，未产生任何比对点。";
+        error = I18n::tr("ins.verify.err.no_overlap");
         return false;
     }
     out = std::move(v.report);

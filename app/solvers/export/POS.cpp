@@ -23,8 +23,6 @@ namespace Solvers::Export {
     }
 
     void writePOS(std::ostream &out, const Task &task, const Spec &spec, const std::vector<std::size_t> &idx) {
-        // ENU 形式要有参考基准：真值就绪，或基线解（基准就是基准站坐标）。
-        // 无基准时 refECEF 只是首历元自己的位置，写出去就是伪基线，退回经纬高。
         const bool hasRef = task.refECEF.squaredNorm() > 1.0
                             && (task.truthReady() || task.mode == Mode::RTK);
         const PosForm form = spec.posForm == PosForm::ENU && !hasRef ? PosForm::BLH : spec.posForm;

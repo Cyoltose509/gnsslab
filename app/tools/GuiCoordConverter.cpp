@@ -9,6 +9,7 @@
 #include <exception>
 #include <iterator>
 #include <string>
+#include "i18n/I18n.h"
 
 
 namespace Tools::CoordConverter {
@@ -58,9 +59,9 @@ namespace Tools::CoordConverter {
             fn();
             s_Error.clear();
         } catch (const std::exception &e) {
-            s_Error = std::string(what) + ": " + e.what();
+            s_Error = I18n::tr("tool.coord.err_with_msg", what, e.what());
         } catch (...) {
-            s_Error = std::string(what) + " 失败";
+            s_Error = I18n::tr("tool.coord.err_failed", what);
         }
     }
 
@@ -144,13 +145,13 @@ namespace Tools::CoordConverter {
         }
 
         ImGui::SetNextWindowSize(ImVec2(560, 340), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("坐标转换", p_open)) {
+        if (!ImGui::Begin(I18n::trc("tool.coord.title"), p_open)) {
             ImGui::End();
             return;
         }
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("参考系:");
+        ImGui::TextUnformatted(I18n::trc("tool.coord.frame"));
         ImGui::SameLine();
         if (frameCombo()) {
             SyncXYZToBLH();
@@ -165,7 +166,8 @@ namespace Tools::CoordConverter {
         ImGui::SeparatorText("XYZ <-> BLH");
 
         const bool xyz_edited = InputRow3("##xyz", "X (m)", &s_X, "Y (m)", &s_Y, "Z (m)", &s_Z, "%.4f");
-        const bool blh_edited = InputRow3("##blh", "B (度)", &s_B_deg, "L (度)", &s_L_deg, "H (m)", &s_H, "%.9f");
+        const bool blh_edited = InputRow3("##blh", I18n::trc("tool.coord.b_deg"), &s_B_deg,
+                                          I18n::trc("tool.coord.l_deg"), &s_L_deg, "H (m)", &s_H, "%.9f");
 
         if (xyz_edited) {
             SyncXYZToBLH();
@@ -178,17 +180,20 @@ namespace Tools::CoordConverter {
         ImGui::Spacing();
 
 
-        ImGui::SeparatorText("站心坐标 (ENU)");
+        ImGui::SeparatorText(I18n::trc("tool.coord.enu_section"));
 
 
-        ImGui::TextDisabled("参考点:");
+        ImGui::TextDisabled(I18n::trc("tool.coord.ref_point"));
         ImGui::SameLine();
-        const bool ref_edited = InputRow3("##ref", "B (度)", &s_RefB_deg, "L (度)", &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
+        const bool ref_edited = InputRow3("##ref", I18n::trc("tool.coord.b_deg"), &s_RefB_deg,
+                                          I18n::trc("tool.coord.l_deg"), &s_RefL_deg, "H (m)", &s_RefH, "%.9f");
 
         ImGui::Spacing();
 
 
-        const bool tgt_edited = InputRow3("##tgt", "目标 X (m)", &s_TgtX, "目标 Y (m)", &s_TgtY, "目标 Z (m)", &s_TgtZ, "%.4f");
+        const bool tgt_edited = InputRow3("##tgt", I18n::trc("tool.coord.tgt_x"), &s_TgtX,
+                                          I18n::trc("tool.coord.tgt_y"), &s_TgtY,
+                                          I18n::trc("tool.coord.tgt_z"), &s_TgtZ, "%.4f");
         const bool enu_edited = InputRow3("##enu", "E (m)", &s_E, "N (m)", &s_N, "U (m)", &s_U, "%.4f");
 
         if (tgt_edited) {

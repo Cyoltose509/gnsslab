@@ -1,6 +1,7 @@
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 
 
@@ -257,4 +258,20 @@ CommonTime WeekSecond::toCommonTime() const {
 WeekSecond WeekSecond::fromCommonTime(const CommonTime &ct) {
     // 周基准与结果标签都跟随 ct 的时标，成为 toCommonTime() 的严格逆
     return ct.toWeekSecond();
+}
+
+int GPSWeek(const int year, const int doy) {
+    if (doy < 1 || doy > 366) return 0;
+
+    const long days = YearMonthDay{year, 1, 1}.toDays() + doy - 1 - YearMonthDay{1980, 1, 6}.toDays();
+    if (days < 0) return 0;
+    return static_cast<int>(days / 7);
+}
+
+std::string DOYToDateText(const int year, const int doy) {
+    const auto ymd = YearMonthDay::fromDOY(year, doy);
+    if (!ymd) return "";
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", ymd->year, ymd->month, ymd->day);
+    return buf;
 }

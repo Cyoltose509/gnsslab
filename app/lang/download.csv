@@ -1,0 +1,230 @@
+key,ZH-CN,EN
+dl.fetch.background_inflate,{{Download}}完成，后台{{Unpack}}中…,{{Download}} finished; {{Unpack}} in the background…
+dl.fetch.done,完成 {0},Finished {0}
+dl.fetch.failed,失败 {0} — {1},Failed {0} — {1}
+dl.fetch.inflating,{{Unpack}}中…,{{Unpack}}…
+dl.fetch.interrupted,{{Download}}中断,{{Download}} interrupted
+dl.fetch.list_dirs_failed,{0} 个源列目录失败（首个: {1} {2}）,{0} source directory listing(s) failed (first: {1} {2})
+dl.fetch.merge_note,{0}：{1},{0}: {1}
+dl.fetch.merge_obs_failed,合并{{Observation}}失败（{0}）：{1}；保留全部{{Chunk}},Merging {{Observation}} failed ({0}): {1}; kept every {{Chunk}}
+dl.fetch.merged_obs,展开目录 {0} 合并为 {1} 份{{Observation}}，原始{{Chunk}}已删除,Directory {0} merged into {1} {{Observation}} file(s); the original {{Chunk}} deleted
+dl.fetch.merged_orb,{0} 的{{Orbit}}{{Chunk}}拼成 {1} 份，{{Chunk}}已删除,"{{Orbit}} {{Chunk}} in {0} stitched into {1} file(s), then deleted"
+dl.fetch.merging,合并{{Chunk}}…,Merging {{Chunk}}…
+dl.fetch.no_server_file,服务端没有 {0}（HTTP 404），该日可能尚未发布,Server has no {0} (HTTP 404); it may not be published yet for that day
+dl.fetch.paused_keep,已暂停 {0}（保留断点）,Paused {0} (resume point kept)
+dl.fetch.post_done,后台处理完成 {0},Background processing finished {0}
+dl.fetch.post_failed,后台处理失败 {0} — {1},Background processing failed {0} — {1}
+dl.fetch.queued,排队{{Unpack}}…,Queued for {{Unpack}}…
+dl.fetch.remove_part_failed,删除{{Chunk}}失败 {0}：{1},Failed to remove {{Chunk}} {0}: {1}
+dl.fetch.rename_failed,改名失败: {0},Rename failed: {0}
+dl.fetch.rename_part_failed,单片改名失败：{0},Failed to rename a part: {0}
+dl.fetch.scan_failed,扫描异常,Scan error
+dl.fetch.start,开始 {0} ← {1},Starting {0} ← {1}
+dl.fetch.unpack_failed,{{Unpack}}失败,{{Unpack}} failed
+dl.http.auth_failed,认证未通过：重定向停在 Earthdata 登录页，请检查账号密码,Authentication failed: the redirect stopped on the Earthdata login page; check the user name and password
+dl.http.auth_ok,连接成功：HTTP {0}，已通过 Earthdata 认证,"Connected: HTTP {0}, Earthdata authentication passed"
+dl.http.callback_error,传输回调异常: {0},Transfer callback error: {0}
+dl.http.callback_unknown,回调发生未知异常,Unknown exception in callback
+dl.http.cancelled,{{Download}}已取消,{{Download}} cancelled
+dl.http.create_file_failed,无法创建本地文件: {0},Cannot create local file: {0}
+dl.http.disconnected,第 {0} 次连接断开（已收 {1} 字节，续传中）: {2},"Connection attempt {0} dropped ({1} bytes received, resuming): {2}"
+dl.http.disconnected_log,第 {0} 次连接断开，已收 {1} 字节: {2} — {3},"Connection attempt {0} dropped, {1} bytes received: {2} — {3}"
+dl.http.head_failed,取前段失败，已取 {0} 字节: {1} — {2},Failed to fetch the leading bytes; {0} bytes received: {1} — {2}
+dl.http.head_only,按需截停，只取前 {0} 字节: {1},"Stopped on demand, read only the first {0} bytes: {1}"
+dl.http.host_down,服务器连不上，本会话暂时跳过（点「重试」可立即重来）,Server unreachable; skipped for this session (click Retry to try again right away)
+dl.http.http_status,服务器返回 HTTP {0},Server returned HTTP {0}
+dl.http.init_failed,curl_easy_init 失败,curl_easy_init failed
+dl.http.keep_partial,保留已{{Download}}的 {0} 字节，下次续传: {1},Keeping the {0} bytes already downloaded for the next resume: {1}
+dl.http.no_credentials,未填写 Earthdata 账号或密码,Earthdata user name or password is not set
+dl.http.no_range,服务器不支持断点续传，从头重下: {0},Server does not support resuming; restarting from scratch: {0}
+dl.http.no_range_short,服务器不支持断点续传，从头重下,Server does not support resuming; restarting from scratch
+dl.http.parse_list_failed,解析目录失败: {0},Failed to parse the directory listing: {0}
+dl.http.parse_list_failed_unknown,解析目录失败,Failed to parse the directory listing
+dl.http.resume,续传：已有 {0} 字节,Resuming: {0} bytes present
+dl.http.swarm_json_failed,swarm-diss 列表 JSON 解析失败,Failed to parse the swarm-diss listing JSON
+dl.mkdir_failed,建目录失败 {0}: {1},Failed to create directory {0}: {1}
+dl.prod.download_failed,{{Download}}或安装失败,{{Download}} or install failed
+dl.prod.drop_stale_failed,清理旧版本残留失败 {0}: {1},Failed to drop stale version leftovers {0}: {1}
+dl.prod.drop_tmp_failed,清理暂存件失败 {0}: {1},Failed to drop staged file {0}: {1}
+dl.prod.fetch_failed,{0} 获取失败: {1},{0}: fetch failed: {1}
+dl.prod.import_copy_failed,导入拷贝失败 {0} → {1}: {2},Import copy failed {0} → {1}: {2}
+dl.prod.import_done,手工导入 {0} {1}（{2}）,Manual import of {0} {1} ({2})
+dl.prod.import_validate_failed,导入校验未通过 {0}: {1},Import validation failed {0}: {1}
+dl.prod.imported,已导入,Imported
+dl.prod.index_fetch_failed,{{Index}}获取失败: {0},{{Index}} fetch failed: {0}
+dl.prod.index_no_match,{{Index}}中无匹配,no match in the {{Index}}
+dl.prod.index_no_match_long,{{Index}}中未找到匹配文件,No matching file found in the {{Index}}
+dl.prod.inflate_failed,{{Unpack}}失败（压缩包可能已损坏）,{{Unpack}} failed (the archive may be corrupted)
+dl.prod.install_failed,安装失败 {0}: {1},Install failed {0}: {1}
+dl.prod.installed,已安装 {0} 版本 {1} → {2} ({3} 字节),Installed {0} version {1} → {2} ({3} bytes)
+dl.prod.mkdir_local_failed,无法创建本地目录,Cannot create the local directory
+dl.prod.no_versioned_name,{0} 未发现版本化文件名（{1}），回落 {2}（该{{Product}}将无法自动判断更新）,{0}: no versioned file name found ({1}); falling back to {2} (automatic update detection will not work for this {{Product}})
+dl.prod.regex_error,正则错误: {0},Regex error: {0}
+dl.prod.resume,{0} 续传，已有 {1} 字节,"{0}: resuming, {1} bytes present"
+dl.prod.src_missing,源文件不存在或不可读,Source file missing or unreadable
+dl.prod.src_too_small,源文件过小（<1 KB），不像是完整的{{Product}}文件,Source file too small (<1 KB) to be a complete {{Product}} file
+dl.prod.stage_copy_failed,拷贝到{{Product}}库暂存区失败: {0},Failed to copy into the {{Product}} library staging area: {0}
+dl.prod.synced,{0} 已同步到 {1},{0} synced to {1}
+dl.prod.unknown_aux,没有叫 {0} 的辅助{{Product}}（atx | gpt3）,No auxiliary {{Product}} named {0} (atx | gpt3)
+dl.prod.up_to_date,已是最新,Up to date
+dl.prod.validate_failed,{0} 校验未通过 {1}：{2},{0}: validation failed for {1}: {2}
+dl.prod.write_library_failed,写入{{Product}}库失败,Failed to write into the {{Product}} library
+dl.status.done,完成: {0},Done: {0}
+dl.status.downloading,{{Download}}中…,{{Download}}ing…
+dl.status.failed,{{Download}}失败  {0},{{Download}} failed  {0}
+dl.status.ok,{{Download}}成功  {0},{{Download}}ed  {0}
+dl.status.paused,已暂停  {0},Paused  {0}
+dl.status.reading_dir,读取目录…,Reading directory…
+dl.status.reading_leo_obs,读取{{LEO}}{{Observation}}目录…,Reading {{LEO}} {{Observation}} directory…
+dl.status.reading_obs,读取{{Observation}}目录…,Reading {{Observation}} directory…
+dl.status.reading_truth,读取参考{{Truth}}目录…,Reading reference {{Truth}} directory…
+dl.status.ready,就绪,Ready
+dl.status.settle_failed,落地失败: {0},Staging failed: {0}
+dl.store.drop_old_archive,清理旧{{Archive}} {0}（内容已在 {1}/ 里）,Dropped old {{Archive}} {0} (contents already in {1}/)
+dl.store.mk_index_dir_failed,建{{Index}}目录失败 {0}: {1},Failed to create {{Index}} directory {0}: {1}
+dl.store.old_archive_count,旧{{Archive}}共清理 {0} 个,{0} old {{Archive}}(s) dropped
+dl.store.purge_busy,彻底删除失败(文件被占用?): {0},Delete failed (file in use?): {0}
+dl.store.purge_done,彻底删除 {0} 个本地文件，失败 {1} 个，释放 {2} 字节,"Deleted {0} local file(s), {1} failed, {2} bytes freed"
+dl.store.write_index_failed,写{{Index}}失败 {0}: {1},Failed to write {{Index}} {0}: {1}
+dl.tab.aux,辅助数据,Auxiliary data
+dl.tab.date,日精密{{Product}},Daily precise {{Product}}
+dl.tab.leo,{{LEO}}{{Satellite}},{{LEO}} {{Satellite}}
+dl.tab.local,本地文件,Local files
+dl.truth.cache_hit,本地累积{{Cache}}里已有 {0} 站,Station {0} already present in the local accumulated {{Cache}}
+dl.truth.no_sinex,没有获取到该日的 SINEX,No SINEX available for that day
+dl.truth.read_failed,读 {0} 失败：{1},Failed to read {0}: {1}
+dl.truth.read_failed_unknown,读 {0} 失败（未知异常）,Failed to read {0} (unknown exception)
+dl.truth.sinex_parse_failed,取回的 SINEX 片段解析失败：{0},Failed to parse the fetched SINEX fragment: {0}
+dl.truth.site_from_stream,已从 {0} 获取 {1} 站{{Coordinate}}（只读压缩流前 {2} KB）,Obtained {{Coordinate}} of station {1} from {0} (read only the first {2} KB of the compressed stream)
+dl.truth.site_too_short,{{Site}}名不足 4 字符：{0},{{Site}} name shorter than 4 characters: {0}
+dl.truth.solution_stamp,（{0}:{1} 解）,(solution {0}:{1})
+dl.truth.tried_all,已试 {0} 个{{AnalysisCenter}}的 SINEX，都没有 {1} 站,Tried SINEX from {0} {{AnalysisCenter}}; none contains station {1}
+LeoObservation,{{LEO}}{{Observation}},{{LEO}} {{Observation}}
+LeoOrbit,{{LEO}}{{Orbit}},{{LEO}} {{Orbit}}
+SiteCoordinate,{{Site}}{{Coordinate}},{{Site}} {{Coordinate}}
+dl.ui.account,账号,User name
+dl.ui.and_more,…另有 {0} 个,…and {0} more
+dl.ui.autosync,启动时自动检查并更新,Check for updates at startup
+dl.ui.back,< 返回,< Back
+dl.ui.check_all,全部检查更新,Check all for updates
+dl.ui.checking,检查中…,Checking…
+dl.ui.col.action,操作,Actions
+dl.ui.col.category,类别,Category
+dl.ui.col.local,本地,Local
+dl.ui.col.remote,远端最新,Latest remote
+dl.ui.col.size,大小,Size
+dl.ui.collapse,收起,Collapse
+dl.ui.connecting_cddis,正在连接 CDDIS…,Connecting to CDDIS…
+dl.ui.current_path,（当前：{0}）,(current: {0})
+dl.ui.delete,删除,Delete
+dl.ui.delete_all,删除全部,Delete all
+dl.ui.delete_cancel_dl,彻底删除（取消{{Download}}）…,Delete permanently (cancel {{Download}})…
+dl.ui.delete_permanent_title,彻底删除,Delete permanently
+dl.ui.delete_selected,删除选中,Delete selected
+dl.ui.deleted_count,已彻底删除 {0} 个本地文件,Permanently deleted {0} local file(s)
+dl.ui.deleted_partial,已彻底删除 {0} 个，{1} 个删除失败（可能被占用）,Permanently deleted {0}; {1} failed (may be in use)
+dl.ui.dirs_failed,· {0} 路目录没取回,· {0} directory listing(s) failed
+dl.ui.dl_got_tip,"{0}
+已收 {1}","{0}
+Received {1}"
+dl.ui.dl_progress_tip,"{0}
+{1}（中断可续传）","{0}
+{1} (resumable)"
+dl.ui.downloading_done,{{Download}}中  已完成 {0}/{1}  {2},{{Download}}ing  {0}/{1} done  {2}
+dl.ui.doy,年积日 {0},DOY {0}
+dl.ui.doy_week,年积日 {0}   第 {1} 周,DOY {0}   week {1}
+dl.ui.earthdata_note,CDDIS 需要 NASA Earthdata Login 账号。账号密码以明文保存在 gnsslab.ini，仅对 cddis.nasa.gov、earthdata.nasa.gov 的请求生效。,CDDIS requires a NASA Earthdata Login account. The user name and password are stored in plain text in gnsslab.ini and are only sent to cddis.nasa.gov and earthdata.nasa.gov.
+dl.ui.earthdata_saved,账号配置已保存,Earthdata credentials saved
+dl.ui.earthdata_title,Earthdata 账号,Earthdata account
+dl.ui.eta_hours, · 约 {0} 小时, · about {0} h
+dl.ui.eta_minutes, · 约 {0} 分钟, · about {0} min
+dl.ui.eta_seconds, · 约 {0} 秒, · about {0} s
+dl.ui.expanded_pick,该{{Product}}已展开为 {0} 个文件，请在打开的目录里挑一个,This {{Product}} expanded into {0} files; pick one in the opened directory
+dl.ui.filter_done,已{{Download}},{{Download}}ed
+dl.ui.filter_todo,未{{Download}},Not downloaded
+dl.ui.find_hint,文件名关键字…,File name keyword…
+dl.ui.hint.add,（左键点击可加入清单 · 右键管理）,(left click to add to the list · right click to manage)
+dl.ui.hint.pick_obs,（左键点击填入{{Observation}} · 右键管理）,(left click to use as the {{Observation}} · right click to manage)
+dl.ui.hint.redownload,（点击可重新{{Download}} · 右键管理）,(click to {{Download}} again · right click to manage)
+dl.ui.hint.remove,（左键点击可移出清单 · 右键管理）,(left click to remove from the list · right click to manage)
+dl.ui.hint.remove_obs,（左键点击移出清单 · 右键管理）,(left click to remove from the list · right click to manage)
+dl.ui.import_failed,导入失败：{0}　（{1}）,Import failed: {0} ({1})
+dl.ui.import_ok,{0} → {1}/{2}（{3}）,{0} → {1}/{2} ({3})
+dl.ui.imported_local,已导入本地文件,Imported a local file
+dl.ui.installed_tip,"{0}
+版本 {1}，{2} 更新","{0}
+Version {1}, updated {2}"
+dl.ui.leo_obs_files,{{LEO}}{{ObservationFile}},{{LEO}} {{ObservationFile}}
+dl.ui.local_state,本地状态,Local state
+dl.ui.matched_files,匹配文件,Matching files
+dl.ui.no_account,没有账号？前往,No account? Go to
+dl.ui.no_local_files,本地还没有{{Download}}任何文件。,No files have been downloaded locally yet.
+dl.ui.no_match,当前筛选下没有匹配的文件。,No files match the current filter.
+dl.ui.no_obs_match,没有匹配的{{ObservationFile}},No matching {{ObservationFile}}
+dl.ui.no_readable_obs,这条{{Product}}里没有可读的{{ObservationFile}},This {{Product}} contains no readable {{ObservationFile}}
+dl.ui.not_installed,未安装,Not installed
+dl.ui.other,其它,Other
+dl.ui.password,密码,Password
+dl.ui.pick_local,选择本地文件,Choose local file
+dl.ui.pick_type_first,先勾选上面的{{Product}}类型。,Select a {{Product}} type above first.
+dl.ui.picked_count,（已选 {0}）,({0} selected)
+dl.ui.product_type,{{Product}}类型,{{Product}} type
+dl.ui.readable_obs,{0} · {1} 份可读{{Observation}},{0} · {1} readable {{Observation}} file(s)
+dl.ui.reading_dirs,正在读取的目录,Directories being read
+dl.ui.refresh,刷新,Refresh
+dl.ui.register,注册,Register
+dl.ui.remove_many,将彻底删除 {0} 个本地文件，共 {1}：,{0} local file(s) totalling {1} will be permanently deleted:
+dl.ui.remove_one,将彻底删除以下本地文件：,The following local file will be permanently deleted:
+dl.ui.retry,重试,Retry
+dl.ui.reveal_failed,打开资源管理器失败（文件可能已被删除）,Failed to open File Explorer (the file may have been deleted)
+dl.ui.reveal_temp_failed,定位失败（临时文件可能还未落盘）,Failed to locate (the temporary file may not be on disk yet)
+dl.ui.revealed,已在资源管理器中定位文件,File located in File Explorer
+dl.ui.revealed_temp,已在资源管理器中定位临时文件,Temporary file located in File Explorer
+dl.ui.save,保存,Save
+dl.ui.saved_ini,已保存到 ini，当前会话已生效,Saved to ini and active for this session
+dl.ui.scanning,扫描中 {0}/{1},Scanning {0}/{1}
+dl.ui.scanning_ellipsis,扫描中…,Scanning…
+dl.ui.search,搜索,Search
+dl.ui.selected_count,已选 {0} · {1},{0} selected · {1}
+dl.ui.size_got, · 已{{Download}} {0}, · {0} downloaded
+dl.ui.size_of,大小 {0},Size {0}
+dl.ui.size_unknown,总量未知,Total unknown
+dl.ui.test_conn,测试连接,Test connection
+dl.ui.test_error,测试连接异常: {0},Connection test error: {0}
+dl.ui.test_error_unknown,测试连接发生未知异常,Connection test raised an unknown exception
+dl.ui.tip_downloading,"
+{{Download}}中…（左键暂停 · 右键管理）","
+{{Download}}ing… (left click to pause · right click to manage)"
+dl.ui.tip_local,"
+本地：{0}","
+Local: {0}"
+dl.ui.tip_local_only,"
+本地：{0}
+远端列表未列出（仅本地）","
+Local: {0}
+Not listed remotely (local only)"
+dl.ui.tip_no_local,"
+本地：无（点击{{Download}}）","
+Local: none (click to {{Download}})"
+dl.ui.tip_source,"
+来源：{0}","
+Source: {0}"
+dl.ui.tip_span,"
+覆盖 {0} 天（起始 {1}）  采样 {2}","
+Spans {0} day(s) (from {1})  sampling {2}"
+dl.ui.total_count,共 {0} 个 · {1},{0} item(s) · {1}
+dl.ui.total_narrowed,共 {0} / {1} 个{2},{0} of {1} {2}
+dl.ui.unset,未设,not set
+dl.ui.window_title,{{Product}}{{Download}},{{Product}} {{Download}}
+dl.ui.yesterday,昨日,Yesterday
+dl.unpack.expanded_dir,{0} → 目录 {1}（{2} 个文件）,{0} → directory {1} ({2} files)
+dl.unpack.expanded_files,展开 {0} → {1} 个文件,Expanded {0} → {1} files
+dl.unpack.hatanaka_failed,Hatanaka 还原失败，保留原文件：{0},"Hatanaka recovery failed, original file kept: {0}"
+dl.unpack.incomplete,{0} 不是完整的压缩流：{1},{0} is not a complete compressed stream: {1}
+dl.unpack.inflate_failed,{{Unpack}}失败，保留压缩包：{0},"{{Unpack}} failed, archive kept: {0}"
+dl.unpack.mkdir_failed,建展开目录失败 {0}：{1},Failed to create expansion directory {0}: {1}
+dl.unpack.open_failed,打不开 {0}：{1},Cannot open {0}: {1}
+dl.unpack.read_failed,读取失败：{0},Read failed: {0}
+dl.unpack.recovered_rinex,已还原 RINEX {{ObservationFile}}：{0},Recovered RINEX {{ObservationFile}}: {0}
+dl.unpack.remove_failed,{{Archive}}删除失败，保留 {0}：{1},"Failed to remove {{Archive}}, kept {0}: {1}"
+dl.unpack.stream_part,压缩流片段 {0} → {1}（{2} 字节）,Compressed stream part {0} → {1} ({2} bytes)

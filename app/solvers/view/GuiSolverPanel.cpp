@@ -25,6 +25,7 @@
 #include "solvers/view/GuiPosTab.h"
 #include "solvers/view/QualityControl.h"
 #include "download/ui/Widgets.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::SolverPanel {
     void launchQC(View &view) {
@@ -32,7 +33,7 @@ namespace Solvers::SolverPanel {
         std::lock_guard lk(launchMutex);
         if (view.qcComputing.load()) return;
         if (view.qcWorker.joinable()) view.qcWorker.join();
-        LOG_INFO << "[QC] 开始质量分析";
+        LOG_INFO << I18n::trc("log.qc.start");
         view.qcComputing = true;
         view.qcWorker = std::thread([&view] {
             try {
@@ -42,7 +43,7 @@ namespace Solvers::SolverPanel {
                     view.qcReport = std::make_shared<QualityReport>(std::move(rep));
                 }
                 view.qcReady = true;
-                LOG_INFO << "[QC] 质量分析结束";
+                LOG_INFO << I18n::trc("log.qc.done");
             } catch (...) {
                 view.qcReady = true;
             }
@@ -70,21 +71,21 @@ namespace Solvers::SolverPanel {
                                const bool hasError, const bool busy, const int epochCount,
                                const std::string &liveMsg) {
         if (hasError) {
-            v.statusText = std::string("状态: ") + core.errorMessage();
+            v.statusText = I18n::tr("common.status", core.errorMessage());
             v.statusColor = UI::kColFail;
         } else if (!liveMsg.empty()) {
             // 解算进行中：把逐帧推进的进度放到状态行，并带总历元数。
             v.statusText = liveMsg;
-            if (epochCount > 0) v.statusText += "（共 " + std::to_string(epochCount) + " 个历元）";
+            if (epochCount > 0) v.statusText += I18n::tr("solver.epochs_paren", epochCount);
             v.statusColor = UI::kColInfo;
         } else if (epochCount > 0) {
-            v.statusText = "解算：共 " + std::to_string(epochCount) + " 个历元"
-                           + (busy ? "（进行中…）" : "");
+            v.statusText = I18n::tr("solver.solve_epochs", epochCount)
+                           + (busy ? I18n::tr("solver.in_progress") : std::string());
             v.statusColor = UI::kColWarn;
         } else if (busy) {
-            v.statusText = "正在读取观测 / 加载星历与产品…";
+            v.statusText = I18n::trc("solver.reading");
         } else {
-            v.statusText = "处理结束：未解出任何历元，请检查观测文件与产品是否匹配";
+            v.statusText = I18n::trc("solver.no_epoch_solved");
             v.statusColor = UI::kColFail;
         }
     }
@@ -191,17 +192,17 @@ namespace Solvers::SolverPanel {
                 v.enuFixed3d = v.enuFixedDisp.norm();
             }
 
-            v.solStatShort = isFixed ? "固定(Fixed)" : "浮点(Float)";
+            v.solStatShort = isFixed ? I18n::trc("solver.fixed") : I18n::trc("solver.float");
             v.solveStatusColor = isFixed ? UI::kColPass : UI::kColWarn;
             v.solRatio = isRtkMode ? cur.rtkRatio : r.ratio;
             v.showSolveStatus = canFixed;
 
         } else {
-            v.noSolveMsg = core.noEphSolve ? "无定位解（缺少星历文件）" : "无定位解";
+            v.noSolveMsg = core.noEphSolve ? I18n::trc("solver.no_solution_no_eph") : I18n::trc("solver.no_solution");
         }
 
         char buf[160];
-        std::snprintf(buf, sizeof buf, "Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? "定位" : "无解");
+        std::snprintf(buf, sizeof buf, "Wk %u SOW %.3f | %s", cur.week, cur.sow, cur.solved ? I18n::trc("solver.state_solved") : I18n::trc("solver.state_unsolved"));
         v.epochInfo = buf;
     }
 
@@ -238,7 +239,7 @@ namespace Solvers::SolverPanel {
         if (modeFixesAmbiguities(core.mode) && epochCount > 0 && s.data.solvedEpochs > 0) {
             v.showFixRate = true;
             char buf[64];
-            std::snprintf(buf, sizeof buf, "固定率: %.1f%% (%d/%d)",
+            std::snprintf(buf, sizeof buf, I18n::trc("solver.fix_rate"),
                           100.0 * s.data.fixedEpochs / s.data.solvedEpochs,
                           s.data.fixedEpochs, s.data.solvedEpochs);
             v.fixRateText = buf;
@@ -284,10 +285,10 @@ namespace Solvers {
 
         if (isRealtime) {
             if (!done) {
-                if (ImGui::Button("停止连接")) cancel();
+                if (ImGui::Button(I18n::trc("solver.stop_connection"))) cancel();
                 ImGui::SameLine();
             } else {
-                ImGui::TextColored(UI::kColFail, "连接已断开");
+                ImGui::TextColored(UI::kColFail, I18n::trc("solver.disconnected"));
                 ImGui::SameLine();
             }
         }
@@ -304,24 +305,25 @@ namespace Solvers {
         if (!isRealtime && busy) {
             const int cur = solveEpoch.load();
             const auto phase = solvePhase.load();
-            if (cur <= 0)
-                liveMsg = "正在读取观测 / 加载星历与产品…";
+            // 前向完成、后向解算器正在重新初始化（重载星历/格网）时 solveEpoch 归零：明确提示，别让人以为卡死。
+            if (cur <= 0 && phase == Core::SolvePhase::Backward)
+                liveMsg = I18n::trc("solver.forward_done");
+            else if (cur <= 0)
+                liveMsg = I18n::trc("solver.reading");
             else if (phase == Core::SolvePhase::Scan)
-                liveMsg = "正在扫描第 " + std::to_string(cur) + " 个历元";
-            else if (phase == Core::SolvePhase::Backward) {
-                // 前向完成、后向解算器正在重新初始化（重载星历/格网）时卡在 0 历元：明确提示，别让人以为卡死。
-                if (cur <= 0) liveMsg = "正向完成，准备反向滤波…";
-                else liveMsg = "正在反向解算第 " + std::to_string(cur) + " 个历元";
-            } else
-                liveMsg = "正在解算第 " + std::to_string(cur) + " 个历元";
+                liveMsg = I18n::tr("solver.scanning_epoch", cur);
+            else if (phase == Core::SolvePhase::Backward)
+                liveMsg = I18n::tr("solver.reverse_epoch", cur);
+            else
+                liveMsg = I18n::tr("solver.solving_epoch", cur);
         }
 
         if (ImGui::BeginTabBar("##qa_tabs")) {
-            if (ImGui::BeginTabItem("定位解算")) {
+            if (ImGui::BeginTabItem(I18n::trc("solver.tab.position"))) {
                 Charts::PosTabView v(view.plotSeries, view.skyTracks);
                 v.epochCount = epochCount;
                 if (modeHasFilter(mode))
-                    v.filterDirectionText = std::string("滤波方向：") + filterLabel(opts.filter);
+                    v.filterDirectionText = I18n::tr("solver.filter_direction", filterLabel(opts.filter));
                 v.selectedEpoch = &selectedEpochLocal;
                 v.selectedSatIdx = &view.selectedSatIdx;
                 v.resMode = &view.resMode;
@@ -350,11 +352,11 @@ namespace Solvers {
                     std::lock_guard lk(mutex);
                     view.ensureSkyTracks(epochs);
                 }
-                // 卫星表按当前历元取残差，序列落后一格就全是空值；先同步序列再填表格。
-                if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillPlots(v, *this, selectedIdx, epochCount, isDone);
-                if (epochCount > 0 && selectedIdx >= 0) SolverPanel::fillCurrentEpoch(v, *this, selectedIdx);
-                // 参考表跟着参考走：真值就绪（或 RTK 的基准站坐标）才显示，SPP 挂上真值也照样有。
-                v.showRefTable = v.showRefTable && exportRefReady();
+                if (epochCount > 0 && selectedIdx >= 0) {
+                    SolverPanel::fillPlots(v, *this, selectedIdx, epochCount, isDone);
+                    SolverPanel::fillCurrentEpoch(v, *this, selectedIdx);
+                }
+                v.showRefTable = v.showRefTable && truthReady();
                 SolverPanel::fillLEO3D(v, *this);
 
                 v.onExport = [&] {
@@ -364,9 +366,9 @@ namespace Solvers {
                 try {
                     Charts::renderPositioningTab(v);
                 } catch (const std::exception &e) {
-                    ImGui::TextColored(UI::kColFail, "渲染异常: %s", e.what());
+                    ImGui::TextColored(UI::kColFail, I18n::trc("solver.render_error"), e.what());
                 } catch (...) {
-                    ImGui::TextColored(UI::kColFail, "渲染发生未知异常");
+                    ImGui::TextColored(UI::kColFail, I18n::trc("solver.render_unknown"));
                 }
                 if (selectedEpochLocal != selectedIdx) {
                     std::lock_guard lk(mutex);
@@ -375,25 +377,25 @@ namespace Solvers {
                 }
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(view.qcTabLabel.c_str())) {
+            if (ImGui::BeginTabItem(I18n::trc(view.qcTabKey))) {
                 try {
                     QualityControl::render(view, exportStem());
                 } catch (const std::exception &e) {
-                    ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
+                    ImGui::TextColored(UI::kColFail, I18n::trc("solver.qc_render_error"), e.what());
                 } catch (...) {
-                    ImGui::TextColored(UI::kColFail, "质量分析渲染发生未知异常");
+                    ImGui::TextColored(UI::kColFail, I18n::trc("solver.qc_render_unknown"));
                 }
                 ImGui::EndTabItem();
             }
             for (const auto &tab: view.extraQcTabs) {
                 if (!tab) continue;
-                if (ImGui::BeginTabItem(tab->label.c_str())) {
+                if (ImGui::BeginTabItem(I18n::trc(tab->labelKey))) {
                     try {
                         QualityControl::render(tab->view, tab->fileName);
                     } catch (const std::exception &e) {
-                        ImGui::TextColored(UI::kColFail, "质量分析渲染异常: %s", e.what());
+                        ImGui::TextColored(UI::kColFail, I18n::trc("solver.qc_render_error"), e.what());
                     } catch (...) {
-                        ImGui::TextColored(UI::kColFail, "质量分析渲染发生未知异常");
+                        ImGui::TextColored(UI::kColFail, I18n::trc("solver.qc_render_unknown"));
                     }
                     ImGui::EndTabItem();
                 }

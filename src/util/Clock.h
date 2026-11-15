@@ -5,7 +5,7 @@
 #include <thread>
 
 /// 宿主机的钟：稳时钟计时、超时判断、墙钟转日历、线程休眠。
-/// GNSS 时标（CommonTime/WeekSecond 等）在 src/time/TimeStruct.h——那边是数学时间，
+/// GNSS 时标（CommonTime/WeekSecond 等）在 src/core/TimeStruct.h——那边是数学时间，
 /// 这边是「程序运行/调度用的时间」，语义别混。std::chrono 只允许出现在这一个头里，
 /// 调用点一律写 `Clock::xxx`（时长类型是 using 进来的，`Clock::seconds(120)` 直接可用）；
 /// 超时/到点判断走 `over()` / `due()`，禁再手写 `now - t > d`、`now > deadline`。

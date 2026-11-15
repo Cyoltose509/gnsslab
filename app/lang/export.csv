@@ -1,0 +1,158 @@
+key,ZH-CN,EN
+export.col.argp,近地点幅角 (°),Arg. of perigee (°)
+export.col.axb,{{Accelerometer}}{{Bias}} X (m/s²),{{Accelerometer}} {{Bias}} X (m/s²)
+export.col.ayb,{{Accelerometer}}{{Bias}} Y (m/s²),{{Accelerometer}} {{Bias}} Y (m/s²)
+export.col.azb,{{Accelerometer}}{{Bias}} Z (m/s²),{{Accelerometer}} {{Bias}} Z (m/s²)
+export.col.bfe,{{Baseline}}东 (m),{{Baseline}}-E (m)
+export.col.bfl,{{Baseline}}长度 (m),{{Baseline}} length (m)
+export.col.bfn,{{Baseline}}北 (m),{{Baseline}}-N (m)
+export.col.bfu,{{Baseline}}天 (m),{{Baseline}}-U (m)
+export.col.bfx,{{Baseline}}-X (m),{{Baseline}}-X (m)
+export.col.bfy,{{Baseline}}-Y (m),{{Baseline}}-Y (m)
+export.col.bfz,{{Baseline}}-Z (m),{{Baseline}}-Z (m)
+export.col.bke,{{FixedSolution}}{{Baseline}}东 (m),{{FixedSolution}} {{Baseline}}-E (m)
+export.col.bkl,{{FixedSolution}}{{Baseline}}长度 (m),{{FixedSolution}} {{Baseline}} length (m)
+export.col.bkn,{{FixedSolution}}{{Baseline}}北 (m),{{FixedSolution}} {{Baseline}}-N (m)
+export.col.bku,{{FixedSolution}}{{Baseline}}天 (m),{{FixedSolution}} {{Baseline}}-U (m)
+export.col.bkx,{{FixedSolution}}{{Baseline}}-X (m),{{FixedSolution}} {{Baseline}}-X (m)
+export.col.bky,{{FixedSolution}}{{Baseline}}-Y (m),{{FixedSolution}} {{Baseline}}-Y (m)
+export.col.bkz,{{FixedSolution}}{{Baseline}}-Z (m),{{FixedSolution}} {{Baseline}}-Z (m)
+export.col.e,东 (m),East (m)
+export.col.ecc,偏心率 e,Eccentricity e
+export.col.fbh,{{FloatSolution}}{{Height}} (m),{{FloatSolution}} H (m)
+export.col.fblat,{{FloatSolution}}{{Latitude}} (°),{{FloatSolution}} B (°)
+export.col.fblon,{{FloatSolution}}{{Longitude}} (°),{{FloatSolution}} L (°)
+export.col.fe,{{FloatSolution}}东 (m),{{FloatSolution}} E (m)
+export.col.fn,{{FloatSolution}}北 (m),{{FloatSolution}} N (m)
+export.col.fu,{{FloatSolution}}天 (m),{{FloatSolution}} U (m)
+export.col.fx,{{FloatSolution}} X (m),{{FloatSolution}} X (m)
+export.col.fy,{{FloatSolution}} Y (m),{{FloatSolution}} Y (m)
+export.col.fz,{{FloatSolution}} Z (m),{{FloatSolution}} Z (m)
+export.col.gdop,GDOP,GDOP
+export.col.ha,远地点高度 (km),Apogee height (km)
+export.col.hdop,HDOP,HDOP
+export.col.heading,{{Heading}} (°),{{Heading}} (°)
+export.col.hp,近地点高度 (km),Perigee height (km)
+export.col.inc,倾角 i (°),Inclination i (°)
+export.col.kbh,{{FixedSolution}}{{Height}} (m),{{FixedSolution}} H (m)
+export.col.kblat,{{FixedSolution}}{{Latitude}} (°),{{FixedSolution}} B (°)
+export.col.kblon,{{FixedSolution}}{{Longitude}} (°),{{FixedSolution}} L (°)
+export.col.ke,{{FixedSolution}}东 (m),{{FixedSolution}} E (m)
+export.col.kn,{{FixedSolution}}北 (m),{{FixedSolution}} N (m)
+export.col.ku,{{FixedSolution}}天 (m),{{FixedSolution}} U (m)
+export.col.kx,{{FixedSolution}} X (m),{{FixedSolution}} X (m)
+export.col.ky,{{FixedSolution}} Y (m),{{FixedSolution}} Y (m)
+export.col.kz,{{FixedSolution}} Z (m),{{FixedSolution}} Z (m)
+export.col.lat,{{Latitude}} (°),B (°)
+export.col.lon,{{Longitude}} (°),L (°)
+export.col.ma,平近点角 M (°),Mean anomaly M (°)
+export.col.n,北 (m),North (m)
+export.col.nrtn,法向 N (m),Cross-track N (m)
+export.col.pdop,PDOP,PDOP
+export.col.period,周期 (s),Period (s)
+export.col.pitch,{{Pitch}} (°),{{Pitch}} (°)
+export.col.r,径向 R (m),Radial R (m)
+export.col.raan,升交点赤经 (°),RAAN (°)
+export.col.ratio,Ratio,Ratio
+export.col.refx,参考-X (m),REF-X (m)
+export.col.refy,参考-Y (m),REF-Y (m)
+export.col.refz,参考-Z (m),REF-Z (m)
+export.col.rms3df,浮点{{ThreeDRMS}} (m),Float {{ThreeDRMS}} (m)
+export.col.rms3dk,固定{{ThreeDRMS}} (m),Fix {{ThreeDRMS}} (m)
+export.col.roll,{{Roll}} (°),{{Roll}} (°)
+export.col.se,东向 σ (m),East σ (m)
+export.col.sma,半长轴 a (m),Semi-major axis a (m)
+export.col.sn,北向 σ (m),North σ (m)
+export.col.sow,周内秒,SOW
+export.col.sp,{{Position}} σ (m),{{Position}} σ (m)
+export.col.spfix,{{FixedSolution}} σ (m),{{FixedSolution}} σ (m)
+export.col.spfloat,{{FloatSolution}} σ (m),{{FloatSolution}} σ (m)
+export.col.su,天向 σ (m),Up σ (m)
+export.col.sv,{{Velocity}} σ (m/s),{{Velocity}} σ (m/s)
+export.col.t,切向 T (m),Along-track T (m)
+export.col.tdop,TDOP,TDOP
+export.col.u,天 (m),Up (m)
+export.col.vd,{{Velocity}}-地 (m/s),VD (m/s)
+export.col.vdop,VDOP,VDOP
+export.col.ve,{{Velocity}}-东 (m/s),VE (m/s)
+export.col.vn,{{Velocity}}-北 (m/s),VN (m/s)
+export.col.vx,{{Velocity}}-X (m/s),VX (m/s)
+export.col.vy,{{Velocity}}-Y (m/s),VY (m/s)
+export.col.vz,{{Velocity}}-Z (m/s),VZ (m/s)
+export.col.wk,周数,Week
+export.col.wxb,{{Gyroscope}}{{Bias}} X (rad/s),{{Gyroscope}} {{Bias}} X (rad/s)
+export.col.wyb,{{Gyroscope}}{{Bias}} Y (rad/s),{{Gyroscope}} {{Bias}} Y (rad/s)
+export.col.wzb,{{Gyroscope}}{{Bias}} Z (rad/s),{{Gyroscope}} {{Bias}} Z (rad/s)
+export.col.x,ECEF-X (m),ECEF-X (m)
+export.col.y,ECEF-Y (m),ECEF-Y (m)
+export.col.z,ECEF-Z (m),ECEF-Z (m)
+export.col.zupt,{{ZeroVelocityUpdate}}标记,{{ZeroVelocityUpdate}} flag
+export.col.zupte,{{ZeroVelocityUpdate}}东 (m),{{ZeroVelocityUpdate}} E (m)
+export.col.zupth,{{ZeroVelocityUpdate}}{{Height}} (m),{{ZeroVelocityUpdate}} H (m)
+export.col.zuptheading,{{ZeroVelocityUpdate}}{{Heading}} (°),{{ZeroVelocityUpdate}} {{Heading}} (°)
+export.col.zuptlat,{{ZeroVelocityUpdate}}{{Latitude}} (°),{{ZeroVelocityUpdate}} B (°)
+export.col.zuptlon,{{ZeroVelocityUpdate}}{{Longitude}} (°),{{ZeroVelocityUpdate}} L (°)
+export.col.zuptn,{{ZeroVelocityUpdate}}北 (m),{{ZeroVelocityUpdate}} N (m)
+export.col.zuptpitch,{{ZeroVelocityUpdate}}{{Pitch}} (°),{{ZeroVelocityUpdate}} {{Pitch}} (°)
+export.col.zuptroll,{{ZeroVelocityUpdate}}{{Roll}} (°),{{ZeroVelocityUpdate}} {{Roll}} (°)
+export.col.zuptvd,{{ZeroVelocityUpdate}}{{Velocity}}-地 (m/s),{{ZeroVelocityUpdate}} VD (m/s)
+export.col.zuptve,{{ZeroVelocityUpdate}}{{Velocity}}-东 (m/s),{{ZeroVelocityUpdate}} VE (m/s)
+export.col.zuptvn,{{ZeroVelocityUpdate}}{{Velocity}}-北 (m/s),{{ZeroVelocityUpdate}} VN (m/s)
+export.kml.desc_head,gnssLab {0} {{Trajectory}}，{1} 个{{Epoch}}，UTC,"gnssLab {0} {{Trajectory}}, {1} {{Epoch}}, UTC"
+export.kml.desc_range, {0} 至 {1}, {0} to {1}
+export.kml.no_epochs,区间内没有解算成功的{{Epoch}}，未写{{Trajectory}},no solved {{Epoch}} in this interval; {{Trajectory}} not written
+export.lbl.accel,{{Accelerometer}}{{Bias}} (X/Y/Z),{{Accelerometer}} {{Bias}} (X/Y/Z)
+export.lbl.bl_enu_f,{{FloatSolution}}{{Baseline}} (E/N/U),{{FloatSolution}} {{Baseline}} (E/N/U)
+export.lbl.bl_enu_k,{{FixedSolution}}{{Baseline}} (E/N/U),{{FixedSolution}} {{Baseline}} (E/N/U)
+export.lbl.bl_len_f,{{FloatSolution}}{{Baseline}}长度,{{FloatSolution}} {{Baseline}} length
+export.lbl.bl_len_k,{{FixedSolution}}{{Baseline}}长度,{{FixedSolution}} {{Baseline}} length
+export.lbl.bl_xyz_f,{{FloatSolution}}{{Baseline}} (X/Y/Z),{{FloatSolution}} {{Baseline}} (X/Y/Z)
+export.lbl.bl_xyz_k,{{FixedSolution}}{{Baseline}} (X/Y/Z),{{FixedSolution}} {{Baseline}} (X/Y/Z)
+export.lbl.blh,{{BLH}} (B/L/H),{{BLH}} (B/L/H)
+export.lbl.en,水平{{Position}} (E/N),Horizontal {{Position}} (E/N)
+export.lbl.enu,站心{{Deviation}} (E/N/U),Local {{Deviation}} (E/N/U)
+export.lbl.fix_blh,{{FixedSolution}}{{BLH}} (B/L/H),{{FixedSolution}} {{BLH}} (B/L/H)
+export.lbl.fix_enu,{{FixedSolution}}{{Deviation}} (E/N/U),{{FixedSolution}} {{Deviation}} (E/N/U)
+export.lbl.fix_rms3d,固定{{ThreeDRMS}},Fix {{ThreeDRMS}}
+export.lbl.fix_sig_p,{{FixedSolution}} σ,{{FixedSolution}} σ
+export.lbl.fix_xyz,{{FixedSolution}}{{Coordinate}} (X/Y/Z),{{FixedSolution}} {{Coordinate}} (X/Y/Z)
+export.lbl.float_blh,{{FloatSolution}}{{BLH}} (B/L/H),{{FloatSolution}} {{BLH}} (B/L/H)
+export.lbl.float_enu,{{FloatSolution}}{{Deviation}} (E/N/U),{{FloatSolution}} {{Deviation}} (E/N/U)
+export.lbl.float_rms3d,浮点{{ThreeDRMS}},Float {{ThreeDRMS}}
+export.lbl.float_sig_p,{{FloatSolution}} σ,{{FloatSolution}} σ
+export.lbl.float_xyz,{{FloatSolution}}{{Coordinate}} (X/Y/Z),{{FloatSolution}} {{Coordinate}} (X/Y/Z)
+export.lbl.gyro,{{Gyroscope}}{{Bias}} (X/Y/Z),{{Gyroscope}} {{Bias}} (X/Y/Z)
+export.lbl.ref_xyz,参考{{Coordinate}} (X/Y/Z),Reference {{Coordinate}} (X/Y/Z)
+export.lbl.rph,{{AttitudeAngle}} (R/P/H),{{AttitudeAngle}} (R/P/H)
+export.lbl.rtn,{{Orbit}}{{Deviation}} (R/T/N),{{Orbit}} {{Deviation}} (R/T/N)
+export.lbl.sig_p,{{Position}} σ,{{Position}} σ
+export.lbl.sig_v,{{Velocity}} σ,{{Velocity}} σ
+export.lbl.vel_ned,{{Velocity}} (N/E/D),{{Velocity}} (N/E/D)
+export.lbl.vel_xyz,{{Velocity}} (X/Y/Z),{{Velocity}} (X/Y/Z)
+export.lbl.xyz,{{Coordinate}} (X/Y/Z),{{Coordinate}} (X/Y/Z)
+export.lbl.zupt_blh,{{ZeroVelocityUpdate}} {{BLH}} (B/L/H),{{ZeroVelocityUpdate}} {{BLH}} (B/L/H)
+export.lbl.zupt_en,{{ZeroVelocityUpdate}} 水平{{Position}} (E/N),{{ZeroVelocityUpdate}} horizontal {{Position}} (E/N)
+export.lbl.zupt_ned,{{ZeroVelocityUpdate}} {{Velocity}} (N/E/D),{{ZeroVelocityUpdate}} {{Velocity}} (N/E/D)
+export.lbl.zupt_rph,{{ZeroVelocityUpdate}} {{AttitudeAngle}} (R/P/H),{{ZeroVelocityUpdate}} {{AttitudeAngle}} (R/P/H)
+export.meta.cat.files,参与文件,Files
+export.meta.file.aux,辅助文件,Auxiliary file
+export.meta.file.imu,IMU 文件,IMU file
+export.meta.file.truth_sp3,参考{{Truth}} SP3,Reference {{Truth}} SP3
+export.meta.flag.off,关,off
+export.meta.flag.on,开,on
+export.meta.frame,参考框架,Reference frame
+export.meta.max_epochs,最大{{Epoch}}数 (0=不限),Max {{Epoch}} (0 = no limit)
+export.meta.par.base_xyz,{{BaseStation}}{{Coordinate}} XYZ,{{BaseStation}} {{Coordinate}} XYZ
+export.meta.par.specify_attitude,手填{{InitialAttitude}}角,Manual {{InitialAttitude}}
+export.meta.ref_form,参考{{Truth}}形式,Reference {{Truth}} form
+export.meta.ref_prn,参考{{Truth}} SP3 星号,Reference {{Truth}} SP3 satellite
+export.meta.ref_xyz,参考{{Truth}} XYZ,Reference {{Truth}} XYZ
+export.meta.result_epochs,结果{{Epoch}}数,Result {{Epoch}}
+export.meta.sheet,参数配置,Parameter configuration
+export.meta.val.file,逐{{Epoch}} SP3,Per-{{Epoch}} SP3
+export.meta.val.fixed,恒值 XYZ,Fixed XYZ
+export.meta.val.frame_default,未声明(导出按 IGS14),Not declared (IGS14 assumed)
+export.orb.head,% {{OrbitalElements}}（瞬根数）：ECEF {{Position}}按 GMST 转到惯性系后解算，含近/远地点高度与周期,% {{OrbitalElements}} (osculating): derived from ECEF {{Position}} rotated to ECI by GMST; includes perigee/apogee height and period
+export.traj.file,% 文件 {0},% file {0}
+export.traj.head,% gnssLab 惯性导航{{Trajectory}},% gnssLab INS {{Trajectory}}
+export.traj.units,% 时间 GPST；{{Latitude}}/{{Longitude}} deg，椭球高 m；{{Velocity}} m/s（北-东-地）；姿态 deg（机体系相对北-东-地）,"% time GPST; B/L deg, ellipsoidal {{Height}} m; {{Velocity}} m/s (NED); attitude deg (body frame relative to NED)"

@@ -10,7 +10,7 @@
 
 #include <Eigen/Core>
 
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 namespace Solvers {
     struct Task;
@@ -45,8 +45,11 @@ namespace Solvers {
         enum class Kind { Int, Sig, Fixed, Text };
 
         struct FieldDef {
+            /// 内部列标识，也是 ini 里 `fields =` 认的键；不随语言变，别拿它当表头。
             const char *name;
             const char *key;
+            /// 写进文件的列名与弹窗里单列显示的名字；表头要跟界面语言走，ini 键不能跟。
+            const char *colKey;
             Kind kind;
             int prec;
         };

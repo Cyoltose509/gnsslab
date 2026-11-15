@@ -30,7 +30,7 @@ struct SPPConfig {
 
     bool useHealth = true;
 
-    // σ 口径：下面所有 *Sigma 均为真 σ（进 P/Q 阵的使用点各自平方）；2026-11 前部分默认值是方差口径。
+    // σ 口径：下面所有 *Sigma 均为真 σ（进 Dx/Dw 阵的使用点各自平方）；2026-11 前部分默认值是方差口径。
     double isbProcSigma = 3.16227766E-2; // = √1e-3，旧方差口径默认值的精确开方
     double isbInitSigma = 1.0;
     double gloIfcbProcSigma = 1.0E-4;

@@ -7,7 +7,7 @@
 #include <algorithm>
 #include "core/SatID.h"
 #include "core/geom/Ephemeris.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "core/Const.h"
 
 struct EphemerisTable {

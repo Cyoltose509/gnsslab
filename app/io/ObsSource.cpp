@@ -5,8 +5,10 @@
 #include <cstdio>
 #include <filesystem>
 
-#include "download/local/ProductMeta.h"
+#include "download/local/FileMeta.h"
+#include "io/ObsDate.h"
 #include "io/rinex/RINEXNavStore.h"
+#include "i18n/I18n.h"
 
 namespace ObsSource {
     bool ObsPair::open(const std::string &basePath, const std::string &roverPath,
@@ -15,11 +17,11 @@ namespace ObsSource {
         std::map<std::string, int> gloSlots;
         if (!navPath.empty()) RINEXNavStore::readGlonassSlots(navPath, gloSlots);
         if (!base.open(basePath, &err, &gloSlots)) {
-            err = "基准站: " + err;
+            err = I18n::tr("io.err.base_prefix", err);
             return false;
         }
         if (!rover.open(roverPath, &err, &gloSlots)) {
-            err = "流动站: " + err;
+            err = I18n::tr("io.err.rover_prefix", err);
             return false;
         }
         return alignStart();
@@ -29,20 +31,20 @@ namespace ObsSource {
         try {
             Observer::Item b, r;
             if (!base.peek(b) || !rover.peek(r)) {
-                err = "观测文件里没有历元";
+                err = I18n::tr("io.err.no_epoch");
                 return false;
             }
             base.fastForward(r.obs.epoch);
             rover.fastForward(b.obs.epoch);
             return true;
         } catch (const std::exception &e) {
-            err = std::string("读取首历元失败: ") + e.what();
+            err = I18n::tr("io.err.first_epoch", e.what());
             return false;
         }
     }
 
     Puller nextOf(Observer::ObsStream &s) {
-        return [&s](ObsData &out, Observer::DualPair::EphPtr &eph) {
+        return [&s](ObsData &out, DualPair::EphPtr &eph) {
             Observer::Item it;
             if (!s.next(it)) return false;
             out = std::move(it.obs);
@@ -53,13 +55,13 @@ namespace ObsSource {
 
     std::string RTKInputError(const std::string &basePath, const std::string &roverPath,
                               const std::string &navPath) {
-        if (basePath.empty() || roverPath.empty()) return "请先选择基准站与流动站观测文件";
+        if (basePath.empty() || roverPath.empty()) return I18n::tr("io.err.need_base_rover");
         const auto fb = Observer::classifyObsPath(basePath);
         const auto fr = Observer::classifyObsPath(roverPath);
         if (fb == Observer::Format::Unknown || fr == Observer::Format::Unknown)
-            return "无法识别观测文件格式";
+            return I18n::tr("io.err.bad_format");
         if (!Observer::carriesEph(fb) || !Observer::carriesEph(fr)) {
-            if (navPath.empty()) return "RINEX 观测需要广播星历文件（任一侧为 RINEX 即需要）";
+            if (navPath.empty()) return I18n::tr("rtk.err.need_nav");
         }
         return {};
     }
@@ -68,7 +70,7 @@ namespace ObsSource {
         RINEXNavStore nav;
         nav.loadFile(navPath, navTable);
         if (navTable.empty()) {
-            err = "广播星历为空";
+            err = I18n::tr("io.err.empty_nav");
             return false;
         }
         return true;
@@ -97,7 +99,7 @@ namespace ObsSource {
             return result;
         }
 
-        const auto od = ProductMeta::parseObsDate(obsPath);
+        const auto od = parseObsDate(obsPath);
         const auto dir = std::filesystem::path(obsPath).parent_path();
         if (!od || dir.empty()) return result;
         char stamp[16];
@@ -109,7 +111,7 @@ namespace ObsSource {
             const std::string name = ent.path().filename().string();
             if (name.find(stamp) == std::string::npos) continue;
             if (sameNoCase(ent.path().string(), obsPath)) continue;
-            if (const auto m = ProductMeta::parse(name);
+            if (const auto m = FileMeta::parse(name);
                 m && m->type == ProductType::NAV)
                 result.push_back(ent.path().string());
         }

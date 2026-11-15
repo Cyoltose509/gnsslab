@@ -9,7 +9,7 @@ class SolverLSQ {
 public:
     SolverLSQ() = default;
 
-    void solve(EquSys &equSys, const Eigen::MatrixXd &weightMatrix, bool computeCov = true);
+    void solve(EquSys &equSys, const Eigen::MatrixXd &W, bool computeCov = true);
 
     void computeCovariance();
 
@@ -20,12 +20,12 @@ public:
     /// Destructor.
     virtual ~SolverLSQ() = default;
 
-    Eigen::MatrixXd covMatrix;
+    Eigen::MatrixXd Q;
     double sigma0{};
 
     Eigen::VectorXd state;
     Eigen::VectorXd prefit;
-    Eigen::MatrixXd hMatrix;
+    Eigen::MatrixXd H;
     Eigen::VectorXd v;
     VariableSet currentUnkSet;
 

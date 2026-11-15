@@ -6,16 +6,18 @@
 #include "GuiProductSection.h"
 
 #include "core/PathMemory.h"
-#include "io/Products.h"
-#include "io/ProductLoad.h"
-#include "io/ProductPicker.h"
+#include "io/ProductPaths.h"
+#include "io/ProductReader.h"
+#include "download/local/Store.h"
 #include "io/ObsSource.h"
 #include "io/Observer.h"
 #include "product/ATXReader.h"
 #include "product/sp3/Reader.h"
 #include "ui/FileDialog.h"
 
-#include "download/local/ProductMeta.h"
+#include "download/local/FileMeta.h"
+#include "io/ObsDate.h"
+#include "core/TimeStruct.h"
 #include "download/ui/Acquire.h"
 
 #include "StringUtils.h"
@@ -27,6 +29,8 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace {
     namespace fs = std::filesystem;
@@ -44,17 +48,17 @@ namespace {
 
     /// 「获取」按钮的 tooltip
     std::string obsDateTip(const ObsDate &od) {
-        std::string tip = "按观测日期 " + ProductMeta::doyToDateStr(od.year, od.doy) + " 取对应产品";
+        std::string tip = I18n::tr("prod.tip_by_date", DOYToDateText(od.year, od.doy));
         if (od.from == ObsDateFrom::Name) return tip;
-        tip += "\n日期从文件读取";
+        tip += I18n::trc("prod.tip_date_from_file");
         return tip;
     }
 
     /// 同一批精密产品是否混了不同中心/产品线
-    std::string productConsistencyNote(const AppConfig::Products &p) {
+    std::string productConsistencyNote(const AppConfig::ProductPaths &p) {
         std::set<std::string> lines;
         for (const std::string &path: p.files) {
-            const auto m = ProductMeta::parse(File::baseName(path));
+            const auto m = FileMeta::parse(File::baseName(path));
             if (!m) continue;
             switch (m->type) {
                 case ProductType::ORB: case ProductType::CLK:
@@ -62,7 +66,7 @@ namespace {
                     break;
                 default: continue;
             }
-            if (const std::string line = ProductMeta::productLineOf(path); !line.empty())
+            if (const std::string line = FileMeta::productLineOf(path); !line.empty())
                 lines.insert(line);
         }
         if (lines.size() < 2) return {};
@@ -71,7 +75,7 @@ namespace {
             if (!joined.empty()) joined += ", ";
             joined += l;
         }
-        return "注意：精密产品不是同一版本 (" + joined + ") ";
+        return I18n::tr("prod.version_mismatch", joined);
     }
 
     std::string s_dateKey;
@@ -88,7 +92,7 @@ namespace {
         }
         if (key != s_dateKey) {
             s_dateKey = key;
-            s_dateCache = ProductMeta::parseObsDate(path);
+            s_dateCache = parseObsDate(path);
         }
         return s_dateCache;
     }
@@ -116,18 +120,18 @@ namespace {
             s_verdict.clear();
             std::map<ProductType, std::vector<std::string>> byType;
             for (const auto &f: files) {
-                if (const auto m = ProductMeta::parse(File::baseName(f)); m)
+                if (const auto m = FileMeta::parse(File::baseName(f)); m)
                     byType[m->type].push_back(f);
             }
             for (auto &[t, group]: byType) {
                 if (group.size() < 2 || isMergedType(t)) {
-                    for (const auto &f: group) s_verdict[f] = "选用";
+                    for (const auto &f: group) s_verdict[f] = I18n::trc("prod.verdict_pick");
                     continue;
                 }
-                for (const auto &f: group) s_verdict[f] = "备用";
-                const auto ranked = ProductPicker::rank(group, t);
+                for (const auto &f: group) s_verdict[f] = I18n::trc("prod.verdict_spare");
+                const auto ranked = Download::Store::rank(group, t);
                 const std::string &win = ranked.empty() ? group.front() : ranked.front().path;
-                s_verdict[win] = "选用";
+                s_verdict[win] = I18n::trc("prod.verdict_pick");
             }
         }
         static const std::string kUnknown;
@@ -137,7 +141,7 @@ namespace {
 }
 
 void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *iniKey,
-                               const GuiFileFilter *filters, const int nFilters,
+                               const std::vector<GuiFileFilter> &filters,
                                const std::function<void(const std::string &)> &onSelect,
                                const char *obsIniKey, std::string *autoNavBuf,
                                const ProductType obsType) {
@@ -148,11 +152,11 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
         return ImGui::CalcTextSize(text).x + style.FramePadding.x * 2.0f;
     };
     const bool isObsRow = obsIniKey && std::string(iniKey) == obsIniKey;
-    const ProductType ptype = ProductMeta::typeFromIniKey(iniKey);
+    const ProductType ptype = typeFromIniKey(iniKey);
     // 「获取」可能出现两次（观测页跳转 + 单品下载），留白按实际按钮数算。
     const int nGet = (isObsRow ? 1 : 0) + (ptype != ProductType::Unknown ? 1 : 0);
-    float reserve = buttonW("浏览") + style.ItemSpacing.x;
-    reserve += static_cast<float>(nGet) * (buttonW("获取") + style.ItemSpacing.x);
+    float reserve = buttonW(I18n::trc("common.browse")) + style.ItemSpacing.x;
+    reserve += static_cast<float>(nGet) * (buttonW(I18n::trc("common.fetch")) + style.ItemSpacing.x);
 
     ImGui::Text("%s:", label);
     ImGui::PushItemWidth(-reserve);
@@ -170,8 +174,8 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
     }
     ImGui::PopItemWidth();
     ImGui::SameLine();
-    if (ImGui::Button(("浏览##" + std::string(label)).c_str())) {
-        if (std::wstring wpath; ShowOpenFileDialog(wpath, filters, nFilters)) {
+    if (ImGui::Button(UI::idLabel("common.browse", "##", label))) {
+        if (std::wstring wpath; FileDialog::open(wpath, filters)) {
             const std::string p = Str::wideToACP(wpath);
             *buf = p;
             adoptPath(iniKey, p, onSelect, autoNavBuf);
@@ -187,14 +191,14 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
         panel.obsType = obsType;
 
         ImGui::SameLine();
-        if (ImGui::Button(("获取##" + std::string(label)).c_str())) {
-            const ObsDate od = cachedObsDate(*buf).value_or(ProductMeta::defaultObsDate());
+        if (ImGui::Button(UI::idLabel("common.fetch", "##", label))) {
+            const ObsDate od = cachedObsDate(*buf).value_or(defaultObsDate());
             panel.year = od.year;
             panel.doy = od.doy;
             panel.open = true;
         }
         if (ImGui::IsItemHovered()) {
-            const ObsDate od = cachedObsDate(*buf).value_or(ProductMeta::defaultObsDate());
+            const ObsDate od = cachedObsDate(*buf).value_or(defaultObsDate());
             ImGui::SetTooltip("%s", obsDateTip(od).c_str());
         }
         if (panel.open) Download::Acquire::render(panel, iniKey);
@@ -217,8 +221,8 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
                                         : "";
 
         ImGui::SameLine();
-        if (ImGui::Button(("获取##" + std::string(label)).c_str())) {
-            const ObsDate od = cachedObsDate(obsPath).value_or(ProductMeta::defaultObsDate());
+        if (ImGui::Button(UI::idLabel("common.fetch", "##", label))) {
+            const ObsDate od = cachedObsDate(obsPath).value_or(defaultObsDate());
             panel.year = od.year;
             panel.doy = od.doy;
             panel.open = true;
@@ -227,7 +231,7 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
     }
 }
 
-void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *obsIniKey,
+void Solvers::Helpers::renderProductSection(AppConfig::ProductPaths &p, const char *obsIniKey,
                                             const bool usesTropo, const bool crossDayHint) {
     struct SectionMsg {
         std::string msg;
@@ -241,31 +245,31 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
         p.save();
     };
 
-    if (!ImGui::CollapsingHeader("产品文件", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!ImGui::CollapsingHeader(I18n::trc("prod.files"), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SameLine();
-        ImGui::TextDisabled("%d 个文件", static_cast<int>(p.files.size()));
+        ImGui::TextDisabled(I18n::trc("prod.file_count"), static_cast<int>(p.files.size()));
         return;
     }
 
     if (crossDayHint) {
-        ImGui::TextColored(UI::kColWarn, "注意观测文件的跨日情况，建议选择 ±1 日的产品");
+        ImGui::TextColored(UI::kColWarn, I18n::trc("prod.cross_day_hint"));
     }
 
-    if (ImGui::SmallButton("浏览##prod")) {
-        if (std::vector<std::wstring> ws; ShowOpenFilesDialog(ws, FileDialog::fProd, 2)) {
+    if (ImGui::SmallButton(UI::idLabel("common.browse", "##prod"))) {
+        if (std::vector<std::wstring> ws; FileDialog::openMany(ws, FileDialog::fProd())) {
             int added = 0;
             std::string bad;
             for (auto &w: ws) {
                 const std::string path = Str::wideToACP(w);
                 if (std::find(p.files.begin(), p.files.end(), path) != p.files.end()) continue;
                 p.files.push_back(path);
-                if (!ProductMeta::parse(File::baseName(path))) bad += File::baseName(path) + " ";
+                if (!FileMeta::parse(File::baseName(path))) bad += File::baseName(path) + " ";
                 ++added;
             }
             resync();
             ok = bad.empty();
-            msg = "已添加 " + std::to_string(added) + " 个文件";
-            if (!bad.empty()) msg += "；认不出类型（不会用于解算）：" + bad;
+            msg = I18n::tr("prod.added", added);
+            if (!bad.empty()) msg += I18n::trc("prod.unknown_types") + bad;
         }
     }
     ImGui::SameLine();
@@ -275,19 +279,19 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
     acq.target = &p.files;
     acq.owner = &p;
     acq.usesTropo = usesTropo;
-    if (ImGui::SmallButton("获取##prod")) {
+    if (ImGui::SmallButton(UI::idLabel("common.fetch", "##prod"))) {
         const std::string obsPath = obsIniKey && *obsIniKey
                                         ? AppConfig::PathMemory::instance().get(obsIniKey)
                                         : "";
-        const ObsDate od = cachedObsDate(obsPath).value_or(ProductMeta::defaultObsDate());
+        const ObsDate od = cachedObsDate(obsPath).value_or(defaultObsDate());
         acq.year = od.year;
         acq.doy = od.doy;
         acq.open = true;
         ok = true;
-        msg = "点已下载文件加入/移出解算，未下载文件点击开始下载";
+        msg = I18n::trc("prod.list_hint");
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("清空##prod")) {
+    if (ImGui::SmallButton(UI::idLabel("common.clear", "##prod"))) {
         p.files.clear();
         resync();
         msg.clear();
@@ -298,10 +302,10 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
 
     ImGui::Spacing();
     if (!p.files.empty())  {
-        ImGui::Text("已选 %d 个文件：", static_cast<int>(p.files.size()));
+        ImGui::Text(I18n::trc("prod.selected_count"), static_cast<int>(p.files.size()));
         for (std::size_t i = 0; i < p.files.size(); ++i) {
             const std::string &path = p.files[i];
-            const auto m = ProductMeta::parse(File::baseName(path));
+            const auto m = FileMeta::parse(File::baseName(path));
 
             ImGui::PushID(static_cast<int>(i));
             ImGui::Bullet();
@@ -310,10 +314,10 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
 
             ImGui::SameLine();
             if (!m) {
-                ImGui::TextColored(UI::kColFail, "[未识别类型]");
+                ImGui::TextColored(UI::kColFail, I18n::trc("prod.unknown_type_tag"));
             } else {
                 const std::string use = verdictOf(p.files, path);
-                const bool win = use == "选用";
+                const bool win = use == I18n::trc("prod.verdict_pick");
                 ImGui::TextColored(win ? UI::kColPass
                                        : UI::kColMute,
                                    "[%s/%s]", typeLabel(m->type), use.c_str());
@@ -332,9 +336,7 @@ void Solvers::Helpers::renderProductSection(AppConfig::Products &p, const char *
     if (const std::string note = productConsistencyNote(p); !note.empty()) {
         ImGui::TextColored(UI::kColWarn, "%s", note.c_str());
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("轨道、钟差、码偏差、卫星姿态应来自同一分析中心的同一批解算。\n"
-                              "混用不同中心或不同产品线（如 COD0OPS 与 COD0MGX）会留下系统差；\n"
-                              "本提示只是提醒，不阻止解算。");
+            ImGui::SetTooltip("%s", I18n::trc("prod.mixed_ac_hint"));
     }
 
     if (!msg.empty())

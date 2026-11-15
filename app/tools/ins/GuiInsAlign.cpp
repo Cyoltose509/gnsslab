@@ -24,17 +24,19 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "i18n/I18n.h"
 
 namespace Tools::Ins {
 
     StaticAlignTask::StaticAlignTask() {
-        fileName = "静态解析粗对准";
+        fileName = "static-align";
+        nameKey = "gui.menu.tools.ins_align";
     }
 
     void StaticAlignTask::startAlign() {
         saveInsParams(par);
         if (alignPath.empty()) {
-            setError("请先选择对准段日志文件（ASCII .ASC）。");
+            setError(I18n::tr("ins.align.err.no_file"));
             return;
         }
 
@@ -105,7 +107,7 @@ namespace Tools::Ins {
 
         if (stoppedAndEnd(*this)) return;
         if (seriesLocal.empty()) {
-            abortRun(*this, "未在该文件中解析到任何 IMU 历元：" + alignPath);
+            abortRun(*this, I18n::tr("ins.align.err.no_epoch", alignPath));
             return;
         }
         sen.offerProbe();
@@ -131,8 +133,10 @@ namespace Tools::Ins {
             char ang[128];
             std::snprintf(ang, sizeof ang, "yaw=%.4f° pitch=%.4f° roll=%.4f°",
                           a.yaw * RAD_TO_DEG, a.pitch * RAD_TO_DEG, a.roll * RAD_TO_DEG);
-            LOG_INFO << "[静态解析粗对准] 完成：" << seriesLocal.size() << " 个历元，当量 "
-                     << sen.res.describe() << "，" << ang << "，模长校验" << (aq.hasScale ? "可用" : "不可用");
+            LOG_INFO << "[" << fileName << "] " << I18n::tr("ins.align.log.done", seriesLocal.size(),
+                                                           sen.res.describe(), std::string(ang),
+                                                           aq.hasScale ? I18n::trc("ins.align.scale_ok")
+                                                                       : I18n::trc("ins.align.na"));
         }
         {
             std::lock_guard lk(resultMutex);
@@ -152,10 +156,10 @@ namespace Tools::Ins {
     }
 
     void StaticAlignTask::renderConfigPanel() {
-        renderInsConfig("静态解析粗对准配置###cfg_", *this, "开始对准",
+        renderInsConfig("ins.align.window_title", *this, "ins.align.start",
                         [&] {
-                            Solvers::Helpers::fileRow("对准段日志", &alignPath, "ins_align", FileDialog::fIns,
-                                                      std::size(FileDialog::fIns), nullptr);
+                            Solvers::Helpers::fileRow(I18n::trc("ins.align.file_row"), &alignPath, "ins_align",
+                                                      FileDialog::fIns(), nullptr);
                         },
                         [&] {
                             renderInsParams(par);
@@ -169,8 +173,8 @@ namespace Tools::Ins {
         if (renderResultPrologue(*this, true, [this] { startAlign(); })) return;
 
         if (running) {
-            ImGui::TextColored(kColInfo, "正在对准 %s：正在解析第 %lld 个历元", fileName.c_str(),
-                               static_cast<long long>(sampleCount.load()));
+            ImGui::TextColored(kColInfo, "%s",
+                               I18n::tr("ins.align.aligning", displayName(), sampleCount.load()).c_str());
         }
 
         {
@@ -179,11 +183,11 @@ namespace Tools::Ins {
                 std::lock_guard lk(resultMutex);
                 m = att;
             }
-            ImGui::SeparatorText("姿态角 (°)");
+            ImGui::SeparatorText(I18n::trc("ins.align.att_deg"));
             if (ImGui::BeginTable("##align_tbl", 4,
                                   ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
-                ImGui::TableSetupColumn("统计量");
+                ImGui::TableSetupColumn(I18n::trc("ins.align.col.stat"));
                 ImGui::TableSetupColumn("yaw");
                 ImGui::TableSetupColumn("pitch");
                 ImGui::TableSetupColumn("roll");
@@ -192,24 +196,26 @@ namespace Tools::Ins {
                 auto pendingRow = [](const char *label, const char *pend) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(label);
+                    ImGui::TextUnformatted(I18n::trc(label));
                     for (int c = 0; c < 3; ++c) {
                         ImGui::TableSetColumnIndex(1 + c);
                         ImGui::TextDisabled("%s", pend);
                     }
                 };
-                const char *pend = running ? "计算中" : "—";
+                const char *pend = running ? I18n::trc("ins.chart.computing") : "—";
                 if (running || done) {
-                    vec3Row("整段均值", m.yaw * RAD_TO_DEG, m.pitch * RAD_TO_DEG, m.roll * RAD_TO_DEG, "%.4f");
+                    vec3Row("ins.align.row.mean", m.yaw * RAD_TO_DEG, m.pitch * RAD_TO_DEG,
+                            m.roll * RAD_TO_DEG, "%.4f");
                 } else {
-                    pendingRow("整段均值", "—");
+                    pendingRow("ins.align.row.mean", "—");
                 }
                 if (done) {
-                    vec3Row("稳态均值（后 1/3）", steadyY, steadyP, steadyR, "%.4f");
-                    vec3Row("稳态 1σ", steadyYsd, steadyPsd, steadyRsd, "%.4f");
+                    vec3Row("ins.align.row.steady_mean", steadyY, steadyP, steadyR, "%.4f");
+                    vec3Row("ins.align.row.steady_sigma", steadyYsd, steadyPsd, steadyRsd,
+                            "%.4f");
                 } else {
-                    pendingRow("稳态均值（后 1/3）", pend);
-                    pendingRow("稳态 1σ", pend);
+                    pendingRow("ins.align.row.steady_mean", pend);
+                    pendingRow("ins.align.row.steady_sigma", pend);
                 }
                 ImGui::EndTable();
             }
@@ -225,14 +231,14 @@ namespace Tools::Ins {
                 valid = alignQValid;
             }
             if (valid) {
-                ImGui::SeparatorText("姿态矩阵 C（机体轴 → NED）");
+                ImGui::SeparatorText(I18n::trc("ins.align.sep.dcm"));
                 if (ImGui::BeginTable("##alignaxis_tbl", 4,
                                       ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
-                    ImGui::TableSetupColumn("机体轴");
-                    ImGui::TableSetupColumn("北");
-                    ImGui::TableSetupColumn("东");
-                    ImGui::TableSetupColumn("地");
+                    ImGui::TableSetupColumn(I18n::trc("ins.align.col.body_axis"));
+                    ImGui::TableSetupColumn(I18n::trc("ins.align.col.north"));
+                    ImGui::TableSetupColumn(I18n::trc("ins.align.col.east"));
+                    ImGui::TableSetupColumn(I18n::trc("ins.align.col.down"));
                     ImGui::TableHeadersRow();
                     auto axisRow = [](const char *label, const Eigen::Vector3d &v) {
                         ImGui::TableNextRow();
@@ -250,21 +256,21 @@ namespace Tools::Ins {
                 }
                 ImGui::Spacing();
 
-                ImGui::SeparatorText("对准质量");
+                ImGui::SeparatorText(I18n::trc("ins.align.sep.quality"));
                 if (ImGui::BeginTable("##alignq_tbl", 4,
                                       ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchSame)) {
-                    ImGui::TableSetupColumn("检查项");
-                    ImGui::TableSetupColumn("实测");
-                    ImGui::TableSetupColumn("参考");
-                    ImGui::TableSetupColumn("判定/偏差");
+                    ImGui::TableSetupColumn(I18n::trc("ins.calib.col.check"));
+                    ImGui::TableSetupColumn(I18n::trc("ins.calib.col.measured"));
+                    ImGui::TableSetupColumn(I18n::trc("common.reference"));
+                    ImGui::TableSetupColumn(I18n::trc("ins.align.col.verdict_dev"));
                     ImGui::TableHeadersRow();
 
                     auto row = [](const char *label, const char *meas, const char *ref, const char *note,
                                   const ImVec4 *col) {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(label);
+                        ImGui::TextUnformatted(I18n::trc(label));
                         ImGui::TableSetColumnIndex(1);
                         ImGui::TextUnformatted(meas);
                         ImGui::TableSetColumnIndex(2);
@@ -279,13 +285,17 @@ namespace Tools::Ins {
 
                     char b1[64], b2[64], b3[64];
                     std::snprintf(b1, sizeof b1, "%.12f", aq.dcmDet);
-                    row("姿态矩阵 det(C)", b1, "+1", orthoOk ? "单位正交" : "非单位正交", cOrtho);
+                    row("ins.align.row.dcm_det", b1, "+1",
+                        orthoOk ? I18n::trc("ins.align.note.ortho")
+                                : I18n::trc("ins.align.note.not_ortho"), cOrtho);
 
                     std::snprintf(b2, sizeof b2, "%.3e", aq.dcmOrthoErr);
-                    row("正交误差 max|(C^T)C−I|", b2, "0", orthoOk ? "已正交化" : "未正交化", cOrtho);
+                    row("ins.align.row.ortho_err", b2, "0",
+                        orthoOk ? I18n::trc("ins.align.note.orthonormalized")
+                                : I18n::trc("ins.align.note.not_orthonormalized"), cOrtho);
 
                     std::snprintf(b3, sizeof b3, "%.4f", aq.earthRateErrDeg);
-                    row("ω 与 ω_ie^n 夹角 (°)", b3, "0", "", nullptr);
+                    row("ins.align.row.earth_rate", b3, "0", "", nullptr);
 
                     if (aq.hasScale) {
                         char m1[64], r1[64], n1[64];
@@ -301,7 +311,8 @@ namespace Tools::Ins {
                         row("|ω| (rad/s)", m2, r2, n2, nullptr);
                     } else {
 
-                        const char *pend = done ? "不可用" : "待定";
+                        const char *pend = done ? I18n::trc("ins.align.na")
+                                                : I18n::trc("ins.align.pending");
                         row("|f| (m/s²)", pend, "g(φ)", "—", nullptr);
                         row("|ω| (rad/s)", pend, "Ω", "—", nullptr);
                     }
@@ -311,9 +322,10 @@ namespace Tools::Ins {
                         std::snprintf(m3, sizeof m3, "%.4f", aq.latDerivedDeg);
                         std::snprintf(r3, sizeof r3, "φ = %.4f", par.latDeg);
                         std::snprintf(n3, sizeof n3, "%+.4f °", aq.latDerivedDeg - par.latDeg);
-                        row("反解纬度 φ (°)", m3, r3, n3, nullptr);
+                        row("ins.align.row.lat", m3, r3, n3, nullptr);
                     } else {
-                        row("反解纬度 φ (°)", "不可用", "φ", "重力矢量退化", nullptr);
+                        row("ins.align.row.lat", I18n::trc("ins.align.na"), "φ",
+                            I18n::trc("ins.align.note.degenerate"), nullptr);
                     }
                     ImGui::EndTable();
                 }
@@ -323,14 +335,14 @@ namespace Tools::Ins {
         {
 
             ImGui::BeginDisabled(!done);
-            const bool s1 = ImGui::Button("导出逐历元姿态 CSV", ImVec2(220, 0));
+            const bool s1 = ImGui::Button(I18n::trc("ins.align.export.series"), ImVec2(220, 0));
             ImGui::SameLine();
-            const bool s2 = ImGui::Button("导出汇总 CSV", ImVec2(150, 0));
+            const bool s2 = ImGui::Button(I18n::trc("ins.align.export.summary"), ImVec2(150, 0));
             ImGui::SameLine();
-            const bool s3 = ImGui::Button("导出每秒均值 CSV", ImVec2(200, 0));
+            const bool s3 = ImGui::Button(I18n::trc("ins.align.export.persec"), ImVec2(200, 0));
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
             ImGui::EndDisabled();
-            if (!done && hovered) ImGui::SetTooltip("对准完成后才能导出。");
+            if (!done && hovered) ImGui::SetTooltip("%s", I18n::trc("ins.align.export_hint"));
             if (s1) exportAlignSeries();
             if (s2) exportAlignSummary();
             if (s3) exportAlignPerSec();
@@ -362,24 +374,25 @@ namespace Tools::Ins {
         const bool chartNew = chartDirty.exchange(false);
         auto drawATT = [&](const char *title, const std::vector<double> &y, const ImVec4 &col) {
             if (pt.empty()) {
-                ImGui::TextDisabled("（无数据）");
+                ImGui::TextDisabled("%s", I18n::trc("ins.no_data"));
                 return;
             }
             const int n = static_cast<int>(pt.size());
-            if (ImPlot::BeginPlot(title, ImVec2(-1, kChartHeight))) {
-                ImPlot::SetupAxes("时间 t (s)", "姿态角 (°)");
+            if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kChartHeight))) {
+                ImPlot::SetupAxes(I18n::trc("ins.chart.x_time"), I18n::trc("ins.align.att_deg"));
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 fitXToLatest(chartNew, pt.back());
-                ImPlot::PlotLine("角度", pt.data(), y.data(), n, lineSpec(col));
+                ImPlot::PlotLine(I18n::trc("ins.align.chart.legend_angle"), pt.data(), y.data(), n,
+                                 lineSpec(col));
                 ImPlot::EndPlot();
             }
         };
-        drawATT("yaw 随时间", py, kColX);
-        drawATT("pitch 随时间", pp, kColY);
-        drawATT("roll 随时间", pr, kColZ);
+        drawATT("ins.align.chart.yaw", py, kColX);
+        drawATT("ins.align.chart.pitch", pp, kColY);
+        drawATT("ins.align.chart.roll", pr, kColZ);
 
         if (running) {
-            if (ImGui::Button("停止")) stop = true;
+            if (ImGui::Button(I18n::trc("ins.calib.stop"))) stop = true;
             ImGui::Spacing();
         }
 
@@ -432,22 +445,24 @@ namespace Tools::Ins {
         const double ys = std::sqrt(yv / n), ps = std::sqrt(pv / n), rs = std::sqrt(rv / n);
 
         exportCSVDialog(*this, "align_summary.csv", "align_summary.csv", [&](CSV::Writer &w) {
-            w.row("量", "yaw(deg)", "pitch(deg)", "roll(deg)");
-            w.row("整段均值", CSV::fx(a.yaw * RAD_TO_DEG, 4), CSV::fx(a.pitch * RAD_TO_DEG, 4),
+            w.row(I18n::trc("ins.calib.col.qty"), "yaw(deg)", "pitch(deg)", "roll(deg)");
+            w.row(I18n::trc("ins.align.row.mean"), CSV::fx(a.yaw * RAD_TO_DEG, 4), CSV::fx(a.pitch * RAD_TO_DEG, 4),
                   CSV::fx(a.roll * RAD_TO_DEG, 4));
-            w.row("每历元全段均值", CSV::fx(ya * RAD_TO_DEG, 4), CSV::fx(pa * RAD_TO_DEG, 4),
+            w.row(I18n::trc("ins.align.csv.mean_epoch"), CSV::fx(ya * RAD_TO_DEG, 4), CSV::fx(pa * RAD_TO_DEG, 4),
                   CSV::fx(ra * RAD_TO_DEG, 4));
-            w.row("每历元全段标准差", CSV::fx(ys * RAD_TO_DEG, 4), CSV::fx(ps * RAD_TO_DEG, 4),
+            w.row(I18n::trc("ins.align.csv.std_epoch"), CSV::fx(ys * RAD_TO_DEG, 4), CSV::fx(ps * RAD_TO_DEG, 4),
                   CSV::fx(rs * RAD_TO_DEG, 4));
-            w.row("每历元稳态(后1/3)均值", CSV::fx(ym, 4), CSV::fx(pm, 4), CSV::fx(rm, 4));
+            w.row(I18n::trc("ins.align.csv.mean_steady"), CSV::fx(ym, 4), CSV::fx(pm, 4), CSV::fx(rm, 4));
 
             w.blank();
-            w.row("对准质量", "实测", "参考", "判定/偏差");
+            w.row(I18n::trc("ins.align.sep.quality"), I18n::trc("ins.calib.col.measured"),
+                  I18n::trc("common.reference"), I18n::trc("ins.align.col.verdict_dev"));
             const bool orthoOk = std::fabs(aq.dcmDet - 1.0) < 1e-9 && aq.dcmOrthoErr < 1e-9;
-            w.row("姿态矩阵 det(C)", CSV::fx(aq.dcmDet, 12), "+1", orthoOk ? "单位正交" : "非单位正交");
-            w.row("正交误差 max|C^T C-I|", CSV::sci(aq.dcmOrthoErr, 3), "0",
-                  orthoOk ? "已正交化" : "未正交化");
-            w.row("ω 与 ω_ie^n 夹角 (deg)", CSV::fx(aq.earthRateErrDeg, 4), "0", "");
+            w.row(I18n::trc("ins.align.row.dcm_det"), CSV::fx(aq.dcmDet, 12), "+1",
+                  orthoOk ? I18n::trc("ins.align.note.ortho") : I18n::trc("ins.align.note.not_ortho"));
+            w.row(I18n::trc("ins.align.csv.ortho_err"), CSV::sci(aq.dcmOrthoErr, 3), "0",
+                  orthoOk ? I18n::trc("ins.align.note.orthonormalized") : I18n::trc("ins.align.note.not_orthonormalized"));
+            w.row(I18n::trc("ins.align.csv.earth_rate_angle"), CSV::fx(aq.earthRateErrDeg, 4), "0", "");
             if (aq.hasScale) {
                 char ref1[64], dev1[64], ref2[64], dev2[64];
                 std::snprintf(ref1, sizeof ref1, "g = %.6f", aq.gravityRef);
@@ -464,11 +479,12 @@ namespace Tools::Ins {
                 char ref3[64], dev3[64];
                 std::snprintf(ref3, sizeof ref3, "φ = %.4f", par.latDeg);
                 std::snprintf(dev3, sizeof dev3, "%+.4f °", aq.latDerivedDeg - par.latDeg);
-                w.row("反解纬度 φ̂ (deg)", CSV::fx(aq.latDerivedDeg, 4), ref3, dev3);
+                w.row(I18n::trc("ins.align.csv.derived_lat"), CSV::fx(aq.latDerivedDeg, 4), ref3, dev3);
             } else {
-                w.row("反解纬度 φ̂ (deg)", "不可用", "φ", "重力矢量退化");
+                w.row(I18n::trc("ins.align.csv.derived_lat"), I18n::trc("ins.align.na"), "φ",
+                      I18n::trc("ins.align.note.degenerate"));
             }
-            if (!model.empty()) w.row("IMU 型号", model);
+            if (!model.empty()) w.row(I18n::trc("IMUModel"), model);
         });
     }
 
@@ -506,7 +522,7 @@ namespace Tools::Ins {
             std::lock_guard lk(resultMutex);
             s = series;
         }
-        if (s.empty()) setError("尚无对准序列，无法导出。请先完成一次对准。");
+        if (s.empty()) setError(I18n::tr("ins.align.err.no_series"));
         return s;
     }
 }

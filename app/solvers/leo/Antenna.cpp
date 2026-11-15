@@ -10,6 +10,7 @@
 
 #include "AntennaTable.h"
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::LEO::Antenna {
     namespace {
@@ -100,7 +101,7 @@ namespace Solvers::LEO::Antenna {
         Correction fix;
         Eigen::Vector3d v;
         if (!readLeverArm(path, v)) return fix;
-        fix.comToArp = {v, true, "已从 " + std::filesystem::path(path).filename().string() + " 读取 r_CoG_ARP"};
+        fix.comToArp = {v, true, I18n::tr("leo.ant.from_file", std::filesystem::path(path).filename().string())};
         return fix;
     }
 
@@ -126,11 +127,11 @@ namespace Solvers::LEO::Antenna {
         if (const auto [comToArp, pco] = fromHeader(obsPath); comToArp.known)
             c.comToArp = comToArp;
         else if (row)
-            c.comToArp = {row->comToArp, true, "任务表：" + row->antenna};
+            c.comToArp = {row->comToArp, true, I18n::tr("leo.ant.from_mission", row->antenna)};
         else if (Eigen::Vector3d v; readBodyDelta(obsPath, v))
-            c.comToArp = {v, true, "RINEX 头 ANTENNA: DELTA X/Y/Z"};
+            c.comToArp = {v, true, I18n::tr("leo.ant.from_rinex")};
 
-        if (row && row->hasPco) c.pco = {row->pco, true, "任务表：" + row->antenna};
+        if (row && row->hasPco) c.pco = {row->pco, true, I18n::tr("leo.ant.from_mission", row->antenna)};
         return c;
     }
 

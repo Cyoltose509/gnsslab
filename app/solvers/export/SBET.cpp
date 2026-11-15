@@ -20,7 +20,7 @@ namespace Solvers::Export {
     }
 
     void writeSBET(std::ostream &out, const Task &task, [[maybe_unused]] const Spec &spec, const std::vector<std::size_t> &idx) {
-        static_assert(sizeof(double) == 8, "SBET 要求 8 字节双精度");
+        static_assert(sizeof(double) == 8, "SBET requires 8-byte double");
         Row row;
         for (const std::size_t i: idx) {
             task.exportRow(i, row);

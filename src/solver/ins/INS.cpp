@@ -1,4 +1,5 @@
 #include "INS.h"
+#include "i18n/I18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,7 +63,7 @@ namespace {
         constexpr int kCandidates = 3;
         const std::size_t n = log.size();
         if (n < 200) {
-            ins.scaleNote = "样本不足 200 个，无法反推";
+            ins.scaleNote = I18n::tr("ins.scale.reverse_too_few");
             return false;
         }
         for (int k = 0; k < kCandidates; ++k) {
@@ -83,8 +84,8 @@ namespace {
             ins.scaleName = gs.model->name;
             ins.scaleSource = ImuScaleSource::Reverse;
             ins.scaleNote = gs.note.empty()
-                                ? "开头静置段 |f| 量级反推并匹配内置型号表"
-                                : "开头静置段量级反推：" + gs.note;
+                                ? I18n::tr("ins.scale.reverse_ok")
+                                : I18n::tr("ins.scale.reverse_note", gs.note);
             return true;
         }
         return false;
@@ -97,25 +98,24 @@ bool INS::resolveScale(const ImuLog &head, const ImuModel *detected, const ImuSc
     scaleNote.clear();
     scaleError.clear();
     if (head.empty()) {
-        scaleError = "IMU 日志中没有可解码的六轴计数记录";
+        scaleError = I18n::tr("ins.err.no_records");
         return false;
     }
     if (manual.known()) {
         scale = manual;
         scaleSource = ImuScaleSource::Manual;
-        scaleNote = "用户手填";
+        scaleNote = I18n::tr("ins.scale.note_manual");
         return true;
     }
     if (detected) {
         scale = detected->scale;
         scaleName = detected->name;
         scaleSource = ImuScaleSource::Record;
-        scaleNote = "日志自描述的 IMU 型号";
+        scaleNote = I18n::tr("ins.scale.from_record");
         return true;
     }
     if (!reverseScale(head, gravity, *this)) {
-        scaleError = "日志没有型号自描述，静置段也反推不出解码当量：" + scaleNote +
-                     "；请在「参数」页手填加计/陀螺当量与采样率";
+        scaleError = I18n::tr("ins.scale.unknown", scaleNote);
         return false;
     }
     return true;
@@ -133,7 +133,7 @@ bool INS::align(const ImuLog &log, const double latRad) {
     try {
         end = Aligner::staticHead(log, scale, sp);
         if (end < static_cast<std::size_t>(20.0 * rate)) {
-            alignError = "开头静止段不足 20 s，无法自动解析粗对准；请关闭自动对准并手填初始姿态";
+            alignError = I18n::tr("ins.align.head_too_short");
             return false;
         }
         alignAtt = Aligner::solve(log, 0, end, sp);
@@ -143,7 +143,7 @@ bool INS::align(const ImuLog &log, const double latRad) {
             yaws.push_back(Aligner::solve(log, end * k / 5, end * (k + 1) / 5, sp).yaw);
         alignYawSpreadDeg = circularSpreadDeg(yaws);
     } catch (const std::exception &ex) {
-        alignError = std::string("静态解析粗对准失败：") + ex.what();
+        alignError = I18n::tr("ins.align.failed", ex.what());
         return false;
     }
 

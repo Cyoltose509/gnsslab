@@ -3,7 +3,7 @@
 #include "core/Const.h"
 #include "core/geom/CoordConvert.h"
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <algorithm>
 #include <array>
@@ -125,7 +125,7 @@ void RINEXObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats,
     for (int isv = 0; isv < numSats; ++isv) {
         if (!nextLine(line)) throw EndOfFile("EOF encountered!");
         if (!looksLikeSatLine(line)) {
-            throw EndOfFile("观测数据结束");
+            throw EndOfFile("end of observation data");
         }
 
         SatID sat;

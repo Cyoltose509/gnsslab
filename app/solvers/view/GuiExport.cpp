@@ -11,6 +11,7 @@
 #include "solvers/common/Config.h"
 #include "solvers/common/Task.h"
 #include "imgui.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::ExportUI {
     namespace {
@@ -107,7 +108,7 @@ namespace Solvers::ExportUI {
                 for (std::size_t k = 0; k < g.all.size(); ++k)
                     if (g.sel[k]) picked.push_back(g.all[k].field);
                 if (picked.empty()) { // 空列表会被下游当成「按默认列写」，宁可不出文件
-                    g.status = "未勾选任何导出元素";
+                    g.status = I18n::trc("export.nothing_selected");
                     return;
                 }
                 if (!matchesDefault()) spec.fields = std::move(picked);
@@ -115,12 +116,10 @@ namespace Solvers::ExportUI {
 
             const std::string dn = defaultName(*g.task, g.format);
             const std::wstring ext = extOf(g.format);
-            const GuiFileFilter filters[] = {
-                {L"导出文件", {ext}},
-                FileDialog::fAll
-            };
+            const std::vector<GuiFileFilter> filters = {FileDialog::make("export.dialog_title", {ext}),
+                                                        FileDialog::all()};
             std::wstring path;
-            if (!FileDialog::save(dn, path, filters, 2, ext.c_str())) return;
+            if (!FileDialog::save(dn, path, filters, ext.c_str())) return;
 
             if (std::string error; !File::safeWrite(std::filesystem::path(path), [&](std::ostream &out) {
                     std::lock_guard lk(g.task->mutex);
@@ -129,9 +128,9 @@ namespace Solvers::ExportUI {
                 g.status = error;
                 return;
             }
-            LOG_INFO << "[导出] " << Export::formatName(g.format) << " → "
+            LOG_INFO << "[EXPORT] " << Export::formatName(g.format) << " → "
                     << std::filesystem::path(path).string();
-            g.status = "已写出 " + std::filesystem::path(path).filename().string();
+            g.status = I18n::tr("export.written", std::filesystem::path(path).filename().string());
         }
     }
 
@@ -187,7 +186,7 @@ namespace Solvers::ExportUI {
         const bool hasRef = g.task->refECEF.squaredNorm() > 1.0;
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("导出格式");
+        ImGui::TextUnformatted(I18n::trc("export.format"));
         const auto fmts = Export::formatsFor(mode);
         for (const auto fmt : fmts) {
             ImGui::SameLine();
@@ -199,81 +198,81 @@ namespace Solvers::ExportUI {
 
         ImGui::Separator();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("采样");
+        ImGui::TextUnformatted(I18n::trc("export.sampling"));
         ImGui::SameLine();
-        ImGui::RadioButton("与解算一致", &g.samplingMode, 0);
+        ImGui::RadioButton(I18n::trc("export.same_as_solution"), &g.samplingMode, 0);
         ImGui::SameLine();
-        ImGui::RadioButton("每 N 秒", &g.samplingMode, 1);
+        ImGui::RadioButton(I18n::trc("export.every_n_sec"), &g.samplingMode, 1);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(72);
         ImGui::InputDouble("##sec", &g.seconds, 0.0, 0.0, "%.1f");
         ImGui::SameLine();
-        ImGui::RadioButton("每 N 历元", &g.samplingMode, 2);
+        ImGui::RadioButton(I18n::trc("export.every_n_epoch"), &g.samplingMode, 2);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(72);
         ImGui::InputInt("##step", &g.step, 0, 0);
         if (g.seconds < 0.1) g.seconds = 0.1;
         if (g.step < 1) g.step = 1;
         if (g.format == Export::Format::SP3 && g.samplingMode != 1)
-            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1.0f), "SP3 需等间隔：未选「每 N 秒」时按 30 s 出网格");
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1.0f), I18n::trc("export.sp3_grid_hint"));
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("范围");
+        ImGui::TextUnformatted(I18n::trc("export.range"));
         ImGui::SameLine();
-        ImGui::TextUnformatted("起始历元");
+        ImGui::TextUnformatted(I18n::trc("export.start_epoch"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         ImGui::InputInt("##begin", &g.beginIdx, 0, 0);
         ImGui::SameLine();
-        ImGui::TextUnformatted("结束历元");
+        ImGui::TextUnformatted(I18n::trc("export.end_epoch"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         ImGui::InputInt("##end", &g.endIdx, 0, 0);
         ImGui::SameLine();
-        ImGui::TextDisabled("(0 = 末尾)");
+        ImGui::TextDisabled(I18n::trc("export.zero_end"));
         if (g.beginIdx < 0) g.beginIdx = 0;
         if (g.endIdx < 0) g.endIdx = 0;
         ImGui::Separator();
         if (g.format == Export::Format::SP3) {
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("SP3 头");
+            ImGui::TextUnformatted(I18n::trc("export.sp3_header"));
             ImGui::SameLine();
-            ImGui::TextUnformatted("轨迹 ID");
+            ImGui::TextUnformatted(I18n::trc("export.track_id"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(52);
             ImGui::InputText("##satId", g.satId, sizeof(g.satId));
             ImGui::SameLine();
-            ImGui::TextUnformatted("机构");
+            ImGui::TextUnformatted(I18n::trc("export.agency"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(96);
             ImGui::InputText("##marker", g.marker, sizeof(g.marker));
-            ImGui::Checkbox("导出速度", &g.sp3Vel);
+            ImGui::Checkbox(I18n::trc("export.write_velocity"), &g.sp3Vel);
         }
 
         if (g.format == Export::Format::POS) {
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("位置列");
+            ImGui::TextUnformatted(I18n::trc("export.position_cols"));
             ImGui::SameLine();
-            ImGui::RadioButton("经纬高", &g.posForm, 0);
+            ImGui::RadioButton(I18n::trc("BLH"), &g.posForm, 0);
             ImGui::SameLine();
             ImGui::RadioButton("ECEF", &g.posForm, 1);
             ImGui::SameLine();
             ImGui::RadioButton("ENU", &g.posForm, 2);
-            ImGui::Checkbox("导出速度", &g.posVel);
+            ImGui::Checkbox(I18n::trc("export.write_velocity"), &g.posVel);
             ImGui::SameLine();
-            ImGui::Checkbox("文件头", &g.posHead);
-            if (g.posForm == 2 && !hasRef) ImGui::TextDisabled("没有参考站，ENU 按经纬高写");
+            ImGui::Checkbox(I18n::trc("export.file_header"), &g.posHead);
+            if (g.posForm == 2 && !hasRef) ImGui::TextDisabled(I18n::trc("export.no_ref_enu_blh"));
         }
 
         if (g.format == Export::Format::CSV) {
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("导出元素");
+            ImGui::TextUnformatted(I18n::trc("export.elements"));
             ImGui::SameLine();
-            if (ImGui::SmallButton("全选")) std::fill(g.sel.begin(), g.sel.end(), 1);
+            if (ImGui::SmallButton(I18n::trc("common.select_all"))) std::fill(g.sel.begin(), g.sel.end(), 1);
             ImGui::SameLine();
-            if (ImGui::SmallButton("清空")) std::fill(g.sel.begin(), g.sel.end(), 0);
+            if (ImGui::SmallButton(I18n::trc("common.clear"))) std::fill(g.sel.begin(), g.sel.end(), 0);
             ImGui::SameLine();
-            if (ImGui::SmallButton("默认")) resetFields();
+            if (ImGui::SmallButton(I18n::trc("export.reset_default"))) resetFields();
             if (const float rowH = std::max(120.0f, ImGui::GetContentRegionAvail().y - 96.0f);
                 ImGui::BeginChild("##fields", ImVec2(0, rowH), ImGuiChildFlags_Borders)) {
                 constexpr int kCols = 3;
@@ -291,9 +290,9 @@ namespace Solvers::ExportUI {
                             ImGui::SameLine();
                             ImGui::TextUnformatted(grp.label);
                             if (grp.cols.size() > 1 && ImGui::IsItemHovered()) {
-                                std::string tip = "同时写出 " + std::to_string(grp.cols.size()) + " 列：";
+                                std::string tip = I18n::tr("export.tip_cols", grp.cols.size());
                                 for (std::size_t j = 0; j < grp.cols.size(); ++j) {
-                                    if (j) tip += "、";
+                                    if (j) tip += I18n::trv("export.list_sep");
                                     tip += grp.cols[j].name;
                                 }
                                 ImGui::SetTooltip("%s", tip.c_str());
@@ -309,12 +308,12 @@ namespace Solvers::ExportUI {
         }
 
         ImGui::Separator();
-        if (ImGui::Button("导出", ImVec2(140, 0))) {
+        if (ImGui::Button(I18n::trc("export.export"), ImVec2(140, 0))) {
             doExport();
-            if (!g.status.empty() && g.status.rfind("已写出", 0) == 0) ImGui::CloseCurrentPopup();
+            if (!g.status.empty() && g.status.rfind(I18n::trc("export.written_prefix"), 0) == 0) ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(140, 0))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(I18n::trc("common.cancel"), ImVec2(140, 0))) ImGui::CloseCurrentPopup();
         if (!g.status.empty()) ImGui::TextUnformatted(g.status.c_str());
         ImGui::EndPopup();
         // 弹窗关了就放手：任务可能已被关页，导出面板不该再拖住它

@@ -5,11 +5,13 @@
 #include "util/Clock.h"
 #include "download/remote/http/Core.h"
 #include "download/remote/SourceTable.h"
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
+#include "core/TimeStruct.h"
 #include "download/local/Store.h"
 #include "download/local/Unpack.h"
 #include "io/SinexReader.h"
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 #include "product/ATXReader.h"
 #include "product/GPT3Reader.h"
 
@@ -34,7 +36,7 @@ namespace Download::Catalog {
     const std::vector<VersionedProduct> kProducts{
         {
             kGPT3ID,
-            "对流层格网 (GPT3)",
+            ProductType::GPT3,
             "https://vmf.geo.tuwien.ac.at/codes/",
             "",
             "gpt3_5.grd",
@@ -44,7 +46,7 @@ namespace Download::Catalog {
         },
         {
             kATXID,
-            "天线表 (ANTEX)",
+            ProductType::ATX,
             "https://files.igs.org/pub/station/general/",
             R"(igs20_(\d{4})\.atx)",
             "igs20.atx",
@@ -135,7 +137,7 @@ namespace Download::Catalog {
                 return false;
             }
             if (const auto cur = Store::active(p.id); cur && cur->version == version) {
-                detail = "已是最新 " + name;
+                detail = I18n::trc("dl.prod.up_to_date");
                 return true;
             }
 
@@ -143,14 +145,14 @@ namespace Download::Catalog {
                 setProgress(p.id, name, total, now);
             };
             if (!Store::ensureDir(p.id)) {
-                detail = "无法创建本地目录";
+                detail = I18n::tr("dl.prod.mkdir_local_failed");
                 return false;
             }
             Store::clearStagingExcept(p.id, version == "latest" ? std::string() : name);
             const double have = stagedBytes(p.id, name);
             if (have > 0.0)
-                LOG_INFO << "[产品] " << p.label << " 续传，已有 " << static_cast<long long>(have)
-                        << " 字节";
+                LOG_INFO << "[PROD] " << I18n::tr("dl.prod.resume", typeLabel(p.type),
+                                                  static_cast<long long>(have));
             setProgress(p.id, name, 0.0, have);
 
             bool ok = false;
@@ -173,12 +175,13 @@ namespace Download::Catalog {
             if (std::string bad; ok && p.validate && !p.validate(installedFrom, bad)) {
                 std::error_code rmEc;
                 std::filesystem::remove(installedFrom, rmEc);
-                LOG_WARN << "[产品] " << p.label << " 校验未通过 " << name << "：" << bad;
+                LOG_WARN << "[PROD] " << I18n::tr("dl.prod.validate_failed", typeLabel(p.type),
+                                                  name, bad);
                 detail = name + "：" + bad;
                 return false;
             }
             if (!ok || !Store::install(p.id, installedFrom, version, name)) {
-                detail = "下载或安装失败";
+                detail = I18n::tr("dl.prod.download_failed");
                 return false;
             }
             detail = name;
@@ -191,12 +194,12 @@ namespace Download::Catalog {
             std::string detail;
             if (!installLatest(p, detail)) {
                 setStatus(p.id, make(UpdateStatus::Error, {}, {}, detail));
-                LOG_WARN << "[产品] " << p.label << " 获取失败: " << detail;
+                LOG_WARN << "[PROD] " << I18n::tr("dl.prod.fetch_failed", typeLabel(p.type), detail);
                 scheduleRetry(p);
                 return;
             }
             setStatus(p.id, make(UpdateStatus::Ready, {}, {}, detail));
-            LOG_INFO << "[产品] " << p.label << " 已同步到 " << detail;
+            LOG_INFO << "[PROD] " << I18n::tr("dl.prod.synced", typeLabel(p.type), detail);
             scheduleNext(p);
         }
 
@@ -299,8 +302,7 @@ namespace Download::Catalog {
                     SinexReader reader;
                     if (std::string err; reader.readString(text, err) && reader.hasStation(want))
                         if (block = stationEstimateBlock(text, want); !block.empty()) {
-                            detail = "已从 " + name + " 获取 " + want + " 站坐标（只读压缩流前 " +
-                                     std::to_string(have >> 10) + " KB）";
+                            detail = I18n::tr("dl.truth.site_from_stream", name, want, have >> 10);
                             std::filesystem::remove(gz, ec);
                             return true;
                         }
@@ -317,7 +319,7 @@ namespace Download::Catalog {
         std::vector<std::pair<std::string, std::string> > siteCands(const int year, const int doy) {
             char stamp[16];
             std::snprintf(stamp, sizeof(stamp), "%04d%03d", year, doy);
-            const auto weekDirs = SourceTable::snxWeekDir(ProductMeta::GPSWeek(year, doy));
+            const auto weekDirs = SourceTable::snxWeekDir(GPSWeek(year, doy));
             std::vector<std::pair<std::string, std::string> > out;
             for (const std::string &base: {weekDirs.url, weekDirs.backupUrl}) {
                 if (base.empty()) continue;
@@ -352,13 +354,13 @@ namespace Download::Catalog {
         block.clear();
         const std::string want = Str::toUpper(site.substr(0, std::min<std::size_t>(4, site.size())));
         if (want.size() < 4) {
-            detail = "站点名不足 4 字符：" + site;
+            detail = I18n::tr("dl.truth.site_too_short", site);
             return false;
         }
 
         const auto cands = siteCands(year, doy);
         if (cands.empty()) {
-            detail = "没有获取到该日的 SINEX";
+            detail = I18n::tr("dl.truth.no_sinex");
             return false;
         }
 
@@ -396,9 +398,11 @@ namespace Download::Catalog {
                     try {
                         ok = probeSite(cands[i].first, cands[i].second, want, gz, onBytes, got, note);
                     } catch (const std::exception &e) {
-                        LOG_WARN << "[真值] 读 " << cands[i].second << " 失败：" << e.what();
+                        LOG_WARN << "[TRUTH] " << I18n::tr("dl.truth.read_failed", cands[i].second,
+                                                           e.what());
                     } catch (...) {
-                        LOG_WARN << "[真值] 读 " << cands[i].second << " 失败（未知异常）";
+                        LOG_WARN << "[TRUTH] " << I18n::tr("dl.truth.read_failed_unknown",
+                                                           cands[i].second);
                     }
                     if (!ok) continue;
                     std::lock_guard lk(hitMtx);
@@ -417,7 +421,7 @@ namespace Download::Catalog {
         }
         block.clear();
 
-        detail = "已试 " + std::to_string(cands.size()) + " 个分析中心的 SINEX，都没有 " + want + " 站";
+        detail = I18n::tr("dl.truth.tried_all", cands.size(), want);
         return false;
     }
 
@@ -426,7 +430,7 @@ namespace Download::Catalog {
         fromCache = false;
         const std::string want = Str::toUpper(site.substr(0, std::min<std::size_t>(4, site.size())));
         if (want.size() < 4) {
-            detail = "站点名不足 4 字符：" + site;
+            detail = I18n::tr("dl.truth.site_too_short", site);
             return false;
         }
         std::error_code ec;
@@ -442,10 +446,11 @@ namespace Download::Catalog {
             xyz[1] = v.y();
             xyz[2] = v.z();
             fromCache = true;
-            detail = "本地累积缓存里已有 " + want + " 站";
+            detail = I18n::tr("dl.truth.cache_hit", want);
             if (usedYear > 0) {
                 char stamp[24];
-                std::snprintf(stamp, sizeof stamp, "（%04d:%03d 解）", usedYear, usedDoy);
+                std::snprintf(stamp, sizeof stamp, I18n::trc("dl.truth.solution_stamp"),
+                              usedYear, usedDoy);
                 detail += stamp;
             }
             return true;
@@ -457,7 +462,7 @@ namespace Download::Catalog {
         int refYear = 0, refDoy = 0;
         if (SinexReader fresh; !fresh.readString(block, err) ||
                                !fresh.getStation(want, year, doy, v, &refYear, &refDoy)) {
-            detail = "取回的 SINEX 片段解析失败：" + err;
+            detail = I18n::tr("dl.truth.sinex_parse_failed", err);
             return false;
         }
         // 同一期解只留一份：重复追加会让缓存无限膨胀，同一站还会出现多条同历元记录。
@@ -488,19 +493,21 @@ namespace Download::Catalog {
                 }
                 if (best >= 0) return true;
             } catch (const std::regex_error &e) {
-                err = std::string("正则错误: ") + e.what();
+                err = I18n::tr("dl.prod.regex_error", e.what());
             }
         }
 
         if (p.fallback && *p.fallback) {
             fileName = p.fallback;
             version = "latest";
-            LOG_WARN << "[产品] " << p.label << " 未发现版本化文件名（"
-                    << (err.empty() ? std::string("索引中无匹配") : "索引获取失败: " + err)
-                    << "），回落 " << p.fallback << "（该产品将无法自动判断更新）";
+            LOG_WARN << "[PROD] " << I18n::tr("dl.prod.no_versioned_name", typeLabel(p.type),
+                                              err.empty()
+                                                  ? I18n::tr("dl.prod.index_no_match")
+                                                  : I18n::tr("dl.prod.index_fetch_failed", err),
+                                              p.fallback);
             return true;
         }
-        if (err.empty()) err = "索引中未找到匹配文件";
+        if (err.empty()) err = I18n::tr("dl.prod.index_no_match_long");
         return false;
     }
 
@@ -509,16 +516,16 @@ namespace Download::Catalog {
         std::error_code ec;
 
         if (!fs::is_regular_file(srcPath, ec)) {
-            r.detail = "源文件不存在或不可读";
+            r.detail = I18n::tr("dl.prod.src_missing");
             return r;
         }
         if (const auto srcSize = fs::file_size(srcPath, ec); ec || srcSize < 1024) {
-            r.detail = "源文件过小（<1 KB），不像是完整的产品文件";
+            r.detail = I18n::tr("dl.prod.src_too_small");
             return r;
         }
 
         if (!Store::ensureDir(p.id)) {
-            r.detail = "无法创建产品库目录";
+            r.detail = I18n::tr("dl.prod.mkdir_local_failed");
             return r;
         }
         std::string work = srcPath;
@@ -528,14 +535,15 @@ namespace Download::Catalog {
             work = Store::tempPath(p.id, fileName);
             fs::copy_file(srcPath, work, fs::copy_options::overwrite_existing, ec);
             if (ec) {
-                r.detail = "拷贝到产品库暂存区失败: " + ec.message();
-                LOG_ERROR << "[产品] 导入拷贝失败 " << srcPath << " → " << work << ": " << ec.message();
+                r.detail = I18n::tr("dl.prod.stage_copy_failed", ec.message());
+                LOG_ERROR << "[PROD] " << I18n::tr("dl.prod.import_copy_failed", srcPath, work,
+                                                    ec.message());
                 return r;
             }
             const std::string got = Unpack::settle(work).main;
             if (Str::endsWithIC(got, ".gz")) {
                 fs::remove(work, ec);
-                r.detail = "解压失败（压缩包可能已损坏）";
+                r.detail = I18n::tr("dl.prod.inflate_failed");
                 return r;
             }
             work = got;
@@ -546,7 +554,7 @@ namespace Download::Catalog {
         std::string detail;
         if (p.validate && !p.validate(work, detail)) {
             if (staged) fs::remove(work, ec);
-            LOG_WARN << "[产品] 导入校验未通过 " << srcPath << ": " << detail;
+            LOG_WARN << "[PROD] " << I18n::tr("dl.prod.import_validate_failed", srcPath, detail);
             r.detail = detail;
             return r;
         }
@@ -557,15 +565,16 @@ namespace Download::Catalog {
                 std::error_code e2;
                 fs::remove(work, e2);
             }
-            r.detail = "写入产品库失败";
+            r.detail = I18n::tr("dl.prod.write_library_failed");
             return r;
         }
 
         r.ok = true;
         r.file = fileName;
         r.version = version;
-        r.detail = detail.empty() ? "已导入" : detail;
-        LOG_INFO << "[产品] 手工导入 " << p.label << " " << fileName << "（" << r.detail << "）";
+        r.detail = detail.empty() ? I18n::tr("dl.prod.imported") : detail;
+        LOG_INFO << "[PROD] " << I18n::tr("dl.prod.import_done", typeLabel(p.type), fileName,
+                                          r.detail);
         return r;
     }
 
@@ -605,7 +614,7 @@ namespace Download::Catalog {
     bool updateProduct(const std::string &id, std::string &detail) {
         const VersionedProduct *p = find(id);
         if (!p) {
-            detail = "没有叫 " + id + " 的辅助产品（atx | gpt3）";
+            detail = I18n::tr("dl.prod.unknown_aux", id);
             return false;
         }
         return installLatest(*p, detail);
@@ -634,7 +643,8 @@ namespace Download::Catalog {
 
     void noteImported(const std::string &id, const std::string &version,
                       const std::string &file, const std::string &detail) {
-        setStatus(id, make(UpdateStatus::Ready, version, file, detail.empty() ? "已导入" : detail));
+        setStatus(id, make(UpdateStatus::Ready, version, file,
+                           detail.empty() ? I18n::tr("dl.prod.imported") : detail));
         if (const auto *p = find(id)) {
             std::lock_guard lk(g_mtx);
             g_nextDue[id] = Clock::after(Clock::hours(p->checkHours));

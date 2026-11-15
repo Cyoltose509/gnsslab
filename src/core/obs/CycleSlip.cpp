@@ -22,14 +22,6 @@ void CycleSlip::reset() {
 }
 
 void CycleSlip::flushGf() {
-    if (gfThres > 0.0 && gfLbuf.size() >= 6) {
-        std::vector<char> slip(gfLbuf.size(), 0), artifact(gfLbuf.size(), 0);
-        detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact, gfSlipMult);
-        for (std::size_t k = 0; k < slip.size(); ++k) {
-            if (slip[k]) gfSlipSet.insert(static_cast<int>(k));
-            if (artifact[k]) gfArtifactSet.insert(static_cast<int>(k));
-        }
-    }
     gfLbuf.clear();
     gfPbuf.clear();
     gfObuf.clear();

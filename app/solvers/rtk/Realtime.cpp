@@ -7,16 +7,17 @@
 #include <utility>
 
 #include "Decimator.h"
-#include "DualPair.h"
+#include "solver/rtk/DualPair.h"
 #include "core/geom/EphemerisTable.h"
 #include "Log.h"
 #include "util/Clock.h"
 #include "novatel/SocketReader.h"
-#include "RTK.h"
+#include "solver/rtk/RTK.h"
 #include "SolverOptions.h"
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
 #include "Task.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Realtime {
     RTKSession::RTKSession(std::shared_ptr<RTK::Task> task,
@@ -24,20 +25,20 @@ namespace Solvers::Realtime {
         : task(std::move(task)), baseEp(std::move(base)), roverEp(std::move(rover)) {
         SolverOptions opts = this->task->opts;
         if (const SolverOptions::FilterMode rt = filterForRealtime(opts.filter); rt != opts.filter) {
-            LOG_WARN << "[RTK实时] 实时流没有倒序趟，滤波方向 " << filterLabel(opts.filter)
-                    << " 按 " << filterLabel(rt) << " 处理";
+            LOG_WARN << "[RTK-RT] " << I18n::tr("log.rt.no_backward", filterLabel(opts.filter),
+                                                         filterLabel(rt));
             opts.filter = rt;
         }
         this->task->rtk.applyOptions(opts);
-        this->task->rtk.mBaseXyzUser = this->task->useBaseCoord
+        this->task->rtk.mBaseUser = this->task->useBaseCoord
                                            ? this->task->baseXyz
                                            : Eigen::Vector3d::Zero();
 
         this->task->view.clearQCInput(this->task->opts.sampleInterval);
-        this->task->view.qcTabLabel = "质量分析[流动站]";
+        this->task->view.qcTabKey = "solver.tab.qc_rover";
 
         baseTab = std::make_shared<QcTab>();
-        baseTab->label = "质量分析[基准站]";
+        baseTab->labelKey = "solver.tab.qc_base";
         baseTab->fileName = File::baseName(this->task->rtEndpoints[0].ip);
         baseTab->view.clearQCInput(this->task->opts.sampleInterval);
         {
@@ -49,7 +50,7 @@ namespace Solvers::Realtime {
 
     RTKSession::~RTKSession() = default;
 
-    const char *RTKSession::tag() const noexcept { return "RTK实时"; }
+    const char *RTKSession::tag() const noexcept { return "RTK-RT"; }
 
     std::string RTKSession::target() const {
         return "base=" + baseEp.ip + ":" + baseEp.port + " rover=" + roverEp.ip + ":" + roverEp.port;
@@ -58,16 +59,16 @@ namespace Solvers::Realtime {
     void RTKSession::clearError() { task->clearError(); }
 
     void RTKSession::setConnectError() {
-        task->setError("正在尝试连接 base " + baseEp.ip + ":" + baseEp.port
-                       + " / rover " + roverEp.ip + ":" + roverEp.port + " ...");
+        task->setError(I18n::tr("rtk.rt.connecting", baseEp.ip + ":" + baseEp.port,
+                                roverEp.ip + ":" + roverEp.port));
     }
 
     void RTKSession::setStreamBroken() {
-        task->setError("实时数据流中断（连接关闭或长时间无历元），正在重连 ...");
+        task->setError(I18n::tr("rtk.rt.stream_broken"));
     }
 
     void RTKSession::onException(const std::exception &e) {
-        task->setError(std::string("RTK实时运行异常: ") + e.what());
+        task->setError(I18n::tr("rtk.rt.run_error", e.what()));
     }
 
     void RTKSession::finish() {
@@ -103,7 +104,7 @@ namespace Solvers::Realtime {
     bool RTKSession::stopped() { return task->shouldStop(); }
 
     bool RTKSession::pump() {
-        Observer::DualPair pairing;
+        DualPair pairing;
         pairing.setInterval(task->opts.sampleInterval);
         const Observer::Decimator dec(task->opts.sampleInterval);
 
@@ -119,7 +120,7 @@ namespace Solvers::Realtime {
         bool stallWarned = false;
 
         ObsData base, rover;
-        Observer::DualPair::EphPtr baseEph, roverEph;
+        DualPair::EphPtr baseEph, roverEph;
         bool haveBase = false, haveRover = false;
 
         while (!stopped()) {
@@ -152,21 +153,18 @@ namespace Solvers::Realtime {
             if (const auto idle = Clock::since(lastCommit); idle > kStallWarn && Clock::over(lastStallWarn, kStallWarnGap)) {
                 lastStallWarn = Clock::now();
                 stallWarned = true;
-                const std::string msg = "已 " + std::to_string(static_cast<long long>(idle.sec()))
-                                        + " s 无新解（最后提交历元 SOW "
-                                        + std::to_string(lastCommitSow) + "），数据在流但未产出解算结果";
-                LOG_WARN << "[RTK实时] " << msg;
-                task->setError("实时流" + msg);
+                LOG_WARN << "[RTK-RT] " << I18n::tr("rtk.rt.idle", idle.sec(), lastCommitSow);
+                task->setError(I18n::tr("rtk.rt.idle_error", idle.sec(), lastCommitSow));
             }
 
             // 配对窗口按两路历元间隔估；对不齐时只推进落后的一侧。
-            const auto act = Observer::DualPair::classify(base.epoch, rover.epoch, pairing.pairWindow());
-            if (act == Observer::DualPair::Action::AdvanceBase) {
+            const auto act = DualPair::classify(base.epoch, rover.epoch, pairing.pairWindow());
+            if (act == DualPair::Action::AdvanceBase) {
                 haveBase = false;
                 baseWaitSince = Clock::now();
                 continue;
             }
-            if (act == Observer::DualPair::Action::AdvanceRover) {
+            if (act == DualPair::Action::AdvanceRover) {
                 haveRover = false;
                 roverWaitSince = Clock::now();
                 continue;
@@ -174,7 +172,7 @@ namespace Solvers::Realtime {
 
             haveBase = haveRover = false;
             baseWaitSince = roverWaitSince = Clock::now();
-            const auto eph = Observer::DualPair::selectEph(baseEph, roverEph);
+            const auto eph = DualPair::selectEph(baseEph, roverEph);
 
             task->view.pushQCInput(rover, rover.weekSecond.sow);
             baseTab->view.pushQCInput(base, base.weekSecond.sow);
@@ -187,7 +185,7 @@ namespace Solvers::Realtime {
             lastCommitSow = static_cast<long long>(rover.weekSecond.sow);
             if (stallWarned) {
                 stallWarned = false;
-                LOG_INFO << "[RTK实时] 恢复产出新解，最后提交历元 SOW " << lastCommitSow;
+                LOG_INFO << "[RTK-RT] " << I18n::tr("rtk.rt.recovered", lastCommitSow);
                 task->clearError();
             }
         }

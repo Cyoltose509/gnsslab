@@ -2,7 +2,7 @@
 #include "core/geom/CoordStruct.h"
 #include "core/geom/Ephemeris.h"
 #include "core/SatID.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "MathUtils.h"
 
 #include <map>

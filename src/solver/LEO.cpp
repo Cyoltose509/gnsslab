@@ -5,10 +5,12 @@
 #include "Log.h"
 #include <Eigen/Eigen>
 #include <iomanip>
+#include <sstream>
 #include <vector>
 #include "core/equ/EquStruct.h"
 #include "core/obs/ObsStruct.h"
 #include "core/SatID.h"
+#include "i18n/I18n.h"
 
 namespace {
     /// 4 星近共面时 PDOP 可上千，1 m 码噪声被放大成公里级，这样的 SPP 位置不能作线性化点
@@ -33,41 +35,37 @@ namespace {
 }
 
 
-void LEO::adoptProducts(SPP &src) {
-    auto *s = dynamic_cast<LEO *>(&src);
-    if (!s || s == this) return;
-    PPP::Core::adoptProducts(src);
-    mAnt = s->mAnt;
-    mAntSrc = s->mAntSrc;
-}
-
 void LEO::setAntennaOffset(const AntennaOffset &offset, const std::string &source) {
-    mAnt = offset;
-    mAntSrc = source;
-    LOG_INFO << "[LEO] 天线改正 质心→ARP = " << mAnt.comToArp.transpose() << " m"
-             << (mAnt.hasArp ? "" : "（未定，按 0）")
-             << "，ARP→相位中心 = " << mAnt.pco.transpose() << " m"
-             << (mAnt.hasPco ? "" : "（未定，按 0）")
-             << "，合计 " << mAnt.total().transpose() << " m ← " << mAntSrc;
+    prod->recvAnt = offset;
+    prod->recvAntSrc = source;
+    const auto vec = [](const Eigen::Vector3d &v) {
+        std::ostringstream s;
+        s << v.transpose();
+        return s.str();
+    };
+    const AntennaOffset &a = prod->recvAnt;
+    const std::string unset = I18n::tr("log.leo.antenna_unset");
+    LOG_INFO << I18n::tr("log.leo.antenna", vec(a.comToArp), a.hasArp ? std::string() : unset,
+                         vec(a.pco), a.hasPco ? std::string() : unset, vec(a.total()), prod->recvAntSrc);
 }
 
 Eigen::Vector3d LEO::recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch,
                                             const SatID &sat) const {
     (void) epoch;
     (void) sat;
-    if (!mAnt.any()) return Eigen::Vector3d::Zero();
+    if (!prod->recvAnt.any()) return Eigen::Vector3d::Zero();
     // 第一历元还没有速度估计，LVLH 的沿迹轴无从确定（退化兜底会拿 ECEF 的 Z 轴顶上），
     // 于是 0.3 m 的沿迹分量会被投到一个无关方向。宁可这一历元不做改正，也不要错方向。
     if (mRecvVel.squaredNorm() < 1.0e6) return Eigen::Vector3d::Zero();
     const DCM M = DCM::fromECEFToLVLH(xyzEst, mRecvVel);
-    return M.transpose() * mAnt.total();
+    return M.transpose() * prod->recvAnt.total();
 }
 
 void LEO::bootstrapFirstEpoch(ObsData &obsData) {
     if (!mFirstEpoch) return;
     // 初值只许来自观测文件头或解算自身。参考轨道是真值，只用于 commitEpoch() 事后对比，
     // 拿它当起算点会让精度评估自证其说。星载 RINEX 缺 APPROX POSITION XYZ 时这里留 0，
-    // 由 Core::solve() 用本历元码伪距粗定位补上；赤道海平面点兜底已撤销，不凭空造初值。
+    // 由后续 LSQ 迭代从该线性化点自行收敛；不私造粗定位，不凭空造初值。
     if (!isSaneECEF(mRefPos)) mRefPos = obsData.antennaPosition;
     xyz = mRefPos;
     mFirstEpoch = false;
@@ -112,7 +110,7 @@ Eigen::Vector3d LEO::predictPosition(const double dt, const CommonTime &epoch) c
 
     // 几何退化时 SPP 位置带着公里级误差，不把它当锚点，改用已有解作线性化点：
     // 相位观测噪声只有毫米级，放大后仍在十米量级，靠滤波器自己撑住比用错锚点强得多。
-    if (!mSppGood && pd > kPdopLimit) {
+    if (mGeomWeak) {
         mReanchorPos = x;
         return x;
     }
@@ -139,7 +137,7 @@ Eigen::Vector3d LEO::predictPosition(const double dt, const CommonTime &epoch) c
     return fb;
 }
 void LEO::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) {
-    PPP::Core::buildEquSys(obsData, xyzEst, csData, firstIter);
+    PPPStatic::buildEquSys(obsData, xyzEst, csData, firstIter);
     if (!mGeomWeak || mEpochPdop <= kPdopReject) return;
     // 4 颗星近共面（实测 PDOP 7.5e6）时位置在法向完全不可观：码观测会把位置状态直接
     // 拉到 3e8 m，之后整段解不回来；降到 PDOP 200 时码解也已带 70–140 m 误差。
@@ -150,7 +148,7 @@ void LEO::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableD
 bool LEO::processEpoch(ObsData &obs) {
     const bool prevSolved = mPrevEpochSolved;
     mPrevEpochSolved = false;
-    const bool ok = PPP::Kinematic::processEpoch(obs);
+    const bool ok = PPPKinematic::processEpoch(obs);
     const bool hasSol = ok && result.xyz.squaredNorm() > 1e12;
     // 轨道高度物理包络 + 最少 5 星：跑到地球内部/上万公里外，或星数不足只剩状态外推，
     // 都会输出「标了 Float 却带假位置」的行，一律不发布。
@@ -217,7 +215,7 @@ bool LEO::processEpoch(ObsData &obs) {
 }
 
 void LEO::applyOptions(const SolverOptions &o) {
-    PPP::Core::applyOptions(o);
+    PPPStatic::applyOptions(o);
     setTropo(false, o.spp.ztdInitValue, o.spp.ztdInitSigma, o.spp.ztdProcSigma);
     mMotionThresh = o.motionThresh;
     mSppVsPredThresh = o.sppVsPredThresh;

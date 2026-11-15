@@ -1,6 +1,7 @@
 #include "rinex/RINEXObsMerge.h"
 
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 
 #include <algorithm>
 #include <cctype>
@@ -112,12 +113,12 @@ namespace RINEX {
         std::vector<std::string> sorted = files;
         std::sort(sorted.begin(), sorted.end());
         if (sorted.empty()) {
-            err = "没有可合并的观测分片";
+            err = I18n::tr("io.merge.no_pieces");
             return 0;
         }
         const Piece tmpl = readPiece(sorted.front());
         if (!tmpl.valid || tmpl.rowsPerSat <= 0) {
-            err = "首片 RINEX 头不可读";
+            err = I18n::tr("io.merge.bad_header");
             return 0;
         }
         const Piece tail = readPiece(sorted.back());
@@ -125,7 +126,7 @@ namespace RINEX {
 
         std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
         if (!out) {
-            err = "无法创建合并文件 " + outPath;
+            err = I18n::tr("io.merge.create_failed", outPath);
             return 0;
         }
         for (const std::string &h: tmpl.header) {
@@ -177,14 +178,14 @@ namespace RINEX {
         }
         out.flush();
         if (!out) {
-            err = "写合并文件失败";
+            err = I18n::tr("io.merge.write_failed");
             return 0;
         }
         if (epochs == 0) {
-            err = "没有写出任何历元";
+            err = I18n::tr("io.merge.no_epoch");
             return 0;
         }
-        if (!skipped.empty()) err = "跳过 " + std::to_string(skipped.size()) + " 个观测类型不一致的分片";
+        if (!skipped.empty()) err = I18n::tr("io.merge.skipped", skipped.size());
         return epochs;
     }
 }

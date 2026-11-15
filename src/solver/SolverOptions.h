@@ -1,7 +1,7 @@
 #pragma once
 
 #include "SPPConfig.h"
-#include "RTKConfig.h"
+#include "solver/rtk/RTKConfig.h"
 #include "solver/ins/INSConfig.h"
 #include <set>
 #include <string>

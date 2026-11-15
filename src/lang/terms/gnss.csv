@@ -1,0 +1,40 @@
+key,ZH-CN,EN
+Epoch,历元,Epoch
+SamplingInterval,采样间隔,Sampling interval
+Observation,观测,Observation
+ObservationFile,观测文件,Observation file
+Pseudorange,伪距,Pseudorange
+CarrierPhase,载波相位,Carrier phase
+Frequency,频点,Frequency
+CycleSlip,周跳,Cycle slip
+CNR,载噪比,CNR
+Satellite,卫星,Satellite
+SatelliteCount,卫星数,Satellite count
+Ephemeris,星历,Ephemeris
+BroadcastEphemeris,广播星历,Broadcast ephemeris
+PreciseOrbit,精密轨道,Precise orbit
+PreciseClock,精密钟差,Precise clock
+ClockOffset,钟差,Clock offset
+Orbit,轨道,Orbit
+OrbitalElements,轨道根数,Orbital elements
+SatelliteAttitude,卫星姿态,Satellite attitude
+AntennaFile,{{Antenna}}文件,{{Antenna}} file
+Product,产品,Product
+AnalysisCenter,分析中心,Analysis center
+CodeBias,码偏差,Code bias
+EarthRotation,地球自转,Earth rotation
+Grid,格网,Grid
+MappingFunction,映射函数,Mapping function
+Antenna,天线,Antenna
+AntennaCorrection,天线改正,Antenna correction
+Receiver,接收机,Receiver
+Site,测站,Station
+Coordinate,坐标,Coordinate
+Latitude,纬度,Latitude
+Longitude,经度,Longitude
+Height,高程,Height
+BLH,经纬高,BLH
+Trajectory,轨迹,Trajectory
+ReferenceOrbit,参考轨道,Reference orbit
+Truth,真值,Truth
+LEO,低轨,LEO

@@ -1,8 +1,8 @@
 #include "download/remote/SourceTable.h"
+#include "core/TimeStruct.h"
 #include "FileUtils.h"
 
 #include "StringUtils.h"
-#include "time/TimeStruct.h"
 
 #include <cstdio>
 #include <set>
@@ -121,7 +121,7 @@ namespace Download::SourceTable {
             char buf[256];
             const std::pair<int, int> days[2] = {{year, doy}, {prevYmd.year, prevDoy}};
             for (const auto &[y, d]: days) {
-                const int week = ProductMeta::GPSWeek(y, d);
+                const int week = GPSWeek(y, d);
                 std::snprintf(buf, sizeof(buf), "%s/products/%04d/", kIgsRoot, week);
                 const std::string plain = buf;
                 addUnique(out, seen, mirrored(plain));

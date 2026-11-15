@@ -6,6 +6,7 @@
 
 #include "Log.h"
 #include "SPP.h"
+#include "i18n/I18n.h"
 
 std::size_t Filter::runForward(const Session &session) {
     clear();
@@ -15,15 +16,15 @@ std::size_t Filter::runForward(const Session &session) {
     for (std::size_t i = 0; session.feed.ensure(i); ++i) {
         ObsData obs = session.feed.obs(i);
         bool ok = false;
-        // 纯后向档正序只扫不解，内嵌星历仍要在这趟注入，供 adoptProducts 搬给倒序解算器。
+        // 纯后向档正序只扫不解，内嵌星历仍要在这趟注入：两趟共用同一份 Products，倒序趟直接看得见。
         if (session.prepare) session.prepare(i, *session.solver);
         if (solve) {
             try {
                 ok = session.solver->processEpoch(obs);
             } catch (const std::exception &e) {
-                LOG_ERROR << "[滤波] 前向历元异常 (sod=" << obs.epoch.m_sod << "): " << e.what();
+                LOG_ERROR << I18n::tr("log.filter.fwd_epoch_error", obs.epoch.m_sod, e.what());
             } catch (...) {
-                LOG_ERROR << "[滤波] 前向历元未知异常 (sod=" << obs.epoch.m_sod << ")";
+                LOG_ERROR << I18n::tr("log.filter.fwd_epoch_unknown", obs.epoch.m_sod);
             }
         }
         Out out;
@@ -46,7 +47,6 @@ std::size_t Filter::runForward(const Session &session) {
 }
 
 std::size_t Filter::runBackward(const Session &session) const {
-    // 倒序必须先知道终点：把前向趟之后剩下的序列抽干，已就绪的帧按原索引重放。
     std::size_t n = session.feed.count();
     while (session.feed.ensure(n)) {
         const std::size_t grown = session.feed.count();
@@ -56,10 +56,10 @@ std::size_t Filter::runBackward(const Session &session) const {
     if (n == 0) return 0;
     const std::unique_ptr<SPP> bwd = session.make();
     if (!bwd) {
-        LOG_ERROR << "[滤波] 后向解算器创建失败";
+        LOG_ERROR << I18n::trc("log.filter.bwd_create_fail");
         return 0;
     }
-    bwd->adoptProducts(*session.solver);
+    bwd->prod = session.solver->prod;
     bwd->mDirection = -1;
 
     std::size_t done = 0;
@@ -69,7 +69,7 @@ std::size_t Filter::runBackward(const Session &session) const {
         try {
             ok = bwd->processEpoch(obs);
         } catch (const std::exception &e) {
-            LOG_ERROR << "[滤波] 后向历元异常 (idx=" << i << "): " << e.what();
+            LOG_ERROR << I18n::tr("log.filter.bwd_epoch_error", i, e.what());
         } catch (...) {
         }
 

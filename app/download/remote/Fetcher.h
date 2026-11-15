@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "download/local/ProductMeta.h"
+#include "download/local/FileMeta.h"
 #include "download/local/Unpack.h"
 #include "download/remote/http/Core.h"
 #include "download/remote/SourceTable.h"
@@ -18,13 +18,13 @@ namespace Download::Fetcher {
         int srcOk = 0;
         std::string err;  // 这一路取失败的原因
         std::string note; // 这一路取成功但值得说一句（如服务端 404：该日未发布）
-        std::vector<ProductMeta> items;
+        std::vector<FileMeta> items;
         std::map<std::string, std::string> sources;
         std::map<std::string, std::string> urls;
     };
 
     struct Match {
-        ProductMeta m;
+        FileMeta m;
         std::string dirUrl;
         std::string url;
         std::string localPath;

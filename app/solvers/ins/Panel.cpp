@@ -7,6 +7,8 @@
 #include "solvers/view/GuiProductSection.h"
 #include "ui/FileDialog.h"
 #include "ui/GuiColors.h"
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace Solvers::INS {
     void Task::loadFromMemory() {
@@ -20,15 +22,15 @@ namespace Solvers::INS {
         const auto onStart = [self] {
             self->renderFileStart("ins_imu", false,
                 [self] { self->opts.ins.imuPath = self->view.obsPathBuf; },
-                [self] { LOG_INFO << "[INS] 开始解算: IMU=" << self->view.obsPathBuf; });
+                [self] { LOG_INFO << "[INS] " << I18n::tr("ins.log.start_file", self->view.obsPathBuf); });
         };
         const auto fileTab = [self] {
-            Helpers::fileRow("IMU 日志", &self->view.obsPathBuf, "ins_imu",
-                             FileDialog::fIns, 2);
+            Helpers::fileRow(I18n::trc("ins.imu_log_file"), &self->view.obsPathBuf, "ins_imu",
+                             FileDialog::fIns());
             ImGui::Separator();
             Helpers::renderInsInitialState(self->opts);
             ImGui::Separator();
         };
-        self->renderConfigTabs("INS 处理配置###ins_cfg_", fileTab, onStart, {}, false);
+        self->renderConfigTabs(UI::idLabel("ins.cfg_tab", "###ins_cfg_"), fileTab, onStart, {}, false);
     }
 }  // namespace Solvers::INS

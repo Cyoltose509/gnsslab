@@ -1,11 +1,9 @@
-#include "Core.h"
+#include "Static.h"
 #include "ARLambda.h"
 #include "core/Const.h"
 #include <cmath>
 
-namespace PPP {
-
-bool Core::tryFixAmbiguities(ObsData &obsData) {
+bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
     mArRatio = 0.0;
     mArNumFixed = 0;
     result.xyzFixed = Eigen::Vector3d::Zero();
@@ -15,7 +13,7 @@ bool Core::tryFixAmbiguities(ObsData &obsData) {
     }
 
     const Eigen::VectorXd x = ekf.solution;
-    const Eigen::MatrixXd P = ekf.covMatrix;
+    const Eigen::MatrixXd P = ekf.Q;
 
     std::vector<SatID> sats;
     std::vector<int> idx;
@@ -56,7 +54,7 @@ bool Core::tryFixAmbiguities(ObsData &obsData) {
         cFac[k] = f2 / (f1 - f2);
         const double lam1 = def.lambda1, lam2 = def.lambda2;
         double osbP1 = 0, osbP2 = 0, osbL1 = 0, osbL2 = 0;
-        mOsb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, obsData.station);
+        prod->osb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, obsData.station);
         const double L1m = tv.at(def.phase1), L2m = tv.at(def.phase2);
         const double C1m = tv.at(def.code1), C2m = tv.at(def.code2);
         const double NwInst = def.MW_cycle(C1m, C2m, L1m, L2m, osbP1, osbP2, osbL1, osbL2);
@@ -116,8 +114,8 @@ bool Core::tryFixAmbiguities(ObsData &obsData) {
     H.setZero();
     for (int k = 0; k < n; ++k) H(k, idx[k]) = 1.0;
     constexpr double varFix = 1.0e-10;
-    const Eigen::MatrixXd R = varFix * Eigen::MatrixXd::Identity(n, n);
-    const Eigen::MatrixXd S = H * P * H.transpose() + R;
+    const Eigen::MatrixXd Dv = varFix * Eigen::MatrixXd::Identity(n, n);
+    const Eigen::MatrixXd S = H * P * H.transpose() + Dv;
     const Eigen::MatrixXd Km = P * H.transpose() * S.inverse();
     const Eigen::VectorXd xf = x + Km * (z - H * x);
 
@@ -137,6 +135,4 @@ bool Core::tryFixAmbiguities(ObsData &obsData) {
     mArNumFixed = n;
     ++mArSuccess;
     return true;
-}
-
 }

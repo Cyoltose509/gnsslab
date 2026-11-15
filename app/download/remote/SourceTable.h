@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
+#include "i18n/I18n.h"
 
 namespace Download::SourceTable {
     /// 一条数据源。同一个远端文件只有这一份描述：下载页按它列目录/直取，
@@ -32,7 +33,7 @@ namespace Download::SourceTable {
         std::set<ProductType> types;
         int year = 0;
         int doy = 0;
-        const char *scanText = "读取目录…";
+        const char *scanTextKey = "dl.status.reading_dir";
     };
 
     /// 日精密产品页的全部来源

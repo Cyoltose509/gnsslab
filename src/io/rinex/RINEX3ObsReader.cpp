@@ -1,7 +1,7 @@
 #include "rinex/RINEXObsReader.h"
 
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <sstream>
 

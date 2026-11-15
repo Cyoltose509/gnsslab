@@ -43,7 +43,7 @@ namespace Solvers::SPP {
 
         [[nodiscard]] std::vector<Export::Col> exportDefaults(Export::Format fmt) const override;
 
-        void writeCsvParams(CSV::Meta &m) const override;
+        void writeCSVParams(CSV::Meta &m) const override;
 
         Task();
 

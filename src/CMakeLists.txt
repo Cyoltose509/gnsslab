@@ -1,17 +1,22 @@
 
 
+add_subdirectory(i18n)
+
 set(LIB_SOURCES
-        # 根册：常量表与卫星标识，任何一册都能用
+
+        i18n/I18n.h
+        i18n/I18n.cpp
+
         core/Const.h
         core/SatID.h
-        # obs：观测容器、频率组合、周跳、噪声模型
+
         core/obs/ObsStruct.h
         core/obs/FreqCombo.h
         core/obs/FreqCombo.cpp
         core/obs/CycleSlip.h
         core/obs/CycleSlip.cpp
         core/obs/Weight.h
-        # geom：坐标、星历
+
         core/geom/CoordStruct.h
         core/geom/Attitude.h
         core/geom/Attitude.cpp
@@ -21,20 +26,20 @@ set(LIB_SOURCES
         core/geom/Ephemeris.h
         core/geom/Ephemeris.cpp
         core/geom/EphemerisTable.h
-        # equ：参数方程、解算结果、精度指标
+
         core/equ/EquStruct.h
         core/equ/EquStruct.cpp
         core/equ/Result.h
         core/equ/Precision.h
-        # atmo：对流层与电离层
+
         core/atmo/Troposphere.h
         core/atmo/Troposphere.cpp
         core/atmo/Ionosphere.h
-        # ins：惯导结构与数学
+
         core/ins/InsStruct.h
         core/ins/InsMath.h
-        time/TimeStruct.h
-        time/TimeStruct.cpp
+        core/TimeStruct.h
+        core/TimeStruct.cpp
         io/Observer.h
         io/Observer.cpp
         io/FileCache.h
@@ -87,18 +92,19 @@ set(LIB_SOURCES
         io/product/ATXReader.h
         io/product/ATXReader.cpp
         solver/SolverOptions.h
-        solver/DualPair.h
-        solver/DualPair.cpp
         solver/TropoGrid.h
+        solver/Products.h
         solver/SPPConfig.h
         solver/Filter.h
         solver/Filter.cpp
+        solver/GnssSolver.h
+        solver/GnssSolver.cpp
         solver/SPP.h
         solver/SPP.cpp
         solver/TropoSite.h
         solver/TropoSite.cpp
-        solver/ppp/Core.h
-        solver/ppp/Core.cpp
+        solver/ppp/Static.h
+        solver/ppp/Static.cpp
         solver/ppp/Equation.cpp
         solver/ppp/Epoch.cpp
         solver/ppp/Readback.cpp
@@ -117,9 +123,11 @@ set(LIB_SOURCES
         solver/GnssEKF.cpp
         solver/ARLambda.h
         solver/ARLambda.cpp
-        solver/RTKConfig.h
-        solver/RTK.h
-        solver/RTK.cpp
+        solver/rtk/DualPair.h
+        solver/rtk/DualPair.cpp
+        solver/rtk/RTKConfig.h
+        solver/rtk/RTK.h
+        solver/rtk/RTK.cpp
         solver/ins/INS.h
         solver/ins/INS.cpp
         solver/ins/InsVerify.h
@@ -144,6 +152,43 @@ set(LIB_SOURCES
 
 add_library(gnss STATIC ${LIB_SOURCES})
 
+
+target_compile_options(gnss PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+
+set(LANG_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/lang ${PROJECT_SOURCE_DIR}/app/lang)
+set(LANG_MT_ROOT ${PROJECT_SOURCE_DIR}/build/lang-mt)
+
+file(MAKE_DIRECTORY ${LANG_MT_ROOT}/app ${LANG_MT_ROOT}/src)
+file(GLOB_RECURSE LANG_CSV_FILES CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/lang/*.csv ${PROJECT_SOURCE_DIR}/app/lang/*.csv
+        ${LANG_MT_ROOT}/*.csv)
+set(GEN_LANG_CPP ${CMAKE_CURRENT_BINARY_DIR}/gen/LangData.cpp)
+
+set(LANG_STAMP ${CMAKE_CURRENT_BINARY_DIR}/gen/lang_inputs.stamp)
+set(LANG_CSV_KEY "")
+foreach(_f ${LANG_CSV_FILES})
+    string(APPEND LANG_CSV_KEY "${_f}\n")
+endforeach()
+set(LANG_CSV_KEY "${LANG_CSV_KEY}")
+set(_stamp_old "")
+if(EXISTS ${LANG_STAMP})
+    file(READ ${LANG_STAMP} _stamp_old)
+endif()
+if(NOT _stamp_old STREQUAL "${LANG_CSV_KEY}")
+    file(WRITE ${LANG_STAMP} "${LANG_CSV_KEY}")
+endif()
+
+add_custom_command(
+        OUTPUT ${GEN_LANG_CPP}
+        COMMAND $<TARGET_FILE:gen_lang> ${GEN_LANG_CPP} ${LANG_DIRS}
+                --mt ${LANG_MT_ROOT}/app --mt ${LANG_MT_ROOT}/src
+        DEPENDS gen_lang ${LANG_CSV_FILES} ${LANG_STAMP}
+        COMMENT "生成多语言表"
+        VERBATIM)
+target_sources(gnss PRIVATE ${GEN_LANG_CPP})
+add_dependencies(gnss gen_lang)
+
 target_compile_definitions(gnss PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
@@ -152,7 +197,6 @@ set_source_files_properties(util/MathUtils.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 
 target_include_directories(gnss PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/time
         ${CMAKE_CURRENT_SOURCE_DIR}/io
         ${CMAKE_CURRENT_SOURCE_DIR}/io/novatel
         ${CMAKE_CURRENT_SOURCE_DIR}/io/rinex

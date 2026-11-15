@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdint>
 
+#include "i18n/I18n.h"
+
 namespace {
     constexpr std::size_t kBlockRecords = 4096;
 }
@@ -16,19 +18,19 @@ bool BinRecordReader::open(const std::string &path, const std::size_t stride) {
     m_error.clear();
     m_failed = false;
     if (stride == 0) {
-        m_error = "记录长度必须大于 0 个 double";
+        m_error = I18n::tr("io.bin.bad_stride");
         return false;
     }
 
     m_in.open(path, std::ios::in | std::ios::binary);
     if (!m_in) {
-        m_error = "无法打开文件：" + path;
+        m_error = I18n::tr("io.bin.open_failed", path);
         return false;
     }
     m_in.seekg(0, std::ios::end);
     const std::streampos end = m_in.tellg();
     if (end < 0) {
-        m_error = "无法读取文件长度：" + path;
+        m_error = I18n::tr("io.bin.size_failed", path);
         return false;
     }
     m_in.seekg(0, std::ios::beg);
@@ -37,7 +39,7 @@ bool BinRecordReader::open(const std::string &path, const std::size_t stride) {
     const auto bytes = static_cast<std::uintmax_t>(end);
     m_total = bytes / recordBytes;
     if (const auto rest = bytes % recordBytes; rest != 0)
-        m_error = "文件末尾有 " + std::to_string(rest) + " 字节凑不成一整条记录，已丢弃";
+        m_error = I18n::tr("io.bin.trailing_bytes", rest);
     if (m_total == 0) return true;
 
     m_buf.resize(kBlockRecords * stride);
@@ -55,8 +57,7 @@ bool BinRecordReader::fill() {
     m_loaded += got;
     if (got < want) {
         m_failed = true;
-        m_error = "读取中断，实际只读到 " + std::to_string(m_loaded) + " / " +
-                  std::to_string(m_total) + " 条记录";
+        m_error = I18n::tr("io.bin.read_interrupted", m_loaded, m_total);
     }
     return m_filled > 0;
 }

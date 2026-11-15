@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 
 static int inputTextResizeCallback(ImGuiInputTextCallbackData *data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
@@ -21,7 +22,7 @@ namespace Solvers::Helpers {
     PasteResult clipboardXYZButton(const char *id) {
         ImGui::PushID(id);
         PasteResult p;
-        p.clicked = ImGui::Button("从剪贴板获取");
+        p.clicked = ImGui::Button(I18n::trc("helper.paste"));
         if (p.clicked)
             if (const char *clip = ImGui::GetClipboardText()) p.count = Str::scanMeters(clip, p.xyz, 3);
         ImGui::PopID();

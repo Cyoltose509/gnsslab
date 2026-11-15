@@ -1,0 +1,9 @@
+key,ZH-CN,EN
+QualityControl,质量分析,Quality control
+Completeness,完整率,Completeness
+Multipath,多路径,Multipath
+PseudorangeNoise,伪距噪声,Pseudorange noise
+CarrierNoise,载波噪声,Carrier phase noise
+CycleSlipRatio,周跳比,Cycle slip ratio
+Outlier,粗差,Outlier
+ClockJump,钟跳,Clock jump

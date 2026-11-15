@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
 
 namespace AppConfig {
-    class Products;
+    class ProductPaths;
 }
 
 namespace Download::Acquire {
@@ -20,7 +20,7 @@ namespace Download::Acquire {
         bool open = false;
         int year = 0, doy = 0;
         std::vector<std::string> *target = nullptr; // Products：解算产品清单
-        AppConfig::Products *owner = nullptr;       // Products：清单所属的模式产品池
+        AppConfig::ProductPaths *owner = nullptr;   // 清单所属的模式产品池
         std::string obsKey;                         // Obs：PathMemory 键
         std::string *obsOut = nullptr;              // Obs：回填到该填写框
         ProductType obsType = ProductType::OBS;     // Obs：观测类别（低轨观测走另一套源表）

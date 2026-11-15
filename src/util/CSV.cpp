@@ -125,8 +125,7 @@ namespace CSV {
                     rows.push_back(std::move(fields));
                     fields.clear();
                     cur.clear();
-                } else if (c == '\r') {
-                } else {
+                } else if (c != '\r') {
                     cur += c;
                 }
             }

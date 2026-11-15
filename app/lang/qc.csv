@@ -1,0 +1,66 @@
+key,ZH-CN,EN
+qc.axis.epoch_slip,{{Epoch}}/{{CycleSlip}},{{Epoch}} / {{CycleSlip}}
+qc.col.assessment_e,综合评估 E,Composite E
+qc.col.clock_jumps,{{ClockJump}}数,{{ClockJump}}
+qc.col.code_noise,{{PseudorangeNoise}} (m),{{PseudorangeNoise}} (m)
+qc.col.code_noise_f1,{{PseudorangeNoise}}_f1 (m),{{PseudorangeNoise}} f1 (m)
+qc.col.code_noise_f2,{{PseudorangeNoise}}_f2 (m),{{PseudorangeNoise}} f2 (m)
+qc.col.completeness_pct,{{Completeness}}%,{{Completeness}} %
+qc.col.composite_e,综合 E,Composite E
+qc.col.freq1,{{Frequency}}f1,{{Frequency}} f1
+qc.col.freq2,{{Frequency}}f2,{{Frequency}} f2
+qc.col.indicator,指标,Indicator
+qc.col.iod_jump,IOD_跳变,IOD jumps
+qc.col.iod_jump_f1,IOD_跳变_f1,IOD jumps f1
+qc.col.iod_jump_f2,IOD_跳变_f2,IOD jumps f2
+qc.col.outliers,{{Outlier}}数,{{Outlier}}
+qc.col.phase_noise,{{CarrierNoise}} (cyc),{{CarrierNoise}} (cyc)
+qc.col.phase_noise_f1,{{CarrierNoise}}_f1 (cyc),{{CarrierNoise}} f1 (cyc)
+qc.col.phase_noise_f2,{{CarrierNoise}}_f2 (cyc),{{CarrierNoise}} f2 (cyc)
+qc.col.slips,{{CycleSlip}}数,{{CycleSlip}}
+qc.entropy_hint,熵权E (越小越好),Entropy weight E (lower is better)
+qc.export_all_png,一键导出全部图 PNG ,Export all plots PNG 
+qc.export_all_progress,正在批量导出：剩余 %d 张（每帧 1 张，请勿操作）…,"Exporting: %d plots left (one per frame, please wait)…"
+qc.export_csv,导出 CSV (系统汇总/逐{{Satellite}}),Export CSV (system / {{Satellite}})
+qc.export_plot_png,导出此图 PNG,Export plot PNG
+qc.interval_s,间隔(s),Interval (s)
+qc.last_export_dir,上次导出目录：%s,Last export dir: %s
+qc.legend.completeness,{{Observation}}{{Completeness}},{{Observation}} {{Completeness}}
+qc.mean_cnr,平均CNR(dB-Hz),Mean CNR (dB-Hz)
+qc.no_dual_freq,无有效双频{{Observation}}，无法进行{{QualityControl}}。,No valid dual-frequency {{Observation}}; {{QualityControl}} unavailable.
+qc.no_sats,无符合条件的{{Satellite}}。,No {{Satellite}} matches the filter.
+qc.no_slips,所有{{Satellite}}均未检测到{{CycleSlip}},No {{CycleSlip}} detected on any {{Satellite}}
+qc.overall_completeness,总体{{Completeness}}%,Overall {{Completeness}} %
+qc.overall_e,整体综合E,Overall E
+qc.overview_line,总{{Epoch}} %d | 间隔 %.2f s | 可用{{Satellite}} %d {{Receiver}}{{ClockJump}} %d {{Epoch}},"%d {{Epoch}} | %.2f s {{SamplingInterval}} | %d {{Satellite}}, %d {{Receiver}} {{ClockJump}} {{Epoch}}"
+qc.plot.assessment_e,综合质量评估 E,Composite quality E
+qc.plot.cnr_all,{{CNR}} CNR,{{CNR}}
+qc.plot.completeness,{{Observation}}{{Completeness}} (%),{{Observation}} {{Completeness}} (%)
+qc.plot.iod_all,{{Ionosphere}}{{Residual}}变化率 IOD,{{Ionosphere}} {{Residual}} rate IOD
+qc.plot.mp1_all,{{Multipath}}误差 MP1,{{Multipath}} MP1
+qc.plot.mp2_all,{{Multipath}}误差 MP2,{{Multipath}} MP2
+qc.plot.noise_combined,{{PseudorangeNoise}} / {{CarrierNoise}},{{PseudorangeNoise}} / {{CarrierNoise}}
+qc.plot.sat_mp,{{Multipath}}误差 MP1 / MP2,{{Multipath}} MP1 / MP2
+qc.plot.sat_slip,{{CycleSlip}}{{Position}},{{CycleSlip}} {{Position}}
+qc.preparing,正在准备{{QualityControl}}…,Preparing {{QualityControl}}…
+qc.report_title,GNSS {{Observation}}数据{{QualityControl}}报告,GNSS {{Observation}} {{QualityControl}} report
+qc.row.code_noise,{{PseudorangeNoise}} f1 / f2,{{PseudorangeNoise}} f1 / f2
+qc.row.di,{{Frequency}}{{Completeness}} DI_f1 / DI_f2,{{Frequency}} {{Completeness}} DI_f1 / DI_f2
+qc.row.freq,{{Frequency}} f1 / f2,{{Frequency}} f1 / f2
+qc.row.iod,{{Ionosphere}}{{Residual}}变化率 IOD f1 / f2,{{Ionosphere}} {{Residual}} rate IOD f1 / f2
+qc.row.iod_std,"std %.4f / %.4f m/s, 跳变 %d / %d 次","std %.4f / %.4f m/s, %d / %d jumps"
+qc.row.outliers,{{Outlier}}数 / {{Receiver}}{{ClockJump}}数,{{Outlier}} / {{Receiver}} {{ClockJump}}
+qc.row.phase_noise,{{CarrierNoise}} f1 / f2,{{CarrierNoise}} f1 / f2
+qc.row.slips,{{CycleSlip}}数 / {{CycleSlipRatio}},{{CycleSlip}} / {{CycleSlipRatio}}
+qc.section.assessment,综合评估,Overall assessment
+qc.section.by_sat,逐{{Satellite}}统计,Per {{Satellite}}
+qc.section.by_system,系统汇总,Per system
+qc.section.overview,总体概览,Overview
+qc.section.sat_assessment,逐{{Satellite}}综合评估,Per-{{Satellite}} assessment
+qc.section.sat_metrics,逐{{Satellite}}指标,Per-{{Satellite}} metrics
+qc.select_sat,选择{{Satellite}},{{Satellite}}
+qc.solving,正在解算…,Solving…
+qc.system_e,系统综合E,Composite E by system
+qc.system_total,总体,All
+qc.total_epochs,总{{Epoch}},{{Epoch}}
+qc.usable_sats,可用{{Satellite}},Usable {{Satellite}}

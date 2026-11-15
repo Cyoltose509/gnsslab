@@ -4,11 +4,11 @@
 #include <string>
 #include <vector>
 
-#include "solver/DualPair.h"
+#include "solver/rtk/DualPair.h"
 #include "io/Observer.h"
 
 namespace ObsSource {
-    using Puller = Observer::DualPair::Puller;
+    using Puller = ::DualPair::Puller;
 
     /// 一对观测文件（基准站 / 流动站）。两侧都是 ObsStream，格式在 open 时定死，
     /// 配对、是否需要广播星历都从流自己的属性读，不看文件名也不问格式。

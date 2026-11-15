@@ -1,6 +1,6 @@
 #pragma once
 #include "core/SatID.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "MathUtils.h"
 #include "rinex/RINEXFileBase.h"
 #include <vector>

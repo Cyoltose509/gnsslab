@@ -8,6 +8,7 @@
 #include "core/Const.h"
 #include <array>
 #include <optional>
+#include <string>
 
 enum class TimeSystem:uint8_t {
     Unknown = 0,
@@ -632,3 +633,9 @@ inline std::ostream &operator<<(std::ostream &s, const WeekSecond &ws) {
     s << ws.toString();
     return s;
 }
+
+/// 年积日 → GPS 周（1980-01-06 起算）；越界给 0。
+int GPSWeek(int year, int doy);
+
+/// 年积日 → "YYYY-MM-DD"；非法日期给空串。
+std::string DOYToDateText(int year, int doy);

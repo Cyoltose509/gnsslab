@@ -1,0 +1,3 @@
+key,ZH-CN,EN
+log.app.start,GnssLab v{0} 启动 lang={1},GnssLab v{0} started lang={1}
+log.app.exit,GnssLab 退出,GnssLab exit

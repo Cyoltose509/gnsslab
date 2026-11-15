@@ -1,5 +1,5 @@
 #include "product/CLKReader.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "MathUtils.h"
 #include <algorithm>
 #include <StringUtils.h>

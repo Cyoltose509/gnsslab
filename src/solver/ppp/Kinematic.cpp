@@ -13,9 +13,7 @@ namespace {
     constexpr int kMaxBaardaRounds = 4;
 }
 
-namespace PPP {
-
-Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut, double *rmsOut,
+Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut, double *rmsOut,
                                           double *pdopOut, char sysOnly) const {
     if (!mCurObs) return seedIn;
     const CommonTime epoch = mCurObs->epoch;
@@ -24,14 +22,11 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
     std::map<char, Variable> cdtVars;
     for (const auto &[sys, param] : mCdtParam) cdtVars.try_emplace(sys, station, param);
 
-    // Baarda 逐星剔除：坏星（GEO 轨道/钟差质量差等）会把内部码 SPP 拖偏数十米，
-    // 与独立 SPP 用同一 W_THRESHOLD 逐轮剔掉最大标准化残差星再收敛，剔到无粗差或冗余不足。
     std::set<SatID> rejected;
     Eigen::Vector3d xc = seedIn;
     int lastN = 0;
     double lastRms = 1.0e9;
     double pdop = 1.0e9;
-
 
     for (int round = 0; round <= kMaxBaardaRounds; ++round) {
         std::map<char, double> clk;
@@ -45,7 +40,7 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
             for (const auto &[sys, v] : cdtVars) eq.varSet.insert(v);
 
             TropoSite site;
-            site.update(mTropoGrid, mConfig.tropoMap, xc, epoch);
+            site.update(prod->tropo, mConfig.tropoMap, xc, epoch);
             const double ztdMean = mFilterInit ? mZtdEstimate : 0.0;
             const Eigen::Vector3d recvTide = mApplySolidTide ? computeTideDisplacement(xc, epoch) : Eigen::Vector3d::Zero();
             int nObs = 0;
@@ -67,7 +62,7 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
                 const Eigen::Vector3d los = -(pvt.p - recvEff) / rho0;
                 const double dts = pvt.clockBias * C_MPS;
                 const double rel = pvt.relativityCorrection * C_MPS;
-                const double P_IF = def.combineCodeFromObs(tv) - mOsb.codeBiasAligned(def, sat, station);
+                const double P_IF = def.combineCodeFromObs(tv) - prod->osb.codeBiasAligned(def, sat, station);
                 const double obsMinusClk = P_IF + dts + rel - clk[sat.system];
                 double weight = 1.0 / (mConfig.codeSigma * mConfig.codeSigma);
                 if (elev < PI / 6) { const double s = std::sin(elev); weight *= s * s; }
@@ -93,7 +88,7 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
                 int row = 0;
                 for (const auto &[eid, ed]: eq.obsEquData) {
                     for (const auto &[var, coeff]: ed.varCoeffData) {
-                        const auto pt = var.getParaType();
+                        const auto pt = var.par;
                         if (pt == Parameter::dX) H(row, 0) = coeff;
                         else if (pt == Parameter::dY) H(row, 1) = coeff;
                         else if (pt == Parameter::dZ) H(row, 2) = coeff;
@@ -112,7 +107,7 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
                                 solver.getSolution(Parameter::dY),
                                 solver.getSolution(Parameter::dZ));
             xc += dpos;
-            for (const auto &[sys, v] : cdtVars) clk[sys] += solver.getSolution(v.getParaType());
+            for (const auto &[sys, v] : cdtVars) clk[sys] += solver.getSolution(v.par);
             if (dpos.norm() < mConfig.convEps) break;
         }
         if (lastN >= 4 && solver.v.size() > 0)
@@ -121,14 +116,14 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
         // 末轮解的标准化残差逐星检验（与独立 SPP 同式：w = |v| / (σ0·√qvv)）。
         SatID worstSat{};
         double worstW = 0.0;
-        if (lastN >= 7 && solver.sigma0 > 0.0 && solver.covMatrix.rows() > 0) {
-            const auto &Ninv = solver.covMatrix;
+        if (lastN >= 7 && solver.sigma0 > 0.0 && solver.Q.rows() > 0) {
+            const auto &Ninv = solver.Q;
             int i = 0;
             for (const auto &[eid, ed]: eq.obsEquData) {
                 if (i >= solver.v.size()) break;
                 const double w = ed.weight;
                 const double invW = w > 0.0 ? 1.0 / w : 0.0;
-                const auto hRow = solver.hMatrix.row(i);
+                const auto hRow = solver.H.row(i);
                 if (const double qvv = invW - (hRow * Ninv * hRow.transpose())(0, 0); qvv > 0.0) {
                     if (const double ws = std::abs(solver.v[i]) / (solver.sigma0 * std::sqrt(qvv)); ws > worstW) {
                         worstW = ws;
@@ -148,7 +143,7 @@ Eigen::Vector3d Kinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut,
     return xc;
 }
 
-Eigen::Vector3d Kinematic::predictPosition(const double dt, const CommonTime &epoch) const {
+Eigen::Vector3d PPPKinematic::predictPosition(const double dt, const CommonTime &epoch) const {
     (void) dt;
     (void) epoch;
     if (!mFilterInit || mReanchorEveryEpoch) {
@@ -180,9 +175,9 @@ Eigen::Vector3d Kinematic::predictPosition(const double dt, const CommonTime &ep
     return currentEstimatedPosition();
 }
 
-bool Kinematic::processEpoch(ObsData &obs) {
+bool PPPKinematic::processEpoch(ObsData &obs) {
     try {
-        if (!Core::processEpoch(obs)) return false;
+        if (!PPPStatic::processEpoch(obs)) return false;
         bool diverged = false;
         if (mReanchorPos.squaredNorm() > 1e12 && result.xyz.squaredNorm() > 1e12) {
             if ((result.xyz - mReanchorPos).norm() > mDivergeJumpThresh) {
@@ -235,6 +230,4 @@ bool Kinematic::processEpoch(ObsData &obs) {
     } catch (const SVNumException &) {
         return false;   // 本历元不可解（星数不足等），跳过；下一历元继续
     }
-}
-
 }

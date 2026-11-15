@@ -1,11 +1,13 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "CliCommon.h"
+#include "i18n/I18n.h"
 #include "Log.h"
 #include "core/IniFile.h"
 #include "download/local/Store.h"
@@ -28,7 +30,7 @@ namespace {
                     iniPath = a;
                     iniGiven = true;
                 } else if (iniPath != a) {
-                    std::cerr << "只接受一个 ini 路径，多余参数: " << a << "\n";
+                    std::cerr << I18n::tr("cli.args.extra", a) << "\n";
                     return false;
                 }
                 continue;
@@ -91,7 +93,7 @@ namespace {
         std::vector<std::pair<int, int> > out;
         if (const auto items = splitList(s); !items.empty()) {
             for (const auto &t: items)
-                if (!parseDateOne(t, out)) std::cerr << "日期 " << t << " 不认识（YYYY-DDD 或 YYYY-DDD..DDD），跳过\n";
+                if (!parseDateOne(t, out)) std::cerr << I18n::tr("cli.fetch.bad_date", t) << "\n";
             return out;
         }
         // 空 = 今天
@@ -106,7 +108,7 @@ namespace {
         s = Str::toLower(s);
         if (s == "obs") s = "rinex";            // 下载目录名 rinex 的别名
         if (s == "snx") s = "ref_truth/snx";    // 同上
-        return ProductMeta::typeFromDir(s);
+        return typeFromDir(s);
     }
 
     /// 低轨卫星的宽松解析：S6A / Sentinel-6A / Swarm C / COSMIC-2 / GRACE-FO …
@@ -222,25 +224,26 @@ namespace {
     /// 下载一条（落盘与 GUI 同库），打印进度与结果。
     bool fetchOne(const Download::Fetcher::Pending &p, const int year, const int doy) {
         if (!Download::Store::findLocal(p.type, year, doy, p.remoteName).empty()) {
-            std::cout << "  本机已有 " << p.remoteName << "\n";
+            std::cout << "  " << I18n::tr("common.local_exist", p.remoteName) << "\n";
             return true;
         }
         const auto prog = [&p](const double total, const double now) {
             const float f = Download::Http::fracOf(total, now);
             if (f < 0.0f) return;
-            std::cout << "\r  正在下载 " << p.remoteName << "  " << static_cast<int>(f * 100.0f) << "%"
-                    << std::flush;
+            std::cout << "\r  " << I18n::tr("cli.fetch.downloading", p.remoteName) << "  "
+                    << static_cast<int>(f * 100.0f) << "%" << std::flush;
         };
         const auto r = Download::Fetcher::fetchNow(p, prog, nullptr);
         if (r.paused) {
-            std::cout << "\r  已暂停 " << p.remoteName << "        \n";
+            std::cout << "\r  " << I18n::tr("cli.fetch.paused", p.remoteName) << "        \n";
             return false;
         }
         if (!r.ok) {
-            std::cout << "\r  获取失败 " << p.remoteName << "：" << r.err << "        \n";
+            std::cout << "\r  " << I18n::tr("cli.fetch.failed", p.remoteName, r.err) << "        \n";
             return false;
         }
-        std::cout << "\r  已获取 " << (r.path.empty() ? p.remoteName : r.path) << "        \n";
+        std::cout << "\r  " << I18n::tr("ref.fetch.got", r.path.empty() ? p.remoteName : r.path)
+                << "        \n";
         return true;
     }
 
@@ -250,7 +253,7 @@ namespace {
                   const int limit) {
         auto dirs = dirsFor(t, year, doy);
         if (dirs.empty()) {
-            std::cout << typeLabel(t) << " " << year << "-" << doy << "：没有可用数据源\n";
+            std::cout << I18n::tr("cli.fetch.no_source", typeLabel(t), year, doy) << "\n";
             return 0;
         }
         if (!sel.empty()) {
@@ -261,14 +264,14 @@ namespace {
                     out.push_back(std::move(d));
             dirs = std::move(out);
             if (dirs.empty()) {
-                std::cout << typeLabel(t) << " " << year << "-" << doy
-                          << "：源表里没有 " << sel.mission << (sel.sat ? " 的卫星" : "") << "\n";
+                std::cout << I18n::tr(sel.sat ? "cli.fetch.no_mission_sat" : "cli.fetch.no_mission",
+                                      typeLabel(t), year, doy, sel.mission) << "\n";
                 return 0;
             }
         }
         filterDc(dirs, dcs);
         if (dirs.empty()) {
-            std::cout << typeLabel(t) << " " << year << "-" << doy << "：没有命中指定数据中心的源\n";
+            std::cout << I18n::tr("cli.fetch.no_dc", typeLabel(t), year, doy) << "\n";
             return 0;
         }
 
@@ -283,7 +286,7 @@ namespace {
         for (const auto &u: urls) {
             const std::string name = Download::Http::nameOfUrl(u);
             // IGS 周目录是混合目录：长名自报的产品类型与要的不符就跳过（认不出类型的信任目录类型）
-            if (const auto m = ProductMeta::parse(name);
+            if (const auto m = FileMeta::parse(name);
                 m && m->type != ProductType::Unknown && m->type != t)
                 continue;
             if (nameSel(t, sel, name)) picked.push_back(u);
@@ -292,17 +295,17 @@ namespace {
         if (picked.empty()) {
             if (!localHave.empty()) {
                 for (const auto &n: localHave)
-                    std::cout << "  本机已有 " << n << "\n";
+                    std::cout << "  " << I18n::tr("common.local_exist", n) << "\n";
                 return 0;
             }
-            std::cout << typeLabel(t) << " " << year << "-" << doy << "：源里没有匹配的文件";
+            std::string tail;
             if (!matches.empty()) {
-                std::cout << "（match =";
-                for (const auto &m: matches) std::cout << ' ' << m;
-                std::cout << ')';
+                std::string list;
+                for (const auto &m: matches) list += " " + m;
+                tail += I18n::tr("cli.fetch.match_suffix", list);
             }
-            if (!listErr.empty()) std::cout << "；" << listErr;
-            std::cout << "\n";
+            if (!listErr.empty()) tail += I18n::tr("cli.fetch.err_suffix", listErr);
+            std::cout << I18n::tr("cli.fetch.no_match", typeLabel(t), year, doy) << tail << "\n";
             return 0;
         }
 
@@ -328,10 +331,11 @@ int main(const int argc, char **argv) {
 
     IniFile f;
     if (!f.load(iniPath)) {
-        std::cerr << "无法读取 ini: " << iniPath << "\n";
+        std::cerr << I18n::tr("cli.ini.unreadable", iniPath) << "\n";
         return 1;
     }
     const CliSource src(f, std::move(over));
+    Cli::setupLanguage(src);
     Log::init("fetch_cli.log");
 
     const std::string user = src.get("earthdata", "user");
@@ -343,20 +347,20 @@ int main(const int argc, char **argv) {
         const auto &pm = AppConfig::PathMemory::instance();
         if (effUser.empty()) effUser = pm.get(Download::Earthdata::kUserKey);
         if (effPass.empty()) effPass = pm.get(Download::Earthdata::kPassKey);
-        if (!effUser.empty() && !effPass.empty()) authSrc = "GUI 本地记录";
+        if (!effUser.empty() && !effPass.empty()) authSrc = I18n::tr("cli.fetch.auth.gui");
     }
     Download::Http::setEarthdata(effUser, effPass);
     if ((effUser.empty() || effPass.empty()) &&
         (src.get("fetch", "type").find("leo") != std::string::npos ||
          src.get("fetch", "datacenter").find("cddis") != std::string::npos))
-        std::cerr << "提示: CDDIS / Earthdata 源需要账号，[earthdata] user / pass 与 GUI 本地记录都没填全，"
-                     "相关源会失败\n";
+        std::cerr << I18n::tr("cli.fetch.auth_hint") << "\n";
     else
-        std::cout << "Earthdata 账号来自 " << authSrc << (effUser.empty() ? "（匿名）" : "") << "\n";
+        std::cout << I18n::tr("cli.fetch.auth_from", authSrc,
+                              effUser.empty() ? I18n::tr("cli.fetch.anonymous") : std::string()) << "\n";
 
     const auto dates = parseDates(src.get("fetch", "date"));
     if (dates.empty()) {
-        std::cerr << "没有可用的日期（[fetch] date 或 --date，写 YYYY-DDD）\n";
+        std::cerr << I18n::tr("cli.fetch.no_date") << "\n";
         return 2;
     }
 
@@ -364,19 +368,18 @@ int main(const int argc, char **argv) {
 
     // 辅助产品同步更新：atx / gpt3，不走日期循环
     for (const auto &id: splitList(src.get("fetch", "update"))) {
-        std::cout << "更新 " << id << " …\n";
+        std::cout << I18n::tr("cli.fetch.updating", id) << "\n";
         if (std::string detail; Download::Catalog::updateProduct(id, detail)) {
             std::cout << "  " << detail << "\n";
             ++okTotal;
         } else {
-            std::cerr << "  失败：" << detail << "\n";
+            std::cerr << "  " << I18n::tr("cli.fetch.update_failed", detail) << "\n";
         }
     }
 
     const LeoSel sel = parseSat(src.get("fetch", "sat"));
     if (!src.get("fetch", "sat").empty() && sel.empty()) {
-        std::cerr << "卫星名 " << src.get("fetch", "sat")
-                << " 不认识（S6A | S6B | Swarm A/B/C | COSMIC-2 | GRACE-FO）\n";
+        std::cerr << I18n::tr("cli.fetch.bad_sat", src.get("fetch", "sat")) << "\n";
         return 2;
     }
 
@@ -389,18 +392,20 @@ int main(const int argc, char **argv) {
             const auto prog = [&site](const double total, const double now) {
                 const float fr = Download::Http::fracOf(total, now);
                 if (fr >= 0.0f)
-                    std::cout << "\r  正在获取 " << site << " 的 SINEX  "
+                    std::cout << "\r  " << I18n::tr("cli.fetch.fetching_sinex", site) << "  "
                             << static_cast<int>(fr * 100.0f) << "%" << std::flush;
             };
             const bool ok = Download::Catalog::ensureSiteTruth(site, year, doy, v, cached, detail, prog);
             std::cout << "\r";
             if (ok) {
-                std::cout << "  " << site << " " << year << "-" << doy << " 坐标 ("
-                          << v[0] << ", " << v[1] << ", " << v[2] << ")"
-                          << (cached ? "（本地缓存）" : "") << "  " << detail << "\n";
+                std::ostringstream xyz;
+                xyz << v[0] << ", " << v[1] << ", " << v[2];
+                std::cout << "  " << I18n::tr("cli.fetch.site_ok", site, year, doy, xyz.str(),
+                                              cached ? I18n::tr("cli.fetch.cached") : std::string(),
+                                              detail) << "\n";
                 ++okTotal;
             } else {
-                std::cout << "  " << site << " " << year << "-" << doy << "：" << detail << "\n";
+                std::cout << "  " << I18n::tr("cli.fetch.site_failed", site, year, doy, detail) << "\n";
             }
         }
     }
@@ -410,13 +415,13 @@ int main(const int argc, char **argv) {
     const int limit = src.getInt("fetch", "count_limit", 1);
     const auto types = splitList(src.get("fetch", "type"));
     if (types.empty() && src.get("fetch", "site").empty()) {
-        std::cerr << "没有给出要下的类型（[fetch] type 或 --type，如 sp3 / obs / leo_sp3）\n";
+        std::cerr << I18n::tr("cli.fetch.no_type") << "\n";
         return 2;
     }
     for (const auto &t: types) {
         const ProductType pt = parseType(t);
         if (pt == ProductType::Unknown) {
-            std::cerr << "类型 " << t << " 不认识（nav sp3 clk erp ionex tro osb vmf att obs leo_obs leo_sp3 snx）\n";
+            std::cerr << I18n::tr("cli.fetch.bad_type", t) << "\n";
             return 2;
         }
         for (const auto &[year, doy]: dates)
@@ -424,7 +429,7 @@ int main(const int argc, char **argv) {
     }
 
     for (const auto &k: src.unusedKeys())
-        std::cerr << "警告: --" << k << " 没有被读取（拼写错误，或本次用不到）\n";
-    std::cout << "完成，成功 " << okTotal << " 项\n";
+        std::cerr << I18n::tr("cli.args.unused_fetch", k) << "\n";
+    std::cout << I18n::tr("cli.fetch.summary", okTotal) << "\n";
     return okTotal > 0 ? 0 : 1;
 }

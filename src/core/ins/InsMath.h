@@ -22,7 +22,7 @@ inline DCM triad(const Eigen::Vector3d &vb1, const Eigen::Vector3d &vb2,
                  const Eigen::Vector3d &vn1, const Eigen::Vector3d &vn2) {
     auto basis = [](const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
         if (a.norm() < 1e-12 || b.norm() < 1e-12)
-            throw GeometryException("triad: 双矢量退化（站点参数未填或实测矢量为零）");
+            throw GeometryException("triad: degenerate vector pair (site params unfilled or measured vector is zero)");
         const Eigen::Vector3d r1 = a.normalized();
         Eigen::Vector3d r2 = b - b.dot(r1) * r1;
         r2.normalize();
@@ -38,7 +38,7 @@ inline DCM triad(const Eigen::Vector3d &vb1, const Eigen::Vector3d &vb2,
 
 inline DCM alignDCM(const Eigen::Vector3d &gB, const Eigen::Vector3d &wB, const SiteParams &sp) {
     if (!std::isfinite(sp.latDeg) || std::fabs(sp.latDeg) > 90.0)
-        throw GeometryException("alignDCM: SiteParams.latDeg 应在 [-90, 90]（当地纬度）");
+        throw GeometryException("alignDCM: SiteParams.latDeg must lie in [-90, 90] (local latitude)");
     return triad(gB, wB, navGravityDir(), navEarthRate(sp.latDeg));
 }
 

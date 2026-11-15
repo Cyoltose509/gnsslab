@@ -12,6 +12,7 @@
 #include "implot.h"
 #include "ui/DragBar.h"
 #include "ui/GuiColors.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Charts {
     namespace {
@@ -24,22 +25,19 @@ namespace Solvers::Charts {
             if (v.filterDirectionText.empty()) return;
             ImGui::TextDisabled("%s", v.filterDirectionText.c_str());
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("滤波方向在参数页选择；解算结果、图表与 CSV 都用这一档的解。\n后向先扫完整份文件再从末尾倒序滤波，融合再跑一遍前向并按协方差加权。");
+                ImGui::SetTooltip(I18n::trc("pos.filter_tip"));
         }
 
         void renderStatusAndEpochNav(const PosTabView &v) {
             if (!v.statusText.empty())
                 ImGui::TextColored(v.statusColor, "%s", v.statusText.c_str());
             else if (v.epochCount > 0)
-                ImGui::TextColored(UI::kColPass, "处理完成: 共 %d 个历元", v.epochCount);
+                ImGui::TextColored(UI::kColPass, I18n::trc("pos.done_epochs"), v.epochCount);
 
             if (v.selectedEpoch && v.epochCount > 0) {
-                char tail[128] = {};
-                if (v.showFixRate)
-                    std::snprintf(tail, sizeof tail, "%s", v.fixRateText.c_str());
                 Helpers::renderEpochNav(*v.selectedEpoch, v.epochCount,
                                         v.epochInfo.empty() ? nullptr : v.epochInfo.c_str(),
-                                        v.showFixRate ? tail : nullptr);
+                                        v.showFixRate ? v.fixRateText.c_str() : nullptr);
             }
         }
 
@@ -62,7 +60,7 @@ namespace Solvers::Charts {
 
         void renderRefECEFInput(const PosTabView &v) {
             if (v.refECEF && v.showRefEnu) {
-                ImGui::Text("参考真值:");
+                ImGui::Text(I18n::trc("pos.ref_truth"));
                 ImGui::SameLine();
                 ImGui::PushItemWidth(200);
                 bool changed = false;
@@ -79,7 +77,7 @@ namespace Solvers::Charts {
                     changed = true;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("取均值")) {
+                if (ImGui::Button(I18n::trc("pos.average"))) {
                     if (const auto mean = meanSolvedENU(v)) {
                         *v.refECEF = Coord::ENUToXYZ(*mean, *v.refECEF);
                         if (v.onRefChanged) v.onRefChanged();
@@ -96,14 +94,14 @@ namespace Solvers::Charts {
             if (v.showObsDetail && v.selectedSatIdx && *v.selectedSatIdx >= 0 &&
                 *v.selectedSatIdx < static_cast<int>(v.satRows.size())) {
                 const int si = *v.selectedSatIdx;
-                ImGui::SeparatorText(("观测详情 (" + v.satRows[si].sat.toString() + ")").c_str());
+                ImGui::SeparatorText((I18n::trc("pos.obs_detail") + v.satRows[si].sat.toString() + ")").c_str());
                 if (ImGui::BeginTable(
                     "##od", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                    ImGui::TableSetupColumn("频", ImGuiTableColumnFlags_WidthFixed, 60);
-                    ImGui::TableSetupColumn("伪距(m)");
-                    ImGui::TableSetupColumn("载波(cyc)");
+                    ImGui::TableSetupColumn(I18n::trc("pos.col.freq"), ImGuiTableColumnFlags_WidthFixed, 60);
+                    ImGui::TableSetupColumn(I18n::trc("pos.col.code_m"));
+                    ImGui::TableSetupColumn(I18n::trc("pos.col.phase_cyc"));
                     ImGui::TableSetupColumn("Doppler(Hz)");
-                    ImGui::TableSetupColumn("强度", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn(I18n::trc("pos.col.strength"), ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
                     std::set<std::string> freqs;
                     for (auto &[t, vv]: v.detailObs) if (t.size() > 1) freqs.insert(t.substr(1));
@@ -181,7 +179,7 @@ namespace Solvers::Charts {
         }
 
         void renderPosTables(const PosTabView &v) {
-            ImGui::SeparatorText("坐标 / 速度");
+            ImGui::SeparatorText(I18n::trc("pos.section.coord_vel"));
 
             // 分量列 Stretch 吸收剩余宽度：表格始终铺满容器（右侧不留白），也不会围出空列；
             // 其余列按内容自适应（换字体/DPI 不裁字）。
@@ -189,13 +187,13 @@ namespace Solvers::Charts {
             const float wFmt = ImGui::CalcTextSize("XYZ").x + ImGui::GetFrameHeight() + pad;
             if (ImGui::BeginTable("##coord", 7, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders
                                                  | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("数据");
-                ImGui::TableSetupColumn("分量1", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("分量2", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("分量3", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("长度/m");
+                ImGui::TableSetupColumn(I18n::trc("common.data"));
+                ImGui::TableSetupColumn(I18n::trc("pos.col.comp1"), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(I18n::trc("pos.col.comp2"), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(I18n::trc("pos.col.comp3"), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(I18n::trc("pos.col.length_m"));
                 ImGui::TableSetupColumn("σ/m");
-                ImGui::TableSetupColumn("格式", ImGuiTableColumnFlags_WidthFixed, wFmt);
+                ImGui::TableSetupColumn(I18n::trc("pos.col.format"), ImGuiTableColumnFlags_WidthFixed, wFmt);
                 ImGui::TableHeadersRow();
                 auto row = [&](const char *label, const Eigen::Vector3d &p, int &sel, const RowKind kind,
                                const char *const *opts, const int nOpts, const Eigen::Vector3d &anchor,
@@ -226,46 +224,46 @@ namespace Solvers::Charts {
                 const Eigen::Vector3d anchor =
                         v.xyzFloatDisp.squaredNorm() > 1.0e12 ? v.xyzFloatDisp : v.xyzFixedDisp;
                 std::snprintf(b1, sizeof b1, "%.3f", v.sigmaFloatDisp);
-                row("坐标-float", v.xyzFloatDisp, g_dispFmt.coordFloat, RowKind::Coord,
+                row(I18n::trc("pos.row.coord_float"), v.xyzFloatDisp, g_dispFmt.coordFloat, RowKind::Coord,
                     kFmtCoord, 2, anchor, "", b1);
                 if (v.hasFixed) {
                     std::snprintf(b1, sizeof b1, "%.3f", v.sigmaFixedDisp);
-                    row("坐标-fixed", v.xyzFixedDisp, g_dispFmt.coordFixed, RowKind::Coord,
+                    row(I18n::trc("pos.row.coord_fixed"), v.xyzFixedDisp, g_dispFmt.coordFixed, RowKind::Coord,
                         kFmtCoord, 2, anchor, "", b1);
                 }
                 if (v.hasBaseline) {
                     std::snprintf(b1, sizeof b1, "%.4f", v.baseFloatDisp.norm());
-                    row("基线-float", v.baseFloatDisp, g_dispFmt.baseFloat, RowKind::Baseline,
+                    row(I18n::trc("pos.row.base_float"), v.baseFloatDisp, g_dispFmt.baseFloat, RowKind::Baseline,
                         kFmtBase, 2, v.refDisp, b1, "");
                     if (v.hasFixed) {
                         std::snprintf(b1, sizeof b1, "%.4f", v.baseFixedDisp.norm());
-                        row("基线-fixed", v.baseFixedDisp, g_dispFmt.baseFixed, RowKind::Baseline,
+                        row(I18n::trc("pos.row.base_fixed"), v.baseFixedDisp, g_dispFmt.baseFixed, RowKind::Baseline,
                             kFmtBase, 2, v.refDisp, b1, "");
                     }
                 }
                 const bool velValid = v.velDisp.squaredNorm() > 1e-12;
                 std::snprintf(b1, sizeof b1, "%.4f", v.velDisp.norm());
                 std::snprintf(b2, sizeof b2, "%.3f", v.sigmaVDisp);
-                row("速度", v.velDisp, g_dispFmt.vel, RowKind::Velocity, kFmtVel, 2, anchor,
+                row(I18n::trc("Velocity"), v.velDisp, g_dispFmt.vel, RowKind::Velocity, kFmtVel, 2, anchor,
                     velValid ? b1 : "", velValid && v.sigmaVDisp > 0.0 ? b2 : "");
                 ImGui::EndTable();
             }
 
 
             if (v.showRefTable) {
-                ImGui::SeparatorText("参考");
+                ImGui::SeparatorText(I18n::trc("common.reference"));
                 if (ImGui::BeginTable("##ref", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders
                                                    | ImGuiTableFlags_RowBg)) {
-                    ImGui::TableSetupColumn("数据");
+                    ImGui::TableSetupColumn(I18n::trc("common.data"));
                     if (v.isLeoRtn) {
                         ImGui::TableSetupColumn("R/m", ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableSetupColumn("T/m", ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableSetupColumn("N/m", ImGuiTableColumnFlags_WidthStretch);
                     } else {
                         // 行里既有 XYZ 也有 ENU，表头只写「分量」，单位落到格子里。
-                        ImGui::TableSetupColumn("分量1", ImGuiTableColumnFlags_WidthStretch);
-                        ImGui::TableSetupColumn("分量2", ImGuiTableColumnFlags_WidthStretch);
-                        ImGui::TableSetupColumn("分量3", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn(I18n::trc("pos.col.comp1"), ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn(I18n::trc("pos.col.comp2"), ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn(I18n::trc("pos.col.comp3"), ImGuiTableColumnFlags_WidthStretch);
                     }
                     ImGui::TableSetupColumn("RMS/m");
                     ImGui::TableHeadersRow();
@@ -283,10 +281,10 @@ namespace Solvers::Charts {
                         ImGui::Text("%.4fm", rms);
                     };
                     if (v.isLeoRtn) {
-                        rrow("参考", v.refDisp, v.rtn3dDisp);
+                        rrow(I18n::trc("common.reference"), v.refDisp, v.rtn3dDisp);
                         rrow("RTN", v.rtnDisp, v.rtn3dDisp);
                     } else {
-                        rrow("参考", v.refDisp, v.abs3dDisp);
+                        rrow(I18n::trc("common.reference"), v.refDisp, v.abs3dDisp);
                         if (v.hasFixed) {
                             rrow("ENU-fixed", v.enuFixedDisp, v.enuFixed3d);
                             rrow("ENU-float", v.enuFloatDisp, v.enuFloat3d);
@@ -300,7 +298,7 @@ namespace Solvers::Charts {
 
 
             {
-                ImGui::SeparatorText("其他");
+                ImGui::SeparatorText(I18n::trc("pos.section.other"));
                 if (const int nC = v.isRtk ? 5 : 6;
                     ImGui::BeginTable("##dop", nC, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                     // 值都短，均匀铺满一行即可。
@@ -309,7 +307,7 @@ namespace Solvers::Charts {
                     ImGui::TableSetupColumn("HDOP", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableSetupColumn("VDOP", ImGuiTableColumnFlags_WidthStretch);
                     if (!v.isRtk) ImGui::TableSetupColumn("TDOP", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("卫星数", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn(I18n::trc("SatelliteCount"), ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
 
                     ImGui::TableNextRow();
@@ -330,19 +328,19 @@ namespace Solvers::Charts {
 
                 // 解状态/ratio 放同一张表里会塞进 PDOP 那格，文字直接溢出到相邻列。
                 if (v.showSolveStatus) {
-                    const float wKey = ImGui::CalcTextSize("ratio值").x + pad;
+                    const float wKey = ImGui::CalcTextSize(I18n::trc("pos.ratio_value")).x + pad;
                     if (ImGui::BeginTable("##solstat", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders
                                                          | ImGuiTableFlags_RowBg)) {
-                        ImGui::TableSetupColumn("项", ImGuiTableColumnFlags_WidthFixed, wKey);
-                        ImGui::TableSetupColumn("值", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn(I18n::trc("pos.col.item"), ImGuiTableColumnFlags_WidthFixed, wKey);
+                        ImGui::TableSetupColumn(I18n::trc("common.value"), ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted("解状态");
+                        ImGui::TextUnformatted(I18n::trc("common.solution_state"));
                         ImGui::TableSetColumnIndex(1);
                         ImGui::TextColored(v.solveStatusColor, "%s", v.solStatShort.c_str());
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted("ratio值");
+                        ImGui::TextUnformatted(I18n::trc("pos.ratio_value"));
                         ImGui::TableSetColumnIndex(1);
                         ImGui::Text("%.2f", v.solRatio);
                         ImGui::EndTable();
@@ -361,7 +359,7 @@ namespace Solvers::Charts {
 
             ImGui::TableSetColumnIndex(0);
             if (ImGui::BeginChild("##sat")) {
-                sectionHeader("卫星概览");
+                sectionHeader(I18n::trc("pos.section.sat_overview"));
                 if (v.hasSatRows && v.selectedSatIdx) renderSatelliteTable(v.satRows, *v.selectedSatIdx);
                 renderObsDetailTable(v);
             }
@@ -369,7 +367,7 @@ namespace Solvers::Charts {
 
             ImGui::TableSetColumnIndex(1);
             if (ImGui::BeginChild("##res")) {
-                sectionHeader("解算结果");
+                sectionHeader(I18n::trc("pos.section.result"));
                 constexpr float btnH = 40.0f;
                 const float foot = v.onExport ? btnH + ImGui::GetStyle().ItemSpacing.y : 0.0f;
                 if (v.solved) {
@@ -380,7 +378,7 @@ namespace Solvers::Charts {
                     ImGui::EndChild();
                 } else {
                     ImGui::TextColored(UI::kColFail, "%s",
-                                       v.noSolveMsg.empty() ? "无定位解" : v.noSolveMsg.c_str());
+                                       v.noSolveMsg.empty() ? I18n::trc("solver.no_solution") : v.noSolveMsg.c_str());
                     // 本历元无解也留着导出入口：别的历元可能解出来了，或者要留一份「全排除」的记录。
                     if (v.onExport) {
                         const float gap = ImGui::GetContentRegionAvail().y - foot;
@@ -390,7 +388,7 @@ namespace Solvers::Charts {
                 if (v.onExport) {
                     const bool canExport = v.epochCount > 0;
                     if (!canExport) ImGui::BeginDisabled();
-                    if (ImGui::Button("导出…", ImVec2(-FLT_MIN, btnH))) v.onExport();
+                    if (ImGui::Button(I18n::trc("common.export"), ImVec2(-FLT_MIN, btnH))) v.onExport();
                     if (!canExport) ImGui::EndDisabled();
                 }
             }
@@ -412,7 +410,7 @@ namespace Solvers::Charts {
                 ImGui::EndChild();
                 return;
             }
-            if (ImPlot::BeginPlot(v.enPlanTrack ? "E-N 轨迹图" : "E-N 平面图", ImVec2(-1, -1),
+            if (ImPlot::BeginPlot(v.enPlanTrack ? I18n::trc("pos.plot.en_track") : I18n::trc("pos.plot.en_plane"), ImVec2(-1, -1),
                                   ImPlotFlags_NoLegend | ImPlotFlags_NoBoxSelect)) {
                 const int m = static_cast<int>(xe.size());
                 const double r = v.s.planR;
@@ -424,7 +422,7 @@ namespace Solvers::Charts {
                     ImPlotSpec ls;
                     ls.LineColor = ImVec4(0.5f, 0.7f, 0.9f, 0.35f);
                     ls.LineWeight = 1.0f;
-                    ImPlot::PlotLine("轨迹", xe.data(), xn.data(), m, ls);
+                    ImPlot::PlotLine(I18n::trc("Trajectory"), xe.data(), xn.data(), m, ls);
                 }
 
                 if (m > 0) {
@@ -432,7 +430,7 @@ namespace Solvers::Charts {
                     ps.Marker = ImPlotMarker_Circle;
                     ps.MarkerSize = 2.5f;
                     ps.LineColor = ImVec4(0.2f, 0.9f, 0.4f, 0.9f);
-                    ImPlot::PlotScatter("解算轨迹", xe.data(), xn.data(), m, ps);
+                    ImPlot::PlotScatter(I18n::trc("pos.legend.solved_track"), xe.data(), xn.data(), m, ps);
                 }
 
                 // 当前历元（时间游标所指）高亮：蓝色大点，叠加在轨迹之上，便于实时/回放时一眼定位。
@@ -499,7 +497,7 @@ namespace Solvers::Charts {
         void renderEnuConvergence(const PosTabView &v) {
             if (v.epochCount > 0 && !v.s.axis.kept.empty() && !v.show3d &&
                 !v.p.enu_e.empty() && !v.p.enu_n.empty() && !v.p.enu_u.empty()) {
-                sectionHeader(v.enPlanTrack ? "ENU 误差序列 / E-N 轨迹图" : "ENU 收敛轨迹 / E-N 平面图");
+                sectionHeader(v.enPlanTrack ? I18n::trc("pos.section.enu_error") : I18n::trc("pos.section.enu_converge"));
 
                 const ImGuiStyle &style = ImGui::GetStyle();
                 const float defH = std::clamp(ImGui::GetContentRegionAvail().y - style.ItemSpacing.y,
@@ -558,7 +556,7 @@ namespace Solvers::Charts {
 
                 ImGui::TableSetColumnIndex(0);
                 if (ImGui::BeginChild("##leftpanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                    sectionHeader("天顶图");
+                    sectionHeader(I18n::trc("pos.section.skyplot"));
                     float fillH = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
                     if (fillH < 120.0f) fillH = 120.0f;
                     if (v.show3d)
@@ -571,7 +569,7 @@ namespace Solvers::Charts {
                 if (v.s.hasResidual) {
                     ImGui::TableSetColumnIndex(1);
                     if (ImGui::BeginChild("##respanel", ImVec2(0, rowH), ImGuiChildFlags_FrameStyle)) {
-                        sectionHeader(v.resMode && *v.resMode == 1 ? "相位残差序列" : "伪距残差序列");
+                        sectionHeader(v.resMode && *v.resMode == 1 ? I18n::trc("pos.section.phase_residual") : I18n::trc("pos.section.code_residual"));
                         const double ylo = v.s.hasResRange ? v.s.resYlo : -8.0;
                         const double yhi = v.s.hasResRange ? v.s.resYhi : 8.0;
                         const double plo = v.s.hasResPhaseRange ? v.s.resPhaseYlo : -0.5;
@@ -620,7 +618,7 @@ namespace Solvers::Charts {
         void renderSigmaDopRow(const PosTabView &v) {
 
             if (v.showSigmaDop && v.epochCount > 0 && !v.s.axis.kept.empty()) {
-                sectionHeader("σ / 精度 (P·V·DOP)");
+                sectionHeader(I18n::trc("pos.section.sigma"));
                 const bool newed = v.s.newed;
                 float &ph = UI::dragHeight("spp_sigma_row", 350.0f);
 
@@ -658,20 +656,16 @@ namespace Solvers::Charts {
                                 const int nSigma = static_cast<int>(br.t.size());
                                 const std::vector<double> yy = br.align(*cols[k].data);
                                 xAxisFollow(br.t, newed);
-                                if (nSigma > 0) {
-                                    ImPlot::PlotLine(cols[k].name, br.t.data(), yy.data(), nSigma);
-                                    if (sigPWithFloat) {
-                                        const std::vector<double> ff = br.align(v.p.sigmaPFloatVals);
-                                        ImPlotSpec fspec;
-                                        fspec.LineColor = UI::kColFloat;
-                                        fspec.LineWeight = 1.0f;
-                                        ImPlot::PlotLine("SigmaP(浮点)", br.t.data(), ff.data(), nSigma, fspec);
-                                    }
+                                ImPlot::PlotLine(cols[k].name, br.t.data(), yy.data(), nSigma);
+                                if (sigPWithFloat) {
+                                    const std::vector<double> ff = br.align(v.p.sigmaPFloatVals);
+                                    ImPlotSpec fspec;
+                                    fspec.LineColor = UI::kColFloat;
+                                    fspec.LineWeight = 1.0f;
+                                    ImPlot::PlotLine(I18n::trc("pos.legend.sigma_p_float"), br.t.data(), ff.data(), nSigma, fspec);
                                 }
-                                if (nSigma > 0) {
-                                    solveCursor(v.solvingEpoch);
-                                    epochCursor(3, v.selectedEpoch, v.epochCount);
-                                }
+                                solveCursor(v.solvingEpoch);
+                                epochCursor(3, v.selectedEpoch, v.epochCount);
                                 ImPlot::EndPlot();
                             }
                         }
@@ -685,10 +679,10 @@ namespace Solvers::Charts {
         // LEO 专用：相对参考轨道的 R/T/N/3D 偏差轨迹
         void renderRtnDeviation(const PosTabView &v) {
             if (!v.showRtn || v.rtnTimes.empty()) return;
-            sectionHeader("R/T/N/3D 偏差");
+            sectionHeader(I18n::trc("pos.section.rtn"));
             float &ph = UI::dragHeight("spp_rtn_row", 380.0f);
-            if (ImPlot::BeginPlot("R/T/N/3D 偏差", ImVec2(-1, ph))) {
-                ImPlot::SetupAxes("Epoch", "偏差 (m)");
+            if (ImPlot::BeginPlot(I18n::trc("pos.section.rtn"), ImVec2(-1, ph))) {
+                ImPlot::SetupAxes("Epoch", I18n::trc("pos.axis.deviation_m"));
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 BrokenAxis br;
                 br.build(v.rtnTimes);
@@ -720,7 +714,7 @@ namespace Solvers::Charts {
 
         if (v.epochCount == 0) {
             if (!v.busy)
-                ImGui::TextDisabled("无解算历元。");
+                ImGui::TextDisabled(I18n::trc("pos.no_epochs"));
             return;
         }
 

@@ -1,6 +1,9 @@
 #include "download/local/Store.h"
 
 #include "CSV.h"
+#include "FileUtils.h"
+#include "download/local/FileMeta.h"
+#include "i18n/I18n.h"
 #include "Log.h"
 #include "StringUtils.h"
 #include "download/local/Unpack.h"
@@ -46,7 +49,7 @@ namespace Download::Store {
                 if (ent.path() == fs::path(keepPath)) continue;
                 std::error_code e2;
                 fs::remove_all(ent.path(), e2);
-                if (e2) LOG_WARN << "[产品] 清理旧版本残留失败 " << n << ": " << e2.message();
+                if (e2) LOG_WARN << "[PROD] " << I18n::tr("dl.prod.drop_stale_failed", n, e2.message());
             }
         }
 
@@ -121,6 +124,53 @@ namespace Download::Store {
                 dir = dir.parent_path();
             }
         }
+
+        std::string centerOf(const std::string &name) {
+            std::string c = Str::toUpper(Str::leadingAlpha(name));
+            return c.size() > 3 ? c.substr(0, 3) : c;
+        }
+
+        std::string latencyOf(const std::string &name) {
+            if (const auto us = name.find('_'); us != std::string::npos && us >= 3) {
+                if (const std::string t = Str::toUpper(name.substr(us - 3, 3));
+                    t == "FIN" || t == "RAP" || t == "ULT")
+                    return t;
+            }
+            const std::string p = Str::toLower(name.substr(0, 3));
+            if (p == "igs") return "FIN";
+            if (p == "igr") return "RAP";
+            if (p == "igu") return "ULT";
+            return {};
+        }
+
+        int latencyScore(const std::string &lat) {
+            if (lat == "FIN") return 3;
+            if (lat == "RAP") return 2;
+            if (lat == "ULT") return 1;
+            return 2;
+        }
+
+        int centerScore(const std::string &c) {
+            if (c == "COD") return 6;
+            if (c == "IGS") return 5;
+            if (c == "GFZ") return 4;
+            if (c == "GRG" || c == "WUM") return 3;
+            if (c == "ESA" || c == "JPL") return 2;
+            return 1;
+        }
+
+        void fill(Candidate &c, const std::string &name, const std::string &path, const FileMeta &meta) {
+            c.path = path;
+            c.name = name;
+            c.center = centerOf(name);
+            c.latency = latencyOf(name);
+            c.slot = meta.slot;
+
+            c.groupKey = c.center + "|" + c.latency + "|" + meta.interval + "|" +
+                         (c.slot.empty() ? meta.ext : std::string());
+            c.score = latencyScore(c.latency) * 100 + centerScore(c.center) * 10 +
+                      (meta.spanDays == 1 ? 1 : 0);
+        }
     }
 
     std::string downloadRoot() {
@@ -137,7 +187,7 @@ namespace Download::Store {
         std::error_code ec;
         fs::create_directories(fs::path(path).parent_path(), ec);
         if (ec) {
-            LOG_WARN << "[下载] 建索引目录失败 " << path << ": " << ec.message();
+            LOG_WARN << "[DL] " << I18n::tr("dl.store.mk_index_dir_failed", path, ec.message());
             return;
         }
         const std::string tmp = path + ".tmp";
@@ -148,11 +198,11 @@ namespace Download::Store {
             if (!f) return;
         }
         fs::rename(tmp, path, ec);
-        if (ec) LOG_WARN << "[下载] 写索引失败 " << path << ": " << ec.message();
+        if (ec) LOG_WARN << "[DL] " << I18n::tr("dl.store.write_index_failed", path, ec.message());
     }
 
     std::string dateDir(const ProductType t, const int year, const int doy) {
-        return downloadRoot() + "/" + ProductMeta::typeDir(t) + "/" +
+        return downloadRoot() + "/" + typeDir(t) + "/" +
                std::to_string(year) + "/" + std::to_string(doy) + "/";
     }
 
@@ -265,9 +315,9 @@ namespace Download::Store {
     int reclaimLegacyArchives() {
         int removed = 0;
         std::error_code ec;
-        for (int i = 0; i < kStoredTypeCount; ++i) {
+        for (int i = 0; i < kDateTypeCount; ++i) {
             const auto t = static_cast<ProductType>(i);
-            const fs::path root = fs::path(downloadRoot()) / ProductMeta::typeDir(t);
+            const fs::path root = fs::path(downloadRoot()) / typeDir(t);
             for (const auto &y: fs::directory_iterator(root, ec)) {
                 if (!y.is_directory(ec) || ec) continue;
                 for (const auto &d: fs::directory_iterator(y.path(), ec)) {
@@ -285,13 +335,13 @@ namespace Download::Store {
                         fs::remove(f.path(), fec);
                         if (fec) continue;
                         ++removed;
-                        LOG_INFO << "[下载] 清理旧归档 " << f.path().generic_string() << "（内容已在 "
-                                << expanded.filename().string() << "/ 里）";
+                        LOG_INFO << "[DL] " << I18n::tr("dl.store.drop_old_archive",
+                                f.path().generic_string(), expanded.filename().string());
                     }
                 }
             }
         }
-        if (removed > 0) LOG_INFO << "[下载] 旧归档共清理 " << removed << " 个";
+        if (removed > 0) LOG_INFO << "[DL] " << I18n::tr("dl.store.old_archive_count", removed);
         return removed;
     }
 
@@ -326,9 +376,9 @@ namespace Download::Store {
             out.push_back(std::move(e));
         };
 
-        for (int i = 0; i < kStoredTypeCount; ++i) {
+        for (int i = 0; i < kDateTypeCount; ++i) {
             const auto t = static_cast<ProductType>(i);
-            const fs::path root = fs::path(downloadRoot()) / ProductMeta::typeDir(t);
+            const fs::path root = fs::path(downloadRoot()) / typeDir(t);
             ec.clear();
             const fs::directory_iterator years(root, ec);
             if (ec) continue;
@@ -352,7 +402,8 @@ namespace Download::Store {
                                 std::error_code fec;
                                 if (!m.is_regular_file(fec) || fec) continue;
                                 const auto size = m.file_size(fec);
-                                push(m.path(), m.path().filename().string(), typeLabel(t), stamp, false,
+                                push(m.path(), m.path().filename().string(), typeKey(t), stamp,
+                                     false,
                                      fec ? 0 : static_cast<long long>(size));
                             }
                             continue;
@@ -363,7 +414,7 @@ namespace Download::Store {
                         if (fs::is_directory(d.path() / Unpack::stemName(name), dirEc)) continue;
 
                         const auto size = f.file_size(ec);
-                        push(f.path(), name, typeLabel(t), stamp, false,
+                        push(f.path(), name, typeKey(t), stamp, false,
                              ec ? 0 : static_cast<long long>(size));
                     }
                 }
@@ -405,7 +456,7 @@ namespace Download::Store {
 
             if (std::error_code ecChk; fs::exists(p, ecChk)) {
                 ++res.failed;
-                LOG_WARN << "[下载] 彻底删除失败(文件被占用?): " << p;
+                LOG_WARN << "[DL] " << I18n::tr("dl.store.purge_busy", p);
                 continue;
             }
             ++res.removed;
@@ -413,8 +464,7 @@ namespace Download::Store {
             pruneEmptyParents(fs::path(p));
         }
 
-        LOG_INFO << "[下载] 彻底删除 " << res.removed << " 个本地文件，失败 " << res.failed
-                << " 个，释放 " << res.bytes << " 字节";
+        LOG_INFO << "[DL] " << I18n::tr("dl.store.purge_done", res.removed, res.failed, res.bytes);
         return res;
     }
 
@@ -443,7 +493,7 @@ namespace Download::Store {
         std::error_code ec;
         fs::create_directories(productDir(id), ec);
         if (ec) {
-            LOG_ERROR << "[产品] 建目录失败 " << productDir(id) << ": " << ec.message();
+            LOG_ERROR << "[PROD] " << I18n::tr("dl.mkdir_failed", productDir(id), ec.message());
             return false;
         }
         return true;
@@ -463,7 +513,7 @@ namespace Download::Store {
             if (!keepName.empty() && (n == keep1 || n == keep2)) continue;
             std::error_code e2;
             fs::remove(ent.path(), e2);
-            if (e2) LOG_WARN << "[产品] 清理暂存件失败 " << n << ": " << e2.message();
+            if (e2) LOG_WARN << "[PROD] " << I18n::tr("dl.prod.drop_tmp_failed", n, e2.message());
         }
     }
 
@@ -474,7 +524,7 @@ namespace Download::Store {
         const std::string dstDir = productDir(id);
         fs::create_directories(dstDir, ec);
         if (ec) {
-            LOG_ERROR << "[产品] 建目录失败 " << dstDir << ": " << ec.message();
+            LOG_ERROR << "[PROD] " << I18n::tr("dl.mkdir_failed", dstDir, ec.message());
             return false;
         }
 
@@ -483,7 +533,7 @@ namespace Download::Store {
         if (const bool same = fs::equivalent(srcPath, dst, eqEc) && !eqEc; !same) {
             fs::copy_file(srcPath, dst, fs::copy_options::overwrite_existing, ec);
             if (ec) {
-                LOG_ERROR << "[产品] 安装失败 " << dst << ": " << ec.message();
+                LOG_ERROR << "[PROD] " << I18n::tr("dl.prod.install_failed", dst, ec.message());
                 return false;
             }
             if (removeSource) fs::remove(srcPath, ec);
@@ -507,8 +557,39 @@ namespace Download::Store {
 
         dropStale(id, dst);
 
-        LOG_INFO << "[产品] 已安装 " << id << " 版本 " << version << " → " << dst
-                << " (" << p.size << " 字节)";
+        LOG_INFO << "[PROD] " << I18n::tr("dl.prod.installed", id, version, dst, p.size);
         return true;
+    }
+
+    std::vector<Candidate> rank(const std::vector<std::string> &paths, const ProductType t) {
+        std::vector<Candidate> out;
+        for (const auto &path: paths) {
+            const auto meta = FileMeta::parse(File::baseName(path));
+            if (!meta || meta->type != t) continue;
+            Candidate c;
+            fill(c, File::baseName(path), path, *meta);
+            out.push_back(std::move(c));
+        }
+        std::sort(out.begin(), out.end(), [](const Candidate &a, const Candidate &b) {
+            if (a.score != b.score) return a.score > b.score;
+            if (a.slot != b.slot) return a.slot < b.slot;
+            return a.name < b.name;
+        });
+        return out;
+    }
+
+    std::string bestPath(const std::vector<std::string> &paths, const ProductType t) {
+        const std::vector<Candidate> ranked = rank(paths, t);
+        if (!ranked.empty()) return ranked.front().path;
+        return paths.empty() ? std::string() : paths.front();
+    }
+
+    std::vector<std::string> bestPaths(const std::vector<std::string> &paths, const ProductType t) {
+        const std::vector<Candidate> ranked = rank(paths, t);
+        if (ranked.empty()) return paths;
+        std::vector<std::string> out;
+        out.reserve(ranked.size());
+        for (const auto &c: ranked) out.push_back(c.path);
+        return out;
     }
 }

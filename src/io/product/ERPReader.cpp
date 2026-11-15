@@ -1,6 +1,6 @@
 #include "product/ERPReader.h"
 #include "core/Const.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "MathUtils.h"
 
 #include <algorithm>

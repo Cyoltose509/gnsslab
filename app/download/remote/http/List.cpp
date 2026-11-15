@@ -1,5 +1,6 @@
 #include "download/remote/http/Core.h"
 #include "download/remote/http/Internal.h"
+#include "i18n/I18n.h"
 
 #include "StringUtils.h"
 
@@ -132,7 +133,7 @@ namespace {
                         err.clear();
                         break;
                     }
-                    err = "swarm-diss 列表 JSON 解析失败";
+                    err = I18n::tr("dl.http.swarm_json_failed");
                     return !outNames.empty();
                 }
                 err = !r.err.empty() ? r.err : "HTTP " + std::to_string(r.http);
@@ -202,10 +203,10 @@ namespace Download::Http {
         try {
             parseList(r.text, outNames, fullUrls);
         } catch (const std::exception &e) {
-            err = std::string("解析目录失败: ") + e.what();
+            err = I18n::tr("dl.http.parse_list_failed", e.what());
             return false;
         } catch (...) {
-            err = "解析目录失败";
+            err = I18n::tr("dl.http.parse_list_failed_unknown");
             return false;
         }
         return true;

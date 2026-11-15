@@ -6,7 +6,8 @@
 #include "core/geom/CoordConvert.h"
 #include "Core.h"
 #include "solvers/common/Task.h"
-#include "TimeStruct.h"
+#include "i18n/I18n.h"
+#include "core/TimeStruct.h"
 #include "util/CSV.h"
 
 namespace Solvers::Export {
@@ -113,11 +114,13 @@ namespace Solvers::Export {
     }
 
     void writeORB(std::ostream &out, const Task &task, [[maybe_unused]] const Spec &spec, const std::vector<std::size_t> &idx) {
-        out << "% 轨道根数（瞬根数）：ECEF 位置按 GMST 转到惯性系后解算，"
-                "含近/远地点高度与周期\n";
+        out << I18n::trc("export.orb.head") << '\n';
         out << "% program   : gnssLab\n";
         CSV::Writer w(out);
-        w.row("Wk", "SOW", "a/m", "e", "i/deg", "RAAN/deg", "argp/deg", "M/deg", "hp/km", "ha/km", "T/s");
+        w.row(I18n::trc("export.col.wk"), I18n::trc("export.col.sow"), I18n::trc("export.col.sma"),
+              I18n::trc("export.col.ecc"), I18n::trc("export.col.inc"), I18n::trc("export.col.raan"),
+              I18n::trc("export.col.argp"), I18n::trc("export.col.ma"), I18n::trc("export.col.hp"),
+              I18n::trc("export.col.ha"), I18n::trc("export.col.period"));
         if (idx.size() >= 2) {
             std::vector<State> st(idx.size());
             Row row;

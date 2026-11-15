@@ -9,6 +9,7 @@
 #include "implot.h"
 #include "implot3d.h"
 #include "ui/GuiColors.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Charts {
     namespace {
@@ -45,7 +46,7 @@ namespace Solvers::Charts {
 
     void renderSatelliteTable(const std::vector<SatRow> &rows, int &selectedSatIdx) {
         if (rows.empty()) {
-            ImGui::TextDisabled("(无卫星)");
+            ImGui::TextDisabled(I18n::trc("chart.no_satellites"));
             return;
         }
         bool hasAzim = false, hasXYZ = false;
@@ -57,18 +58,18 @@ namespace Solvers::Charts {
         if (ImGui::BeginTable("##satTable", 2 + 1 + (hasAzim ? 1 : 0) + (hasXYZ ? 3 : 0) + 2 + 1,
                               ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
                               ImVec2(0, ImGui::GetContentRegionAvail().y * 0.8f))) {
-            ImGui::TableSetupColumn("序号", ImGuiTableColumnFlags_WidthFixed, 44);
-            ImGui::TableSetupColumn("卫星", ImGuiTableColumnFlags_WidthFixed, 56);
-            ImGui::TableSetupColumn("仰角(°)", ImGuiTableColumnFlags_WidthFixed, 80);
-            if (hasAzim) ImGui::TableSetupColumn("方位角(°)", ImGuiTableColumnFlags_WidthFixed, 80);
+            ImGui::TableSetupColumn(I18n::trc("chart.col.index"), ImGuiTableColumnFlags_WidthFixed, 44);
+            ImGui::TableSetupColumn(I18n::trc("Satellite"), ImGuiTableColumnFlags_WidthFixed, 56);
+            ImGui::TableSetupColumn(I18n::trc("chart.col.elev"), ImGuiTableColumnFlags_WidthFixed, 80);
+            if (hasAzim) ImGui::TableSetupColumn(I18n::trc("chart.col.azim"), ImGuiTableColumnFlags_WidthFixed, 80);
             if (hasXYZ) {
                 ImGui::TableSetupColumn("X(m)", ImGuiTableColumnFlags_WidthFixed, 90);
                 ImGui::TableSetupColumn("Y(m)", ImGuiTableColumnFlags_WidthFixed, 90);
                 ImGui::TableSetupColumn("Z(m)", ImGuiTableColumnFlags_WidthFixed, 90);
             }
-            ImGui::TableSetupColumn("伪距残差(m)", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("相位残差(m)", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("状态", ImGuiTableColumnFlags_WidthFixed, 56);
+            ImGui::TableSetupColumn(I18n::trc("chart.col.code_residual"), ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(I18n::trc("chart.col.phase_residual"), ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(I18n::trc("common.state"), ImGuiTableColumnFlags_WidthFixed, 56);
             ImGui::TableHeadersRow();
 
             for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -100,8 +101,8 @@ namespace Solvers::Charts {
                 ImGui::TableSetColumnIndex(c++);
                 ImGui::Text("%s", std::isfinite(r.phaseRes) ? Str::fmt4(r.phaseRes).c_str() : "-");
                 ImGui::TableSetColumnIndex(c++);
-                if (r.used) ImGui::TextColored(UI::kColPass, "参与");
-                else ImGui::TextColored(UI::kColFail, "排除");
+                if (r.used) ImGui::TextColored(UI::kColPass, I18n::trc("chart.used"));
+                else ImGui::TextColored(UI::kColFail, I18n::trc("chart.excluded"));
             }
             ImGui::EndTable();
         }
@@ -120,7 +121,7 @@ namespace Solvers::Charts {
                        const int epochCount,
                        const float plotH,
                        const int solvingEpoch) {
-        if (axis.kept.empty() || !ImPlot::BeginPlot("ENU 偏差", ImVec2(-1, plotH))) return;
+        if (axis.kept.empty() || !ImPlot::BeginPlot(I18n::trc("chart.plot.enu_dev"), ImVec2(-1, plotH))) return;
         const int nEpoch = epochCount > 0 ? epochCount : static_cast<int>(axis.t.size());
         ImPlot::SetupAxes("Epoch", "E/N/U (m)");
         ImPlot::SetupAxisLimits(ImAxis_Y1, -1, 1, ImPlotCond_Once);
@@ -134,43 +135,39 @@ namespace Solvers::Charts {
         }
         xAxisFollow(axis.t, newed);
         newed = false;
-        if (nf > 0) {
-            if (hasFloat && !fe.empty()) {                ImPlotSpec fspec;
-                fspec.LineColor = UI::kColFloat;
-                fspec.LineWeight = 1.0f;
-                ImPlot::PlotLine("E(浮点)", axis.t.data(), fe.data(), nf, fspec);
-                ImPlot::PlotLine("N(浮点)", axis.t.data(), fn.data(), nf, fspec);
-                ImPlot::PlotLine("U(浮点)", axis.t.data(), fu.data(), nf, fspec);
-            }
-
-            ImPlotSpec espec;
-            espec.LineColor = UI::kColX;
-            espec.LineWeight = 1.5f;
-            ImPlot::PlotLine("E", axis.t.data(), ee.data(), nf, espec);
-            ImPlotSpec nspec;
-            nspec.LineColor = UI::kColY;
-            nspec.LineWeight = 1.5f;
-            ImPlot::PlotLine("N", axis.t.data(), nn.data(), nf, nspec);
-            ImPlotSpec uspec;
-            uspec.LineColor = UI::kColZ;
-            uspec.LineWeight = 1.5f;
-            ImPlot::PlotLine("U", axis.t.data(), uu.data(), nf, uspec);
-
-            {
-                std::vector<double> rms3d;
-                rms3d.reserve(nf);
-                for (int k = 0; k < nf; ++k)
-                    rms3d.push_back(std::sqrt(ee[k] * ee[k] + nn[k] * nn[k] + uu[k] * uu[k]));
-                ImPlotSpec rs;
-                rs.LineColor = ImVec4(1.0f, 0.85f, 0.2f, 0.95f);
-                rs.LineWeight = 1.5f;
-                ImPlot::PlotLine("RMS 3D", axis.t.data(), rms3d.data(), nf, rs);
-            }
+        if (hasFloat) {
+            ImPlotSpec fspec;
+            fspec.LineColor = UI::kColFloat;
+            fspec.LineWeight = 1.0f;
+            ImPlot::PlotLine(I18n::trc("chart.legend.e_float"), axis.t.data(), fe.data(), nf, fspec);
+            ImPlot::PlotLine(I18n::trc("chart.legend.n_float"), axis.t.data(), fn.data(), nf, fspec);
+            ImPlot::PlotLine(I18n::trc("chart.legend.u_float"), axis.t.data(), fu.data(), nf, fspec);
         }
-        if (nf > 0) {
-            solveCursor(solvingEpoch);
-            epochCursor(0, &selectedEpoch, nEpoch);
-        }
+
+        ImPlotSpec espec;
+        espec.LineColor = UI::kColX;
+        espec.LineWeight = 1.5f;
+        ImPlot::PlotLine("E", axis.t.data(), ee.data(), nf, espec);
+        ImPlotSpec nspec;
+        nspec.LineColor = UI::kColY;
+        nspec.LineWeight = 1.5f;
+        ImPlot::PlotLine("N", axis.t.data(), nn.data(), nf, nspec);
+        ImPlotSpec uspec;
+        uspec.LineColor = UI::kColZ;
+        uspec.LineWeight = 1.5f;
+        ImPlot::PlotLine("U", axis.t.data(), uu.data(), nf, uspec);
+
+        std::vector<double> rms3d;
+        rms3d.reserve(nf);
+        for (int k = 0; k < nf; ++k)
+            rms3d.push_back(std::sqrt(ee[k] * ee[k] + nn[k] * nn[k] + uu[k] * uu[k]));
+        ImPlotSpec rs;
+        rs.LineColor = ImVec4(1.0f, 0.85f, 0.2f, 0.95f);
+        rs.LineWeight = 1.5f;
+        ImPlot::PlotLine("RMS 3D", axis.t.data(), rms3d.data(), nf, rs);
+
+        solveCursor(solvingEpoch);
+        epochCursor(0, &selectedEpoch, nEpoch);
         ImPlot::EndPlot();
     }
 
@@ -187,9 +184,9 @@ namespace Solvers::Charts {
 
         int mode = resMode ? *resMode : 0;
         ImGui::PushID("resmode");
-        if (ImGui::RadioButton("伪距", mode == 0)) mode = 0;
+        if (ImGui::RadioButton(I18n::trc("Pseudorange"), mode == 0)) mode = 0;
         ImGui::SameLine();
-        if (ImGui::RadioButton("相位", mode == 1)) mode = 1;
+        if (ImGui::RadioButton(I18n::trc("chart.mode.phase"), mode == 1)) mode = 1;
         ImGui::PopID();
         if (resMode) *resMode = mode;
         const bool phase = mode == 1;
@@ -201,7 +198,7 @@ namespace Solvers::Charts {
 
         if (phase && V.empty()) {
             ImGui::SameLine();
-            ImGui::TextDisabled("(无相位残差)");
+            ImGui::TextDisabled(I18n::trc("chart.no_phase_residual"));
         }
 
         float ph = ImGui::GetContentRegionAvail().y - ImGui::GetStyle().ItemSpacing.y;
@@ -209,7 +206,7 @@ namespace Solvers::Charts {
         if (ph < 120.0f) ph = 120.0f;
 
         if (ImPlot::BeginPlot("##residualSeries", ImVec2(-1, ph), ImPlotFlags_NoTitle)) {
-            ImPlot::SetupAxes("Epoch", phase ? "载波相位残差 (m)" : "码(伪距)残差 (m)");
+            ImPlot::SetupAxes("Epoch", phase ? I18n::trc("chart.axis.phase_residual") : I18n::trc("chart.col.code_residual"));
             {
                 ImPlot::SetupAxisLimits(ImAxis_X1, 0, std::max(10.0, static_cast<double>(epochCount)), ImPlotCond_Once);
                 if (lo && hi && std::isfinite(*lo) && std::isfinite(*hi) && *hi > *lo)
@@ -291,10 +288,8 @@ namespace Solvers::Charts {
                 gaps.reserve(pts.size());
                 for (std::size_t i = 1; i < pts.size(); ++i)
                     gaps.push_back(pts[i].epIdx - pts[i - 1].epIdx);
-                if (!gaps.empty()) {
-                    const int minGap = *std::min_element(gaps.begin(), gaps.end());
-                    gapThr = std::max(2, 3 * minGap);
-                }
+                const int minGap = *std::min_element(gaps.begin(), gaps.end());
+                gapThr = std::max(2, 3 * minGap);
             }
             const float maxJump = 0.5f * R;
 
@@ -338,7 +333,7 @@ namespace Solvers::Charts {
                      const std::vector<TrajPoint> &refTraj,
                      const float sizePx) {
         if (leoTraj.size() < 2) {
-            ImGui::TextDisabled("(轨迹点不足，无法绘制)");
+            ImGui::TextDisabled(I18n::trc("chart.too_few_points"));
             return;
         }
         auto fillXYZ = [&](const std::vector<TrajPoint> &traj,
@@ -358,19 +353,19 @@ namespace Solvers::Charts {
         std::vector<double> xs, ys, zs;
         fillXYZ(leoTraj, xs, ys, zs);
         if (xs.size() < 2) {
-            ImGui::TextDisabled("(有效轨迹点不足，无法绘制)");
+            ImGui::TextDisabled(I18n::trc("chart.too_few_valid_points"));
             return;
         }
         std::vector<double> rx, ry, rz;
         if (!refTraj.empty()) fillXYZ(refTraj, rx, ry, rz);
-        if (ImPlot3D::BeginPlot("LEO 轨迹 (ECEF XYZ)", ImVec2(-1, sizePx))) {
+        if (ImPlot3D::BeginPlot(I18n::trc("chart.plot.leo_track"), ImVec2(-1, sizePx))) {
             ImPlot3D::SetupAxes("X (m)", "Y (m)", "Z (m)");
-            ImPlot3D::PlotLine("LEO 估计", xs.data(), ys.data(), zs.data(), static_cast<int>(xs.size()));
+            ImPlot3D::PlotLine(I18n::trc("chart.legend.leo_est"), xs.data(), ys.data(), zs.data(), static_cast<int>(xs.size()));
             if (rx.size() >= 2)
-                ImPlot3D::PlotLine("参考轨道", rx.data(), ry.data(), rz.data(), static_cast<int>(rx.size()));
+                ImPlot3D::PlotLine(I18n::trc("ReferenceOrbit"), rx.data(), ry.data(), rz.data(), static_cast<int>(rx.size()));
             if (leoPos.norm() > 1e3 && std::isfinite(leoPos.x()) && std::isfinite(leoPos.y()) && std::isfinite(leoPos.z())) {
                 const double px[1] = {leoPos.x()}, py[1] = {leoPos.y()}, pz[1] = {leoPos.z()};
-                ImPlot3D::PlotScatter("当前位置", px, py, pz, 1);
+                ImPlot3D::PlotScatter(I18n::trc("chart.legend.current_pos"), px, py, pz, 1);
             }
             ImPlot3D::EndPlot();
         }

@@ -2,38 +2,34 @@
 
 #include "Log.h"
 #include "io/ObsSource.h"
+#include "solver/Products.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::RTK {
     int pairFiles(const std::string &basePath, const std::string &roverPath,
                   const std::string &navPath, const double sampleInterval,
-                  EphemerisTable &navTable,
+                  Products &prod,
                   const std::function<bool()> &shouldStop,
                   const std::function<void(const ObsData &, const ObsData &,
-                                           const std::shared_ptr<EphemerisTable> &,
-                                           EphemerisTable *)> &onPair,
+                                           const std::shared_ptr<EphemerisTable> &)> &onPair,
                   std::string &err) {
         ObsSource::ObsPair files;
         if (!files.open(basePath, roverPath, navPath)) {
             err = files.err;
             return -1;
         }
-        if (files.needsNav()) {
-            if (navPath.empty()) {
-                err = "RINEX 观测需要广播星历文件（任一侧为 RINEX 即需要）";
-                return -1;
-            }
-            if (!ObsSource::loadNav(navPath, navTable, err)) return -1;
-            LOG_INFO << "RTK 读取广播星历: " << navPath
-                    << " gps=" << navTable.gps.size()
-                    << " bds=" << navTable.bds.size();
+        // 流内不带星历（RINEX 回放）时必须有广播星历：已由任务按产品表读进 prod.eph
+        if (files.needsNav() && prod.eph.empty()) {
+            err = I18n::tr("rtk.err.need_nav");
+            return -1;
         }
 
-        Observer::DualPair p(ObsSource::nextOf(files.base), ObsSource::nextOf(files.rover));
+        DualPair p(ObsSource::nextOf(files.base), ObsSource::nextOf(files.rover));
         p.setInterval(sampleInterval);
         int n = 0;
-        Observer::DualPair::Pair pr;
+        DualPair::Pair pr;
         while (!shouldStop() && p.next(pr)) {
-            onPair(pr.base, pr.rover, pr.baseEph ? pr.baseEph : pr.roverEph, &navTable);
+            onPair(pr.base, pr.rover, pr.baseEph ? pr.baseEph : pr.roverEph);
             ++n;
         }
         return n;

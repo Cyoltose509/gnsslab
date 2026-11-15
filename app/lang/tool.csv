@@ -1,0 +1,38 @@
+key,ZH-CN,EN
+tool.coord.b_deg,B (度),B (deg)
+tool.coord.enu_section,站心{{Coordinate}} (ENU),Local tangent {{Coordinate}} (ENU)
+tool.coord.err_failed,{0} 失败,{0} failed
+tool.coord.err_with_msg,{0}: {1},{0}: {1}
+tool.coord.frame,参考系:,Frame:
+tool.coord.l_deg,L (度),L (deg)
+tool.coord.ref_point,参考点:,Reference point:
+tool.coord.tgt_x,目标 X (m),Target X (m)
+tool.coord.tgt_y,目标 Y (m),Target Y (m)
+tool.coord.tgt_z,目标 Z (m),Target Z (m)
+tool.coord.title,{{Coordinate}}转换,{{Coordinate}} conversion
+tool.lsq.auto_solve,自动计算,Auto-solve
+tool.lsq.err_failed,解算失败 (请检查矩阵是否满秩),Solve failed (check that the matrix has full rank)
+tool.lsq.err_obs_lt_unk,{{Observation}}数 (m) 必须 >= 未知数 (n),{{Observation}} count (m) must be >= unknown count (n)
+tool.lsq.err_singular,法方程奇异或秩亏，无法求解,Normal equations are singular or rank-deficient; cannot solve
+tool.lsq.err_var_fail,内部错误: 变量生成失败,Internal error: failed to create variables
+tool.lsq.model,方程模型: Z = H * X + △,Model: Z = H * X + △
+tool.lsq.not_solved,尚未计算,Not computed yet
+tool.lsq.num_obs,{{Observation}}数 ({0}):,{{Observation}} ({0}):
+tool.lsq.num_unk,未知数 ({0}):,Unknowns ({0}):
+tool.lsq.shape_h,H ({0} x {1}),H ({0} x {1})
+tool.lsq.shape_l,L ({0} x 1),L ({0} x 1)
+tool.lsq.sigma0,单位权中误差 (Sigma0): {0},Unit-weight RMS (Sigma0): {0}
+tool.lsq.solve,计算,Solve
+tool.lsq.title,{{LeastSquares}}工具,{{LeastSquares}}
+tool.lsq.weight,权阵 W (m x m),{{Weight}} matrix W (m x m)
+tool.time.col.day,日,Day
+tool.time.col.hour,时,Hour
+tool.time.col.min,分,Minute
+tool.time.col.month,月,Month
+tool.time.col.sec,秒,Second
+tool.time.col.year,年,Year
+tool.time.err_convert,时间换算失败,Time conversion failed
+tool.time.err_mjd,MJD 换算失败,MJD conversion failed
+tool.time.leap_mjd,跳秒: {0}    MJD (GPS): {1},Leap seconds: {0}    MJD (GPS): {1}
+tool.time.now,此刻,Now
+tool.time.title,时间转换,Time conversion

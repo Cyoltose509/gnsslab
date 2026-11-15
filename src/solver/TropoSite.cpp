@@ -2,7 +2,7 @@
 
 #include "core/Const.h"
 #include "core/geom/CoordConvert.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 
 void TropoSite::reset() {

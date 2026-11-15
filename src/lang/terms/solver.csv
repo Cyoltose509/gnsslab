@@ -1,0 +1,35 @@
+key,ZH-CN,EN
+FixedSolution,固定解,Fix
+FloatSolution,浮点解,Float
+Ambiguity,模糊度,Ambiguity
+Baseline,基线,Baseline
+BaseStation,基准站,Base station
+Rover,流动站,Rover
+Elevation,高度角,Elevation
+ElevationMask,截止高度角,Elevation cutoff
+ElevationWeighting,高度角加权,Elevation-dependent weighting
+Residual,残差,Residual
+Ionosphere,电离层,Ionosphere
+IonosphereModel,{{Ionosphere}}模型,{{Ionosphere}} model
+Troposphere,对流层,Troposphere
+TroposphereModel,{{Troposphere}}模型,{{Troposphere}} model
+Gpt3Model,GPT3 {{Troposphere}}模型,GPT3 {{Troposphere}} model
+Vmf3Model,VMF3 {{MappingFunction}}模型,VMF3 {{MappingFunction}} model
+Filter,滤波,Filter
+Forward,前向,Forward
+Backward,后向,Backward
+Convergence,收敛,Convergence
+Covariance,协方差,Covariance
+LeastSquares,最小二乘,Least squares
+Weight,权重,Weight
+ProcessSigma,过程 σ,process σ
+InitialSigma,初始 σ,initial σ
+Threshold,阈值,Threshold
+Tolerance,容差,Tolerance
+Criterion,判据,Criterion
+ThreeDRMS,三维 RMS,3D RMS
+Deviation,偏差,Deviation
+Velocity,速度,Velocity
+RealTime,实时,Real-time
+DataStream,数据流,Data stream
+Reconnect,重连,Reconnect

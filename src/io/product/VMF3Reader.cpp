@@ -2,7 +2,7 @@
 
 #include "core/Const.h"
 #include "MathUtils.h" // Math::lerp（时次一维混合）
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <algorithm>
 #include <fstream>

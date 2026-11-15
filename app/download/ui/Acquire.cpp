@@ -2,17 +2,19 @@
 #include "FileUtils.h"
 
 #include "download/remote/Fetcher.h"
-#include "download/local/ProductMeta.h"
+#include "download/local/ProductType.h"
+#include "io/ObsDate.h"
 #include "download/remote/SourceTable.h"
 #include "download/ui/Widgets.h"
 #include "download/local/Store.h"
+#include "i18n/I18n.h"
 
 #include "core/PathMemory.h"
-#include "io/Products.h"
+#include "io/ProductPaths.h"
 #include "Observer.h"
 
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include "ui/DragBar.h"
 #include "imgui.h"
@@ -29,7 +31,7 @@ namespace Download::Acquire {
     namespace {
         /// 昨日（本地时区）：IGS 当日观测要到次日才发布，默认翻到昨天。
         void yesterday(int &y, int &m, int &d) {
-            const ObsDate def = ProductMeta::defaultObsDate();
+            const ObsDate def = defaultObsDate();
             if (const auto ymd = YearMonthDay::fromDOY(def.year, def.doy)) {
                 y = ymd->year;
                 m = ymd->month;
@@ -74,7 +76,7 @@ namespace Download::Acquire {
             if (files.size() == 1) return files.front();
 
             Store::revealFile(local);
-            Fetcher::setStatus("该产品已展开为 " + std::to_string(files.size()) + " 个文件，请在打开的目录里挑一个");
+            Fetcher::setStatus(I18n::tr("dl.ui.expanded_pick", files.size()));
             return {};
         }
 
@@ -98,7 +100,7 @@ namespace Download::Acquire {
             const std::string rest = prefix < member.size() ? member.substr(prefix) : std::string();
             const auto cut = rest.find_first_of("._-");
             const std::string key = cut == std::string::npos ? rest : rest.substr(0, cut);
-            return key.empty() ? std::string("其它") : key;
+            return key.empty() ? I18n::tr("dl.ui.other") : key;
         }
 
         bool containsIC(const std::string &hay, const std::string &needle) {
@@ -110,15 +112,15 @@ namespace Download::Acquire {
         void renderMembers(Panel &p, const float height) {
             const std::size_t prefix = commonPrefix(p.members);
 
-            if (ImGui::SmallButton("< 返回##acqMemBack")) {
+            if (ImGui::SmallButton((std::string(I18n::trc("dl.ui.back")) + "##acqMemBack").c_str())) {
                 p.membersOf.clear();
                 p.members.clear();
                 p.memberGroup.clear();
                 return;
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("%s · %d 份可读观测", File::baseName(p.membersOf).c_str(),
-                                static_cast<int>(p.members.size()));
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.readable_obs", File::baseName(p.membersOf),
+                                               p.members.size()).c_str());
 
             Widgets::searchBox("acqMemFind", p.memberFind, sizeof p.memberFind);
 
@@ -128,7 +130,9 @@ namespace Download::Acquire {
                     std::find(groups.begin(), groups.end(), g) == groups.end()) groups.push_back(g);
             }
             if (groups.size() > 1) {
-                if (ImGui::SmallButton("全部##acqMemAll")) p.memberGroup.clear();
+                if (ImGui::SmallButton((std::string(I18n::trc("common.all")) +
+                                        "##acqMemAll").c_str()))
+                    p.memberGroup.clear();
                 for (const auto &g: groups) {
                     ImGui::SameLine();
                     ImGui::PushID(g.c_str());
@@ -159,7 +163,7 @@ namespace Download::Acquire {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.c_str());
                 ImGui::PopID();
             }
-            if (shown == 0) ImGui::TextDisabled("没有匹配的观测文件");
+            if (shown == 0) ImGui::TextDisabled("%s", I18n::trc("dl.ui.no_obs_match"));
             ImGui::EndChild();
 
             if (!chosen.empty()) {
@@ -230,22 +234,27 @@ namespace Download::Acquire {
         ImGui::SameLine();
         if (isObs) {
             const std::string cur = AppConfig::PathMemory::instance().get(p.obsKey);
-            ImGui::TextDisabled("（当前：%s）", cur.empty() ? "未设" : File::baseName(cur).c_str());
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.current_path",
+                                               cur.empty() ? std::string(I18n::trc("dl.ui.unset"))
+                                                           : File::baseName(cur)).c_str());
         } else if (isSingle) {
             const std::string cur = p.singleOut ? *p.singleOut : std::string();
-            ImGui::TextDisabled("（当前：%s）", cur.empty() ? "未设" : File::baseName(cur).c_str());
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.current_path",
+                                               cur.empty() ? std::string(I18n::trc("dl.ui.unset"))
+                                                           : File::baseName(cur)).c_str());
         } else {
-            ImGui::TextDisabled("（已选 %d）", static_cast<int>(p.target->size()));
+            ImGui::TextDisabled("%s", I18n::tr("dl.ui.picked_count", p.target->size()).c_str());
         }
 
         if (p.year <= 0 || p.doy <= 0) {
-            const ObsDate def = ProductMeta::defaultObsDate();
+            const ObsDate def = defaultObsDate();
             p.year = def.year;
             p.doy = def.doy;
         }
         {
             YearMonthDay ymd = YearMonthDay::fromDOY(p.year, p.doy).value_or(YearMonthDay{p.year, 1, 1});
-            Widgets::dateRow(ymd.year, ymd.month, ymd.day, "acq", "昨日", yesterday, true);
+            Widgets::dateRow(ymd.year, ymd.month, ymd.day, "acq", I18n::trc("dl.ui.yesterday"),
+                             yesterday, true);
             p.year = ymd.year;
             p.doy = ymd.toDOY();
         }
@@ -270,7 +279,7 @@ namespace Download::Acquire {
 
         Widgets::searchBox("acqFind", p.nameFind, sizeof p.nameFind);
 
-        ImGui::TextUnformatted("本地状态");
+        ImGui::TextUnformatted(I18n::trc("dl.ui.local_state"));
         ImGui::SameLine();
         Widgets::stateFilterChips("##acqState", &p.stateFilter);
 
@@ -280,7 +289,7 @@ namespace Download::Acquire {
         const bool isLeoObs = isObs && p.obsType == ProductType::LEO_OBS;
         if (isObs) {
             q.types = {p.obsType};
-            if (isLeoObs) q.scanText = "读取低轨观测目录…";
+            if (isLeoObs) q.scanTextKey = "dl.status.reading_leo_obs";
         } else if (isSingle) {
             q.types = {p.singleType};
         } else {
@@ -306,10 +315,9 @@ namespace Download::Acquire {
         opt.isSelected = [&p](const std::string &local) { return p.isPicked(local); };
         opt.localHint = [isObs](const bool selected) {
             if (isObs)
-                return selected ? std::string("（左键点击移出清单 · 右键管理）")
-                                : std::string("（左键点击填入观测 · 右键管理）");
-            return selected ? std::string("（左键点击可移出清单 · 右键管理）")
-                            : std::string("（左键点击可加入清单 · 右键管理）");
+                return selected ? I18n::tr("dl.ui.hint.remove_obs")
+                                : I18n::tr("dl.ui.hint.pick_obs");
+            return selected ? I18n::tr("dl.ui.hint.remove") : I18n::tr("dl.ui.hint.add");
         };
         opt.onClick = [&p, isObs](const Fetcher::Match &m, const std::string &local) {
             if (!local.empty()) {
@@ -319,7 +327,7 @@ namespace Download::Acquire {
                     if (members.size() == 1) {
                         p.pick(members.front(), p.isPicked(local));
                     } else if (members.empty()) {
-                        Fetcher::setStatus("这条产品里没有可读的观测文件");
+                        Fetcher::setStatus(I18n::tr("dl.ui.no_readable_obs"));
                     } else {
                         p.membersOf = local;
                         p.members = members;
@@ -338,11 +346,12 @@ namespace Download::Acquire {
         if (isObs && !p.membersOf.empty()) {
             renderMembers(p, listH);
         } else {
-            Widgets::remoteList(snap, opt, "##acqList", "文件", listH);
+            Widgets::remoteList(snap, opt, "##acqList", I18n::trc("common.file"), listH);
         }
         UI::heightGrip("##acqGrip", p.height, 96.0f, maxH);
 
-        if (ImGui::SmallButton("收起##acqClose")) p.open = false;
+        if (ImGui::SmallButton((std::string(I18n::trc("dl.ui.collapse")) + "##acqClose").c_str()))
+            p.open = false;
 
         Widgets::deleteConfirm();
 

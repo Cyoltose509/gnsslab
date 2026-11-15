@@ -8,7 +8,7 @@
 #include "Log.h"
 #include "StringUtils.h"
 #include "core/PathMemory.h"
-#include "io/Products.h"
+#include "io/ProductPaths.h"
 #include "imgui.h"
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiParamPage.h"
@@ -17,6 +17,8 @@
 #include "ui/FileDialog.h"
 #include "ui/Gui.h"
 #include "ui/GuiColors.h"
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace Solvers::LEO {
     namespace {
@@ -59,7 +61,7 @@ namespace Solvers::LEO {
                 return;
             }
             seg.known = true;
-            if (edited || seg.from.empty()) seg.from = "手工填写";
+            if (edited || seg.from.empty()) seg.from = I18n::tr("leo.ant.manual");
             for (int i = 0; i < 3; i++) {
                 seg.xyz[i] = def.xyz[i]; // 空着的轴仍用缺省
                 double v = 0.0;
@@ -81,11 +83,11 @@ namespace Solvers::LEO {
         void renderAntennaSection(Task *self) {
             syncDefault(self);
 
-            ImGui::SeparatorText("接收机天线改正");
+            ImGui::SeparatorText(I18n::trc("leo.section.rx_antenna"));
 
-            renderGroup("arp", "天线改正  质心→ARP",
+            renderGroup("arp", I18n::trc("leo.group.arp"),
                         self->antennaArpText, self->antenna.comToArp, self->antennaDef.comToArp);
-            renderGroup("pco", "PCO  ARP→相位中心",
+            renderGroup("pco", I18n::trc("leo.group.pco"),
                         self->antennaPcoText, self->antenna.pco, self->antennaDef.pco);
         }
     }
@@ -95,33 +97,36 @@ namespace Solvers::LEO {
         view.obsPathBuf = cfg.get("leo_obs");
         RefTruth::restore(this);
         Helpers::loadSolverParams(Mode::LEO, opts);
-        AppConfig::Products::of(modeKey(Mode::LEO)).load();
+        AppConfig::ProductPaths::of(modeKey(Mode::LEO)).load();
     }
 
     void Task::renderConfigPanel() {
         auto *self = this;
-        auto &prod = AppConfig::Products::of(modeKey(Mode::LEO));
+        auto &prod = AppConfig::ProductPaths::of(modeKey(Mode::LEO));
         const auto onStart = [self] {
             self->renderFileStart("leo_obs", true,
                 [self] { RefTruth::persist(self); },
                 [self] {
                     const Antenna::Correction ant = Antenna::merge(self->antenna, self->antennaDef);
-                    const std::string refInfo = self->truth.sp3Path.empty() ? std::string("无") : self->truth.sp3Path;
-                    LOG_INFO << "[LEO] 开始定轨: 观测=" << self->view.obsPathBuf
-                            << ", 格式=" << Observer::formatName(self->obsFormat)
-                            << ", 参考轨道=" << refInfo
-                            << ", 天线改正=" << ant.total().transpose() << " m ← "
-                            << (ant.comToArp.from.empty() ? std::string("无") : ant.comToArp.from);
+                    const std::string refInfo = self->truth.sp3Path.empty()
+                                                    ? I18n::tr("common.none")
+                                                    : self->truth.sp3Path;
+                    std::ostringstream antText;
+                    antText << ant.total().transpose() << " m ← "
+                            << (ant.comToArp.from.empty() ? I18n::tr("common.none") : ant.comToArp.from);
+                    LOG_INFO << "[LEO] " << I18n::tr("leo.log.start", self->view.obsPathBuf,
+                                                            Observer::formatName(self->obsFormat), refInfo,
+                                                            antText.str());
                 });
         };
         const auto fileTab = [self, &prod] {
-            Helpers::fileRow("观测文件", &self->view.obsPathBuf, "leo_obs", FileDialog::fObs, 3,
-                             {}, "leo_obs", &prod.brdc, ProductType::LEO_OBS);
+            Helpers::fileRow(I18n::trc("ObservationFile"), &self->view.obsPathBuf, "leo_obs", FileDialog::fObs(),
+                             {}, "leo_obs", &prod.nav, ProductType::LEO_OBS);
             Helpers::renderProductSection(prod, "leo_obs", false, /*crossDayHint=*/true);
             RefTruth::renderRefTruthSection(self);
             renderAntennaSection(self);
             ImGui::Separator();
         };
-        self->renderConfigTabs("LEO 处理配置###leo_cfg_", fileTab, onStart);
+        self->renderConfigTabs(UI::idLabel("leo.cfg_tab", "###leo_cfg_"), fileTab, onStart);
     }
 }

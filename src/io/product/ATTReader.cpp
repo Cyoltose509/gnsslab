@@ -1,7 +1,7 @@
 #include "product/ATTReader.h"
 
 #include "MathUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <algorithm>
 #include <fstream>

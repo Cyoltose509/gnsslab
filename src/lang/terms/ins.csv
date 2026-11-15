@@ -1,0 +1,25 @@
+key,ZH-CN,EN
+IMU,IMU,IMU
+IMUModel,IMU 型号,IMU model
+Accelerometer,加速度计,Accelerometer
+Gyroscope,陀螺,Gyro
+SpecificForce,比力,Specific force
+AngularRate,角速度,Angular rate
+Bias,零偏,Bias
+ScaleFactor,比例因子,Scale factor
+Alignment,对准,Alignment
+CoarseAlignment,粗对准,Coarse alignment
+InitialAttitude,初始姿态,Initial attitude
+AttitudeAngle,姿态角,Attitude
+Roll,横滚,Roll
+Pitch,俯仰,Pitch
+Heading,航向,Heading
+Static,静置,Static
+Rotation,旋转,Rotation
+Position,位置,Position
+Calibration,标定,Calibration
+ZeroVelocityUpdate,零速修正,ZUPT
+DecodeScale,当量,Scale
+Increment,增量,Increment
+Gravity,重力,Gravity
+SamplingRate,采样率,Sampling rate

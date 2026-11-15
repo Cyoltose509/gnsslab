@@ -2,7 +2,7 @@
 
 #include "MathUtils.h"
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <algorithm>
 #include <fstream>
@@ -74,14 +74,9 @@ bool TROReader::read(const std::string &path) {
     }
 
 
-    for (auto it = data.begin(); it != data.end();) {
-        if (it->second.empty()) {
-            it = data.erase(it);
-        } else {
-            std::sort(it->second.begin(), it->second.end(),
-                      [](const Record &a, const Record &b) { return a.mjd < b.mjd; });
-            ++it;
-        }
+    for (auto &[_, recs]: data) {
+        std::sort(recs.begin(), recs.end(),
+                  [](const Record &a, const Record &b) { return a.mjd < b.mjd; });
     }
     return !data.empty();
 }

@@ -2,7 +2,8 @@
 #include "FileUtils.h"
 #include "FileCache.h"
 #include "MathUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
+#include "i18n/I18n.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -440,12 +441,12 @@ double ATXReader::satPCVIF(const SatID &sat, const FreqCombo &def, const double 
 bool ATXReader::validate(const std::string &path, std::string &detail) {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        detail = "无法打开文件";
+        detail = I18n::tr("io.file.open_failed");
         return false;
     }
     std::error_code ec;
     if (const auto fileSize = fs::file_size(path, ec); ec || fileSize < 1024) {
-        detail = "文件过小（<1 KB），不像是完整的 ANTEX 天线文件";
+        detail = I18n::tr("io.atx.too_small");
         return false;
     }
 
@@ -495,15 +496,15 @@ bool ATXReader::validate(const std::string &path, std::string &detail) {
     }
 
     if (ver.empty()) {
-        detail = "不是 ANTEX 文件（缺少 ANTEX VERSION / SYST 头记录）";
+        detail = I18n::tr("io.atx.no_version");
         return false;
     }
     if (antennas == 0) {
-        detail = "ANTEX 里没有任何天线块（TYPE / SERIAL NO）";
+        detail = I18n::tr("io.atx.no_antenna");
         return false;
     }
     if (freqBlocks == 0) {
-        detail = "ANTEX 头部没有任何频点标定块（START OF FREQUENCY），文件可能被截断";
+        detail = I18n::tr("io.atx.no_freq_block");
         return false;
     }
 
@@ -515,13 +516,12 @@ bool ATXReader::validate(const std::string &path, std::string &detail) {
     }
     if (const std::string lastLabel = recordLabel(last); lastLabel.find("END OF ANTENNA") == std::string::npos &&
                                                          lastLabel.find("END OF FILE") == std::string::npos) {
-        detail = "文件末尾不是完整的收尾记录（缺 END OF ANTENNA / END OF FILE），"
-                "疑似下载或拷贝被截断";
+        detail = I18n::tr("io.atx.no_tail");
         return false;
     }
 
     char mb[32];
     std::snprintf(mb, sizeof mb, "%.1f MB", static_cast<double>(total) / 1048576.0);
-    detail = "ANTEX " + ver + "，" + std::to_string(antennas) + " 个天线块，" + mb;
+    detail = I18n::tr("io.atx.summary", ver, antennas, mb);
     return true;
 }

@@ -3,7 +3,7 @@
 #include "core/Const.h"
 #include "core/geom/Attitude.h"
 #include "core/geom/CoordConvert.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include <Eigen/Eigen>
 
 

@@ -1,6 +1,6 @@
 #include "rinex/RINEXNavStore.h"
 #include "StringUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "Exception.h"
 #include "Log.h"
 
@@ -53,7 +53,7 @@ namespace {
 
         const std::size_t p0 = convLine.find_first_not_of(" \t\r");
         if (p0 == std::string::npos)
-            throw FFStreamError("导航首行为空");
+            throw FFStreamError("empty first line in navigation message");
         std::size_t p1 = convLine.find_first_of(" \t\r", p0);
         if (p1 == std::string::npos) p1 = convLine.size();
         if (const std::string sat = Str::sub(convLine, p0, p1 - p0); sat.size() >= 3 && std::isalpha(static_cast<unsigned char>(sat[0])))
@@ -64,7 +64,7 @@ namespace {
         // 卫星号之后的 9 个数：历元 6 字段（年月日时分秒）+ 钟差 3 字段（a0 a1 a2）
         const std::vector<double> v = extractNumbers(Str::sub(convLine, p1, std::string::npos));
         if (v.size() < 9)
-            throw FFStreamError("导航首行字段不足 9 个: " + line);
+            throw FFStreamError("navigation first line has fewer than 9 fields: " + line);
 
         int yr = static_cast<int>(std::lround(v[0]));
         if (ver < 3.0) {                 // v2 年为 2 位，按 RINEX 世纪规则展开

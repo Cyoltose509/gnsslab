@@ -6,6 +6,7 @@
 #include <string>
 
 #include "CliCommon.h"
+#include "i18n/I18n.h"
 #include "Log.h"
 #include "SolverOptions.h"
 #include "core/IniFile.h"
@@ -33,13 +34,13 @@ namespace {
     }
 
     void printSummary(const Solvers::Mode mode, const SolverOptions &cfg) {
-        std::cout << "[" << Solvers::modeLabel(mode) << "] 模式=" << cfg.source
-                  << " obs=" << cfg.obsPath;
+        std::cout << "[" << Solvers::modeLabel(mode) << "] " << I18n::trc("common.mode")
+                  << "=" << cfg.source << " obs=" << cfg.obsPath;
         if (mode == Solvers::Mode::RTK)
             std::cout << " base=" << cfg.basePath << " rover=" << cfg.roverPath;
         if (mode == Solvers::Mode::INS)
             std::cout << " imu=" << cfg.ins.imuPath;
-        std::cout << " nav=" << (cfg.navPath.empty() ? "(无)" : cfg.navPath) << "\n";
+        std::cout << " nav=" << (cfg.navPath.empty() ? I18n::trc("cli.summary.no_nav") : cfg.navPath) << "\n";
     }
 
     bool collectArgs(const int argc, char **argv, std::string &iniPath, bool &iniGiven,
@@ -51,7 +52,7 @@ namespace {
                     iniPath = a;
                     iniGiven = true;
                 } else if (iniPath != a) {
-                    std::cerr << "只接受一个 ini 路径，多余参数: " << a << "\n";
+                    std::cerr << I18n::tr("cli.args.extra", a) << "\n";
                     return false;
                 }
                 continue;
@@ -80,16 +81,16 @@ int main(const int argc, char **argv) {
 
     IniFile f;
     if (!f.load(iniPath)) {
-        std::cerr << "无法读取 ini: " << iniPath << "\n";
+        std::cerr << I18n::tr("cli.ini.unreadable", iniPath) << "\n";
         return 1;
     }
     const CliSource src(f, std::move(over));
+    Cli::setupLanguage(src);
 
     const std::string modeKey = src.get("solver", "mode", "spp");
     const auto modeOpt = modeFromKey(modeKey);
     if (!modeOpt) {
-        std::cerr << "[solver] mode = " << modeKey
-                << " 不认识（spp | ppp_static | ppp_kin | rtk | leo | ins）\n";
+        std::cerr << I18n::tr("cli.mode.unknown", modeKey) << "\n";
         return 2;
     }
     const Solvers::Mode mode = *modeOpt;
@@ -101,7 +102,7 @@ int main(const int argc, char **argv) {
     if (cfg.atx.empty())
         cfg.atx = Download::Store::activeFile(Download::Catalog::kATXID);
     for (const auto &k: src.unusedKeys())
-        std::cerr << "警告: --" << k << " 没有被读取（拼写错误，或当前模式不用它）\n";
+        std::cerr << I18n::tr("cli.args.unused_solver", k) << "\n";
 
     Log::init("cli_gnsslab.log");
     printSummary(mode, cfg);

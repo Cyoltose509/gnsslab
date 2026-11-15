@@ -37,7 +37,8 @@ namespace Coord {
             iterationCount++;
 
             if (constexpr int maxIterations = 100; iterationCount > maxIterations)
-                throw GeometryException("ECEF→大地坐标：纬度迭代 100 次未收敛（输入 X/Y/Z 可能不是有限值或接近退化）");
+                throw GeometryException("ECEF->geodetic: latitude iteration did not converge in 100 steps "
+                                        "(X/Y/Z not finite or nearly degenerate)");
         } while (true);
 
 

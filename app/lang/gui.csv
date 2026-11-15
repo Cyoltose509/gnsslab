@@ -1,0 +1,51 @@
+key,ZH-CN,EN
+app.log.close_tab,关闭标签页: {0},close tab: {0}
+app.log.new_ins,新建 INS 纯惯导配置：IMU={0},new pure-INS config: IMU={0}
+app.log.new_rtk,"新建 RTK 配置：基准={0}, {{Rover}}={1}","new RTK config: base={0}, {{Rover}}={1}"
+app.log.new_task,新建 {0} 配置：{{Observation}}={1},new {0} config: obs={1}
+app.log.new_tool,新建 {0} 配置,new {0} config
+app.log.reaped,后台释放 {0} 个任务的线程与内存，耗时 {1} ms,released threads and memory of {0} tasks in {1} ms
+date.close,关闭,Close
+date.jump,跳到,Go to
+date.title_fmt,%04d 年 %02d 月,%04d-%02d
+date.week.fri,周五,Fri
+date.week.mon,周一,Mon
+date.week.sat,周六,Sat
+date.week.sun,周日,Sun
+date.week.thu,周四,Thu
+date.week.tue,周二,Tue
+date.week.wed,周三,Wed
+dlg.filter.all,所有文件,All files
+dlg.filter.bin,示例数据 BIN,Sample data BIN
+dlg.filter.novatel,NovAtel 日志,NovAtel log
+dlg.filter.obs,RINEX {{Observation}},RINEX {{Observation}}
+dlg.filter.png,PNG 文件,PNG file
+dlg.filter.product,GNSS {{Product}}文件,GNSS {{Product}} files
+gui.about.ok,确定,OK
+gui.about.title,关于 GnssLab,About GnssLab
+gui.empty.hint,任务 → 开始处理,Task → Start
+gui.menu.data.download,文件{{Download}},File {{Download}}
+gui.menu.data.earthdata,Earthdata 账号填入,Earthdata credentials
+gui.menu.help,帮助,Help
+gui.menu.help.about,关于,About
+gui.menu.language,语言,Language
+gui.menu.task,任务,Task
+gui.menu.task.exit,退出,Exit
+gui.menu.task.ins,INS 解算…,INS solve…
+gui.menu.task.leo,LEO 定轨…,{{LEO}} orbit determination…
+gui.menu.task.ppp_kinematic,PPP（动态）解算…,PPP (kinematic) solve…
+gui.menu.task.ppp_static,PPP（静态）解算…,PPP (static) solve…
+gui.menu.task.rtk,RTK 解算…,RTK solve…
+gui.menu.task.spp,SPP 解算…,SPP solve…
+gui.menu.tools,工具,Tools
+gui.menu.tools.ins,惯导{{Calibration}}与{{Alignment}},INS {{Calibration}} & {{Alignment}}
+gui.menu.tools.ins_align,静态解析{{CoarseAlignment}},Static analytic {{CoarseAlignment}}
+gui.menu.tools.ins_calib,六位置法{{Calibration}},Six-position {{Calibration}}
+gui.menu.tools.ins_verify,INS 算法验证,INS algorithm verification
+gui.tab.config,[配置],[Config]
+gui.tab.error,[错误],[Error]
+gui.tab.loading,[加载中],[Loading]
+gui.tab.realtime,[{{RealTime}}],[{{RealTime}}]
+gui.tab.stopped,[已停止],[Stopped]
+gui.tab.untitled,未命名任务,Untitled task
+param.reset_defaults,恢复默认设置,Restore defaults

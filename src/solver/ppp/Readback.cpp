@@ -1,11 +1,9 @@
-#include "Core.h"
+#include "Static.h"
 #include "core/equ/Precision.h"
 #include "core/geom/CoordConvert.h"
 #include <cmath>
 
-namespace PPP {
-
-void Core::readback(const ObsData &obsData) {
+void PPPStatic::readback(const ObsData &obsData) {
     try { result.xyz = currentEstimatedPosition(); } catch (...) {}
     result.xyzFloat = result.xyz;
     result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
@@ -58,7 +56,7 @@ void Core::readback(const ObsData &obsData) {
     const Variable vox(obsData.station, Parameter::dOX);
     const Variable voy(obsData.station, Parameter::dOY);
     const Variable voz(obsData.station, Parameter::dOZ);
-    const Eigen::MatrixXd P = ekf.covMatrix;
+    const Eigen::MatrixXd P = ekf.Q;
     auto axisVar = [&](const Variable &pos, const Variable &off) -> double {
         if (!ekf.currentIndexData.count(pos)) return 0.0;
         const int ip = ekf.currentIndexData.at(pos);
@@ -82,8 +80,8 @@ void Core::readback(const ObsData &obsData) {
     result.sigmaPFloat = result.sigmaP;
 }
 
-Eigen::Matrix3d Core::posCovariance() const {
-    if (!mCurObs || !mFilterInit || ekf.covMatrix.size() == 0)
+Eigen::Matrix3d PPPStatic::posCovariance() const {
+    if (!mCurObs || !mFilterInit || ekf.Q.size() == 0)
         return Eigen::Matrix3d::Identity() * 1.0e12;
     const std::string &st = mCurObs->station;
     const auto idx = [this](const Variable &v) {
@@ -95,7 +93,5 @@ Eigen::Matrix3d Core::posCovariance() const {
         idx(Variable(st, Parameter::dY)),
         idx(Variable(st, Parameter::dZ))
     };
-    return positionCovBlock(ekf.covMatrix, id);
-}
-
+    return positionCovBlock(ekf.Q, id);
 }

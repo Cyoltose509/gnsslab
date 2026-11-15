@@ -1,14 +1,11 @@
-#include "Core.h"
+#include "Static.h"
 #include "SolverLSQ.h"
 #include "core/Const.h"
 #include "core/geom/CoordConvert.h"
-#include "core/obs/FreqCombo.h"
 #include "core/obs/Weight.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
-
-namespace PPP {
 
 namespace {
     /// 码预fit 粗差门限(m)，判之前先扣掉同系统中位数
@@ -18,84 +15,15 @@ namespace {
     constexpr double kPhasePrefitGateKinematicM = 30.0;
 }
 
-bool Core::roughCodeFix(const ObsData &obsData, Eigen::Vector3d &out) {
-    // 星载 RINEX 可能既没有 APPROX POSITION XYZ，CENTER OF MASS 也是 0。此时不碰参考轨道，
-    // 只用本历元码伪距做 4+ 未知数 LSQ，从地心迭代出粗位置；截止角、对流层、相位、
-    // 天线改正都不参与（它们本身要依赖一个合理的位置）。收敛后按轨道高度验真，
-    // 落回地面或发散就宁可不出解，绝不发布一个骗过门限的假位置。
-    const std::string &station = obsData.station;
-    const Variable vdx(station, Parameter::dX), vdy(station, Parameter::dY), vdz(station, Parameter::dZ);
-    std::map<char, Variable> cdtVars;
-    for (const auto &[sys, param]: mCdtParam) cdtVars.try_emplace(sys, station, param);
-    if (cdtVars.empty()) return false;
-
-    Eigen::Vector3d xc = Eigen::Vector3d::Zero();
-    SolverLSQ solver;
-    bool converged = false;
-    for (int it = 0; it < 12; ++it) {
-        EquSys eq;
-        eq.station = station;
-        eq.varSet.insert(vdx);
-        eq.varSet.insert(vdy);
-        eq.varSet.insert(vdz);
-        for (const auto &[sys, v]: cdtVars) eq.varSet.insert(v);
-        int nObs = 0;
-        for (const auto &[sat, tv]: obsData.satTypeValueData) {
-            const FreqCombo *defp = freqComboFor(sat);
-            const auto itP = satPVTRecTime.find(sat);
-            if (!defp || itP == satPVTRecTime.end() || !defp->available(tv, true)) continue;
-            const auto itC = cdtVars.find(sat.system);
-            if (itC == cdtVars.end()) continue;
-            const PVT &pvt = itP->second;
-            const double rho0 = (pvt.p - xc).norm();
-            if (rho0 < 1.0) continue;
-            const double code = defp->combineCodeFromObs(tv) - mOsb.codeBiasAligned(*defp, sat, station);
-            if (!std::isfinite(code)) continue;
-            const Eigen::Vector3d los = -(pvt.p - xc) / rho0;
-            EquData ed;
-            ed.prefit = code + pvt.clockBias * C_MPS + pvt.relativityCorrection * C_MPS - rho0;
-            ed.varCoeffData[vdx] = los.x();
-            ed.varCoeffData[vdy] = los.y();
-            ed.varCoeffData[vdz] = los.z();
-            ed.varCoeffData[itC->second] = 1.0;
-            ed.weight = 1.0;
-            eq.obsEquData[EquID(sat, "ROUGH")] = ed;
-            ++nObs;
-        }
-        if (nObs < 4) return false;
-        try {
-            solver.solve(eq, eq.weightVector().asDiagonal().toDenseMatrix());
-        } catch (...) {
-            return false;
-        }
-        const double dx = solver.getSolution(Parameter::dX);
-        const double dy = solver.getSolution(Parameter::dY);
-        const double dz = solver.getSolution(Parameter::dZ);
-        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz)) return false;
-        const Eigen::Vector3d d(dx, dy, dz);
-        xc += d;
-        if (d.norm() < 1.0) {
-            converged = true;
-            break;
-        }
-    }
-    const double r = xc.norm();
-    if (!converged || !std::isfinite(r) || r < 6.6e6 || r > 5.0e7) return false;
-    out = xc;
-    return true;
-}
-
 // 首历元精确初位置
-std::pair<Eigen::Vector3d, bool> Core::solveInitialPosition(ObsData &obsData) {
+std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsData) {
     Eigen::Vector3d xc = mRefPos;
-    bool roughPoint = false; // 线性化点是否来自码伪距自举（不可信，不许钉高）
     if (!isSaneECEF(xc))
         xc = mCurObs ? mCurObs->antennaPosition : Eigen::Vector3d::Zero();
-    if (!isSaneECEF(xc)) {
-        // 星载 RINEX 缺头坐标：码伪距自举线性化点，后续迭代自己收敛；不碰参考轨道，
-        // 也不写回 mRefPos。xyz 只供仰角与权重；失败就本历元不发布，下历元自然重试。
-        if (!roughCodeFix(obsData, xc)) return {Eigen::Vector3d::Zero(), false};
-        roughPoint = true;
+    const bool anchorTrusted = isSaneECEF(xc);
+    if (!anchorTrusted) {
+        // 星载 RINEX 缺头坐标时不私造线性化点：交给下面的 LSQ 迭代自行收敛，
+        // xyz 只供仰角与权重，不写回 mRefPos；不收敛就本历元不发布，下历元重试。
         xyz = xc;
         computeElevAzim();
     }
@@ -109,7 +37,7 @@ std::pair<Eigen::Vector3d, bool> Core::solveInitialPosition(ObsData &obsData) {
             else {
                 for (auto vit = it2->second.varCoeffData.begin();
                      vit != it2->second.varCoeffData.end();) {
-                    if (vit->first.getParaType() == Parameter::codeBias &&
+                    if (vit->first.par == Parameter::codeBias &&
                         osbCoversSystem(vit->first.sat.system))
                         vit = it2->second.varCoeffData.erase(vit);
                     else
@@ -129,9 +57,9 @@ std::pair<Eigen::Vector3d, bool> Core::solveInitialPosition(ObsData &obsData) {
             const Variable vdx(obsData.station, Parameter::dX);
             const Variable vdy(obsData.station, Parameter::dY);
             const Variable vdz(obsData.station, Parameter::dZ);
-            // 钉高只许用于可信的线性化点（接收机自报/文件头坐标）：自举点本身可能差几十米，
+            // 钉高只许用于可信的线性化点（接收机自报/文件头坐标）：不可信锚点可能差几十米，
             // 钉住会把首历元的高程错误锁进先验与模糊度，之后靠伪距极难爬出来。
-            if (mPinInitHeight && !roughPoint) {
+            if (mPinInitHeight && anchorTrusted) {
                 EquData ed;
                 ed.prefit = 0.0;
                 ed.varCoeffData[vdx] = up.x();
@@ -181,7 +109,7 @@ std::pair<Eigen::Vector3d, bool> Core::solveInitialPosition(ObsData &obsData) {
     return {xc, true};
 }
 
-void Core::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) {
+void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) {
     mEq.reset();
     mEq.station = obsData.station;
     mVarSet.clear();
@@ -220,10 +148,10 @@ void Core::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Variable
     mCsData = &csData;
     mGfEpoch = CycleSlipEpoch{};
 
-    mEpochTropo.update(mTropoGrid, mConfig.tropoMap, xyzEst, obsData.epoch);
-    if (!mTro.empty()) {
+    mEpochTropo.update(prod->tropo, mConfig.tropoMap, xyzEst, obsData.epoch);
+    if (!prod->tro.empty()) {
         if (double gn = 0.0, ge = 0.0, sgn = 0.0, sge = 0.0;
-            mTro.getTropoGrad(mCurObs->station, obsData.epoch, gn, ge, sgn, sge)) {
+            prod->tro.getTropoGrad(mCurObs->station, obsData.epoch, gn, ge, sgn, sge)) {
             mEpochTropo.gradN = gn;
             mEpochTropo.gradE = ge;
         }
@@ -265,7 +193,7 @@ void Core::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Variable
     mPrevSatSet = std::move(mCurrentSatSet);
 }
 
-void Core::decidePrefitGate() {
+void PPPStatic::decidePrefitGate() {
     mPrefitBad.clear();
     mPrefitPhaseBad.clear();
     // 首历元钟差基值未建立，判不出单星粗差，从第二历元起逐历元判。
@@ -313,7 +241,7 @@ void Core::decidePrefitGate() {
 }
 
 // 对流层 ZTD 状态 + 先验/外部产品约束方程
-void Core::addZTDConstraint() {
+void PPPStatic::addZTDConstraint() {
     if (!mHasTropo) return;
     const Variable vztd(mCurObs->station, Parameter::ztd);
     mVarSet.insert(vztd);
@@ -326,8 +254,8 @@ void Core::addZTDConstraint() {
     double ztdTarget = zwd;
     double ztdSigma = mConfig.ztdPriorSigma;
     auto src = "ZTD_PRIOR";
-    if (!mTro.empty() && mConfig.troZtdSigma > 0.0) {
-        if (double ztdTro = 0.0, sigTro = 0.0; mTro.getZTD(mCurObs->station, mCurObs->epoch, ztdTro, sigTro)) {
+    if (!prod->tro.empty() && mConfig.troZtdSigma > 0.0) {
+        if (double ztdTro = 0.0, sigTro = 0.0; prod->tro.getZTD(mCurObs->station, mCurObs->epoch, ztdTro, sigTro)) {
             ztdTarget = ztdTro - mEpochTropo.zhd;
             ztdSigma = mConfig.troZtdSigma;
             src = "ZTD_TRO";
@@ -342,6 +270,4 @@ void Core::addZTDConstraint() {
         ed.weight = 1.0 / (ztdSigma * ztdSigma);
         mEq.obsEquData[eid] = ed;
     }
-}
-
 }

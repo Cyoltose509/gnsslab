@@ -2,7 +2,7 @@
 
 #include "core/geom/CoordStruct.h"
 #include "MathUtils.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 
 #include <iosfwd>
 #include <string>

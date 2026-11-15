@@ -13,10 +13,14 @@
 #include "Log.h"
 #include "Observer.h"
 #include "StringUtils.h"
+#include "download/local/ProductType.h"
+#include "io/ProductPaths.h"
+#include "io/ProductReader.h"
 #include "solvers/common/Config.h"
 #include "solvers/rtk/Pipeline.h"
 #include "solvers/rtk/Realtime.h"
 #include "util/Clock.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::RTK {
     void Task::applyConfig(const SolverOptions &cfg) {
@@ -44,15 +48,15 @@ namespace Solvers::RTK {
         try {
             ok = rtk.processEpoch(base, rover, eph) && rtk.result.numSats > 0;
         } catch (const std::exception &e) {
-            LOG_ERROR << "[RTK] 历元异常: " << e.what();
+            LOG_ERROR << "[RTK] " << I18n::tr("rtk.log.epoch_error", e.what());
         } catch (...) {
-            LOG_ERROR << "[RTK] 历元未知异常";
+            LOG_ERROR << "[RTK] " << I18n::tr("rtk.log.epoch_unknown");
         }
         Epoch data;
         data.getFromObs(rover);
         if (ok) data.getFromRTK(rtk);
         // 失败也提交空解：倒序趟要按下标回填，epochs 必须与配对序列一一对应。
-        const Eigen::Vector3d b = rtk.mBaseXyz;
+        const Eigen::Vector3d b = rtk.mBase;
         commitEpoch(std::move(data), [&](int, Epoch &) {
             if (!initializedRefECEF && b.squaredNorm() > 1e12) {
                 refECEF = XYZ(b.x(), b.y(), b.z());
@@ -69,7 +73,6 @@ namespace Solvers::RTK {
             std::swap(pairQueue, empty);
         }
         rtk = ::RTK{};
-        navTable = EphemerisTable{};
         replay.clear();
     }
 
@@ -81,11 +84,20 @@ namespace Solvers::RTK {
         pairSpaceCv.notify_all();
     }
 
+    std::string Task::navPath() const {
+        return navPathBuf.empty() ? Solvers::Task::navPath() : navPathBuf;
+    }
+
     void Task::readBody() {
         try {
-            view.qcTabLabel = "质量分析[流动站]";
+            // 双站解算只吃广播星历：与单站走同一个产品入口，读进 rtk.prod->eph
+            AppConfig::ProductPaths paths = AppConfig::ProductPaths::of(modeKey(Mode::RTK)).resolved(opts);
+            if (!navPathBuf.empty()) paths.nav = navPathBuf;
+            rtk.prod = productsFor(paths, "RTK", opts.systems, {ProductType::NAV}).prod;
+
+            view.qcTabKey = "solver.tab.qc_rover";
             auto baseTab = std::make_shared<QcTab>();
-            baseTab->label = "质量分析[基准站]";
+            baseTab->labelKey = "solver.tab.qc_base";
             baseTab->fileName = File::baseName(baseObsPathBuf);
             baseTab->view.clearQCInput(opts.sampleInterval);
 
@@ -93,10 +105,10 @@ namespace Solvers::RTK {
             std::string pipeErr;
             const int nPair = pairFiles(
                 baseObsPathBuf, view.obsPathBuf, navPathBuf,
-                opts.sampleInterval, navTable,
+                opts.sampleInterval, *rtk.prod,
                 [&] { return shouldStop(); },
                 [&](const ObsData &base, const ObsData &rover,
-                    const std::shared_ptr<EphemerisTable> &eph, EphemerisTable *) {
+                    const std::shared_ptr<EphemerisTable> &eph) {
                     view.pushQCInput(rover, rover.weekSecond.sow);
                     baseTab->view.pushQCInput(base, base.weekSecond.sow);
                     view.markQcDirty();
@@ -129,9 +141,9 @@ namespace Solvers::RTK {
                 view.extraQcTabs.push_back(std::move(baseTab));
             }
         } catch (const std::exception &e) {
-            failRead("RTK 读取错误: " + std::string(e.what()));
+            failRead(I18n::tr("rtk.err.read", e.what()));
         } catch (...) {
-            failRead("RTK 读取未知异常");
+            failRead(I18n::tr("rtk.err.read_unknown"));
         }
         loading = false;
     }
@@ -143,17 +155,17 @@ namespace Solvers::RTK {
         const SolverOptions o = opts;
         filterMode = o.filter;
         rtk.applyOptions(o);
-        rtk.mBaseXyzUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
-        LOG_INFO << "[RTK] 开始: 截止高度角 " << o.cutoffDeg << "°, 滤波方向 " << filterLabel(o.filter);
+        rtk.mBaseUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
+        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start", o.cutoffDeg, filterLabel(o.filter));
 
         replay.clear();
         try {
             runForward();
             if (filterHasBackward(filterMode)) runBackward();
         } catch (const std::exception &e) {
-            setError(std::string("RTK 解算错误: ") + e.what());
+            setError(I18n::tr("rtk.err.solve", e.what()));
         } catch (...) {
-            setError("RTK 解算未知异常");
+            setError(I18n::tr("rtk.err.solve_unknown"));
         }
         finishSolving();
 
@@ -162,7 +174,7 @@ namespace Solvers::RTK {
             std::lock_guard lk(mutex);
             nSolved = epochs.size();
         }
-        LOG_INFO << "[RTK] 结束: " << nSolved << " 历元, 耗时 " << total.ms() << " ms";
+        LOG_INFO << "[RTK] " << I18n::tr("solver.log.done", nSolved, total.ms());
     }
 
     void Task::runForward() {
@@ -177,14 +189,13 @@ namespace Solvers::RTK {
                     return !pairQueue.empty() || readDone.load() || stop.load();
                 });
                 if (pairQueue.empty() && (readDone.load() || stop.load())) break;
-                if (pairQueue.empty()) continue;
                 item = std::move(pairQueue.front());
                 pairQueue.pop();
             }
             pairSpaceCv.notify_one();
             if (stop || epochLimitReached()) break;
 
-            EphemerisTable *eph = item.eph ? item.eph.get() : &navTable;
+            EphemerisTable *eph = item.eph ? item.eph.get() : &rtk.prod->eph;
             if (solve) {
                 solvePair(item.base, item.rover, *eph);
             } else {
@@ -206,7 +217,7 @@ namespace Solvers::RTK {
         if (n == 0) return;
 
         const Clock::Stopwatch backwardCost;
-        LOG_INFO << "[RTK] 倒序滤波 " << n << " 历元 (" << filterLabel(filterMode) << ")";
+        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.backward", n, filterLabel(filterMode));
         solvePhase = SolvePhase::Backward;
         solveEpoch = 0;
         // 纯后向档正序没解过，参考点由倒序趟自己重建
@@ -215,7 +226,8 @@ namespace Solvers::RTK {
         // 与 SPP 的倒序趟同理：新解算器不继承前向状态，从末历元重新收敛
         ::RTK bwd;
         bwd.applyOptions(opts);
-        bwd.mBaseXyzUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
+        bwd.prod = rtk.prod; // 与正序共用同一份星历，不倒空
+        bwd.mBaseUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
 
         const auto publish = [this] {
             std::lock_guard lk(mutex);
@@ -229,14 +241,14 @@ namespace Solvers::RTK {
         for (std::size_t i = n; i-- > 0;) {
             if (stop.load()) break;
             solveEpoch = static_cast<int>(n - i);
-            EphemerisTable *eph = replay[i].eph ? replay[i].eph.get() : &navTable;
+            EphemerisTable *eph = replay[i].eph ? replay[i].eph.get() : &bwd.prod->eph;
             bool ok = false;
             try {
                 ok = bwd.processEpoch(replay[i].base, replay[i].rover, *eph) && bwd.result.numSats > 0;
             } catch (const std::exception &e) {
-                LOG_ERROR << "[RTK] 倒序历元异常: " << e.what();
+                LOG_ERROR << "[RTK] " << I18n::tr("rtk.log.backward_epoch_error", e.what());
             } catch (...) {
-                LOG_ERROR << "[RTK] 倒序历元未知异常";
+                LOG_ERROR << "[RTK] " << I18n::tr("rtk.log.backward_epoch_unknown");
             }
             Epoch data;
             data.getFromObs(replay[i].rover);
@@ -244,8 +256,8 @@ namespace Solvers::RTK {
             {
                 std::lock_guard lk(mutex);
                 if (i < epochs.size()) mergeEpoch(epochs[i], data);
-                if (!initializedRefECEF && bwd.mBaseXyz.squaredNorm() > 1e12) {
-                    refECEF = XYZ(bwd.mBaseXyz.x(), bwd.mBaseXyz.y(), bwd.mBaseXyz.z());
+                if (!initializedRefECEF && bwd.mBase.squaredNorm() > 1e12) {
+                    refECEF = XYZ(bwd.mBase.x(), bwd.mBase.y(), bwd.mBase.z());
                     initializedRefECEF = true;
                 }
             }
@@ -259,7 +271,7 @@ namespace Solvers::RTK {
                 ep.sppResult.postResPhase.release();
             }
         }
-        LOG_INFO << "[RTK] 倒序完成，耗时 " << backwardCost.ms() << " ms";
+        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.backward_done", backwardCost.ms());
         replay.clear();
         replay.shrink_to_fit();
     }
@@ -321,7 +333,7 @@ namespace Solvers::RTK {
         using F = Export::Field;
         if (i >= epochs.size() || !epochs[i].solved) return;
         const Epoch &ep = epochs[i];
-        const Eigen::Vector3d ref = exportRef(ep);
+        const Eigen::Vector3d ref = ep.refECEF;
         const Eigen::Vector3d xyz = ep.rtkFloatXyz.squaredNorm() > 1.0 ? ep.rtkFloatXyz : ref + ep.rtkBaseFloat;
         row.set(F::Xf, xyz.x());
         row.set(F::Yf, xyz.y());
@@ -367,7 +379,7 @@ namespace Solvers::RTK {
         if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = Export::floatFixColumns(false, true);
         // 基线列不受影响；REF/偏差/3dRMS 这些「相对参考」的列没挂真值就剔除。
-        return exportRefReady() ? c : Export::withoutRefColumns(c);
+        return truthReady() ? c : Export::withoutRefColumns(c);
     }
 
     std::string Task::exportStem() const {
@@ -377,20 +389,20 @@ namespace Solvers::RTK {
         return rover + "-" + base;
     }
 
-    void Task::writeCsvParams(CSV::Meta &m) const {
-        m.flag("使用 AR 固定", opts.rtk.useAR);
-        m.flag("完整协方差", opts.rtk.fullCovariance);
-        m.num("Ratio 阈值", opts.rtk.arThreshold);
-        m.flag("使用周跳探测", opts.rtk.useCycleSlip);
-        m.flag("使用 GF 周跳", opts.rtk.useGfCycleSlip);
-        m.num("GF 周跳阈值倍数", opts.rtk.gfSlipMult);
-        m.num("相位高度角加权下限 (sinE)", opts.rtk.phaseWeight.minSinElev);
-        m.num("伪距:相位 σ 比", opts.rtk.codeOverPhaseSigma);
-        m.integer("双差最少卫星数", opts.rtk.minSats);
-        m.num("相位高度角模型 a", opts.rtk.phaseWeight.a);
-        m.num("相位高度角模型 b", opts.rtk.phaseWeight.b);
-        m.flag("排除北斗 GEO 参考星", opts.rtk.excludeGeoRef);
-        m.xyz("基准站坐标 XYZ", opts.baseCoordX, opts.baseCoordY, opts.baseCoordZ);
+    void Task::writeCSVParams(CSV::Meta &m) const {
+        m.flag(I18n::trc("param.use_ar"), opts.rtk.useAR);
+        m.flag(I18n::trc("param.full_covariance"), opts.rtk.fullCovariance);
+        m.num(I18n::trc("param.ratio_threshold"), opts.rtk.arThreshold);
+        m.flag(I18n::trc("param.use_cycle_slip"), opts.rtk.useCycleSlip);
+        m.flag(I18n::trc("param.use_gf_slip"), opts.rtk.useGfCycleSlip);
+        m.num(I18n::trc("param.gf_slip_mult"), opts.rtk.gfSlipMult);
+        m.num(I18n::trc("param.phase_weight_floor"), opts.rtk.phaseWeight.minSinElev);
+        m.num(I18n::trc("param.code_phase_sigma_ratio"), opts.rtk.codeOverPhaseSigma);
+        m.integer(I18n::trc("param.dd_min_sats"), opts.rtk.minSats);
+        m.num(I18n::trc("param.phase_weight_a"), opts.rtk.phaseWeight.a);
+        m.num(I18n::trc("param.phase_weight_b"), opts.rtk.phaseWeight.b);
+        m.flag(I18n::trc("param.exclude_geo_ref"), opts.rtk.excludeGeoRef);
+        m.xyz(I18n::trc("export.meta.par.base_xyz"), opts.baseCoordX, opts.baseCoordY, opts.baseCoordZ);
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

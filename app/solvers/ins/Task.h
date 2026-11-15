@@ -100,7 +100,7 @@ namespace Solvers::INS {
 
         [[nodiscard]] std::vector<Export::Col> exportDefaults(Export::Format fmt) const override;
 
-        void writeCsvParams(CSV::Meta &m) const override;
+        void writeCSVParams(CSV::Meta &m) const override;
 
         [[nodiscard]] std::size_t resultEpochCount() const override;
 

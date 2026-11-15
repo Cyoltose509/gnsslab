@@ -6,8 +6,6 @@
 #include <memory>
 #include <vector>
 
-namespace Observer {
-
 void DualPair::IntervalEstimator::reset() {
     mHave = false;
     mLast = 0.0;
@@ -126,6 +124,4 @@ bool DualPair::stepRover() {
     mRoverIv.observe(mRover.weekSecond.sow);
     mHaveRover = true;
     return true;
-}
-
 }

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/IniFile.h"
 #include "core/geom/CoordConvert.h"
 #include "core/geom/CoordStruct.h"
 #include "Decimator.h"
@@ -17,10 +18,12 @@
 #include "StringUtils.h"
 #include "core/atmo/Troposphere.h"
 #include "io/ObsSource.h"
-#include "io/ProductLoad.h"
+#include "io/ProductPaths.h"
+#include "io/ProductReader.h"
 #include "solvers/common/Core.h"
 #include "solvers/spp/Realtime.h"
 #include "util/Clock.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::SPP {
     namespace {
@@ -119,26 +122,22 @@ namespace Solvers::SPP {
     }
 
     bool Task::initSolver(::SPP &solver) {
+        AppConfig::ProductPaths d = AppConfig::ProductPaths::of(modeKey(Mode::SPP)).resolved(opts);
         std::vector<std::string> navs;
         if (!navPathBuf.empty()) navs.push_back(navPathBuf);
         else navs = ObsSource::scanNavFiles(filePath);
-        for (const auto &nav: navs) {
-            try {
-                solver.loadBRDC(nav);
-                hasNav = true;
-                LOG_INFO << "SPP 读取广播星历: " << nav;
-            } catch (const std::exception &e) {
-                LOG_ERROR << "SPP 读取广播星历失败 " << nav << ": " << e.what();
-            }
-        }
-        const auto products = ProductLoad::resolve(opts, modeKey(Mode::SPP));
-        ProductLoad::loadSPPGrids(solver, products.vmf, products.gpt3);
-        ProductLoad::warnTropoFallback("SPP", opts.spp.tropoMap, solver.tropoGridReady());
+        d.nav = navs.empty() ? std::string{} : Str::join(navs, kIniListSep); // 文件档只认观测目录里的导航文件
+        // 文件 SPP 只吃广播星历与对流层格网，精密产品一概不读
+        solver.prod = productsFor(d, "SPP", opts.systems,
+                                  {ProductType::NAV, ProductType::VMF, ProductType::GPT3})
+                          .prod;
+        hasNav = !solver.prod->eph.gps.empty() || !solver.prod->eph.bds.empty();
+        Troposphere::warnFallback("SPP", opts.spp.tropoMap, solver.tropoGridReady());
         return true;
     }
 
     void Task::beforeSolveEpoch(::SPP &solver, Observer::Item &item) {
-        solver.ephTable.mergeEmbedded(item.eph, item.obs.epoch);
+        solver.prod->eph.mergeEmbedded(item.eph, item.obs.epoch);
         if (item.eph) hasNav = true;
         // 只有 SPP 吃广播星历；PPP/LEO 靠精密产品，缺 BRDC 不算致命
         if (mode == Mode::SPP && !Observer::carriesEph(obsFormat) && !hasNav) noEphSolve = true;
@@ -163,31 +162,26 @@ namespace Solvers::SPP {
 
     void Task::solveBody() {
         fwdSolver = makeSolver();
-        if (!fwdSolver) {
-            setError("解算器未就绪");
-            finishSolving();
-            return;
-        }
         const Clock::Stopwatch solveCost;
         try {
             if (!waitNavReady()) {
-                LOG_WARN << "[解算] 任务被取消(stop 已置位)：解算线程未启动，0 历元";
+                LOG_WARN << "[SOLVE] " << I18n::tr("solver.log.cancelled_before_start");
                 finishSolving();
                 return;
             }
 
             std::string sys;
             for (const char c: opts.systems) sys += c;
-            LOG_INFO << "[解算] 开始: 截止高度角 " << opts.cutoffDeg << "°, 系统="
-                    << (sys.empty() ? std::string("全部") : sys)
-                    << (opts.sampleInterval > 0.0
-                            ? ", 采样间隔 " + std::to_string(opts.sampleInterval) + "s"
-                            : ", 采样间隔按文件")
-                    << ", 滤波方向 " << filterLabel(opts.filter);
+            LOG_INFO << "[SOLVE] " << I18n::tr("solver.log.start", opts.cutoffDeg,
+                                                       sys.empty() ? I18n::tr("common.all") : sys,
+                                                       opts.sampleInterval > 0.0
+                                                           ? I18n::tr("solver.log.interval", opts.sampleInterval)
+                                                           : I18n::tr("solver.log.interval_file"),
+                                                       filterLabel(opts.filter));
             const SolverOptions o = opts;
             fwdSolver->applyOptions(o);
             if (!initSolver(*fwdSolver)) {
-                LOG_ERROR << "[解算] 解算器初始化失败（产品加载返回 false）";
+                LOG_ERROR << "[SOLVE] " << I18n::tr("solver.log.init_failed");
                 finishSolving();
                 return;
             }
@@ -196,18 +190,18 @@ namespace Solvers::SPP {
             runForward();
             if (filter.hasBackward()) runBackward();
         } catch (const std::exception &e) {
-            LOG_ERROR << "[解算] 解算线程异常: " << e.what();
+            LOG_ERROR << "[SOLVE] " << I18n::tr("solver.log.thread_error", e.what());
             setError(e.what());
         } catch (...) {
-            LOG_ERROR << "[解算] 解算线程未知异常";
-            setError("解算线程未知异常");
+            LOG_ERROR << "[SOLVE] " << I18n::tr("solver.err.thread_unknown");
+            setError(I18n::trc("solver.err.thread_unknown"));
         }
         std::size_t total = 0;
         {
             std::lock_guard lk(mutex);
             total = epochs.size();
         }
-        LOG_INFO << "[解算] 结束: " << total << " 历元, 耗时 " << solveCost.ms() << " ms";
+        LOG_INFO << "[SOLVE] " << I18n::tr("solver.log.done", total, solveCost.ms());
         finishSolving();
     }
 
@@ -243,10 +237,10 @@ namespace Solvers::SPP {
                     !afterSolveEpoch(s, data, item, static_cast<int>(index)))
                     data.solved = false;
             } catch (const std::exception &e) {
-                LOG_ERROR << "[解算] 历元异常 (sod=" << item.obs.epoch.m_sod << "): " << e.what();
+                LOG_ERROR << "[SOLVE] " << I18n::tr("solver.log.epoch_error", item.obs.epoch.m_sod, e.what());
                 data.solved = false;
             } catch (...) {
-                LOG_ERROR << "[解算] 历元未知异常 (sod=" << item.obs.epoch.m_sod << ")";
+                LOG_ERROR << "[SOLVE] " << I18n::tr("solver.log.epoch_unknown", item.obs.epoch.m_sod);
                 data.solved = false;
             }
             out.solved = data.solved;
@@ -267,7 +261,7 @@ namespace Solvers::SPP {
         const std::size_t m = std::min(fwdSession.feed.count(), epochCount);
         if (m == 0) return;
 
-        LOG_INFO << "[滤波] 扫描完成 " << m << " 历元，从末尾倒序滤波 (" << filterLabel(filter.mode) << ")";
+        LOG_INFO << "[FILTER] " << I18n::tr("solver.log.scan_done", m, filterLabel(filter.mode));
         const Clock::Stopwatch backwardCost;
         solvePhase = SolvePhase::Backward;
         solveEpoch = 0;
@@ -335,16 +329,15 @@ namespace Solvers::SPP {
         };
         const auto makeBackward = [this]() -> std::unique_ptr<::SPP> {
             std::unique_ptr<::SPP> s = makeSolver();
-            if (!s) return nullptr;
             s->applyOptions(opts);
             return s;
         };
         Filter::Session back = fwdSession;
         back.make = makeBackward;
-        back.prepare = {}; // 内嵌星历已在正序趟注入，倒序解算器靠 adoptProducts 接管
+        back.prepare = {}; // 内嵌星历已在正序趟注入同一份 Products，倒序解算器直接共用
         back.onEpoch = onEpoch;
         if (!filter.runBackward(back)) return;
-        LOG_INFO << "[滤波] 后向完成，耗时 " << backwardCost.ms() << " ms";
+        LOG_INFO << "[FILTER] " << I18n::tr("solver.log.backward_done", backwardCost.ms());
 
         {
             std::lock_guard lk(mutex);
@@ -370,22 +363,22 @@ namespace Solvers::SPP {
     std::vector<Export::Col> Task::exportFields(const Export::Format fmt) const {
         if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = sppFields();
-        return exportRefReady() ? c : Export::withoutRefColumns(c);
+        return truthReady() ? c : Export::withoutRefColumns(c);
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
         if (fmt != Export::Format::CSV) return {};
         const std::vector<Export::Col> c = sppCSV();
-        return exportRefReady() ? c : Export::withoutRefColumns(c);
+        return truthReady() ? c : Export::withoutRefColumns(c);
     }
 
-    void Task::writeCsvParams(CSV::Meta &m) const {
-        m.num("码 σ (m)", opts.spp.codeSigma);
-        m.num("高度角加权下限 (sinE)", opts.spp.minSinElev);
-        m.text("映射函数", Troposphere::keyOf(opts.spp.tropoMap));
-        m.num("ISB 过程 σ", opts.spp.isbProcSigma);
-        m.num("ISB 初始 σ", opts.spp.isbInitSigma);
-        m.flag("剔除电文标记不健康的卫星", opts.spp.useHealth);
+    void Task::writeCSVParams(CSV::Meta &m) const {
+        m.num(I18n::trc("param.code_sigma"), opts.spp.codeSigma);
+        m.num(I18n::trc("param.elev_weight_floor"), opts.spp.minSinElev);
+        m.text(I18n::trc("MappingFunction"), Troposphere::keyOf(opts.spp.tropoMap));
+        m.num(I18n::trc("param.isb_proc_sigma"), opts.spp.isbProcSigma);
+        m.num(I18n::trc("param.isb_init_sigma"), opts.spp.isbInitSigma);
+        m.flag(I18n::trc("param.drop_unhealthy"), opts.spp.useHealth);
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

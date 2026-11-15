@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "core/ins/InsMath.h"
+#include "i18n/I18n.h"
 
 
 struct CalibReport {
@@ -62,13 +63,15 @@ public:
     };
 
     static const char *posLabel(const Pos p) {
-        static const char *s[6] = {"X上", "X下", "Y上", "Y下", "Z上", "Z下"};
-        return s[static_cast<int>(p)];
+        static const char *k[6] = {"ins.seg.x_up", "ins.seg.x_down", "ins.seg.y_up",
+                                   "ins.seg.y_down", "ins.seg.z_up", "ins.seg.z_down"};
+        return I18n::trc(k[static_cast<int>(p)]);
     }
 
     static const char *rotLabel(const Rot r) {
-        static const char *s[6] = {"X正转", "X逆转", "Y正转", "Y逆转", "Z正转", "Z逆转"};
-        return s[static_cast<int>(r)];
+        static const char *k[6] = {"ins.seg.x_cw", "ins.seg.x_ccw", "ins.seg.y_cw",
+                                   "ins.seg.y_ccw", "ins.seg.z_cw", "ins.seg.z_ccw"};
+        return I18n::trc(k[static_cast<int>(r)]);
     }
 
 

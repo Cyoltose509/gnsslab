@@ -1,37 +1,27 @@
 #include "Exception.h"
 #include "SolverKalman.h"
-#define debug 0
 
-void SolverKalman::reset(const Eigen::VectorXd &initialState, const Eigen::MatrixXd &initialErrorCovariance) {
-    xhat = initialState;
-    P = initialErrorCovariance;
+void SolverKalman::reset(const Eigen::VectorXd &X0, const Eigen::MatrixXd &Dx0) {
+    Xhat = X0;
+    Dx = Dx0;
 
-    xhatminus = Eigen::VectorXd::Zero(initialState.size());
-    Pminus = Eigen::MatrixXd::Zero(initialErrorCovariance.rows(), initialErrorCovariance.cols());
+    Xminus = Eigen::VectorXd::Zero(X0.size());
+    Dp = Eigen::MatrixXd::Zero(Dx0.rows(), Dx0.cols());
 }
 
-
-int SolverKalman::compute(const Eigen::MatrixXd &phiMatrix, const Eigen::MatrixXd &qMatrix,
-                          const Eigen::VectorXd &mVector, const Eigen::MatrixXd &hMatrix, const Eigen::MatrixXd &wMatrix) {
-    predict(phiMatrix, xhat, qMatrix);
-    if (const int rc = correct(mVector, hMatrix, wMatrix); rc != 0) return -1;
-    return 0;
+int SolverKalman::predict(const Eigen::MatrixXd &Phi, const Eigen::MatrixXd &Dw) {
+    const int stateRow = static_cast<int>(Xhat.size());
+    const Eigen::MatrixXd dummyB = Eigen::MatrixXd::Zero(stateRow, 1);
+    const Eigen::VectorXd dummyU = Eigen::VectorXd::Zero(1);
+    return predict(Phi, dummyB, dummyU, Dw);
 }
 
-int SolverKalman::predict(const Eigen::MatrixXd &phiMatrix, const Eigen::VectorXd &previousState, const Eigen::MatrixXd &qMatrix) {
-    const int stateRow(previousState.size());
-
-    const Eigen::MatrixXd dummyControMatrix = Eigen::MatrixXd::Zero(stateRow, 1);
-    const Eigen::VectorXd dummyControlInput = Eigen::VectorXd::Zero(1);
-
-    return predict(phiMatrix, previousState, dummyControMatrix, dummyControlInput, qMatrix);}
-
-int SolverKalman::predict(const Eigen::MatrixXd &phiMatrix, const Eigen::VectorXd &previousState, const Eigen::MatrixXd &controlMatrix,
-                          const Eigen::VectorXd &controlInput, const Eigen::MatrixXd &qMatrix) {
+int SolverKalman::predict(const Eigen::MatrixXd &Phi, const Eigen::MatrixXd &B,
+                          const Eigen::VectorXd &U, const Eigen::MatrixXd &Dw) {
     try {
-        xhatminus = phiMatrix * xhat + controlMatrix * controlInput;
-        const Eigen::MatrixXd phiT = phiMatrix.transpose();
-        Pminus = phiMatrix * P * phiT + qMatrix;
+        Xminus = Phi * Xhat + B * U;
+        const Eigen::MatrixXd PhiT = Phi.transpose();
+        Dp = Phi * Dx * PhiT + Dw;
     } catch (...) {
         throw InvalidSolver("Predict(): Unable to predict next state.");
     }
@@ -39,26 +29,26 @@ int SolverKalman::predict(const Eigen::MatrixXd &phiMatrix, const Eigen::VectorX
     return 0;
 }
 
-int SolverKalman::correct(const Eigen::VectorXd &mVector, const Eigen::MatrixXd &hMatrix, const Eigen::MatrixXd &wMatrix) {
-    const int n = static_cast<int>(hMatrix.cols()); // 状态维数
-    const int q = static_cast<int>(hMatrix.rows()); // 观测维数
+int SolverKalman::correct(const Eigen::VectorXd &Z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &W) {
+    const int n = static_cast<int>(H.cols()); // 状态维数
+    const int q = static_cast<int>(H.rows()); // 观测维数
 
-    if (wMatrix.rows() != q || wMatrix.cols() != q) return -1;
-    const Eigen::MatrixXd R = wMatrix.inverse();
-    if (!R.allFinite()) return -1;
+    if (W.rows() != q || W.cols() != q) return -1;
+    const Eigen::MatrixXd Dv = W.inverse();
+    if (!Dv.allFinite()) return -1;
 
-    const Eigen::MatrixXd PHt = Pminus * hMatrix.transpose();
-    const Eigen::MatrixXd S = hMatrix * PHt + R;
+    const Eigen::MatrixXd DpHt = Dp * H.transpose();
+    const Eigen::MatrixXd S = H * DpHt + Dv;
     const Eigen::LDLT<Eigen::MatrixXd> sldlt(S);
     if (sldlt.info() != Eigen::Success) return -1;
 
-    const Eigen::MatrixXd K = sldlt.solve(PHt.transpose()).transpose();
-    const Eigen::VectorXd dx = K * mVector;
-    xhat = xhatminus + dx;
-    const Eigen::MatrixXd Pnew = (Eigen::MatrixXd::Identity(n, n) - K * hMatrix) * Pminus;
-    P = 0.5 * (Pnew + Pnew.transpose());
-    postfitResidual = mVector - hMatrix * dx;
+    const Eigen::MatrixXd K = sldlt.solve(DpHt.transpose()).transpose();
+    const Eigen::VectorXd dx = K * Z;
+    Xhat = Xminus + dx;
+    const Eigen::MatrixXd DxNew = (Eigen::MatrixXd::Identity(n, n) - K * H) * Dp;
+    Dx = 0.5 * (DxNew + DxNew.transpose());
+    postfitResidual = Z - H * dx;
 
-    if (!xhat.allFinite() || !P.allFinite()) return -1;
+    if (!Xhat.allFinite() || !Dx.allFinite()) return -1;
     return 0;
 }

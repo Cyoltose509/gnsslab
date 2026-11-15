@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 
 namespace {
     constexpr std::string_view kVersionLabel = "CRINEX VERS   / TYPE";
@@ -72,7 +73,7 @@ bool CRXDecoder::isCompactRINEX(const std::string &path) {
 }
 
 bool CRXDecoder::fail(const std::string &msg) {
-    error = msg + "（第 " + std::to_string(lineNo) + " 行）";
+    error = I18n::tr("crx.line", msg, lineNo);
     return false;
 }
 
@@ -101,16 +102,16 @@ void CRXDecoder::parseHeaderTypes(const std::string &s) {
 bool CRXDecoder::readHeader() {
     std::string s;
     if (!readLine(s) || s.size() < 79 || s.substr(60, 19) != kVersionLabel.substr(0, 19))
-        return fail("不是 Compact RINEX 文件");
+        return fail(I18n::tr("crx.err.not_crinex"));
     crinexVersion = static_cast<int>(prefixInt(s));
-    if (crinexVersion != 1 && crinexVersion != 3) return fail("不支持的 CRINEX 版本");
+    if (crinexVersion != 1 && crinexVersion != 3) return fail(I18n::tr("crx.err.crinex_ver"));
 
-    if (!readLine(s)) return fail("头部被截断");
+    if (!readLine(s)) return fail(I18n::tr("crx.err.head_truncated"));
     if (!readLine(s) || s.size() < 61 ||
         labelAt(s).compare(0, 20, "RINEX VERSION / TYPE") != 0)
-        return fail("缺少 RINEX VERSION / TYPE");
+        return fail(I18n::tr("crx.err.no_version"));
     rinexVersion = static_cast<int>(prefixInt(s));
-    if (s[5] != '2' && s[5] != '3' && s[5] != '4') return fail("不支持的 RINEX 版本");
+    if (s[5] != '2' && s[5] != '3' && s[5] != '4') return fail(I18n::tr("crx.err.rinex_ver"));
 
     if (rinexVersion == 2) {
         epTopFrom = '&';
@@ -134,7 +135,7 @@ bool CRXDecoder::readHeader() {
         out << rtrim(s) << '\n';
         parseHeaderTypes(s);
         if (labelAt(s).compare(0, kEndOfHeader.size(), kEndOfHeader) == 0) break;
-        if (!readLine(s)) return fail("头部缺少 END OF HEADER");
+        if (!readLine(s)) return fail(I18n::tr("crx.err.no_end_header"));
     }
     return true;
 }
@@ -157,9 +158,9 @@ bool CRXDecoder::parseClock(const std::string &s, bool &haveClock) {
         clkArcOrder = static_cast<int>(prefixInt(s));
         clkOrder = -1;
         num = s.substr(2);
-        if (clkArcOrder > kMaxDiffOrder) return fail("钟差差分阶数超限");
+        if (clkArcOrder > kMaxDiffOrder) return fail(I18n::tr("crx.err.clk_diff_order"));
     }
-    if (num.empty()) return fail("钟差记录为空");
+    if (num.empty()) return fail(I18n::tr("crx.err.clk_empty"));
     if (const std::size_t digits = num.size() - (num[0] == '-' ? 1u : 0u); digits < 9) {
         clkCur.u[0] = 0;
         clkCur.l[0] = prefixInt(num);
@@ -225,20 +226,20 @@ bool CRXDecoder::parseSatDiff(const std::string &s, const int sat, const int pre
             order = 0;
             arcOrder = static_cast<int>(prefixInt(tok));
             num = tok.substr(2);
-            if (arcOrder > kMaxDiffOrder) return fail("观测差分阶数超限");
+            if (arcOrder > kMaxDiffOrder) return fail(I18n::tr("crx.err.obs_diff_order"));
         } else {
             if (prevIdx < 0 || prevIdx >= static_cast<int>(diffPrev.size()) ||
                 j >= static_cast<int>(diffPrev[prevIdx].size()))
-                return fail("新卫星未初始化 arc");
+                return fail(I18n::tr("crx.err.new_sat_arc"));
             const Diff &prev = diffPrev[prevIdx][j];
-            if (prev.arcOrder < 0) return fail("观测量未初始化 arc");
+            if (prev.arcOrder < 0) return fail(I18n::tr("crx.err.obs_arc"));
             order = prev.order;
             arcOrder = prev.arcOrder;
             if (order < arcOrder) ++order;
         }
         const int i = order;
-        if (i < 0 || i > kMaxDiffOrder) return fail("差分阶数越界");
-        if (num.empty()) return fail("观测差分记录为空");
+        if (i < 0 || i > kMaxDiffOrder) return fail(I18n::tr("crx.err.diff_order"));
+        if (num.empty()) return fail(I18n::tr("crx.err.obs_empty"));
         if (const std::size_t digits = num.size() - (num[0] == '-' ? 1u : 0u); digits < 6) {
             u[i] = 0;
             l[i] = prefixInt(num);
@@ -380,11 +381,11 @@ void CRXDecoder::saveState() {
 
 bool CRXDecoder::processEpoch(const std::string &dline) {
     repairText(line, dline);
-    if (!validEpochLine()) return fail("历元行格式异常");
+    if (!validEpochLine()) return fail(I18n::tr("crx.err.epoch_line"));
     line = rtrim(line);
 
     nsat = static_cast<int>(prefixInt(std::string_view(line).substr(nSatPos)));
-    if (nsat <= 0 || nsat > 100) return fail("卫星数异常");
+    if (nsat <= 0 || nsat > 100) return fail(I18n::tr("crx.err.sat_count"));
 
     satIds.clear();
     satIds.reserve(nsat);
@@ -401,7 +402,7 @@ bool CRXDecoder::processEpoch(const std::string &dline) {
             }
 
     std::string clockLine;
-    if (!readLine(clockLine)) return fail("缺少钟差记录");
+    if (!readLine(clockLine)) return fail(I18n::tr("crx.err.no_clk"));
     bool haveClock = false;
     if (!parseClock(clockLine, haveClock)) return false;
 
@@ -409,10 +410,10 @@ bool CRXDecoder::processEpoch(const std::string &dline) {
     diffCur.assign(nsat, std::vector<Diff>());
     for (int i = 0; i < nsat; ++i) {
         const int nt = typesOf(satIds[i]);
-        if (nt <= 0 || nt > 100) return fail("观测量类型数异常");
+        if (nt <= 0 || nt > 100) return fail(I18n::tr("crx.err.type_count"));
         diffCur[i].resize(nt);
         std::string s;
-        if (!readLine(s)) return fail("观测数据被截断");
+        if (!readLine(s)) return fail(I18n::tr("crx.err.obs_truncated"));
         if (!parseSatDiff(s, i, satTable[i], nt)) return false;
     }
 
@@ -420,7 +421,7 @@ bool CRXDecoder::processEpoch(const std::string &dline) {
     emitEpochLine();
     emitSatData();
     out << buf;
-    if (!out) return fail("写入 RINEX 失败");
+    if (!out) return fail(I18n::tr("crx.err.write"));
     buf.clear();
     saveState();
     return true;
@@ -433,10 +434,10 @@ bool CRXDecoder::handleEvent(std::string &dline) {
         out << dline << '\n';
         if (dline.size() > 29) {
             const int n = static_cast<int>(prefixInt(std::string_view(dline).substr(eventPos + 1)));
-            if (n < 0) return fail("事件记录条数异常");
+            if (n < 0) return fail(I18n::tr("crx.err.event_count"));
             for (int i = 0; i < n; ++i) {
                 std::string s;
-                if (!readLine(s)) return fail("事件记录被截断");
+                if (!readLine(s)) return fail(I18n::tr("crx.err.event_truncated"));
                 out << rtrim(s) << '\n';
                 parseHeaderTypes(s);
             }
@@ -447,7 +448,7 @@ bool CRXDecoder::handleEvent(std::string &dline) {
         if (dline.empty() || dline[0] != epTopFrom || dline.size() < 29 ||
             eventPos >= dline.size() ||
             !std::isdigit(static_cast<unsigned char>(dline[eventPos])))
-            return fail("事件记录后缺少初始化历元");
+            return fail(I18n::tr("crx.err.no_init_epoch"));
         if (dline[eventPos] == '0' || dline[eventPos] == '1') break;
     }
     pending = dline;
@@ -480,12 +481,12 @@ bool CRXDecoder::runEpochs() {
 bool CRXDecoder::decode(const std::string &inPath, const std::string &outPath, std::string &err) {
     in.open(inPath);
     if (!in) {
-        err = "无法打开 Compact RINEX 输入文件: " + inPath;
+        err = I18n::tr("crx.err.open_in", inPath);
         return false;
     }
     out.open(outPath);
     if (!out) { // 输入打不开时不能先建输出，否则磁盘上会留一个 0 字节的「解压结果」
-        err = "无法创建输出文件: " + outPath;
+        err = I18n::tr("crx.err.create_out", outPath);
         return false;
     }
     std::fill(ntypeGnss.begin(), ntypeGnss.end(), -1);
@@ -496,7 +497,7 @@ bool CRXDecoder::decode(const std::string &inPath, const std::string &outPath, s
     if (!ok) {
         std::error_code ec;
         std::filesystem::remove(outPath, ec);
-        err = error.empty() ? "Compact RINEX 解压失败" : error;
+        err = error.empty() ? I18n::tr("crx.err.failed") : error;
         return false;
     }
     err.clear();

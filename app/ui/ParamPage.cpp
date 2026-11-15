@@ -1,5 +1,7 @@
 #include "ui/ParamPage.h"
 
+#include "i18n/I18n.h"
+
 #include <algorithm>
 
 namespace {
@@ -33,7 +35,7 @@ namespace UI::ParamPage {
     void beginField(const char *label, const bool autoWidth) {
         const float indent = labelWidth > 0.0f ? labelWidth : ImGui::GetFontSize() * 14.0f;
         const float baseX = ImGui::GetCursorPosX();
-        ImGui::TextUnformatted(label);
+        ImGui::TextUnformatted(I18n::trc(label));
         ImGui::SameLine();
         ImGui::SetCursorPosX(baseX + indent);
         if (autoWidth) ImGui::SetNextItemWidth(fieldWidth());
@@ -41,11 +43,12 @@ namespace UI::ParamPage {
 
     void drawGroupTitle(const char *title) {
         if (!title || !*title) return;
+        const char *text = I18n::trc(title);
         ImGui::SetWindowFontScale(1.16f);
         const ImVec2 pos = ImGui::GetCursorScreenPos();
         const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-        ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + 0.8f, pos.y), col, title);
-        ImGui::TextUnformatted(title);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + 0.8f, pos.y), col, text);
+        ImGui::TextUnformatted(text);
         ImGui::SetWindowFontScale(1.0f);
     }
 }

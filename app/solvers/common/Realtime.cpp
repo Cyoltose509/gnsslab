@@ -5,6 +5,7 @@
 
 #include "Log.h"
 #include "util/Clock.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Realtime {
     namespace {
@@ -20,8 +21,8 @@ namespace Solvers::Realtime {
             try {
                 if (!connect()) {
                     if (!loggedConnectFail) {
-                        LOG_WARN << "[" << tag() << "] 连接失败 " << target()
-                                << "，每 " << kConnectFailBackoffMs / 1000 << "s 重试";
+                        LOG_WARN << "[" << tag() << I18n::tr("rt.log.connect_failed", target(),
+                                                                      kConnectFailBackoffMs / 1000);
                         loggedConnectFail = true;
                     }
                     setConnectError();
@@ -30,7 +31,7 @@ namespace Solvers::Realtime {
                 }
                 clearError();
                 if (loggedConnectFail) {
-                    LOG_INFO << "[" << tag() << "] 已连接 " << target();
+                    LOG_INFO << "[" << tag() << I18n::tr("rt.log.connected", target());
                     loggedConnectFail = false;
                 }
 
@@ -39,8 +40,8 @@ namespace Solvers::Realtime {
                 if (broke) break;
 
                 if (!stopped()) {
-                    LOG_WARN << "[" << tag() << "] 数据流中断，"
-                            << kStreamBreakBackoffMs / 1000 << "s 后重连 " << target();
+                    LOG_WARN << "[" << tag() << I18n::tr("rt.log.stream_broken",
+                                                              kStreamBreakBackoffMs / 1000, target());
                     setStreamBroken();
                     sleep(kStreamBreakBackoffMs);
                 }

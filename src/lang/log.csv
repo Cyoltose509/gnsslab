@@ -1,0 +1,65 @@
+key,ZH-CN,EN
+ins.align.failed,静态解析{{CoarseAlignment}}失败：{0},Static analytic {{CoarseAlignment}} failed: {0}
+ins.align.head_too_short,开头{{Static}}段不足 20 s，无法自动解析{{CoarseAlignment}}；请关闭自动{{Alignment}}并手填{{InitialAttitude}},"The leading {{Static}} segment is shorter than 20 s, so automatic {{CoarseAlignment}} is not possible. Turn off automatic {{Alignment}} and enter the {{InitialAttitude}} manually."
+ins.calib.err_coverage,覆盖不足，缺少：{0},"insufficient coverage, missing:{0}"
+ins.scale.bad_dt,时间戳间隔异常,Abnormal timestamp interval
+ins.scale.bad_g,当地{{Gravity}}加速度 g 不是有效正数,Local {{Gravity}} g is not a valid positive value
+ins.scale.from_record,日志自描述的 {{IMUModel}},{{IMUModel}} declared in the log
+ins.scale.multi_match,反推{{DecodeScale}} {0} (m/s)/LSB（{1} Hz）有 {2} 个{{DecodeScale}}不同的型号都相符,Derived {{DecodeScale}} {0} (m/s)/LSB ({1} Hz) matches {2} models with different {{DecodeScale}}
+ins.scale.multi_model,有 {0} 个型号{{DecodeScale}}相同，取 {1},{0} models share the same {{DecodeScale}}; using {1}
+ins.scale.no_accel,{{Accelerometer}}三轴无输出,The {{Accelerometer}} has no output on any axis
+ins.scale.no_model,反推{{DecodeScale}} {0} (m/s)/LSB（{1} Hz）与内置型号表全都不符,Derived {{DecodeScale}} {0} (m/s)/LSB ({1} Hz) matches no built-in model
+ins.scale.not_static,这段不是{{Static}}（|f| 起伏 {0} %）,This segment is not {{Static}} (|f| spread {0} %)
+ins.scale.note_manual,用户手填,Entered manually
+ins.scale.reverse_note,开头{{Static}}段量级反推：{0},Derived from the leading {{Static}} segment: {0}
+ins.scale.reverse_ok,开头{{Static}}段 |f| 量级反推并匹配内置型号表,Derived from the |f| magnitude of the leading {{Static}} segment and matched against the built-in model table
+ins.scale.reverse_too_few,样本不足 200 个，无法反推,Fewer than 200 samples; the scale cannot be derived
+ins.scale.too_few,{{Static}}段样本太少（不足 200 个）,Too few {{Static}} segment samples (fewer than 200)
+ins.scale.unknown,日志没有型号自描述，{{Static}}段也反推不出{{DecodeScale}}：{0}；请在「参数」页手填{{Accelerometer}}/{{Gyroscope}}{{DecodeScale}}与{{SamplingRate}},The log declares no {{IMUModel}} and the {{Static}} segment yields no {{DecodeScale}}: {0}. Enter the {{Accelerometer}}/{{Gyroscope}} {{DecodeScale}} and {{SamplingRate}} on the Parameters tab.
+io.atx.no_antenna,ANTEX 里没有任何{{Antenna}}块（TYPE / SERIAL NO）,The ANTEX file has no {{Antenna}} block (TYPE / SERIAL NO)
+io.atx.no_freq_block,ANTEX 头部没有任何{{Frequency}}{{Calibration}}块（START OF FREQUENCY），文件可能被截断,The ANTEX header has no {{Frequency}} {{Calibration}} block (START OF FREQUENCY); the file may be truncated
+io.atx.no_tail,文件末尾不是完整的收尾记录（缺 END OF ANTENNA / END OF FILE），疑似{{Download}}或拷贝被截断,The file does not end with a complete closing record (END OF ANTENNA / END OF FILE); the {{Download}} or copy looks truncated
+io.atx.no_version,不是 ANTEX 文件（缺少 ANTEX VERSION / SYST 头记录）,Not an ANTEX file (missing the ANTEX VERSION / SYST header record)
+io.atx.summary,ANTEX {0}，{1} 个{{Antenna}}块，{2},"ANTEX {0}, {1} {{Antenna}} blocks, {2}"
+io.atx.too_small,文件过小（<1 KB），不像是完整的 ANTEX {{Antenna}}文件,File is too small (<1 KB) to be a complete ANTEX {{Antenna}} file
+io.bin.bad_stride,记录长度必须大于 0 个 double,Record length must be greater than 0 doubles
+io.bin.open_failed,无法打开文件：{0},Cannot open file: {0}
+io.bin.read_interrupted,读取中断，实际只读到 {0} / {1} 条记录,Read interrupted: only {0} of {1} records were read
+io.bin.size_failed,无法读取文件长度：{0},Cannot read file size: {0}
+io.bin.trailing_bytes,文件末尾有 {0} 字节凑不成一整条记录，已丢弃,{0} trailing bytes do not form a whole record and were dropped
+io.file.open_failed,无法打开文件,Cannot open file
+io.gpt3.bad_header,不是 GPT3 {{Grid}}文件（首行应为以 % 开头的列注释）,Not a GPT3 {{Grid}} file (the first line should be a % column comment)
+io.gpt3.empty,文件是空的,The file is empty
+io.gpt3.no_lat_a0,GPT3 {{Grid}}的列注释里找不到 lat / a0 列,The GPT3 {{Grid}} column comment has no lat / a0 columns
+io.gpt3.ragged,{{Grid}}行列数不一致（第 {0} 行有 {1} 列，首行数据有 {2} 列）,"{{Grid}} rows differ in width (row {0} has {1} columns, the first data row has {2})"
+io.gpt3.summary,GPT3 {{Grid}}，{0} 个格点 × {1} 列,"GPT3 {{Grid}}, {0} points × {1} columns"
+io.gpt3.too_few,{{Grid}}点太少（{0} 行 × {1} 列），文件可能被截断,Too few {{Grid}} points ({0} rows × {1} columns); the file may be truncated
+io.merge.bad_header,首片 RINEX 头不可读,The first piece has an unreadable RINEX header
+io.merge.create_failed,无法创建合并文件 {0},Cannot create the merged file {0}
+io.merge.no_epoch,没有写入任何{{Epoch}},No {{Epoch}} was written
+io.merge.no_pieces,没有可合并的{{Observation}}{{Chunk}},No {{Observation}} {{Chunk}} to merge
+io.merge.skipped,跳过 {0} 个{{Observation}}类型不一致的{{Chunk}},Skipped {0} {{Chunk}} with a mismatching {{Observation}} type
+io.merge.write_failed,写合并文件失败,Failed to write the merged file
+io.obs.format_unknown,未知,Unknown
+io.obs.novatel_open_failed,打不开 NovAtel 日志,Cannot open the NovAtel log
+io.obs.open_failed,打不开{{ObservationFile}},Cannot open the {{ObservationFile}}
+io.obs.rinex_no_version,RINEX 头里没有{{Observation}}类的 VERSION / TYPE,The RINEX header has no {{Observation}} VERSION / TYPE record
+log.filter.bwd_create_fail,[FILTER] {{Backward}}解算器创建失败,[FILTER] failed to create the {{Backward}} solver
+log.filter.bwd_epoch_error,[FILTER] {{Backward}}{{Epoch}}异常 (idx={0}): {1},[FILTER] {{Backward}} {{Epoch}} failed (idx={0}): {1}
+log.filter.fwd_epoch_error,[FILTER] {{Forward}}{{Epoch}}异常 (sod={0}): {1},[FILTER] {{Forward}} {{Epoch}} failed (sod={0}): {1}
+log.filter.fwd_epoch_unknown,[FILTER] {{Forward}}{{Epoch}}未知异常 (sod={0}),[FILTER] {{Forward}} {{Epoch}} failed with an unknown exception (sod={0})
+log.leo.antenna,[LEO] {{AntennaCorrection}} 质心→ARP = {0} m{1}，ARP→相位中心 = {2} m{3}，合计 {4} m ← {5},"[{{LEO}}] {{AntennaCorrection}} COM→ARP = {0} m{1}, ARP→APC = {2} m{3}, total {4} m ← {5}"
+log.leo.antenna_unset,（未定，按 0）," (undefined, 0 assumed)"
+log.novatel.range,{{Observation}}格式：RANGE（未量化）,{{Observation}} format: RANGE (unquantized)
+log.novatel.range_cmp_pref,；与 RANGECMP 并存时以 RANGE 为准,; RANGE wins when RANGECMP is also present
+log.novatel.rangecmp,{{Observation}}格式：RANGECMP（{{Pseudorange}} 1/128 m、相位 1/256 周量化）,"{{Observation}} format: RANGECMP ({{Pseudorange}} 1/128 m, phase 1/256 cycle)"
+log.ppp.clk_fallback,{0} {{PreciseClock}}未覆盖本{{Epoch}}，改用{{BroadcastEphemeris}}（{{Orbit}}仍取 SP3）,"{0}: {{PreciseClock}} does not cover this {{Epoch}}, using {{BroadcastEphemeris}} ({{Orbit}} still from SP3)"
+log.ppp.no_frame,{0} 的 #cP 行没写框架（或不在 IGS14/IGS20/ITRF* 里），按 IGS14 记,"{0}: #cP line declares no frame (or not in IGS14/IGS20/ITRF*), assuming IGS14"
+log.ppp.orbit_fallback,{0} {{PreciseOrbit}}未覆盖本{{Epoch}}，整颗回退{{BroadcastEphemeris}},"{0}: {{PreciseOrbit}} does not cover this {{Epoch}}, whole satellite falls back to {{BroadcastEphemeris}}"
+log.spp.no_if,未检测到可用的 IF 组合,no usable IF combination detected
+log.spp.no_if_fallback,未检测到可用的 IF 组合，回退默认,no usable IF combination detected; falling back to the defaults
+log.spp.solve_error,[SPP] solve 异常: {0},[SPP] solve failed: {0}
+log.unhealthy,剔除{{BroadcastEphemeris}}标记不可用的{{Satellite}} {0} (health={1}),dropped {{Satellite}} {0} flagged unhealthy by the {{BroadcastEphemeris}} (health={1})
+qc.ind.ion_rate,{{Ionosphere}}变化率,{{Ionosphere}} rate
+util.file.write_busy,写入失败：{0}（文件被占用或磁盘已满）,Write failed: {0} (file in use or disk full)
+util.file.write_no_dir,写入失败：{0}（目录不存在或无写权限）,Write failed: {0} (directory missing or not writable)

@@ -206,16 +206,27 @@ void Gui::Initialize(const char *title, const float width, const float height, c
     style.ScaleAllSizes(main_scale);
     style.FontScaleDpi = main_scale;
 
-    // Chinese font
+    // 中日韩字体：1.92 的图集按需加载字形，不必预设 GlyphRanges。主字体出中英，
+    // 日文假名与韩文谚文由合并进来的系统字体补；按需查找按合并顺序取第一个有该字形的源。
     const float fontSize = 18.0f * main_scale;
     ImFont *font = nullptr;
     for (const char *path: {R"(C:\Windows\Fonts\msyh.ttc)", R"(C:\Windows\Fonts\simhei.ttf)",
                             R"(C:\Windows\Fonts\simsun.ttc)"}) {
         if (!std::filesystem::exists(path)) continue;
-        font = io.Fonts->AddFontFromFileTTF(path, fontSize, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+        font = io.Fonts->AddFontFromFileTTF(path, fontSize);
         if (font) break;
     }
-    if (!font) io.Fonts->AddFontDefault(); // 一个中文字体都没有时至少还能出英文
+    if (!font) {
+        io.Fonts->AddFontDefault(); // 一个中文字体都没有时至少还能出英文
+    } else {
+        ImFontConfig merge;
+        merge.MergeMode = true;
+        for (const char *path: {R"(C:\Windows\Fonts\YuGothM.ttc)", R"(C:\Windows\Fonts\meiryo.ttc)",
+                                R"(C:\Windows\Fonts\msgothic.ttc)",
+                                R"(C:\Windows\Fonts\malgun.ttf)"}) {
+            if (std::filesystem::exists(path)) io.Fonts->AddFontFromFileTTF(path, fontSize, &merge);
+        }
+    }
 
     // Backends
     ImGui_ImplWin32_Init(m_hwnd);

@@ -44,6 +44,8 @@ public:
         return paraNameStrings[static_cast<int>(paraName)];
     }
 
+    /// 参数种类枚举值：方差表按它下标查，避免各处再写一遍类型词表
+    [[nodiscard]] ParameterName name() const { return paraName; }
 
     bool operator==(const Parameter &other) const {
         return this->paraName == other.paraName;
@@ -126,13 +128,13 @@ public:
     Variable() = default;
 
     //  (dx, dy, dz, cdt)
-    Variable(std::string _station, const Parameter _paraName)
-        : station(std::move(_station)), paraName(_paraName) {
+    Variable(std::string _station, const Parameter p)
+        : station(std::move(_station)), par(p) {
     }
 
     // isb, ion, ambiguity
-    Variable(std::string _station, const SatID _sat, const Parameter _paraName, ObsID _obsID)
-        : station(std::move(_station)), sat(_sat), obsID(std::move(_obsID)), paraName(_paraName) {
+    Variable(std::string _station, const SatID _sat, const Parameter p, ObsID id)
+        : station(std::move(_station)), sat(_sat), obsID(std::move(id)), par(p) {
     }
 
     Variable &operator=(const Variable &right) {
@@ -140,7 +142,7 @@ public:
             this->station = right.station;
             this->sat = right.sat;
             this->obsID = right.obsID;
-            this->paraName = right.paraName;
+            this->par = right.par;
         }
         return *this;
     }
@@ -151,10 +153,6 @@ public:
 
     bool operator!=(const Variable &right) const;
 
-    [[nodiscard]] std::string getStation() const { return station; }
-    [[nodiscard]] Parameter getParaType() const { return paraName; }
-    [[nodiscard]] SatID getSat() const { return sat; }
-    [[nodiscard]] ObsID getObsID() const { return obsID; }
 
     [[nodiscard]] std::string toString() const {
         std::stringstream ss;
@@ -162,7 +160,7 @@ public:
                 << "station=" << station << ", "
                 << "sat=" << sat << ", "
                 << "obsID=" << obsID << ", "
-                << "paraName=" << paraName
+                << "paraName=" << par
                 << "}";
         return ss.str();
     }
@@ -170,7 +168,7 @@ public:
     std::string station;
     SatID sat;
     ObsID obsID;
-    Parameter paraName{};
+    Parameter par{};
 };
 
 inline std::ostream &operator<<(std::ostream &os, const Variable &v) {

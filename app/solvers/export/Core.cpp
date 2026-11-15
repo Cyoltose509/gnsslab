@@ -8,166 +8,166 @@
 
 #include "solvers/common/Config.h"
 #include "solvers/common/Task.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Export {
     namespace {
         constexpr FieldDef kDefs[] = {
-            {"Wk", "wk", Kind::Int, 0},
-            {"SOW", "sow", Kind::Fixed, 3},
-            {"Status", "stat", Kind::Text, 0},
-            {"ECEF-X/m", "x", Kind::Sig, 11},
-            {"ECEF-Y/m", "y", Kind::Sig, 11},
-            {"ECEF-Z/m", "z", Kind::Sig, 11},
-            {"REF-X/m", "refx", Kind::Sig, 11},
-            {"REF-Y/m", "refy", Kind::Sig, 11},
-            {"REF-Z/m", "refz", Kind::Sig, 11},
-            {"B/deg", "lat", Kind::Sig, 10},
-            {"L/deg", "lon", Kind::Sig, 10},
-            {"H/m", "h", Kind::Sig, 4},
-            {"Float-B/deg", "fblat", Kind::Sig, 10},
-            {"Float-L/deg", "fblon", Kind::Sig, 10},
-            {"Float-H/m", "fbh", Kind::Sig, 4},
-            {"Fix-B/deg", "kblat", Kind::Sig, 10},
-            {"Fix-L/deg", "kblon", Kind::Sig, 10},
-            {"Fix-H/m", "kbh", Kind::Sig, 4},
-            {"EAST/m", "e", Kind::Sig, 6},
-            {"NORTH/m", "n", Kind::Sig, 6},
-            {"UP/m", "u", Kind::Sig, 6},
-            {"Float-X/m", "fx", Kind::Sig, 11},
-            {"Float-Y/m", "fy", Kind::Sig, 11},
-            {"Float-Z/m", "fz", Kind::Sig, 11},
-            {"Float-E/m", "fe", Kind::Sig, 6},
-            {"Float-N/m", "fn", Kind::Sig, 6},
-            {"Float-U/m", "fu", Kind::Sig, 6},
-            {"Float-SigmaP/m", "spfloat", Kind::Sig, 4},
-            {"Fix-X/m", "kx", Kind::Sig, 11},
-            {"Fix-Y/m", "ky", Kind::Sig, 11},
-            {"Fix-Z/m", "kz", Kind::Sig, 11},
-            {"Fix-E/m", "ke", Kind::Sig, 6},
-            {"Fix-N/m", "kn", Kind::Sig, 6},
-            {"Fix-U/m", "ku", Kind::Sig, 6},
-            {"Fix-SigmaP/m", "spfix", Kind::Sig, 4},
-            {"Bl-X/m", "bfx", Kind::Sig, 6},
-            {"Bl-Y/m", "bfy", Kind::Sig, 6},
-            {"Bl-Z/m", "bfz", Kind::Sig, 6},
-            {"Bl-Len/m", "bfl", Kind::Sig, 4},
-            {"Bl-E/m", "bfe", Kind::Sig, 6},
-            {"Bl-N/m", "bfn", Kind::Sig, 6},
-            {"Bl-U/m", "bfu", Kind::Sig, 6},
-            {"Bl-Xk/m", "bkx", Kind::Sig, 6},
-            {"Bl-Yk/m", "bky", Kind::Sig, 6},
-            {"Bl-Zk/m", "bkz", Kind::Sig, 6},
-            {"Bl-Lenk/m", "bkl", Kind::Sig, 4},
-            {"Bl-Ek/m", "bke", Kind::Sig, 6},
-            {"Bl-Nk/m", "bkn", Kind::Sig, 6},
-            {"Bl-Uk/m", "bku", Kind::Sig, 6},
-            {"Vel-X/m", "vx", Kind::Sig, 6},
-            {"Vel-Y/m", "vy", Kind::Sig, 6},
-            {"Vel-Z/m", "vz", Kind::Sig, 6},
-            {"VN/m", "vn", Kind::Sig, 6},
-            {"VE/m", "ve", Kind::Sig, 6},
-            {"VD/m", "vd", Kind::Sig, 6},
-            {"PDOP", "pdop", Kind::Sig, 4},
-            {"GDOP", "gdop", Kind::Sig, 4},
-            {"HDOP", "hdop", Kind::Sig, 4},
-            {"VDOP", "vdop", Kind::Sig, 4},
-            {"TDOP", "tdop", Kind::Sig, 4},
-            {"SigmaP", "sp", Kind::Sig, 4},
-            {"SigmaV", "sv", Kind::Sig, 4},
-            {"SigmaE", "se", Kind::Sig, 4},
-            {"SigmaN", "sn", Kind::Sig, 4},
-            {"SigmaU", "su", Kind::Sig, 4},
-            {"SatCount", "sats", Kind::Int, 0},
-            {"Ratio", "ratio", Kind::Sig, 6},
-            {"Float-3dRMS/m", "rms3df", Kind::Sig, 6},
-            {"Fix-3dRMS/m", "rms3dk", Kind::Sig, 6},
-            {"R/m", "r", Kind::Sig, 6},
-            {"T/m", "t", Kind::Sig, 6},
-            {"N/m", "nrtn", Kind::Sig, 6},
-            {"a/m", "sma", Kind::Fixed, 3},
-            {"e", "ecc", Kind::Fixed, 8},
-            {"i/deg", "inc", Kind::Fixed, 6},
-            {"RAAN/deg", "raan", Kind::Fixed, 6},
-            {"argp/deg", "argp", Kind::Fixed, 6},
-            {"M/deg", "ma", Kind::Fixed, 6},
-            {"hp/km", "hp", Kind::Fixed, 3},
-            {"ha/km", "ha", Kind::Fixed, 3},
-            {"T/s", "period", Kind::Fixed, 3},
-            {"Roll/deg", "roll", Kind::Fixed, 6},
-            {"Pitch/deg", "pitch", Kind::Fixed, 6},
-            {"Heading/deg", "heading", Kind::Fixed, 6},
-            {"ZuptApplied", "zupt", Kind::Int, 0},
-            {"ZuptB/deg", "zuptlat", Kind::Sig, 10},
-            {"ZuptL/deg", "zuptlon", Kind::Sig, 10},
-            {"ZuptH/m", "zupth", Kind::Sig, 4},
-            {"ZuptVN/m", "zuptvn", Kind::Sig, 6},
-            {"ZuptVE/m", "zuptve", Kind::Sig, 6},
-            {"ZuptVD/m", "zuptvd", Kind::Sig, 6},
-            {"ZuptRoll/deg", "zuptroll", Kind::Sig, 6},
-            {"ZuptPitch/deg", "zuptpitch", Kind::Sig, 6},
-            {"ZuptHeading/deg", "zuptheading", Kind::Sig, 6},
-            {"ZuptE/m", "zupte", Kind::Sig, 6},
-            {"ZuptN/m", "zuptn", Kind::Sig, 6},
-            {"Axb/(m/s2)", "axb", Kind::Fixed, 6},
-            {"Ayb/(m/s2)", "ayb", Kind::Fixed, 6},
-            {"Azb/(m/s2)", "azb", Kind::Fixed, 6},
-            {"Wxb/(rad/s)", "wxb", Kind::Fixed, 8},
-            {"Wyb/(rad/s)", "wyb", Kind::Fixed, 8},
-            {"Wzb/(rad/s)", "wzb", Kind::Fixed, 8},
+            {"Wk", "wk", "export.col.wk", Kind::Int, 0},
+            {"SOW", "sow", "export.col.sow", Kind::Fixed, 3},
+            {"Status", "stat", "common.solution_state", Kind::Text, 0},
+            {"ECEF-X/m", "x", "export.col.x", Kind::Sig, 11},
+            {"ECEF-Y/m", "y", "export.col.y", Kind::Sig, 11},
+            {"ECEF-Z/m", "z", "export.col.z", Kind::Sig, 11},
+            {"REF-X/m", "refx", "export.col.refx", Kind::Sig, 11},
+            {"REF-Y/m", "refy", "export.col.refy", Kind::Sig, 11},
+            {"REF-Z/m", "refz", "export.col.refz", Kind::Sig, 11},
+            {"B/deg", "lat", "export.col.lat", Kind::Sig, 10},
+            {"L/deg", "lon", "export.col.lon", Kind::Sig, 10},
+            {"H/m", "h", "common.height_m", Kind::Sig, 4},
+            {"Float-B/deg", "fblat", "export.col.fblat", Kind::Sig, 10},
+            {"Float-L/deg", "fblon", "export.col.fblon", Kind::Sig, 10},
+            {"Float-H/m", "fbh", "export.col.fbh", Kind::Sig, 4},
+            {"Fix-B/deg", "kblat", "export.col.kblat", Kind::Sig, 10},
+            {"Fix-L/deg", "kblon", "export.col.kblon", Kind::Sig, 10},
+            {"Fix-H/m", "kbh", "export.col.kbh", Kind::Sig, 4},
+            {"EAST/m", "e", "export.col.e", Kind::Sig, 6},
+            {"NORTH/m", "n", "export.col.n", Kind::Sig, 6},
+            {"UP/m", "u", "export.col.u", Kind::Sig, 6},
+            {"Float-X/m", "fx", "export.col.fx", Kind::Sig, 11},
+            {"Float-Y/m", "fy", "export.col.fy", Kind::Sig, 11},
+            {"Float-Z/m", "fz", "export.col.fz", Kind::Sig, 11},
+            {"Float-E/m", "fe", "export.col.fe", Kind::Sig, 6},
+            {"Float-N/m", "fn", "export.col.fn", Kind::Sig, 6},
+            {"Float-U/m", "fu", "export.col.fu", Kind::Sig, 6},
+            {"Float-SigmaP/m", "spfloat", "export.col.spfloat", Kind::Sig, 4},
+            {"Fix-X/m", "kx", "export.col.kx", Kind::Sig, 11},
+            {"Fix-Y/m", "ky", "export.col.ky", Kind::Sig, 11},
+            {"Fix-Z/m", "kz", "export.col.kz", Kind::Sig, 11},
+            {"Fix-E/m", "ke", "export.col.ke", Kind::Sig, 6},
+            {"Fix-N/m", "kn", "export.col.kn", Kind::Sig, 6},
+            {"Fix-U/m", "ku", "export.col.ku", Kind::Sig, 6},
+            {"Fix-SigmaP/m", "spfix", "export.col.spfix", Kind::Sig, 4},
+            {"Bl-X/m", "bfx", "export.col.bfx", Kind::Sig, 6},
+            {"Bl-Y/m", "bfy", "export.col.bfy", Kind::Sig, 6},
+            {"Bl-Z/m", "bfz", "export.col.bfz", Kind::Sig, 6},
+            {"Bl-Len/m", "bfl", "export.col.bfl", Kind::Sig, 4},
+            {"Bl-E/m", "bfe", "export.col.bfe", Kind::Sig, 6},
+            {"Bl-N/m", "bfn", "export.col.bfn", Kind::Sig, 6},
+            {"Bl-U/m", "bfu", "export.col.bfu", Kind::Sig, 6},
+            {"Bl-Xk/m", "bkx", "export.col.bkx", Kind::Sig, 6},
+            {"Bl-Yk/m", "bky", "export.col.bky", Kind::Sig, 6},
+            {"Bl-Zk/m", "bkz", "export.col.bkz", Kind::Sig, 6},
+            {"Bl-Lenk/m", "bkl", "export.col.bkl", Kind::Sig, 4},
+            {"Bl-Ek/m", "bke", "export.col.bke", Kind::Sig, 6},
+            {"Bl-Nk/m", "bkn", "export.col.bkn", Kind::Sig, 6},
+            {"Bl-Uk/m", "bku", "export.col.bku", Kind::Sig, 6},
+            {"Vel-X/m", "vx", "export.col.vx", Kind::Sig, 6},
+            {"Vel-Y/m", "vy", "export.col.vy", Kind::Sig, 6},
+            {"Vel-Z/m", "vz", "export.col.vz", Kind::Sig, 6},
+            {"VN/m", "vn", "export.col.vn", Kind::Sig, 6},
+            {"VE/m", "ve", "export.col.ve", Kind::Sig, 6},
+            {"VD/m", "vd", "export.col.vd", Kind::Sig, 6},
+            {"PDOP", "pdop", "export.col.pdop", Kind::Sig, 4},
+            {"GDOP", "gdop", "export.col.gdop", Kind::Sig, 4},
+            {"HDOP", "hdop", "export.col.hdop", Kind::Sig, 4},
+            {"VDOP", "vdop", "export.col.vdop", Kind::Sig, 4},
+            {"TDOP", "tdop", "export.col.tdop", Kind::Sig, 4},
+            {"SigmaP", "sp", "export.col.sp", Kind::Sig, 4},
+            {"SigmaV", "sv", "export.col.sv", Kind::Sig, 4},
+            {"SigmaE", "se", "export.col.se", Kind::Sig, 4},
+            {"SigmaN", "sn", "export.col.sn", Kind::Sig, 4},
+            {"SigmaU", "su", "export.col.su", Kind::Sig, 4},
+            {"SatCount", "sats", "SatelliteCount", Kind::Int, 0},
+            {"Ratio", "ratio", "export.col.ratio", Kind::Sig, 6},
+            {"Float-3dRMS/m", "rms3df", "export.col.rms3df", Kind::Sig, 6},
+            {"Fix-3dRMS/m", "rms3dk", "export.col.rms3dk", Kind::Sig, 6},
+            {"R/m", "r", "export.col.r", Kind::Sig, 6},
+            {"T/m", "t", "export.col.t", Kind::Sig, 6},
+            {"N/m", "nrtn", "export.col.nrtn", Kind::Sig, 6},
+            {"a/m", "sma", "export.col.sma", Kind::Fixed, 3},
+            {"e", "ecc", "export.col.ecc", Kind::Fixed, 8},
+            {"i/deg", "inc", "export.col.inc", Kind::Fixed, 6},
+            {"RAAN/deg", "raan", "export.col.raan", Kind::Fixed, 6},
+            {"argp/deg", "argp", "export.col.argp", Kind::Fixed, 6},
+            {"M/deg", "ma", "export.col.ma", Kind::Fixed, 6},
+            {"hp/km", "hp", "export.col.hp", Kind::Fixed, 3},
+            {"ha/km", "ha", "export.col.ha", Kind::Fixed, 3},
+            {"T/s", "period", "export.col.period", Kind::Fixed, 3},
+            {"Roll/deg", "roll", "export.col.roll", Kind::Fixed, 6},
+            {"Pitch/deg", "pitch", "export.col.pitch", Kind::Fixed, 6},
+            {"Heading/deg", "heading", "export.col.heading", Kind::Fixed, 6},
+            {"ZuptApplied", "zupt", "export.col.zupt", Kind::Int, 0},
+            {"ZuptB/deg", "zuptlat", "export.col.zuptlat", Kind::Sig, 10},
+            {"ZuptL/deg", "zuptlon", "export.col.zuptlon", Kind::Sig, 10},
+            {"ZuptH/m", "zupth", "export.col.zupth", Kind::Sig, 4},
+            {"ZuptVN/m", "zuptvn", "export.col.zuptvn", Kind::Sig, 6},
+            {"ZuptVE/m", "zuptve", "export.col.zuptve", Kind::Sig, 6},
+            {"ZuptVD/m", "zuptvd", "export.col.zuptvd", Kind::Sig, 6},
+            {"ZuptRoll/deg", "zuptroll", "export.col.zuptroll", Kind::Sig, 6},
+            {"ZuptPitch/deg", "zuptpitch", "export.col.zuptpitch", Kind::Sig, 6},
+            {"ZuptHeading/deg", "zuptheading", "export.col.zuptheading", Kind::Sig, 6},
+            {"ZuptE/m", "zupte", "export.col.zupte", Kind::Sig, 6},
+            {"ZuptN/m", "zuptn", "export.col.zuptn", Kind::Sig, 6},
+            {"Axb/(m/s2)", "axb", "export.col.axb", Kind::Fixed, 6},
+            {"Ayb/(m/s2)", "ayb", "export.col.ayb", Kind::Fixed, 6},
+            {"Azb/(m/s2)", "azb", "export.col.azb", Kind::Fixed, 6},
+            {"Wxb/(rad/s)", "wxb", "export.col.wxb", Kind::Fixed, 8},
+            {"Wyb/(rad/s)", "wyb", "export.col.wyb", Kind::Fixed, 8},
+            {"Wzb/(rad/s)", "wzb", "export.col.wzb", Kind::Fixed, 8},
         };
-        static_assert(std::size(kDefs) == kFieldCount, "字段表与 Field 枚举数量不一致");
+        static_assert(std::size(kDefs) == kFieldCount, "field table out of sync with Field enum");
 
-        /// 导出弹窗勾选项的中文名：键是成组列的 Col::group 或单列的 CSV 表头名。
-        /// 只登记「显示名与 CSV 名不同」的条目，PDOP/Ratio 这类无需翻译的查不到原样显示；
-        /// CSV 表头以 Col::name 为准，这张表只管界面。
-        constexpr struct { const char *key; const char *ui; } kUiLabels[] = {
-            {"Wk", "周数"},
-            {"SOW", "周内秒"},
-            {"GPSTow", "周内秒"},
-            {"Status", "解状态"},
-            {"SigmaP", "位置 σ"},
-            {"SigmaV", "速度 σ"},
-            {"Float-SigmaP/m", "浮点解 σ"},
-            {"Fix-SigmaP/m", "固定解 σ"},
-            {"SatCount", "卫星数"},
-            {"3dRMS/m", "三维 RMS"},
-            {"Float-3dRMS/m", "浮点三维 RMS"},
-            {"Fix-3dRMS/m", "固定三维 RMS"},
-            {"ZuptApplied", "零速修正标记"},
-            {"ECEF-XYZ", "坐标 (XYZ)"},
-            {"REF-XYZ", "参考坐标 (XYZ)"},
-            {"ENU", "站心偏差 (E/N/U)"},
-            {"BLH", "经纬高 (B/L/H)"},
-            {"Float-BLH", "浮点解经纬高 (B/L/H)"},
-            {"Fix-BLH", "固定解经纬高 (B/L/H)"},
-            {"Float-XYZ", "浮点解坐标 (XYZ)"},
-            {"Float-ENU", "浮点解偏差 (E/N/U)"},
-            {"Fix-XYZ", "固定解坐标 (XYZ)"},
-            {"Fix-ENU", "固定解偏差 (E/N/U)"},
-            {"Bl-XYZ-f", "浮点解基线 (X/Y/Z)"},
-            {"Bl-ENU-f", "浮点解基线 (E/N/U)"},
-            {"Bl-Len/m", "浮点解基线长度"},
-            {"Bl-XYZ-k", "固定解基线 (X/Y/Z)"},
-            {"Bl-ENU-k", "固定解基线 (E/N/U)"},
-            {"Bl-Lenk/m", "固定解基线长度"},
-            {"Vel-XYZ", "速度 (X/Y/Z)"},
-            {"Vel-NED", "速度 (N/E/D)"},
-            {"RTN", "轨道偏差 (R/T/N)"},
-            {"RPH", "姿态角 (R/P/H)"},
-            {"EN", "水平位置 (E/N)"},
-            {"Zupt-BLH", "零速修正 经纬高 (B/L/H)"},
-            {"Zupt-NED", "零速修正 速度 (N/E/D)"},
-            {"Zupt-RPH", "零速修正 姿态角 (R/P/H)"},
-            {"Zupt-EN", "零速修正 水平位置 (E/N)"},
-            {"Accel", "加计零偏 (X/Y/Z)"},
-            {"Gyro", "陀螺零偏 (X/Y/Z)"},
+        /// 导出弹窗里按组显示的名字：键是 Col::group。单列的名字走 FieldDef::colKey，
+        /// 那张表与 CSV 表头共用，不在这里重复。
+        constexpr struct { const char *key; const char *uiKey; } kUiLabels[] = {
+            {"Wk", "export.col.wk"},
+            {"SOW", "export.col.sow"},
+            {"GPSTow", "export.col.sow"},
+            {"Status", "common.solution_state"},
+            {"SigmaP", "export.lbl.sig_p"},
+            {"SigmaV", "export.lbl.sig_v"},
+            {"Float-SigmaP/m", "export.lbl.float_sig_p"},
+            {"Fix-SigmaP/m", "export.lbl.fix_sig_p"},
+            {"SatCount", "SatelliteCount"},
+            {"3dRMS/m", "ThreeDRMS"},
+            {"Float-3dRMS/m", "export.lbl.float_rms3d"},
+            {"Fix-3dRMS/m", "export.lbl.fix_rms3d"},
+            {"ZuptApplied", "export.col.zupt"},
+            {"ECEF-XYZ", "export.lbl.xyz"},
+            {"REF-XYZ", "export.lbl.ref_xyz"},
+            {"ENU", "export.lbl.enu"},
+            {"BLH", "export.lbl.blh"},
+            {"Float-BLH", "export.lbl.float_blh"},
+            {"Fix-BLH", "export.lbl.fix_blh"},
+            {"Float-XYZ", "export.lbl.float_xyz"},
+            {"Float-ENU", "export.lbl.float_enu"},
+            {"Fix-XYZ", "export.lbl.fix_xyz"},
+            {"Fix-ENU", "export.lbl.fix_enu"},
+            {"Bl-XYZ-f", "export.lbl.bl_xyz_f"},
+            {"Bl-ENU-f", "export.lbl.bl_enu_f"},
+            {"Bl-Len/m", "export.lbl.bl_len_f"},
+            {"Bl-XYZ-k", "export.lbl.bl_xyz_k"},
+            {"Bl-ENU-k", "export.lbl.bl_enu_k"},
+            {"Bl-Lenk/m", "export.lbl.bl_len_k"},
+            {"Vel-XYZ", "export.lbl.vel_xyz"},
+            {"Vel-NED", "export.lbl.vel_ned"},
+            {"RTN", "export.lbl.rtn"},
+            {"RPH", "export.lbl.rph"},
+            {"EN", "export.lbl.en"},
+            {"Zupt-BLH", "export.lbl.zupt_blh"},
+            {"Zupt-NED", "export.lbl.zupt_ned"},
+            {"Zupt-RPH", "export.lbl.zupt_rph"},
+            {"Zupt-EN", "export.lbl.zupt_en"},
+            {"Accel", "export.lbl.accel"},
+            {"Gyro", "export.lbl.gyro"},
         };
 
-        /// 组名 / 单列 CSV 名 → 中文名
+        /// 组名 / 单列 CSV 名 → 当前语言的名字；查不到就原样返回 CSV 名。
         const char *uiLabel(const char *key) {
-            for (const auto &[k, name]: kUiLabels)
-                if (std::strcmp(k, key) == 0) return name;
+            for (const auto &[k, uiKey]: kUiLabels)
+                if (std::strcmp(k, key) == 0) return I18n::trc(uiKey);
             return key;
         }
 
@@ -193,7 +193,7 @@ namespace Solvers::Export {
                 if (next <= t + 1e-6) next = t + step;
             }
             // SP3 要求严格等间隔：末历元不在网格上就不能硬塞，否则读取器按 interval 插值会错。
-            if (padEnd && !out.empty() && out.back() != e - 1) out.push_back(e - 1);
+            if (padEnd && out.back() != e - 1) out.push_back(e - 1);
             return out;
         }
     }
@@ -235,7 +235,7 @@ namespace Solvers::Export {
             std::vector<std::size_t> out;
             const std::size_t k = static_cast<std::size_t>(std::max(1, step));
             for (std::size_t i = b; i < e; i += k) out.push_back(i);
-            if (!out.empty() && out.back() != e - 1) out.push_back(e - 1);
+            if (out.back() != e - 1) out.push_back(e - 1);
             return out;
         }
         if (mode == Sampling::Mode::Seconds && seconds > 0.0)
@@ -262,8 +262,8 @@ namespace Solvers::Export {
         switch (fmt) {
             case Format::POS: return "POS";
             case Format::SP3: return "SP3";
-            case Format::ORB: return "轨道根数";
-            case Format::TRAJ: return "轨迹";
+            case Format::ORB: return I18n::trc("OrbitalElements");
+            case Format::TRAJ: return I18n::trc("Trajectory");
             case Format::KML: return "KML";
             case Format::SBET: return "SBET";
             default: return "CSV";
@@ -381,7 +381,7 @@ namespace Solvers::Export {
                 continue;
             }
             open = col.group;
-            out.push_back({uiLabel(col.group ? col.group : col.name), {col}});
+            out.push_back({col.group ? uiLabel(col.group) : I18n::trc(fieldDef(col.field).colKey), {col}});
         }
         return out;
     }

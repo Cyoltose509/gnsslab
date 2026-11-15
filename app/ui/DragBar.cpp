@@ -5,6 +5,7 @@
 #include <string>
 
 #include "imgui.h"
+#include "i18n/I18n.h"
 
 namespace {
     /// 会话内的尺寸记忆：key → 高度。落地在 .cpp 内部，头文件里不放可变 static。
@@ -28,8 +29,6 @@ namespace UI {
             height = std::clamp(height + ImGui::GetIO().MouseDelta.y, minH, std::max(minH, maxH));
         if (ImGui::IsItemHovered() || ImGui::IsItemActive())
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("上下拖动调整高度");
         const ImVec2 a = ImGui::GetItemRectMin();
         const ImVec2 b = ImGui::GetItemRectMax();
         const float cy = (a.y + b.y) * 0.5f;

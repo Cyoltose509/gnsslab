@@ -1,0 +1,45 @@
+key,ZH-CN,EN
+crx.err.clk_diff_order,{{ClockOffset}}差分阶数超限,{{ClockOffset}} difference order out of range
+crx.err.clk_empty,{{ClockOffset}}记录为空,Empty {{ClockOffset}} record
+crx.err.create_out,无法创建输出文件: {0},Cannot create the output file: {0}
+crx.err.crinex_ver,不支持的 CRINEX 版本,Unsupported CRINEX version
+crx.err.diff_order,差分阶数越界,Difference order out of bounds
+crx.err.epoch_line,{{Epoch}}行格式异常,Malformed {{Epoch}} line
+crx.err.event_count,事件记录条数异常,Invalid event record count
+crx.err.event_truncated,事件记录被截断,Event record truncated
+crx.err.failed,Compact RINEX {{Unpack}}失败,Compact RINEX {{Unpack}} failed
+crx.err.head_truncated,头部被截断,Header truncated
+crx.err.new_sat_arc,新{{Satellite}}未初始化 arc,New {{Satellite}} arc not initialized
+crx.err.no_clk,缺少{{ClockOffset}}记录,Missing {{ClockOffset}} record
+crx.err.no_end_header,头部缺少 END OF HEADER,Missing END OF HEADER
+crx.err.no_init_epoch,事件记录后缺少初始化{{Epoch}},Missing initialization {{Epoch}} after the event records
+crx.err.no_version,缺少 RINEX VERSION / TYPE,Missing RINEX VERSION / TYPE
+crx.err.not_crinex,不是 Compact RINEX 文件,Not a Compact RINEX file
+crx.err.obs_arc,{{Observation}}量未初始化 arc,{{Observation}} arc not initialized
+crx.err.obs_diff_order,{{Observation}}差分阶数超限,{{Observation}} difference order out of range
+crx.err.obs_empty,{{Observation}}差分记录为空,Empty {{Observation}} difference record
+crx.err.obs_truncated,{{Observation}}数据被截断,{{Observation}} data truncated
+crx.err.open_in,无法打开 Compact RINEX 输入文件: {0},Cannot open the Compact RINEX input file: {0}
+crx.err.rinex_ver,不支持的 RINEX 版本,Unsupported RINEX version
+crx.err.sat_count,{{SatelliteCount}}异常,Invalid {{SatelliteCount}}
+crx.err.type_count,{{Observation}}量类型数异常,Invalid {{Observation}} type count
+crx.err.write,写入 RINEX 失败,Failed to write RINEX
+crx.line,{0}（第 {1} 行）,{0} (line {1})
+io.err.bad_format,无法识别{{ObservationFile}}格式,Unrecognized {{ObservationFile}} format
+io.err.base_prefix,{{BaseStation}}: {0},{{BaseStation}}: {0}
+io.err.empty_nav,{{BroadcastEphemeris}}为空,{{BroadcastEphemeris}} is empty
+io.err.first_epoch,读取首{{Epoch}}失败: {0},Failed to read the first {{Epoch}}: {0}
+io.err.need_base_rover,请先选择{{BaseStation}}与{{Rover}}{{ObservationFile}},Select the {{BaseStation}} and {{Rover}} {{ObservationFile}} first
+io.err.no_epoch,{{ObservationFile}}里没有{{Epoch}},No {{Epoch}} in the {{ObservationFile}}
+io.err.rover_prefix,{{Rover}}: {0},{{Rover}}: {0}
+pl.err.gpt3,读取 GPT3 {{Grid}}失败: {0},failed to read the GPT3 {{Grid}}: {0}
+pl.err.no_orbit,{{Product}}加载失败：需要({{PreciseOrbit}}SP3 或 {{BroadcastEphemeris}}BRDC)至少其一提供{{Satellite}}{{Position}}；另检查 SP3/CLK/OSB/ATX 等路径是否正确,{{Product}} loading failed: either a {{PreciseOrbit}} SP3 or a {{BroadcastEphemeris}} BRDC must provide {{Satellite}} {{Position}}; also check that the SP3/CLK/OSB/ATX paths exist
+pl.err.read,读取{0}异常: {1},error reading {0}: {1}
+pl.err.vmf3,读取 VMF3 {{Grid}}失败: {0},failed to read the VMF3 {{Grid}}: {0}
+pl.log.no_atx,未检测到 ATX {{Antenna}}文件，本次按无 PCO/PCV 处理,no ATX {{Antenna}} file found; running without PCO/PCV
+pl.log.read,读取{0}: {1},read {0}: {1}
+pl.log.tropo_fallback,已选{{Troposphere}}模型 {0} 但{{Grid}}未就位，映射回落 GMF,{{Troposphere}} model {0} selected but its {{Grid}} is missing; mapping falls back to GMF
+sinex.err.no_station,SINEX 中未解析到任何{{Site}}{{Coordinate}}: {0},No {{Site}} {{Coordinate}} parsed from SINEX: {0}
+sinex.err.read,无法读取 SINEX 文件或文件为空: {0},"Cannot read the SINEX file, or it is empty: {0}"
+sinex.err.text_empty,SINEX 文本为空,Empty SINEX text
+sinex.err.text_no_station,SINEX 文本中未解析到任何{{Site}}{{Coordinate}},No {{Site}} {{Coordinate}} parsed from the SINEX text

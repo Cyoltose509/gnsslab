@@ -15,6 +15,7 @@
 #include "solver/ins/INS.h"
 #include "Log.h"
 #include "Observer.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::INS {
     namespace {
@@ -33,7 +34,7 @@ namespace Solvers::INS {
         Eigen::Vector3d initialLLH(const INSConfig &c) {
             if (!(c.latDeg >= -90.0 && c.latDeg <= 90.0 && c.lonDeg >= -180.0 && c.lonDeg <= 180.0 &&
                   c.hM > -1000.0 && c.hM < 100000.0))
-                throw GeometryException("初始位置 BLH 非法：纬度应在 ±90°、经度 ±180°、高程 -1000~100000 m");
+                throw GeometryException(I18n::tr("ins.err.blh_invalid"));
             return {c.latDeg * DEG_TO_RAD, c.lonDeg * DEG_TO_RAD, c.hM};
         }
 
@@ -136,18 +137,18 @@ namespace Solvers::INS {
         try {
             llh = initialLLH(c);
         } catch (const std::exception &ex) {
-            failRead(std::string("初始位置 BLH 非法：") + ex.what());
+            failRead(I18n::tr("ins.err.blh_prefix", ex.what()));
             return;
         }
         const double gravity = NormalGravity::at(llh[0], llh[2]);
 
         const auto reader = Observer::makeNovAtelReader(c.imuPath);
         if (!reader || !reader->open(c.imuPath)) {
-            failRead("无法打开 IMU 日志：" + c.imuPath);
+            failRead(I18n::tr("ins.err.open_imu", c.imuPath));
             return;
         }
 
-        // 先攒开头一小段定解码当量：手填或型号自描述一两帧就够，否则要够反推用的静置样本。
+        // 先攒开头一小段定当量：手填或型号自描述一两帧就够，否则要够反推用的静置样本。
         ImuLog head;
         ImuSample sample;
         const std::size_t cap = c.manual.known() ? 2 : kScaleHeadSamples;
@@ -157,11 +158,11 @@ namespace Solvers::INS {
                 if (c.manual.known() || reader->detectedImuModel()) break;
             }
         } catch (const std::exception &ex) {
-            failRead(std::string("IMU 日志解码失败：") + ex.what());
+            failRead(I18n::tr("ins.err.decode", ex.what()));
             return;
         }
         if (head.empty()) {
-            failRead("IMU 日志中没有可解码的六轴计数记录");
+            failRead(I18n::tr("ins.err.no_records"));
             return;
         }
 
@@ -179,7 +180,7 @@ namespace Solvers::INS {
             result->scaleSource = ins.scaleSource;
             result->scaleNote = ins.scaleNote;
         }
-        LOG_INFO << "[INS] 解码当量：" << ins.scaleNote << "，采样率 " << ins.scale.rateHz << " Hz";
+        LOG_INFO << "[INS] " << I18n::tr("ins.log.scale", ins.scaleNote, ins.scale.rateHz);
         markNavReady();
 
         for (const auto &s: head)
@@ -191,7 +192,7 @@ namespace Solvers::INS {
             while (reader->getNextImu(sample))
                 if (!feedImu(sample)) break;
         } catch (const std::exception &ex) {
-            failRead(std::string("IMU 日志解码失败：") + ex.what());
+            failRead(I18n::tr("ins.err.decode", ex.what()));
             return;
         }
         finishRead();
@@ -208,13 +209,13 @@ namespace Solvers::INS {
         try {
             llh = initialLLH(c);
         } catch (const std::exception &ex) {
-            bail(std::string("初始位置 BLH 非法：") + ex.what());
+            bail(I18n::tr("ins.err.blh_prefix", ex.what()));
             return;
         }
         const double gravity = NormalGravity::at(llh[0], llh[2]);
 
         if (!waitNavReady()) {
-            LOG_WARN << "[INS] 任务被取消：解算线程未启动";
+            LOG_WARN << "[INS] " << I18n::tr("ins.log.cancelled");
             finishSolving();
             return;
         }
@@ -224,7 +225,7 @@ namespace Solvers::INS {
             r = result;
         }
         if (!r || !r->scale.known()) {
-            if (errorMessage().empty()) setError("IMU 解码当量未就绪");
+            if (errorMessage().empty()) setError(I18n::tr("ins.err.scale_not_ready"));
             finishSolving();
             return;
         }
@@ -244,13 +245,12 @@ namespace Solvers::INS {
         aligning = false;
 
         if (head.empty()) {
-            bail("IMU 日志中没有可解码的六轴计数记录");
+            bail(I18n::tr("ins.err.no_records"));
             return;
         }
         navWeek = head.front().gnssWeek;
         if (!c.specifyAttitude && head.size() < static_cast<std::size_t>(20.0 * scale.rateHz)) {
-            bail("IMU 有效样本不足 20 s（" + std::to_string(head.size()) +
-                 " 个），无法自动解析粗对准；请勾选「指定初始姿态角」并手填");
+            bail(I18n::tr("ins.err.short_static", head.size()));
             return;
         }
 
@@ -289,9 +289,9 @@ namespace Solvers::INS {
                 r->align.yawSpreadDeg = zupt.alignYawSpreadDeg;
                 r->align.headingReliable = zupt.alignHeadingReliable;
             }
-            LOG_INFO << "[INS] 静态粗对准: 开头 " << static_cast<double>(zupt.alignCount) / scale.rateHz
-                    << "s, roll=" << init.rollDeg << " pitch=" << init.pitchDeg
-                    << " yaw=" << init.headingDeg << " deg, 航向散布=" << zupt.alignYawSpreadDeg << " deg";
+            LOG_INFO << "[INS] " << I18n::tr("ins.log.coarse_align", zupt.alignCount / scale.rateHz,
+                                                     init.rollDeg, init.pitchDeg, init.headingDeg,
+                                                     zupt.alignYawSpreadDeg);
         } else {
             init.rollDeg = c.rollDeg;
             init.pitchDeg = c.pitchDeg;
@@ -308,10 +308,12 @@ namespace Solvers::INS {
                 r->accelBias = zupt.accelBias;
                 r->accelBiasApplied = true;
             }
-            LOG_INFO << "[INS] 静置段加计零偏: " << zupt.accelBias.transpose() << " m/s^2（已在比力增量中扣除）"
-                    << ", 陀螺偏离地球自转 " << zupt.gyroBiasDiag.transpose() << " rad/s（含航向误差，未扣）";
+            std::ostringstream accelBias, gyroBias;
+            accelBias << zupt.accelBias.transpose();
+            gyroBias << zupt.gyroBiasDiag.transpose();
+            LOG_INFO << "[INS] " << I18n::tr("ins.log.static_bias", accelBias.str(), gyroBias.str());
         } else if (staticEnd > 1) {
-            LOG_INFO << "[INS] 静置段比力偏离重力投影 " << zupt.accelBias.norm() << " m/s^2，过大，未作零偏扣除";
+            LOG_INFO << "[INS] " << I18n::tr("ins.log.bias_too_large", zupt.accelBias.norm());
         }
 
         std::vector<NavState> batchFree, batchZupt;
@@ -372,10 +374,10 @@ namespace Solvers::INS {
             total = r->nav.size();
             zuptCount = r->zuptCount;
         }
-        LOG_INFO << "[INS] 解算完成: " << total << " 历元, 采样率 " << scale.rateHz << " Hz";
-        LOG_INFO << "[INS] 零速判据: 生效 " << (total == 0 ? 0.0 : 100.0 * zuptCount / total)
-                << "%, 比力偏差 max=" << zupt.zuptDiag.accDevMax << " m/s^2 (超限 " << zupt.zuptDiag.accFail
-                << "), 角速度偏差 max=" << zupt.zuptDiag.gyrDevMax << " rad/s (超限 " << zupt.zuptDiag.gyrFail << ")";
+        LOG_INFO << "[INS] " << I18n::tr("ins.log.done", total, scale.rateHz);
+        LOG_INFO << "[INS] " << I18n::tr("ins.log.zupt_stat", total == 0 ? 0.0 : 100.0 * zuptCount / total,
+                                                 zupt.zuptDiag.accDevMax, zupt.zuptDiag.accFail,
+                                                 zupt.zuptDiag.gyrDevMax, zupt.zuptDiag.gyrFail);
         finishSolving();
     }
 
@@ -464,20 +466,20 @@ namespace Solvers::INS {
         return fmt == Export::Format::CSV ? insCSV() : std::vector<Export::Col>{};
     }
 
-    void Task::writeCsvParams(CSV::Meta &m) const {
+    void Task::writeCSVParams(CSV::Meta &m) const {
         const auto &ins = opts.ins;
-        m.xyz("初始位置 BLH (°/°/m)", ins.latDeg, ins.lonDeg, ins.hM);
-        m.xyz("初始速度 vNED (m/s)", ins.vN, ins.vE, ins.vD);
-        m.flag("手填初始姿态角", ins.specifyAttitude);
-        m.num("手填横滚 (°)", ins.rollDeg);
-        m.num("手填俯仰 (°)", ins.pitchDeg);
-        m.num("手填航向 (°)", ins.headingDeg);
-        m.num("加计 (m/s)/LSB", ins.manual.accelMpsPerLsb);
-        m.num("陀螺 rad/LSB", ins.manual.gyroRadPerLsb);
-        m.num("采样率 (Hz)", ins.manual.rateHz);
-        m.num("比力判静止容差 (m/s²)", ins.zuptAccelTol);
-        m.num("角速度容差 (rad/s)", ins.zuptGyroTol);
-        m.num("连续静止时长 (s)", ins.zuptHoldSec);
+        m.xyz(I18n::trc("param.ins_init_pos"), ins.latDeg, ins.lonDeg, ins.hM);
+        m.xyz(I18n::trc("param.ins_init_vel"), ins.vN, ins.vE, ins.vD);
+        m.flag(I18n::trc("export.meta.par.specify_attitude"), ins.specifyAttitude);
+        m.num(I18n::trc("param.ins_roll"), ins.rollDeg);
+        m.num(I18n::trc("param.ins_pitch"), ins.pitchDeg);
+        m.num(I18n::trc("param.ins_heading"), ins.headingDeg);
+        m.num(I18n::trc("param.decode_accel"), ins.manual.accelMpsPerLsb);
+        m.num(I18n::trc("param.decode_gyro"), ins.manual.gyroRadPerLsb);
+        m.num(I18n::trc("param.decode_rate"), ins.manual.rateHz);
+        m.num(I18n::trc("param.zupt_accel_tol"), ins.zuptAccelTol);
+        m.num(I18n::trc("param.zupt_gyro_tol"), ins.zuptGyroTol);
+        m.num(I18n::trc("param.zupt_hold"), ins.zuptHoldSec);
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

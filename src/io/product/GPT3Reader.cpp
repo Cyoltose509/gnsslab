@@ -3,8 +3,9 @@
 #include "FileCache.h"
 
 #include "core/Const.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 
 #include <algorithm>
 #include <fstream>
@@ -189,20 +190,20 @@ bool GPT3Reader::at(const double mjd, const double latRad, const double lonRad, 
 bool GPT3Reader::validate(const std::string &path, std::string &detail) {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        detail = "无法打开文件";
+        detail = I18n::tr("io.file.open_failed");
         return false;
     }
     std::string first, line;
     if (!std::getline(f, first)) {
-        detail = "文件是空的";
+        detail = I18n::tr("io.gpt3.empty");
         return false;
     }
     if (first.empty() || first[0] != '%') {
-        detail = "不是 GPT3 格网文件（首行应为以 % 开头的列注释）";
+        detail = I18n::tr("io.gpt3.bad_header");
         return false;
     }
     if (const std::string lo = Str::toLower(first); lo.find("lat") == std::string::npos || lo.find("a0") == std::string::npos) {
-        detail = "GPT3 格网的列注释里找不到 lat / a0 列";
+        detail = I18n::tr("io.gpt3.no_lat_a0");
         return false;
     }
 
@@ -217,17 +218,15 @@ bool GPT3Reader::validate(const std::string &path, std::string &detail) {
         while (is >> tok) ++n;
         if (cols < 0) cols = n;
         else if (n != cols) {
-            detail = "格网行列数不一致（第 " + std::to_string(rows + 2) + " 行有 " +
-                     std::to_string(n) + " 列，首行数据有 " + std::to_string(cols) + " 列）";
+            detail = I18n::tr("io.gpt3.ragged", rows + 2, n, cols);
             return false;
         }
         ++rows;
     }
     if (rows < 100 || cols < 10) {
-        detail = "格网点太少（" + std::to_string(rows) + " 行 × " + std::to_string(cols) +
-                 " 列），文件可能被截断";
+        detail = I18n::tr("io.gpt3.too_few", rows, cols);
         return false;
     }
-    detail = "GPT3 格网，" + std::to_string(rows) + " 个格点 × " + std::to_string(cols) + " 列";
+    detail = I18n::tr("io.gpt3.summary", rows, cols);
     return true;
 }

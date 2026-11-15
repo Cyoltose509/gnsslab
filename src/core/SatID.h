@@ -26,7 +26,7 @@ struct SatID {
 
     explicit SatID(const std::string &substr) {
         if (substr.length() != 3)
-            throw StringException("SatID 由 3 个字符组成（系统 + 两位 PRN），收到 \"" + substr + "\"");
+            throw StringException("SatID must be 3 characters (system + two-digit PRN), got \"" + substr + "\"");
         system = substr[0];
         id = std::stoi(substr.substr(1, 2));
     }

@@ -1,0 +1,295 @@
+key,ZH-CN,EN
+ins.alert.error,错误,Error
+ins.alert.info,提示,Notice
+ins.alert.warn,注意,Warning
+ins.align.aligning,正在{{Alignment}} {0}：正在解析第 {1} 个{{Epoch}},Running {{Alignment}} for {0}: parsing {{Epoch}} {1}
+ins.align.att_deg,{{AttitudeAngle}} (°),{{AttitudeAngle}} (°)
+ins.align.chart.legend_angle,角度,Angle
+ins.align.chart.pitch,pitch 随时间,pitch vs time
+ins.align.chart.roll,roll 随时间,roll vs time
+ins.align.chart.yaw,yaw 随时间,yaw vs time
+ins.align.col.body_axis,机体轴,Body axis
+ins.align.col.down,地,Down
+ins.align.col.east,东,East
+ins.align.col.north,北,North
+ins.align.col.stat,统计量,Statistic
+ins.align.col.verdict_dev,判定/{{Deviation}},Verdict / {{Deviation}}
+ins.align.csv.derived_lat,反解{{Latitude}} φ̂ (deg),Derived {{Latitude}} φ̂ (deg)
+ins.align.csv.earth_rate_angle,ω 与 ω_ie^n 夹角 (deg),Angle between ω and ω_ie^n (deg)
+ins.align.csv.mean_epoch,每{{Epoch}}全段均值,Mean of per-{{Epoch}} means
+ins.align.csv.mean_steady,每{{Epoch}}稳态(后1/3)均值,Per-{{Epoch}} steady-state mean (last third)
+ins.align.csv.ortho_err,正交误差 max|C^T C-I|,Orthogonality error max|C^T C-I|
+ins.align.csv.std_epoch,每{{Epoch}}全段标准差,Std of per-{{Epoch}} values
+ins.align.err.no_epoch,未在该文件中解析到任何 IMU {{Epoch}}：{0},No IMU {{Epoch}} was parsed from this file: {0}
+ins.align.err.no_file,请先选择{{Alignment}}段日志文件（ASCII .ASC）。,Select the {{Alignment}}-segment log file first (ASCII .ASC).
+ins.align.err.no_series,尚无{{Alignment}}序列，无法导出。请先完成一次{{Alignment}}。,"No {{Alignment}} series yet, nothing to export. Run an alignment first."
+ins.align.export.persec,导出每秒均值 CSV,Export per-second mean CSV
+ins.align.export.series,导出逐{{Epoch}}姿态 CSV,Export per-{{Epoch}} attitude CSV
+ins.align.export.summary,导出汇总 CSV,Export summary CSV
+ins.align.export_hint,{{Alignment}}完成后才能导出。,Available after the {{Alignment}} finishes.
+ins.align.file_row,{{Alignment}}段日志,{{Alignment}}-segment log
+ins.align.log.done,完成：{0} 个{{Epoch}}，{{DecodeScale}} {1}，{2}，模长校验{3},"done: {0} {{Epoch}}(s), {{DecodeScale}} {1}, {2}, magnitude check {3}"
+ins.align.na,不可用,Unavailable
+ins.align.note.degenerate,{{Gravity}}矢量退化,{{Gravity}} vector degenerate
+ins.align.note.not_ortho,非单位正交,Not orthonormal
+ins.align.note.not_orthonormalized,未正交化,Not orthonormalized
+ins.align.note.ortho,单位正交,Orthonormal
+ins.align.note.orthonormalized,已正交化,Orthonormalized
+ins.align.pending,待定,pending
+ins.align.row.dcm_det,姿态矩阵 det(C),Attitude matrix det(C)
+ins.align.row.earth_rate,ω 与 ω_ie^n 夹角 (°),Angle between ω and ω_ie^n (°)
+ins.align.row.lat,反解{{Latitude}} φ (°),Derived {{Latitude}} φ (°)
+ins.align.row.mean,整段均值,Segment mean
+ins.align.row.ortho_err,正交误差 max|(C^T)C−I|,Orthogonality error max|(C^T)C−I|
+ins.align.row.steady_mean,稳态均值（后 1/3）,Steady-state mean (last 1/3)
+ins.align.row.steady_sigma,稳态 1σ,Steady-state 1σ
+ins.align.scale_ok,可用,available
+ins.align.sep.dcm,姿态矩阵 C（机体轴 → NED）,Attitude matrix C (body axes → NED)
+ins.align.sep.quality,{{Alignment}}质量,{{Alignment}} quality
+ins.align.start,开始{{Alignment}},Start {{Alignment}}
+ins.align.window_title,静态解析{{CoarseAlignment}}配置,Static analytic {{CoarseAlignment}}
+ins.calib.chart.acc_scale,{{Accelerometer}}三轴{{ScaleFactor}} (LSB/g),{{Accelerometer}} three-axis {{ScaleFactor}} (LSB/g)
+ins.calib.chart.comp_f,补偿后{{SpecificForce}} f (m/s²),Compensated {{SpecificForce}} f (m/s²)
+ins.calib.chart.comp_w,补偿后角速率 ω (LSB，{{Bias}}与交轴已扣),"Compensated angular rate ω (LSB, {{Bias}} and cross-axis removed)"
+ins.calib.chart.gyro_keff,"{{Gyroscope}}有效{{ScaleFactor}} K_eff,g (LSB/rad)","{{Gyroscope}} effective {{ScaleFactor}} K_eff,g (LSB/rad)"
+ins.calib.col.check,检查项,Check
+ins.calib.col.measured,实测,Measured
+ins.calib.col.qty,量,Quantity
+ins.calib.col.unit,单位,Unit
+ins.calib.csv.dt,dt(s),dt (s)
+ins.calib.csv.fit_rms,六位置拟合RMS(LSB),Six-position fit RMS (LSB)
+ins.calib.csv.n_pos,nPos(每{{Position}}{{Epoch}}数),nPos ({{Epoch}} per {{Position}})
+ins.calib.csv.n_rot,nRot(每{{Rotation}}{{Epoch}}数),nRot ({{Epoch}} per {{Rotation}})
+ins.calib.csv.segments,识别到的{{Static}}/{{Rotation}}段,Detected {{Static}} / {{Rotation}} segments
+ins.calib.detected,已识别{{Static}}段 {0} 个、{{Rotation}}段 {1} 个，跳过重复文件 {2} 个，共处理 {3} 个{{Epoch}},Detected {0} {{Static}} segment(s) and {1} {{Rotation}} segment(s); skipped {2} duplicate file(s); {3} {{Epoch}} processed
+ins.calib.err.duplicate,重复文件，已跳过,"Duplicate file, skipped"
+ins.calib.err.no_detect,尚无分段结果，无法导出。,"No segment result yet, nothing to export."
+ins.calib.err.no_file,请先添加至少一个 IMU 日志文件。,Add at least one IMU log file first.
+ins.calib.err.no_nominal,型号{{DecodeScale}}未知（IMU Type 未识别），无法确定标称{{ScaleFactor}},{{DecodeScale}} unknown (IMU type not recognized); the nominal {{ScaleFactor}} cannot be determined
+ins.calib.err.no_result,尚无{{Calibration}}结果，无法导出。请先完成一次{{Calibration}}。,"No {{Calibration}} result yet, nothing to export. Run a calibration first."
+ins.calib.err.no_samples,该段没有样本，无法导出补偿序列。请重新{{Calibration}}后再试。,"This segment has no samples, so the compensated series cannot be exported. Run {{Calibration}} again and try again."
+ins.calib.err.no_segment,未识别到任何{{Static}}段或{{Rotation}}段。请确认所选文件是 IMU 原始日志，且包含完整的六位置{{Static}}/{{Rotation}}过程。,No {{Static}} segment or {{Rotation}} segment detected. Make sure the selected files are raw IMU logs containing a complete six-position {{Static}}/{{Rotation}} sequence.
+ins.calib.err.parse_failed,解析失败（内容为空或格式不符）,Parse failed (empty content or unexpected format)
+ins.calib.export_comp,导出该段补偿序列,Export this segment's compensated series
+ins.calib.export_detect,导出分段摘要 CSV,Export segment summary CSV
+ins.calib.export_hint,完成一次{{Calibration}}后才能导出。,Available after one {{Calibration}} run.
+ins.calib.export_result,导出{{Calibration}}结果 CSV,Export {{Calibration}} result CSV
+ins.calib.hint.files,添加任意数量的 IMU 日志文件，程序自动识别每个文件里的{{Static}}段与{{Rotation}}段。,Add any number of IMU log files; the {{Static}} segment and {{Rotation}} segments in each file are detected automatically.
+ins.calib.in_x,输入 X,Input X
+ins.calib.in_y,输入 Y,Input Y
+ins.calib.in_z,输入 Z,Input Z
+ins.calib.log.done,完成：{{Static}}段 {0} 个 / {{Rotation}}段 {1} 个，{{DecodeScale}} {2}，K_a={3}，拟合{{Residual}} RMS={4} LSB,"done: {0} {{Static}} segment(s) / {1} {{Rotation}} segment(s), {{DecodeScale}} {2}, K_a={3}, fit {{Residual}} RMS={4} LSB"
+ins.calib.no_files,尚未添加任何文件。点击「浏览」,No files added yet. Click Browse
+ins.calib.out_x,输出 X,Output X
+ins.calib.out_y,输出 Y,Output Y
+ins.calib.out_z,输出 Z,Output Z
+ins.calib.over,超限,Out of limit
+ins.calib.parsing,正在解析 {0}：{{Static}}段 {1} 个、{{Rotation}}段 {2} 个、重复 {3} 个、{4} 个{{Epoch}},"Parsing {0}: {1} {{Static}} segment(s), {2} {{Rotation}} segment(s), {3} duplicate(s), {4} {{Epoch}}"
+ins.calib.pass,合格,Pass
+ins.calib.q.acc_bias,{{Accelerometer}}{{Bias}} b_a,{{Accelerometer}} {{Bias}} b_a
+ins.calib.q.acc_ds,{{Accelerometer}}{{ScaleFactor}}误差 δs_a,{{Accelerometer}} {{ScaleFactor}} error δs_a
+ins.calib.q.acc_knom,标称{{ScaleFactor}} K_nom,Nominal {{ScaleFactor}} K_nom
+ins.calib.q.acc_scale,{{Accelerometer}}{{ScaleFactor}} K_a,{{Accelerometer}} {{ScaleFactor}} K_a
+ins.calib.q.acc_scale_sigma,{{Accelerometer}}{{ScaleFactor}} 1σ,{{Accelerometer}} {{ScaleFactor}} 1σ
+ins.calib.q.gyro_bias,{{Gyroscope}}{{Bias}} b_g,{{Gyroscope}} {{Bias}} b_g
+ins.calib.q.gyro_ds,{{Gyroscope}}{{ScaleFactor}}误差 δs_g,{{Gyroscope}} {{ScaleFactor}} error δs_g
+ins.calib.q.gyro_keff,"{{Gyroscope}}有效{{ScaleFactor}} K_eff,g","{{Gyroscope}} effective {{ScaleFactor}} K_eff,g"
+ins.calib.q.gyro_keff_nom,"标称有效{{ScaleFactor}} K_eff,nom","Nominal effective {{ScaleFactor}} K_eff,nom"
+ins.calib.q.gyro_scale,{{Gyroscope}}{{ScaleFactor}} S_g,{{Gyroscope}} {{ScaleFactor}} S_g
+ins.calib.qc.acc_consistency,{{Accelerometer}}三轴{{ScaleFactor}}一致性,{{Accelerometer}} three-axis {{ScaleFactor}} consistency
+ins.calib.qc.gyro_ds,{{Gyroscope}}{{ScaleFactor}}误差,{{Gyroscope}} {{ScaleFactor}} error
+ins.calib.qc.gyro_ng,{{Gyroscope}}交轴耦合,{{Gyroscope}} cross-axis coupling
+ins.calib.qc.rms,六位置拟合{{Residual}} RMS,Six-position fit {{Residual}} RMS
+ins.calib.seg.pos,{{Static}} · {0},{{Static}} · {0}
+ins.calib.seg.rot,{{Rotation}} · {0},{{Rotation}} · {0}
+ins.calib.selected_files,已选 {0} 个文件：,{0} file(s) selected:
+ins.calib.sep.comp_series,补偿序列,Compensated series
+ins.calib.sep.na,{{Accelerometer}}交轴耦合矩阵 Na,{{Accelerometer}} cross-axis coupling matrix Na
+ins.calib.sep.ng,{{Gyroscope}}交轴耦合矩阵 Ng,{{Gyroscope}} cross-axis coupling matrix Ng
+ins.calib.sep.quality,质量判读,Quality assessment
+ins.calib.sep.scale_consistency,{{ScaleFactor}}一致性,{{ScaleFactor}} consistency
+ins.calib.seq.none,未识别到{{Static}}段或{{Rotation}}段,No {{Static}} segment or {{Rotation}} segment detected
+ins.calib.start,开始{{Calibration}},Start {{Calibration}}
+ins.calib.stop,停止,Stop
+ins.calib.window_title,六位置法{{Calibration}}配置,Six-position {{Calibration}}
+ins.cfg_tab,INS 处理配置,INS settings
+ins.chart.computing,计算中,Computing
+ins.chart.x_axis,轴,Axis
+ins.chart.x_time,时间 t (s),Time t (s)
+ins.err.blh_invalid,初始{{Position}} BLH 非法：{{Latitude}}应在 ±90°、{{Longitude}} ±180°、{{Height}} -1000~100000 m,"Invalid initial {{Position}} BLH: {{Latitude}} ±90°, {{Longitude}} ±180°, {{Height}} -1000~100000 m"
+ins.err.blh_prefix,初始{{Position}} BLH 非法：{0},Invalid initial {{Position}} BLH: {0}
+ins.err.decode,IMU 日志解码失败：{0},IMU log decoding failed: {0}
+ins.err.no_records,IMU 日志中没有可解码的六轴计数记录,No decodable 6-axis counter records in the IMU log
+ins.err.open_imu,无法打开 IMU 日志：{0},Cannot open IMU log: {0}
+ins.err.scale_not_ready,IMU {{DecodeScale}}未就绪,IMU {{DecodeScale}} not ready
+ins.err.short_static,IMU 有效样本不足 20 s（{0} 个），无法自动解析{{CoarseAlignment}}；请勾选「指定{{InitialAttitude}}角」并手填,"Fewer than 20 s of valid IMU samples ({0}); automatic {{CoarseAlignment}} is not possible. Enable ""Specify {{InitialAttitude}}"" and enter the angles manually"
+ins.imu_log_file,IMU 日志,IMU log
+ins.log.bias_too_large,{{Static}}段{{SpecificForce}}偏离{{Gravity}}投影 {0} m/s^2，过大，未作{{Bias}}扣除,"{{Static}} segment {{SpecificForce}} deviates from the {{Gravity}} projection by {0} m/s^2, too large; no {{Bias}} removed"
+ins.log.cancelled,任务被取消：解算线程未启动,task cancelled: solving thread not started
+ins.log.coarse_align,"静态{{CoarseAlignment}}: 开头 {0}s, roll={1} pitch={2} yaw={3} deg, {{Heading}}散布={4} deg","{{CoarseAlignment}}: first {0}s, roll={1} pitch={2} yaw={3} deg, {{Heading}} spread={4} deg"
+ins.log.done,"解算完成: {0} {{Epoch}}, {{SamplingRate}} {1} Hz","done: {0} {{Epoch}}, {{SamplingRate}} {1} Hz"
+ins.log.scale,{{DecodeScale}}：{0}，{{SamplingRate}} {1} Hz,"{{DecodeScale}}: {0}, {{SamplingRate}} {1} Hz"
+ins.log.start_file,开始解算: IMU={0},start: IMU={0}
+ins.log.static_bias,"{{Static}}段{{Accelerometer}}{{Bias}}: {0} m/s^2（已在{{SpecificForce}}{{Increment}}中扣除）, {{Gyroscope}}偏离{{EarthRotation}} {1} rad/s（含{{Heading}}误差，未扣）","{{Static}} segment {{Accelerometer}} {{Bias}}: {0} m/s^2 (removed from the {{SpecificForce}} {{Increment}}), {{Gyroscope}} deviation from {{EarthRotation}} {1} rad/s (contains {{Heading}} error, not removed)"
+ins.log.zupt_stat,"零速{{Criterion}}: 生效 {0}%, {{SpecificForce}}{{Deviation}} max={1} m/s^2 (超限 {2}), {{AngularRate}}{{Deviation}} max={3} rad/s (超限 {4})","{{ZeroVelocityUpdate}} {{Criterion}}: applied {0}%, {{SpecificForce}} {{Deviation}} max={1} m/s^2 ({2} over limit), {{AngularRate}} {{Deviation}} max={3} rad/s ({4} over limit)"
+ins.no_data,（无数据）,(no data)
+ins.param.g,当地{{Gravity}}加速度 g (m/s²),Local {{Gravity}} g (m/s²)
+ins.param.group.init_att,{{InitialAttitude}} (°),{{InitialAttitude}} (°)
+ins.param.group.init_pos,初始{{Position}},Initial {{Position}}
+ins.param.group.init_vel,"初始{{Velocity}} (m/s, NED)","Initial {{Velocity}} (m/s, NED)"
+ins.param.group.station_turntable,{{Site}} / 转台,{{Site}} / turntable
+ins.param.group.time,时间,Time
+ins.param.group.window,解算窗口,Solution window
+ins.param.lat,当地{{Latitude}} φ (°N),Local {{Latitude}} φ (°N)
+ins.param.turn_angle,转台精确转角 α (°),Turntable exact rotation α (°)
+ins.param.v_h,{{Height}} h (m),{{Height}} h (m)
+ins.param.v_heading,{{Heading}} heading,{{Heading}}
+ins.param.v_lat,{{Latitude}} φ (°N),{{Latitude}} φ (°N)
+ins.param.v_lon,{{Longitude}} λ (°E),{{Longitude}} λ (°E)
+ins.param.v_pitch,{{Pitch}} pitch,{{Pitch}}
+ins.param.v_roll,{{Roll}} roll,{{Roll}}
+ins.param.v_start_tow,起始时刻 tow (s),Start tow (s)
+ins.param.v_vd,地向 vD,Down vD
+ins.param.v_ve,东向 vE,East vE
+ins.param.v_vn,北向 vN,North vN
+ins.param.win,滑窗长度 ({{Epoch}}),Window length ({{Epoch}})
+ins.punct.period,。,.
+ins.res.accel_bias,{{Static}}段{{Accelerometer}}{{Bias}}：%+.3e / %+.3e / %+.3e m/s²（已扣除）,{{Static}} segment {{Accelerometer}} {{Bias}}: %+.3e / %+.3e / %+.3e m/s² (removed)
+ins.res.aligning,正在读取开头{{Static}}段做{{CoarseAlignment}} [%s]：%.1f s,Reading the initial {{Static}} segment for {{CoarseAlignment}} [%s]: %.1f s
+ins.res.angle_deg,角度 (°),Angle (°)
+ins.res.applied,生效,applied
+ins.res.attitude,姿态,Attitude
+ins.res.attitude_deg,姿态 (°),Attitude (°)
+ins.res.col.comp1,分量 1,Comp 1
+ins.res.col.comp2,分量 2,Comp 2
+ins.res.col.comp3,分量 3,Comp 3
+ins.res.current_epoch,当前{{Epoch}},Current {{Epoch}}
+ins.res.done,处理完成：共 %zu 个{{Epoch}},Done: %zu {{Epoch}}
+ins.res.epoch_info_free,当前{{Epoch}}解算信息（自由解）,Current {{Epoch}} (free solution)
+ins.res.epoch_info_zupt,当前{{Epoch}}解算信息（{{ZeroVelocityUpdate}}解）,Current {{Epoch}} ({{ZeroVelocityUpdate}} solution)
+ins.res.epoch_status,{{Epoch}}状态,{{Epoch}} status
+ins.res.error,错误：%s,Error: %s
+ins.res.export_hint,导出主列跟随上面选中的解；Zupt* 附加列恒为{{ZeroVelocityUpdate}}解。,Main columns follow the solution selected above; Zupt* columns always come from the {{ZeroVelocityUpdate}} solution.
+ins.res.free,自由解,Free solution
+ins.res.free_h,自由解 h,Free h
+ins.res.free_v,自由解 |v|,Free |v|
+ins.res.heading_unreliable,低精度 IMU {{Heading}}不可靠,{{Heading}} unreliable on a low-grade IMU
+ins.res.imu_summary,{{IMUModel}}：%s | 共 %zu 个{{Epoch}} | 当前第 %d 个,{{IMUModel}}: %s | %zu {{Epoch}} | #%d
+ins.res.init_attitude,{{InitialAttitude}}：开头{{Static}}段 0–%.1f s 自动{{CoarseAlignment}} → roll %+.4f° pitch %+.4f° yaw %+.4f°,{{InitialAttitude}}: auto {{CoarseAlignment}} over the first %.1f s {{Static}} segment → roll %+.4f° pitch %+.4f° yaw %+.4f°
+ins.res.nav_curves,导航曲线,Navigation curves
+ins.res.no_solution,没有解算结果,No solution
+ins.res.not_applied,未生效,not applied
+ins.res.reading_imu,正在读取 IMU 日志 [%s] …,Reading IMU log [%s] …
+ins.res.scale,"{{DecodeScale}}：%.3e (m/s)/LSB, %.3e rad/LSB @ %.0f Hz","{{DecodeScale}}: %.3e (m/s)/LSB, %.3e rad/LSB @ %.0f Hz"
+ins.res.scale_source,{{DecodeScale}}来源：%s,{{DecodeScale}} source: %s
+ins.res.self_consistent,自洽,consistent
+ins.res.series,曲线,Series
+ins.res.solving_epoch,正在处理 [%s]：正在解算第 %zu 个{{Epoch}},Processing [%s]: solving {{Epoch}} %zu
+ins.res.speed,{{Velocity}}模,{{Velocity}} norm
+ins.res.stop,停止解算,Stop
+ins.res.track,E-N 平面{{Trajectory}},E-N {{Trajectory}}
+ins.res.vel_components,{{Velocity}}三分量,{{Velocity}} components
+ins.res.vel_ned,{{Velocity}} NED (m/s),{{Velocity}} NED (m/s)
+ins.res.yaw_spread,{{Heading}}跨窗散布 %.2f°（%s）,{{Heading}} spread across windows %.2f° (%s)
+ins.res.zupt_count,{{ZeroVelocityUpdate}}累计生效 %zu 次,{{ZeroVelocityUpdate}} applied %zu times
+ins.res.zupt_h,{{ZeroVelocityUpdate}} h,{{ZeroVelocityUpdate}} h
+ins.res.zupt_v,{{ZeroVelocityUpdate}} |v|,{{ZeroVelocityUpdate}} |v|
+ins.scale.edit_manual,修改手填{{DecodeScale}}…,Edit manual {{DecodeScale}}…
+ins.scale.fill_manual_hint,请在下方填入这台设备手册上的{{DecodeScale}}后重算。,Enter the {{DecodeScale}} from this device's manual below and recompute.
+ins.scale.guess_describe,{0}（量级反推）,{0} (inferred from magnitude)
+ins.scale.k_a,{{Accelerometer}}{{DecodeScale}} k_a,{{Accelerometer}} {{DecodeScale}} k_a
+ins.scale.k_g,{{Gyroscope}}{{DecodeScale}} k_g,{{Gyroscope}} {{DecodeScale}} k_g
+ins.scale.manual,用户手填{{DecodeScale}},User-entered {{DecodeScale}}
+ins.scale.manual_panel_hint,请按这台设备手册填写{{DecodeScale}}，然后点「以此{{DecodeScale}}重算」。,"Enter the {{DecodeScale}} from this device's manual, then click Recompute with this {{DecodeScale}}."
+ins.scale.model_conflict,选中的文件混用了不同 {{IMUModel}}（{0} 与 {1}），{{DecodeScale}}无法统一。请按型号分两批{{Calibration}}。,"The selected files mix different {{IMUModel}} ({0} and {1}), so the {{DecodeScale}} cannot be unified. Run {{Calibration}} in two batches by model."
+ins.scale.no_guess,无法自动确定{{DecodeScale}}：记录里没有 {{IMUModel}}，{{Static}}段量级也反推不出唯一型号。,Cannot determine the {{DecodeScale}} automatically: the record has no {{IMUModel}} and the {{Static}} segment magnitude does not single out a unique model.
+ins.scale.no_selftype,记录里没有 {{IMUModel}}自描述，也没有可用的{{Static}}段反推{{DecodeScale}}。,The record has no {{IMUModel}} self-description and no {{Static}} segment is available to infer the {{DecodeScale}}.
+ins.scale.no_selftype_note,记录里没有 {{IMUModel}}自描述，也无法用{{Static}}段反推{{DecodeScale}}：{0}。,The record has no {{IMUModel}} self-description and the {{DecodeScale}} cannot be inferred from the {{Static}} segment: {0}.
+ins.scale.no_type_note,；本批有 {0} 个文件没有 {{IMUModel}}自描述，已按上述{{DecodeScale}}处理。,; {0} file(s) in this batch have no {{IMUModel}} self-description and were processed with the {{DecodeScale}} above.
+ins.scale.record_label,{0}（Type={1}）,{0} (Type={1})
+ins.scale.recount,以此{{DecodeScale}}重算,Recompute with this {{DecodeScale}}
+ins.scale.skip_check,跳过{{DecodeScale}}校验,Skip {{DecodeScale}} check
+ins.scale.src_guess,{{DecodeScale}}来源：由{{Static}}段量级反推的 {0},"{{DecodeScale}} source: {0}, inferred from the {{Static}} segment magnitude"
+ins.scale.src_manual,{{DecodeScale}}来源：用户按手册手填,{{DecodeScale}} source: entered by the user from the manual
+ins.scale.src_record,{{DecodeScale}}来源：记录自描述的 {0},{{DecodeScale}} source: {0} as self-described in the record
+ins.scale.src_record_short,{{DecodeScale}}来源：记录自描述的 {0}。,{{DecodeScale}} source: {0} as self-described in the record.
+ins.scale.unknown_head,未能确定{{DecodeScale}}，|f| 与 |ω| 的模长校验不可用,{{DecodeScale}} undetermined; the |f| and |ω| magnitude check is unavailable
+ins.scale.unknown_type,记录里的 IMU Type={0} 不在内置型号表内，无法确定{{DecodeScale}}。,"IMU Type={0} in the record is not in the built-in model table, so the {{DecodeScale}} cannot be determined."
+ins.scale.unknown_why_guess,：{{Static}}段反推{{DecodeScale}}失败，{0},": inferring the {{DecodeScale}} from the {{Static}} segment failed, {0}"
+ins.scale.unknown_why_type,：记录里的 IMU Type={0} 不在内置型号表内,: IMU Type={0} in the record is not in the built-in model table
+ins.seg.x_ccw,X逆转,X CCW
+ins.seg.x_cw,X正转,X CW
+ins.seg.x_down,X下,X down
+ins.seg.x_up,X上,X up
+ins.seg.y_ccw,Y逆转,Y CCW
+ins.seg.y_cw,Y正转,Y CW
+ins.seg.y_down,Y下,Y down
+ins.seg.y_up,Y上,Y up
+ins.seg.z_ccw,Z逆转,Z CCW
+ins.seg.z_cw,Z正转,Z CW
+ins.seg.z_down,Z下,Z down
+ins.seg.z_up,Z上,Z up
+ins.tool.log.export,导出 {0} → {1},Export {0} → {1}
+ins.tool.log.start,开始,start
+ins.unit.lsb_epoch,LSB/{{Epoch}},LSB/{{Epoch}}
+ins.unit.unitless,无量纲,dimensionless
+ins.verify.all_within_tol,全部指标在{{Tolerance}}内,All metrics are within {{Tolerance}}
+ins.verify.chart.att,姿态误差,Attitude error
+ins.verify.chart.east,东 E,East E
+ins.verify.chart.north,北 N,North N
+ins.verify.chart.pos,{{Position}}误差,{{Position}} error
+ins.verify.chart.up,天 U,Up U
+ins.verify.chart.vel,{{Velocity}}误差,{{Velocity}} error
+ins.verify.col.item,项目,Item
+ins.verify.col.max_dev,最大{{Deviation}},Max {{Deviation}}
+ins.verify.col.value,数值,Value
+ins.verify.col.verdict,判定,Verdict
+ins.verify.comparing,正在比对 [{0}]：第 {1} 个{{Epoch}},Comparing [{0}]: {{Epoch}} {1}
+ins.verify.csv.all_pass,指导书{{Criterion}}全部满足,Every {{Criterion}} met
+ins.verify.csv.horizontal_max,水平{{Deviation}}折米最大值 (m),Max horizontal {{Deviation}} (m)
+ins.verify.csv.max_v,{{Velocity}} (m/s),{{Velocity}} (m/s)
+ins.verify.csv.t0,起始时标 (s),Start time (s)
+ins.verify.csv.t1,截止时标 (s),End time (s)
+ins.verify.err.imu_columns,"IMU {{Increment}}文件里没有完整的 7 列记录（t, Δθ×3, Δv×3）：{0}","The IMU {{Increment}} file has no complete 7-column records (t, Δθ×3, Δv×3): {0}"
+ins.verify.err.imu_open,无法打开 IMU {{Increment}}文件：{0},Cannot open the IMU {{Increment}} file: {0}
+ins.verify.err.imu_short,IMU 文件在起始时刻之后不足两条记录，无法推进机械编排。,The IMU file has fewer than two records after the start time; mechanization cannot proceed.
+ins.verify.err.no_imu,请先选择 IMU {{Increment}}文件（IMU.bin）。,Select the IMU {{Increment}} file first (IMU.bin).
+ins.verify.err.no_overlap,参考{{Trajectory}}与 IMU 时段没有交集，未产生任何比对点。,"The reference {{Trajectory}} and the IMU time span do not overlap, so no comparison point was produced."
+ins.verify.err.no_ref,请先选择参考{{Trajectory}}文件（PureINS.bin）。,Select the reference {{Trajectory}} file first (PureINS.bin).
+ins.verify.err.no_result,尚无验证结果，无法导出。请先完成一次验证。,"No verification result yet, nothing to export. Run a verification first."
+ins.verify.err.ref_columns,"参考{{Trajectory}}文件里没有完整的 10 列记录（t, φ, λ, h, v×3, 姿态×3）：{0}","The reference {{Trajectory}} file has no complete 10-column records (t, φ, λ, h, v×3, attitude×3): {0}"
+ins.verify.err.ref_early,参考{{Trajectory}}全部早于 IMU 起始时刻，没有可比对的数据。,The whole reference {{Trajectory}} precedes the IMU start time; nothing to compare.
+ins.verify.err.ref_open,无法打开参考{{Trajectory}}文件：{0},Cannot open the reference {{Trajectory}} file: {0}
+ins.verify.export.points,导出逐点误差 CSV,Export per-point error CSV
+ins.verify.export_hint,验证完成后才能导出。,Available after the verification finishes.
+ins.verify.file_imu,IMU {{Increment}}文件,IMU {{Increment}} file
+ins.verify.file_ref,参考{{Trajectory}}文件,Reference {{Trajectory}} file
+ins.verify.hint.imu,"IMU.bin 每条 7 个 double（t, Δθ×3, Δv×3），","Each IMU.bin record holds 7 doubles (t, Δθ×3, Δv×3),"
+ins.verify.hint.ref,"PureINS.bin 每条 10 个 double（t, φ, λ, h, v×3, 姿态×3）。","Each PureINS.bin record holds 10 doubles (t, φ, λ, h, v×3, attitude×3)."
+ins.verify.kv.compared,比对点数,Compared points
+ins.verify.kv.duration,时长,Duration
+ins.verify.kv.end,截止时标,End time
+ins.verify.kv.imu_epochs,IMU {{Increment}}{{Epoch}},IMU {{Increment}} {{Epoch}}
+ins.verify.kv.ref_epochs,参考{{Trajectory}}{{Epoch}},Reference {{Trajectory}} {{Epoch}}
+ins.verify.kv.start,起始时标,Start time
+ins.verify.log.summary,比对 {0} 点（{1} 条 IMU {{Increment}}）：dLat {2}° dLon {3}° dh {4} m dV {5} m/s，{6},"Compared {0} point(s) ({1} IMU {{Increment}}(s)): dLat {2}° dLon {3}° dh {4} m dV {5} m/s, {6}"
+ins.verify.no_result,（尚无验证结果）,(no verification result yet)
+ins.verify.note.horizontal,水平{{Deviation}}折成米后最大 {0} m，仅作直观附注，不参与判定。,The horizontal {{Deviation}} is at most {0} m after converting to metres; this is shown for intuition only and does not affect the verdict.
+ins.verify.note.tol,书里写的是「1.0e-7 deg 的量级」「1.0e-5~1.0e-4 m/s 的量级」，这里按量级上界取{{Threshold}}。,The reference quotes orders of 1.0e-7 deg and 1.0e-5~1.0e-4 m/s; the upper bound of each order is used as the {{Threshold}} here.
+ins.verify.over,超差,Out of tolerance
+ins.verify.over_items,超差项：{0},Out of tolerance: {0}
+ins.verify.over_tol,有超差项,Some items out of tolerance
+ins.verify.pass,通过,Pass
+ins.verify.progress,比对进行中：已比对 {0} 点，最大水平{{Deviation}} {1} m、{{Velocity}} {2} m/s。,"Comparison running: {0} point(s) compared, max horizontal {{Deviation}} {1} m, {{Velocity}} {2} m/s."
+ins.verify.row.lat,{{Latitude}}最大{{Deviation}} (°),Max {{Latitude}} {{Deviation}} (°)
+ins.verify.row.lon,{{Longitude}}最大{{Deviation}} (°),Max {{Longitude}} {{Deviation}} (°)
+ins.verify.row.velocity,{{Velocity}}三分量最大 (m/s),Largest {{Velocity}} component (m/s)
+ins.verify.sep.data,数据概况,Data overview
+ins.verify.sep.max_dev,与参考{{Trajectory}}的最大{{Deviation}},Maximum {{Deviation}} from the reference {{Trajectory}}
+ins.verify.start,开始验证,Start verification
+ins.verify.stop,停止验证,Stop
+ins.verify.unit.deg,°,°
+ins.verify.unit.m,m,m
+ins.verify.unit.mps,m/s,m/s
+ins.verify.window_title,INS 算法验证配置,INS algorithm verification
+ins.verify.within_tol,全部在{{Tolerance}}内,all within {{Tolerance}}

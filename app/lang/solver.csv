@@ -1,0 +1,342 @@
+key,ZH-CN,EN
+chart.axis.phase_residual,{{CarrierPhase}}{{Residual}} (m),{{CarrierPhase}} {{Residual}} (m)
+chart.col.azim,方位角(°),Azim (°)
+chart.col.code_residual,{{Pseudorange}}{{Residual}} (m),{{Pseudorange}} {{Residual}} (m)
+chart.col.elev,{{Elevation}} (°),{{Elevation}} (°)
+chart.col.index,序号,No.
+chart.col.phase_residual,相位{{Residual}}(m),Phase {{Residual}} (m)
+chart.excluded,排除,Excluded
+chart.legend.current_pos,当前{{Position}},Current {{Position}}
+chart.legend.e_float,E(浮点),E (float)
+chart.legend.leo_est,LEO 估计,{{LEO}} estimate
+chart.legend.n_float,N(浮点),N (float)
+chart.legend.u_float,U(浮点),U (float)
+chart.mode.phase,相位,Phase
+chart.no_phase_residual,(无相位{{Residual}}),(no phase {{Residual}})
+chart.no_satellites,(无{{Satellite}}),(no {{Satellite}})
+chart.plot.enu_dev,ENU {{Deviation}},ENU {{Deviation}}
+chart.plot.leo_track,LEO {{Trajectory}} (ECEF XYZ),{{LEO}} {{Trajectory}} (ECEF XYZ)
+chart.too_few_points,({{Trajectory}}点不足，无法绘制),(not enough {{Trajectory}} points to plot)
+chart.too_few_valid_points,(有效{{Trajectory}}点不足，无法绘制),(not enough valid {{Trajectory}} points to plot)
+chart.used,参与,Used
+core.log.frame_mismatch,{{Product}}{{Orbit}}在 {0}，参考{{Truth}}在 {1}：R/T/N 与 ENU 差里含两个实现之间的系统差（厘米级），别全算进模型误差,"{{Product}} {{Orbit}} in {0}, reference {{Truth}} in {1}: R/T/N and ENU differences include a centimeter-level bias between the two realizations, not all of it is model error"
+core.log.frame_of_solution,解所在框架 {0},solution frame {0}
+core.log.frame_undeclared,没有{{Product}}{{Orbit}}框架声明（{{BroadcastEphemeris}}，或 SP3 头没写），导出按 IGS14 记,"no {{Product}} {{Orbit}} frame declared ({{BroadcastEphemeris}}, or SP3 header without FRAME); exports are tagged IGS14"
+core.log.sp3_failed,SP3 读取失败 {0}: {1},SP3 read failed {0}: {1}
+core.log.sp3_failed_no_msg,SP3 读取失败: {0},SP3 read failed: {0}
+core.log.sp3_loaded,"SP3 已加载: {0}, {{Truth}}星 {1}","SP3 loaded: {0}, {{Truth}} satellite {1}"
+core.log.sp3_no_orbit,SP3 无{{Orbit}}记录: {0},SP3 has no {{Orbit}} record: {0}
+export.agency,机构,Agency
+export.dialog_title,导出文件,Export file
+export.elements,导出元素,Elements
+export.end_epoch,结束{{Epoch}},End {{Epoch}}
+export.every_n_epoch,每 N {{Epoch}},Every N {{Epoch}}
+export.every_n_sec,每 N 秒,Every N seconds
+export.export,导出,Export
+export.file_header,文件头,File header
+export.format,导出格式,Export format
+export.list_sep,、,","
+export.no_ref_enu_blh,没有参考站，ENU 按{{BLH}}写,No reference station; ENU is written as {{BLH}}
+export.nothing_selected,未勾选任何导出元素,No export element selected
+export.position_cols,{{Position}}列,{{Position}} columns
+export.range,范围,Range
+export.reset_default,默认,Default
+export.same_as_solution,与解算一致,Same as solution
+export.sampling,采样,Sampling
+export.sp3_grid_hint,SP3 需要等间隔：未选「每 N 秒」时按 30 s 出网格,"SP3 needs regular spacing: without ""Every N seconds"" a 30 s grid is used"
+export.sp3_header,SP3 头,SP3 header
+export.start_epoch,起始{{Epoch}},Start {{Epoch}}
+export.tip_cols,同时写入 {0} 列：,Writes {0} columns at once: 
+export.track_id,{{Trajectory}} ID,{{Trajectory}} ID
+export.write_velocity,导出{{Velocity}},Write {{Velocity}}
+export.written,已写入 {0},Wrote {0}
+export.written_prefix,已写入,Wrote
+export.zero_end,(0 = 末尾),(0 = end)
+filter.backward,{{Backward}}{{Filter}},{{Backward}} {{Filter}}
+filter.forward,{{Forward}}{{Filter}},{{Forward}} {{Filter}}
+filter.forward_backward,{{Forward}} + {{Backward}},{{Forward}} + {{Backward}}
+filter.lsq,逐{{Epoch}}{{LeastSquares}},Per-{{Epoch}} {{LeastSquares}}
+helper.paste,从剪贴板获取,Paste from clipboard
+leo.ant.aux,（aux 指定）, (from aux)
+leo.ant.from_cfg_ant,配置项 leo_ant,config leo_ant
+leo.ant.from_cfg_pco,配置项 leo_pco,config leo_pco
+leo.ant.from_file,已从 {0} 读取 r_CoG_ARP,r_CoG_ARP read from {0}
+leo.ant.from_mission,任务表：{0},Mission table: {0}
+leo.ant.from_rinex,RINEX 头 ANTENNA: DELTA X/Y/Z,RINEX header ANTENNA: DELTA X/Y/Z
+leo.ant.manual,手工填写,Manual
+leo.ant.unknown,质心→ARP 未定,CoM→ARP undefined
+leo.cfg_tab,LEO 处理配置,{{LEO}} settings
+leo.group.arp,{{AntennaCorrection}}  质心→ARP,{{AntennaCorrection}}  CoM→ARP
+leo.group.pco,PCO  ARP→相位中心,PCO  ARP→phase center
+leo.log.start,"开始定轨: {{Observation}}={0}, 格式={1}, {{ReferenceOrbit}}={2}, {{AntennaCorrection}}={3}","start: obs={0}, format={1}, {{ReferenceOrbit}}={2}, {{AntennaCorrection}}={3}"
+leo.section.rx_antenna,{{Receiver}}{{AntennaCorrection}},{{Receiver}} {{AntennaCorrection}}
+log.qc.done,[QC] {{QualityControl}}结束,[QC] {{QualityControl}} finished
+log.qc.start,[QC] 开始{{QualityControl}},[QC] start {{QualityControl}}
+log.rt.no_backward,{{RealTime}}流没有倒序趟，{{Filter}}方向 {0} 按 {1} 处理,{{RealTime}} stream has no backward pass; {{Filter}} {0} is treated as {1}
+log.start,开始解算: {{Observation}}={0},start: obs={0}
+log.start2,"开始解算: {{Observation}}={0}, 格式={1}","start: obs={0}, format={1}"
+log.start_rt,开始{{RealTime}}解算: {0},start {{RealTime}}: {0}
+param.acc_proc_sigma,加速度{{ProcessSigma}} (m/s),Acceleration {{ProcessSigma}} (m/s)
+param.amb_init_sigma,{{Ambiguity}}{{InitialSigma}},{{Ambiguity}} {{InitialSigma}}
+param.amb_init_sigma_cycle,{{Ambiguity}}{{InitialSigma}} (周),{{Ambiguity}} {{InitialSigma}} (cycles)
+param.amb_proc_sigma,{{Ambiguity}}{{ProcessSigma}},{{Ambiguity}} {{ProcessSigma}}
+param.amb_proc_sigma_cycle,{{Ambiguity}}{{ProcessSigma}} (周),{{Ambiguity}} {{ProcessSigma}} (cycles)
+param.att_heading,{{Heading}} heading (°),{{Heading}} (°)
+param.att_pitch,{{Pitch}} pitch (°),{{Pitch}} (°)
+param.att_roll,{{Roll}} roll (°),{{Roll}} (°)
+param.auto_loaded,自动读取 %s,Auto-loaded %s
+param.auto_off,已关闭,Off
+param.auto_version,%s\n版本 %s，%s 更新,"%s\nVersion %s, updated %s"
+param.clock_proc_sigma,{{ClockOffset}}{{ProcessSigma}},{{ClockOffset}} {{ProcessSigma}}
+param.clock_proc_sigma_m,{{ClockOffset}}{{ProcessSigma}} (m),{{ClockOffset}} {{ProcessSigma}} (m)
+param.code_bias_init_sigma,{{CodeBias}}{{InitialSigma}},{{CodeBias}} {{InitialSigma}}
+param.code_bias_proc_sigma,{{CodeBias}}{{ProcessSigma}},{{CodeBias}} {{ProcessSigma}}
+param.code_phase_sigma_ratio,{{Pseudorange}}:相位 σ 比,{{Pseudorange}}:phase σ ratio
+param.code_sigma,码 σ (m),Code σ (m)
+param.constellations,参与星座,Constellations
+param.dd_min_sats,双差最少{{SatelliteCount}},Min {{SatelliteCount}} for double difference
+param.decode_accel,{{Accelerometer}} (m/s)/LSB,{{Accelerometer}} (m/s)/LSB
+param.decode_gyro,{{Gyroscope}} rad/LSB,{{Gyroscope}} rad/LSB
+param.decode_rate,{{SamplingRate}} (Hz),{{SamplingRate}} (Hz)
+param.drop_unhealthy,剔除电文标记不健康的{{Satellite}},Drop {{Satellite}} flagged unhealthy in broadcast
+param.elev_cutoff,{{ElevationMask}} (°),{{ElevationMask}} (°)
+param.elev_weight_floor,{{ElevationWeighting}}下限 (sinE，0=跟随截止角),"{{ElevationWeighting}} floor (sinE, 0 = follow cutoff)"
+param.exclude_geo_ref,排除北斗 GEO 参考星,Exclude BeiDou GEO reference satellites
+param.filter_dir,{{Filter}}方向,{{Filter}} direction
+param.first_epoch_pos_sigma,首{{Epoch}}{{Position}} σ,First-{{Epoch}} {{Position}} σ
+param.full_covariance,完整{{Covariance}},Full {{Covariance}}
+param.gf_slip_mult,GF {{CycleSlip}}{{Threshold}}倍数,GF {{CycleSlip}} {{Threshold}} multiplier
+param.glo_ifcb_init_sigma,GLO IFCB {{InitialSigma}},GLO IFCB {{InitialSigma}}
+param.glo_ifcb_proc_sigma,GLO IFCB {{ProcessSigma}},GLO IFCB {{ProcessSigma}}
+param.gpt3_off,已关闭：不使用 GPT3 {{Grid}},Off: GPT3 {{Grid}} not used
+param.gpt3_off_ahaw,已关闭：只出 ah/aw，不做原生 zhd/zwd 抬升,"Off: ah/aw only, no native zhd/zwd"
+param.group.ambiguity,{{Ambiguity}}与 AR,{{Ambiguity}} & AR
+param.group.code_bias,{{CodeBias}} / GLONASS IFCB,{{CodeBias}} / GLONASS IFCB
+param.group.correction,改正模型,Correction models
+param.group.cycle_slip,{{CycleSlip}}探测,{{CycleSlip}} detection
+param.group.decode_scale,{{DecodeScale}}（0 = 自动：型号自描述 / 开头{{Static}}段反推）,{{DecodeScale}} (0 = auto: IMU type / {{Static}} segment)
+param.group.filter_float,{{Filter}}（{{FloatSolution}}）,{{Filter}} ({{FloatSolution}})
+param.group.filter_update,{{Filter}}更新,{{Filter}} update
+param.group.ins_init_state,初始状态（BLH / vNED）,Initial state (BLH / vNED)
+param.group.isb,系统间{{Deviation}} (ISB),Inter-system {{Deviation}} (ISB)
+param.group.obs_model,{{Observation}}模型,{{Observation}} model
+param.group.pos_vel,{{Position}} / {{Velocity}},{{Position}} / {{Velocity}}
+param.group.position,{{Position}} / σ,{{Position}} / σ
+param.group.ref_sat,参考星选择,Reference satellite
+param.group.sat_availability,{{Satellite}}可用性,{{Satellite}} availability
+param.group.solve,解算设置,Solver settings
+param.group.tropo_ztd,{{Troposphere}} / ZTD,{{Troposphere}} / ZTD
+param.group.zupt,{{ZeroVelocityUpdate}}（默认解算）,{{ZeroVelocityUpdate}} (default solving)
+param.ins_heading,手填{{Heading}} (°),Manual {{Heading}} (°)
+param.ins_init_pos,初始{{Position}} BLH (°/°/m),Initial {{Position}} BLH (°/°/m)
+param.ins_init_pos_short,初始{{Position}} (BLH),Initial {{Position}} (BLH)
+param.ins_init_vel,初始{{Velocity}} vNED (m/s),Initial {{Velocity}} vNED (m/s)
+param.ins_init_vel_short,初始{{Velocity}} (vNED),Initial {{Velocity}} (vNED)
+param.ins_pitch,手填{{Pitch}} (°),Manual {{Pitch}} (°)
+param.ins_roll,手填{{Roll}} (°),Manual {{Roll}} (°)
+param.ins_specify_attitude,指定{{InitialAttitude}}角（不勾则自动{{CoarseAlignment}}）,Specify {{InitialAttitude}} (else auto {{CoarseAlignment}})
+param.isb_init_sigma,ISB {{InitialSigma}},ISB {{InitialSigma}}
+param.isb_proc_sigma,ISB {{ProcessSigma}},ISB {{ProcessSigma}}
+param.min_sats_update,{{Filter}}更新最少{{SatelliteCount}} (0=不限),Min {{SatelliteCount}} for {{Filter}} update (0 = no limit)
+param.motion_threshold,运动检测{{Threshold}},Motion detection {{Threshold}}
+param.no_grid_needed,Hopfield/NMF/GMF：无需外部{{Grid}},Hopfield/NMF/GMF: no external {{Grid}} needed
+param.not_found,未检测到 %s,%s not found
+param.phase_sigma,相位 σ (m),Phase σ (m)
+param.phase_weight_a,相位{{Elevation}}模型 a,Phase {{Elevation}} model a
+param.phase_weight_b,相位{{Elevation}}模型 b,Phase {{Elevation}} model b
+param.phase_weight_floor,相位{{ElevationWeighting}}下限 (sinE),Phase {{ElevationWeighting}} floor (sinE)
+param.phase_windup,相位缠绕,Phase wind-up
+param.pos_proc_sigma,{{Position}}{{ProcessSigma}},{{Position}} {{ProcessSigma}}
+param.pos_proc_sigma_accel,{{Position}}{{ProcessSigma}} (m，仅加速度=0 用),"{{Position}} {{ProcessSigma}} (m, used when accel = 0)"
+param.pos_proc_sigma_m,{{Position}}{{ProcessSigma}} (m),{{Position}} {{ProcessSigma}} (m)
+param.ratio_threshold,Ratio {{Threshold}},Ratio {{Threshold}}
+param.sample_interval,{{SamplingInterval}} (s，0=按文件),"{{SamplingInterval}} (s, 0 = from file)"
+param.solid_tide,固体潮,Solid earth tide
+param.spp_pred_threshold,SPP 预测{{Threshold}},SPP vs prediction {{Threshold}}
+param.tropo_gradient,{{Troposphere}}梯度,{{Troposphere}} gradient
+param.use_ar,使用 AR 固定,Enable AR fixing
+param.use_cycle_slip,使用{{CycleSlip}}探测,Enable {{CycleSlip}} detection
+param.use_gf_slip,使用 GF {{CycleSlip}},Enable GF {{CycleSlip}}
+param.vel_init_sigma,{{Velocity}}{{InitialSigma}} (m/s),{{Velocity}} {{InitialSigma}} (m/s)
+param.vmf3_loaded,已加载 VMF3 {{Grid}}（%d 个文件）,VMF3 {{Grid}} loaded (%d files)
+param.vmf3_missing,已选 VMF3 但缺 VMF3 {{Grid}}文件，将回落 GMF,VMF3 selected but {{Grid}} files missing; falling back to GMF
+param.vmf3_partial,仅 %d/4 时次：时间向线性插值退化为单{{Epoch}},Only %d/4 {{Epoch}}: falls back to single-epoch in time
+param.ztd_constraint_sigma,ZTD 约束 σ,ZTD constraint σ
+param.ztd_init,ZTD 初值 (m),ZTD initial value (m)
+param.ztd_init_sigma,ZTD {{InitialSigma}},ZTD {{InitialSigma}}
+param.ztd_prior_sigma,ZTD 先验 σ,ZTD prior σ
+param.ztd_proc_sigma,ZTD {{ProcessSigma}},ZTD {{ProcessSigma}}
+param.zupt_accel_tol,{{SpecificForce}}判静止{{Tolerance}} (m/s²),{{SpecificForce}} {{Tolerance}} (m/s²)
+param.zupt_gyro_tol,{{AngularRate}}{{Tolerance}} (rad/s),{{AngularRate}} {{Tolerance}} (rad/s)
+param.zupt_hold,连续静止时长 (s),Stationary hold (s)
+pos.average,取均值,Average
+pos.axis.deviation_m,{{Deviation}} (m),{{Deviation}} (m)
+pos.col.code_m,{{Pseudorange}}(m),{{Pseudorange}} (m)
+pos.col.comp1,分量1,Comp 1
+pos.col.comp2,分量2,Comp 2
+pos.col.comp3,分量3,Comp 3
+pos.col.format,格式,Format
+pos.col.freq,频,Freq
+pos.col.item,项,Item
+pos.col.length_m,长度/m,Length/m
+pos.col.phase_cyc,载波(cyc),Phase (cyc)
+pos.col.strength,强度,Strength
+pos.done_epochs,处理完成: 共 %d 个{{Epoch}},Done: %d {{Epoch}}
+pos.filter_tip,{{Filter}}方向在参数页选择；解算结果、图表与 CSV 都用这一档的解。\n{{Backward}}先扫完整份文件再从末尾倒序{{Filter}}，融合再跑一遍{{Forward}}并按{{Covariance}}加权。,"{{Filter}} direction is chosen on the parameter page; results, plots and CSV all use this solution.
+{{Backward}} scans the whole file, filters from the end, then a fused pass runs {{Forward}} again weighted by {{Covariance}}."
+pos.legend.sigma_p_float,SigmaP(浮点),SigmaP (float)
+pos.legend.solved_track,解算{{Trajectory}},Solved {{Trajectory}}
+pos.no_epochs,无解算{{Epoch}}。,No solved {{Epoch}}.
+pos.obs_detail,{{Observation}}详情 (,{{Observation}} detail (
+pos.plot.en_plane,E-N 平面图,E-N plane
+pos.plot.en_track,E-N {{Trajectory}}图,E-N {{Trajectory}} plot
+pos.ratio_value,ratio值,ratio
+pos.ref_truth,参考{{Truth}}:,Reference {{Truth}}:
+pos.row.base_fixed,{{Baseline}}-fixed,{{Baseline}} (fixed)
+pos.row.base_float,{{Baseline}}-float,{{Baseline}} (float)
+pos.row.coord_fixed,{{Coordinate}}-fixed,{{Coordinate}} (fixed)
+pos.row.coord_float,{{Coordinate}}-float,{{Coordinate}} (float)
+pos.section.code_residual,{{Pseudorange}}{{Residual}}序列,{{Pseudorange}} {{Residual}} series
+pos.section.coord_vel,{{Coordinate}} / {{Velocity}},{{Coordinate}} / {{Velocity}}
+pos.section.enu_converge,ENU {{Convergence}}{{Trajectory}} / E-N 平面图,ENU {{Convergence}} {{Trajectory}} / E-N plane plot
+pos.section.enu_error,ENU 误差序列 / E-N {{Trajectory}}图,ENU error series / E-N {{Trajectory}} plot
+pos.section.other,其他,Other
+pos.section.phase_residual,相位{{Residual}}序列,Phase {{Residual}} series
+pos.section.result,解算结果,Solution
+pos.section.rtn,R/T/N/3D {{Deviation}},R/T/N/3D {{Deviation}}
+pos.section.sat_overview,{{Satellite}}概览,{{Satellite}} overview
+pos.section.sigma,σ / 精度 (P·V·DOP),σ / accuracy (P·V·DOP)
+pos.section.skyplot,天顶图,Sky plot
+ppp.cfg_tab_kinematic,PPP (动态) 处理配置,PPP (kinematic) settings
+ppp.cfg_tab_static,PPP (静态) 处理配置,PPP (static) settings
+prod.added,已添加 {0} 个文件,Added {0} files
+prod.cross_day_hint,注意{{ObservationFile}}的跨日情况，建议选择 ±1 日的{{Product}},{{ObservationFile}} may span days; choose {{Product}} for ±1 day
+prod.file_count,%d 个文件,%d files
+prod.files,{{Product}}文件,{{Product}} files
+prod.list_hint,点已{{Download}}文件加入/移出解算，未{{Download}}文件点击开始{{Download}},Click a local file to add it to or remove it from the solve; click a remote file to start {{Download}}
+prod.mixed_ac_hint,"{{Orbit}}、{{ClockOffset}}、{{CodeBias}}、{{SatelliteAttitude}}应来自同一{{AnalysisCenter}}的同一批解算。
+混用不同中心或不同{{Product}}线（如 COD0OPS 与 COD0MGX）会留下系统差；
+本提示只是提醒，不阻止解算。","{{Orbit}}, {{ClockOffset}}, {{CodeBias}} and {{SatelliteAttitude}} should come from the same {{AnalysisCenter}} and the same run.
+Mixing centers or {{Product}} lines (e.g. COD0OPS and COD0MGX) leaves systematic errors;
+this is only a hint and does not block solving."
+prod.selected_count,已选 %d 个文件：,%d files selected:
+prod.tip_by_date,按{{Observation}}日期 {0} 取对应{{Product}},{{Product}} for {{Observation}} {0}
+prod.tip_date_from_file,"
+日期从文件读取","
+Date read from the file"
+prod.unknown_type_tag,[未识别类型],[unrecognized type]
+prod.unknown_types,；认不出类型（不会用于解算）：,; unrecognized type (not used): 
+prod.verdict_pick,选用,selected
+prod.verdict_spare,备用,spare
+prod.version_mismatch,注意：精密{{Product}}不是同一版本 ({0}) ,Note: precise {{Product}} come from different versions ({0}) 
+ref.downloading,正在{{Download}},{{Download}}ing
+ref.fetch.cached_station,本机已有 {0} 站{{Coordinate}},Station {0} {{Coordinate}} already cached
+ref.fetch.failed,获取{{Site}}{{Coordinate}}失败,Failed to fetch {{Site}} {{Coordinate}}
+ref.fetch.failed_at,在 {0} 获取失败,Fetch failed at {0}
+ref.fetch.got,已获取 {0},Fetched {0}
+ref.fetch.sinex_station,SINEX 里 {0} 站的{{Coordinate}}行,Station {0} {{Coordinate}} row in SINEX
+ref.fetch_online,联网获取,Fetch online
+ref.fetch_sp3_tip,按{{ObservationFile}}联网获取{{PreciseOrbit}},Fetch {{PreciseOrbit}} online from the {{ObservationFile}}
+ref.form_fixed,恒值,Fixed
+ref.leo.unknown_object,无法识别该文件的{{LEO}}{{Satellite}}对象,Cannot identify the {{LEO}} {{Satellite}} in this file
+ref.no_date,无法确定{{Observation}}日期,Cannot determine {{Observation}} date
+ref.note.coord_manual,{{Coordinate}}已被手动改过，没有覆盖,{{Coordinate}} edited manually; not overwritten
+ref.note.coord_ready,{{Coordinate}}已取到，勾选「参考{{Truth}}」后生效,"{{Coordinate}} fetched; enable ""Reference {{Truth}}"" to apply"
+ref.note.obs_changed,{{ObservationFile}}已更换，结果没有套用,{{ObservationFile}} changed; result not applied
+ref.note.orbit_manual,{{Orbit}}路径已被手动改过，没有覆盖,{{Orbit}} path edited manually; not overwritten
+ref.note.orbit_ready,{{Orbit}}已取到，勾选「参考{{Truth}}文件」后生效,"{{Orbit}} fetched; enable ""Reference {{Truth}} file"" to apply"
+ref.note.switched_file,已改用{{Truth}}文件，恒值{{Coordinate}}没有套用,Switched to {{Truth}} file; fixed {{Coordinate}} not applied
+ref.note.switched_fixed,已改用恒值{{Coordinate}}，{{Orbit}}文件没有套用,Switched to fixed {{Coordinate}}; {{Orbit}} file not applied
+ref.open_explorer_failed,打开资源管理器失败,Failed to open Explorer
+ref.orbit.no_source,没有 {0} 的{{Orbit}}源,No {{Orbit}} source for {0}
+ref.orbit.not_found,没有获取到 {0} 的{{Orbit}},No {{Orbit}} fetched for {0}
+ref.pause,暂停,Pause
+ref.paused,已暂停,Paused
+ref.pausing,正在暂停…,Pausing…
+ref.sp3_file,SP3 文件:,SP3 file:
+ref.truth,参考{{Truth}},Reference {{Truth}}
+ref.truth_ecef,参考{{Truth}} (ECEF/m),Reference {{Truth}} (ECEF/m)
+ref.truth_file,参考{{Truth}}文件 (SP3),Reference {{Truth}} file (SP3)
+ref.unknown_station,未知{{Site}},Unknown {{Site}}
+rt.connecting,正在尝试连接 {0}…,Connecting to {0}…
+rt.log.connect_failed,] 连接失败 {0}，每 {1}s 重试,"] connect failed {0}, retrying every {1}s"
+rt.log.connected,] 已连接 {0},] connected {0}
+rt.log.stream_broken,] {{DataStream}}中断，{0}s 后{{Reconnect}} {1},"] {{DataStream}} interrupted, will {{Reconnect}} to {1} in {0}s"
+rt.run_error,运行异常: {0},Runtime error: {0}
+rtk.base_obs_file,{{BaseStation}}{{ObservationFile}},{{BaseStation}} {{ObservationFile}}
+rtk.cfg_tab,RTK 处理配置,RTK settings
+rtk.err.need_nav,RINEX {{Observation}}需要{{BroadcastEphemeris}}文件（任一侧为 RINEX 即需要）,RINEX {{Observation}} need a {{BroadcastEphemeris}} file (required when either side is RINEX)
+rtk.err.read,RTK 读取错误: {0},RTK read error: {0}
+rtk.err.read_unknown,RTK 读取未知异常,Unknown RTK read error
+rtk.err.solve,RTK 解算错误: {0},RTK solving error: {0}
+rtk.err.solve_unknown,RTK 解算未知异常,Unknown RTK solving error
+rtk.log.backward,倒序{{Filter}} {0} {{Epoch}} ({1}),backward {{Filter}} {0} {{Epoch}} ({1})
+rtk.log.backward_done,倒序完成，耗时 {0} ms,backward pass done in {0} ms
+rtk.log.backward_epoch_error,倒序{{Epoch}}异常: {0},backward {{Epoch}} error: {0}
+rtk.log.backward_epoch_unknown,倒序{{Epoch}}未知异常,unknown backward {{Epoch}} error
+rtk.log.epoch_error,{{Epoch}}异常: {0},{{Epoch}} error: {0}
+rtk.log.epoch_unknown,{{Epoch}}未知异常,unknown {{Epoch}} error
+rtk.log.read_nav,"RTK 读取{{BroadcastEphemeris}}: {0} (gps={1}, bds={2})","RTK reading {{BroadcastEphemeris}}: {0} (gps={1}, bds={2})"
+rtk.log.start,"开始: {{ElevationMask}} {0}°, {{Filter}}方向 {1}","start: {{ElevationMask}} {0}°, {{Filter}} {1}"
+rtk.log.start_file,"开始解算: 基准={0}, {{Rover}}={1}","start: base={0}, {{Rover}}={1}"
+rtk.log.start_rt,"开始{{RealTime}}解算: base={0}, rover={1}","start {{RealTime}}: base={0}, rover={1}"
+rtk.manual_base,手动指定{{BaseStation}}{{Coordinate}} (ECEF/m),Manual {{BaseStation}} {{Coordinate}} (ECEF/m)
+rtk.rover_obs_file,{{Rover}}{{ObservationFile}},{{Rover}} {{ObservationFile}}
+rtk.rt.connecting,正在尝试连接 base {0} / rover {1}…,Connecting to base {0} / rover {1}…
+rtk.rt.idle,已 {0} s 无新解（最后提交{{Epoch}} SOW {1}），数据在流但未产出解算结果,no new solution for {0} s (last committed {{Epoch}} SOW {1}); data is flowing but no solution is produced
+rtk.rt.idle_error,{{RealTime}}流：已 {0} s 无新解（最后提交{{Epoch}} SOW {1}）,{{RealTime}} stream: no new solution for {0} s (last committed {{Epoch}} SOW {1})
+rtk.rt.recovered,恢复产出新解，最后提交{{Epoch}} SOW {0},"producing solutions again, last committed {{Epoch}} SOW {0}"
+rtk.rt.run_error,RTK {{RealTime}}运行异常: {0},RTK {{RealTime}} run error: {0}
+rtk.rt.stream_broken,{{RealTime}}{{DataStream}}中断（连接关闭或长时间无{{Epoch}}），正在{{Reconnect}}…,{{RealTime}} {{DataStream}} interrupted (closed or no {{Epoch}} for a long time); trying to {{Reconnect}}…
+solver.disconnected,连接已断开,Disconnected
+solver.epochs_paren,（共 {0} 个{{Epoch}}）, ({0} {{Epoch}})
+solver.err.thread_unknown,解算线程未知异常,Unknown solving-thread error
+solver.filter_direction,{{Filter}}方向：{0},{{Filter}} direction: {0}
+solver.fix_rate,固定率: %.1f%% (%d/%d),Fix rate: %.1f%% (%d/%d)
+solver.fixed,固定(Fixed),Fixed
+solver.float,浮点(Float),Float
+solver.forward_done,正向完成，准备反向{{Filter}}…,"{{Forward}} pass done, starting backward {{Filter}}…"
+solver.in_progress,（进行中…）, (running…)
+solver.log.backward_done,{{Backward}}完成，耗时 {0} ms,{{Backward}} pass done in {0} ms
+solver.log.cancelled_before_start,任务被取消(stop 已置位)：解算线程未启动，0 {{Epoch}},"task cancelled (stop already set): solving thread not started, 0 {{Epoch}}"
+solver.log.done,"结束: {0} {{Epoch}}, 耗时 {1} ms",done: {0} {{Epoch}} in {1} ms
+solver.log.epoch_error,{{Epoch}}异常 (sod={0}): {1},{{Epoch}} error (sod={0}): {1}
+solver.log.epoch_unknown,{{Epoch}}未知异常 (sod={0}),unknown {{Epoch}} error (sod={0})
+solver.log.init_failed,解算器初始化失败（{{Product}}加载返回 false）,solver init failed ({{Product}} loading returned false)
+solver.log.interval,{{SamplingInterval}} {0}s,{{SamplingInterval}} {0}s
+solver.log.interval_file,{{SamplingInterval}}按文件,{{SamplingInterval}} from file
+solver.log.scan_done,扫描完成 {0} {{Epoch}}，从末尾倒序{{Filter}} ({1}),"scan done, {0} {{Epoch}}, {{Backward}} {{Filter}} from the end ({1})"
+solver.log.start,"开始: {{ElevationMask}} {0}°, 系统={1}, {2}, {{Filter}}方向 {3}","start: {{ElevationMask}} {0}°, systems={1}, {2}, {{Filter}} {3}"
+solver.log.thread_error,解算线程异常: {0},solving-thread error: {0}
+solver.no_epoch_solved,处理结束：未解出任何{{Epoch}}，请检查{{ObservationFile}}与{{Product}}是否匹配,Finished: no {{Epoch}} solved; check that the {{ObservationFile}} matches the {{Product}}
+solver.no_solution,无定位解,No position solution
+solver.no_solution_no_eph,无定位解（缺少{{Ephemeris}}文件）,No position solution ({{Ephemeris}} file missing)
+solver.qc_render_error,{{QualityControl}}渲染异常: %s,{{QualityControl}} render error: %s
+solver.qc_render_unknown,{{QualityControl}}渲染发生未知异常,Unknown error while rendering {{QualityControl}}
+solver.reading,正在读取{{Observation}} / 加载{{Ephemeris}}与{{Product}}…,Reading {{Observation}} / loading {{Ephemeris}} and {{Product}}…
+solver.render_error,渲染异常: %s,Render error: %s
+solver.render_unknown,渲染发生未知异常,Unknown render error
+solver.reverse_epoch,正在反向解算第 {0} 个{{Epoch}},{{Backward}} solving {{Epoch}} {0}
+solver.scanning_epoch,正在扫描第 {0} 个{{Epoch}},Scanning {{Epoch}} {0}
+solver.solve_epochs,解算：共 {0} 个{{Epoch}},Solved {0} {{Epoch}}
+solver.solving_epoch,正在解算第 {0} 个{{Epoch}},Solving {{Epoch}} {0}
+solver.state_solved,定位,solved
+solver.state_unsolved,无解,no solution
+solver.stop_connection,停止连接,Stop
+solver.tab.position,定位解算,Positioning
+solver.tab.qc_base,{{QualityControl}}[{{BaseStation}}],{{QualityControl}} [{{BaseStation}}]
+solver.tab.qc_rover,{{QualityControl}}[{{Rover}}],{{QualityControl}} [{{Rover}}]
+spp.cfg_tab,SPP 处理配置,SPP settings
+task.cancelled,用户取消,Cancelled by user
+task.err.no_epoch,{0} 无{{Epoch}}: {1}（文件是否被取消/{{Unpack}}失败/选错文件？）,"{0} has no {{Epoch}}: {1} (cancelled, {{Unpack}} failed, or wrong file?)"
+task.err.no_obs,请先选择{{ObservationFile}},Select an {{ObservationFile}} first
+task.err.not_implemented,任务未实现文件解算,File solving not implemented for this task
+task.err.read_unknown,读取发生未知异常,Unknown error while reading
+task.log.cancelled,[任务] 用户取消,[TASK] cancelled by user
+task.log.epoch_limit, {{Epoch}}数触及上限，后续{{Epoch}}未读取: {0}," epoch limit reached, remaining {{Epoch}} not read: {0}"
+task.log.reading, 读取文件: {0}, reading file: {0}
+task.log.start,"] 开始解算: {{Observation}}={0}, 格式={1}","] start: obs={0}, format={1}"
+task.rt.connect,连接到 NovAtel {{RealTime}}流 (socket)：,Connect to a NovAtel {{RealTime}} stream (socket):
+task.rt.ip,IP 地址,IP address
+task.rt.port,端口,Port
+task.start,开始解算,Start

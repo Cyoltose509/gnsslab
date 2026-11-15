@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <deque>
 #include <utility>
+#include "i18n/I18n.h"
 
 namespace QC {
     namespace {
@@ -77,7 +78,9 @@ namespace QC {
 
         void computeComprehensive(QualityReport &rep) {
             ComprehensiveEval ce;
-            ce.indicators = {"完整率", "周跳比", "多路径", "电离层变化率", "伪距噪声", "载波噪声", "载噪比"};
+            ce.indicators = {"Completeness", "CycleSlipRatio", "Multipath",
+                             "qc.ind.ion_rate", "PseudorangeNoise", "CarrierNoise",
+                             "CNR"};
             const std::vector<SatID> &sats = rep.satOrder;
             if (sats.empty()) return;
             const int J = static_cast<int>(sats.size());
@@ -304,7 +307,7 @@ namespace QC {
                 s.triSum[1] += d1 * d1;
                 s.triSum[2] += d2 * d2;
                 s.triSum[3] += d3 * d3;
-                for (int c = 0; c < 4; ++c) s.triCnt[c]++;
+                for (int & c : s.triCnt) c++;
             }
 
             double mpMean1 = 0.0, mpMean2 = 0.0;
@@ -461,7 +464,7 @@ namespace QC {
     }
 
 
-    void Stream::feed(const QCObsEpoch &epoch) {
+    void Stream::feed(const QCObsEpoch &epoch) const {
         Impl &d = *mImpl;
         d.finished = false;
 
@@ -713,9 +716,9 @@ namespace QC {
             rep.sysIonoJumps2[s] = sumIono2[s];
             rep.sysOutliers[s] = sumOut[s];
             rep.sysClockJumps[s] = sumClk[s];
-            rep.sysIonoRate[s] = cntIono.count(s) ? sumIonoRate[s] / cntIono[s] : 0.0;
-            rep.sysIonoRate1[s] = cntIono1.count(s) ? sumIonoRate1[s] / cntIono1[s] : 0.0;
-            rep.sysIonoRate2[s] = cntIono2.count(s) ? sumIonoRate2[s] / cntIono2[s] : 0.0;
+            rep.sysIonoRate[s] = sumIonoRate[s] / cntIono[s];
+            rep.sysIonoRate1[s] = sumIonoRate1[s] / cntIono1[s];
+            rep.sysIonoRate2[s] = sumIonoRate2[s] / cntIono2[s];
             if (cntCnr.count(s)) rep.sysCnr[s] = sumCnr[s] / cntCnr[s];
             if (cntCnr1.count(s)) rep.sysCnr1[s] = sumCnr1[s] / cntCnr1[s];
             if (cntCnr2.count(s)) rep.sysCnr2[s] = sumCnr2[s] / cntCnr2[s];

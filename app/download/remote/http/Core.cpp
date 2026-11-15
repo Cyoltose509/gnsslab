@@ -1,5 +1,6 @@
 #include "download/remote/http/Core.h"
 #include "download/remote/http/Internal.h"
+#include "i18n/I18n.h"
 #include "download/remote/Earthdata.h"
 
 #include "core/PathMemory.h"
@@ -99,12 +100,12 @@ namespace Download::Http {
     Response request(const std::string &url, const Fetch &opt, const std::atomic<bool> *cancel) {
         Response r;
         if (hostDown(url)) {
-            r.err = "站点连不上，本会话暂时跳过（点「重试」可立即重来）";
+            r.err = I18n::tr("dl.http.host_down");
             return r;
         }
         const EasyHandle c;
         if (!c.handle) {
-            r.err = "curl_easy_init 失败";
+            r.err = I18n::tr("dl.http.init_failed");
             return r;
         }
 
@@ -131,7 +132,7 @@ namespace Download::Http {
         if (finalUrl) r.finalUrl = finalUrl;
 
         if (const std::string cbErr = callbackError(sink.error); !cbErr.empty()) {
-            r.err = "传输回调异常: " + cbErr;
+            r.err = I18n::tr("dl.http.callback_error", cbErr);
             return r;
         }
         if (r.code != CURLE_OK) {
@@ -173,7 +174,7 @@ namespace Download::Http {
         } catch (const std::exception &x) {
             return x.what();
         } catch (...) {
-            return "回调发生未知异常";
+            return I18n::tr("dl.http.callback_unknown");
         }
     }
 
@@ -199,7 +200,7 @@ namespace Download::Http {
         {
             std::lock_guard lk(g_authMutex);
             if (g_auth.user.empty() || g_auth.pass.empty()) {
-                msg = "未填写 Earthdata 账号或密码";
+                msg = I18n::tr("dl.http.no_credentials");
                 return false;
             }
         }
@@ -212,14 +213,14 @@ namespace Download::Http {
         if (const std::string landed = r.finalUrl.empty() ? url : r.finalUrl;
             landed.find("urs.earthdata.nasa.gov") != std::string::npos ||
             landed.find("oauth/authorize") != std::string::npos) {
-            msg = "认证未通过：重定向停在 Earthdata 登录页，请检查账号密码";
+            msg = I18n::tr("dl.http.auth_failed");
             return false;
         }
         if (r.http >= 400) {
-            msg = "服务器返回 HTTP " + std::to_string(r.http);
+            msg = I18n::tr("dl.http.http_status", r.http);
             return false;
         }
-        msg = "连接成功：HTTP " + std::to_string(r.http) + "，已通过 Earthdata 认证";
+        msg = I18n::tr("dl.http.auth_ok", r.http);
         return true;
     }
 

@@ -1,5 +1,5 @@
 #pragma once
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include <Eigen/Eigen>
 #include "core/Const.h"
 #include "core/obs/FreqCombo.h"

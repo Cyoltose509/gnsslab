@@ -20,6 +20,8 @@
 #include "solvers/view/GuiSolverPanel.h"
 #include "ui/DragBar.h"
 #include "ui/GuiColors.h"
+#include "i18n/I18n.h"
+#include "ui/ImGuiLabel.h"
 
 namespace Solvers::INS {
     namespace {
@@ -77,7 +79,7 @@ namespace Solvers::INS {
                           const std::vector<double> &epoch, const Line *lines, const int count,
                           int &sel, const int epochCount) {
             if (epoch.empty()) {
-                ImGui::TextDisabled("（无数据）");
+                ImGui::TextDisabled(I18n::trc("ins.no_data"));
                 return;
             }
             float &h = UI::dragHeight(key, kSeriesH);
@@ -99,11 +101,11 @@ namespace Solvers::INS {
 
         void drawPlanPlot(const XYLine *lines, const int count, const double curE, const double curN) {
             if (count <= 0 || !lines[0].x || lines[0].x->empty()) {
-                ImGui::TextDisabled("（无数据）");
+                ImGui::TextDisabled(I18n::trc("ins.no_data"));
                 return;
             }
             float &h = UI::dragHeight("ins_track", kPlanH);
-            if (ImPlot::BeginPlot("E-N 平面轨迹###ins_track", ImVec2(-1.0f, h), ImPlotFlags_Equal)) {
+            if (ImPlot::BeginPlot(UI::idLabel("ins.res.track", "###ins_track"), ImVec2(-1.0f, h), ImPlotFlags_Equal)) {
                 ImPlot::SetupAxes("E (m)", "N (m)");
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 for (int i = 0; i < count; ++i) {
@@ -115,7 +117,7 @@ namespace Solvers::INS {
                 ps.Marker = ImPlotMarker_Circle;
                 ps.MarkerSize = 7.0f;
                 ps.LineColor = UI::kColInfo;
-                ImPlot::PlotScatter("当前历元", &curE, &curN, 1, ps);
+                ImPlot::PlotScatter(I18n::trc("ins.res.current_epoch"), &curE, &curN, 1, ps);
                 ImPlot::EndPlot();
             }
             ImGui::PushID("ins_track");
@@ -125,10 +127,10 @@ namespace Solvers::INS {
 
         void renderCharts(const CurveCache &cc, const double curE, const double curN,
                           int &sel, const int n, int &shownSolution) {
-            ImGui::SeparatorText("导航曲线");
-            ImGui::RadioButton("自由解", &shownSolution, 0);
+            ImGui::SeparatorText(I18n::trc("ins.res.nav_curves"));
+            ImGui::RadioButton(I18n::trc("ins.res.free"), &shownSolution, 0);
             ImGui::SameLine();
-            ImGui::RadioButton("零速修正", &shownSolution, 1);
+            ImGui::RadioButton(I18n::trc("ZeroVelocityUpdate"), &shownSolution, 1);
 
             const Curves &a = cc.freeSol;
             const Curves &b = cc.zuptSol;
@@ -137,35 +139,35 @@ namespace Solvers::INS {
 
             XYLine track[2];
             int trackCount = 0;
-            if (showFree) track[trackCount++] = {"自由解", &a.e, &a.n, UI::kColX};
-            if (showZupt) track[trackCount++] = {"零速修正", &b.e, &b.n, UI::kColPass};
+            if (showFree) track[trackCount++] = {I18n::trc("ins.res.free"), &a.e, &a.n, UI::kColX};
+            if (showZupt) track[trackCount++] = {I18n::trc("ZeroVelocityUpdate"), &b.e, &b.n, UI::kColPass};
             drawPlanPlot(track, trackCount, curE, curN);
 
             {
                 Line ls[2];
                 int cnt = 0;
-                if (showFree) ls[cnt++] = {"自由解 h", &a.h, UI::kColX};
-                if (showZupt) ls[cnt++] = {"零速修正 h", &b.h, UI::kColPass};
-                drawTimePlot("高程###ins_h", "h (m)", "ins_h", a.epoch, ls, cnt, sel, n);
+                if (showFree) ls[cnt++] = {I18n::trc("ins.res.free_h"), &a.h, UI::kColX};
+                if (showZupt) ls[cnt++] = {I18n::trc("ins.res.zupt_h"), &b.h, UI::kColPass};
+                drawTimePlot(UI::idLabel("Height", "###ins_h"), "h (m)", "ins_h", a.epoch, ls, cnt, sel, n);
             }
             {
                 Line ls[2];
                 int cnt = 0;
-                if (showFree) ls[cnt++] = {"自由解 |v|", &a.vNorm, UI::kColX};
-                if (showZupt) ls[cnt++] = {"零速修正 |v|", &b.vNorm, UI::kColPass};
-                drawTimePlot("速度模###ins_vnorm", "|v| (m/s)", "ins_vnorm", a.epoch, ls, cnt, sel, n);
+                if (showFree) ls[cnt++] = {I18n::trc("ins.res.free_v"), &a.vNorm, UI::kColX};
+                if (showZupt) ls[cnt++] = {I18n::trc("ins.res.zupt_v"), &b.vNorm, UI::kColPass};
+                drawTimePlot(UI::idLabel("ins.res.speed", "###ins_vnorm"), "|v| (m/s)", "ins_vnorm", a.epoch, ls, cnt, sel, n);
             }
 
-            const Curves &c = showZupt && !showFree ? b : a;
+            const Curves &c = showFree ? a : b;
             const Line vel[] = {
                 {"vN", &c.vN, UI::kColX}, {"vE", &c.vE, UI::kColY}, {"vD", &c.vD, UI::kColZ}
             };
-            drawTimePlot("速度三分量###ins_v", "v (m/s)", "ins_vel", c.epoch, vel, 3, sel, n);
+            drawTimePlot(UI::idLabel("ins.res.vel_components", "###ins_v"), "v (m/s)", "ins_vel", c.epoch, vel, 3, sel, n);
             const Line att[] = {
-                {"横滚", &c.roll, UI::kColX}, {"俯仰", &c.pitch, UI::kColY},
-                {"航向", &c.heading, UI::kColZ}
+                {I18n::trc("Roll"), &c.roll, UI::kColX}, {I18n::trc("Pitch"), &c.pitch, UI::kColY},
+                {I18n::trc("Heading"), &c.heading, UI::kColZ}
             };
-            drawTimePlot("姿态###ins_att", "角度 (°)", "ins_att", c.epoch, att, 3, sel, n);
+            drawTimePlot(UI::idLabel("ins.res.attitude", "###ins_att"), I18n::trc("ins.res.angle_deg"), "ins_att", c.epoch, att, 3, sel, n);
         }
 
         /// 结果页要用的标量元信息：nav 在解算中一直在长，不能整份拷给界面。
@@ -187,13 +189,13 @@ namespace Solvers::INS {
             const XYZ xyz = Coord::BLHToXYZ(BLH(s.llh[0], s.llh[1], s.llh[2]), Frame::WGS84);
             const Euler e = s.qbn.toEuler();
 
-            ImGui::SeparatorText(zuptView ? "当前历元解算信息（零速修正解）" : "当前历元解算信息（自由解）");
+            ImGui::SeparatorText(zuptView ? I18n::trc("ins.res.epoch_info_zupt") : I18n::trc("ins.res.epoch_info_free"));
             if (ImGui::BeginTable("##ins_state", 4,
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("数据");
-                ImGui::TableSetupColumn("分量 1");
-                ImGui::TableSetupColumn("分量 2");
-                ImGui::TableSetupColumn("分量 3");
+                ImGui::TableSetupColumn(I18n::trc("common.data"));
+                ImGui::TableSetupColumn(I18n::trc("ins.res.col.comp1"));
+                ImGui::TableSetupColumn(I18n::trc("ins.res.col.comp2"));
+                ImGui::TableSetupColumn(I18n::trc("ins.res.col.comp3"));
                 ImGui::TableHeadersRow();
                 auto row = [](const char *label, const double v1, const double v2,
                               const double v3, const char *fmt) {
@@ -209,12 +211,12 @@ namespace Solvers::INS {
                 };
                 row("ECEF (m)", xyz[0], xyz[1], xyz[2], "%.4f");
                 row("BLH (°/°/m)", s.llh[0] * RAD_TO_DEG, s.llh[1] * RAD_TO_DEG, s.llh[2], "%.7f");
-                row("速度 NED (m/s)", s.vned[0], s.vned[1], s.vned[2], "%.4f");
-                row("姿态 (°)", e.roll * RAD_TO_DEG, e.pitch * RAD_TO_DEG, e.yaw * RAD_TO_DEG, "%.4f");
+                row(I18n::trc("ins.res.vel_ned"), s.vned[0], s.vned[1], s.vned[2], "%.4f");
+                row(I18n::trc("ins.res.attitude_deg"), e.roll * RAD_TO_DEG, e.pitch * RAD_TO_DEG, e.yaw * RAD_TO_DEG, "%.4f");
                 ImGui::EndTable();
             }
 
-            ImGui::SeparatorText("历元状态");
+            ImGui::SeparatorText(I18n::trc("ins.res.epoch_status"));
             if (ImGui::BeginTable("##ins_ep", 5,
                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("t (s)");
@@ -235,34 +237,34 @@ namespace Solvers::INS {
                 ImGui::Text("%.4f", s.vned.norm());
                 ImGui::TableSetColumnIndex(4);
                 ImGui::TextColored(applied ? UI::kColPass : UI::kColMute,
-                                   applied ? "生效" : "未生效");
+                                   applied ? I18n::trc("ins.res.applied") : I18n::trc("ins.res.not_applied"));
                 ImGui::EndTable();
             }
 
-            ImGui::SeparatorText("解算设置");
-            ImGui::Text("IMU 型号：%s | 共 %zu 个历元 | 当前第 %d 个",
-                        m.modelName.empty() ? "未识别" : m.modelName.c_str(), m.total, sel + 1);
-            ImGui::Text("零速修正累计生效 %zu 次", m.zuptCount);
-            ImGui::Text("当量：%.3e (m/s)/LSB, %.3e rad/LSB @ %.0f Hz",
+            ImGui::SeparatorText(I18n::trc("param.group.solve"));
+            ImGui::Text(I18n::trc("ins.res.imu_summary"),
+                        m.modelName.empty() ? I18n::trc("common.unknown") : m.modelName.c_str(), m.total, sel + 1);
+            ImGui::Text(I18n::trc("ins.res.zupt_count"), m.zuptCount);
+            ImGui::Text(I18n::trc("ins.res.scale"),
                         m.scale.accelMpsPerLsb, m.scale.gyroRadPerLsb, m.scale.rateHz);
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(m.scaleSource == ImuScaleSource::Record ? UI::kColInfo : UI::kColWarn,
-                               "当量来源：%s", m.scaleNote.c_str());
+                               I18n::trc("ins.res.scale_source"), m.scaleNote.c_str());
             if (m.align.used) {
-                ImGui::Text("初始姿态：开头静止段 0–%.1f s 自动粗对准 → roll %+.4f° pitch %+.4f° yaw %+.4f°",
+                ImGui::Text(I18n::trc("ins.res.init_attitude"),
                             m.align.spanSec, m.align.rollDeg, m.align.pitchDeg, m.align.headingDeg);
                 ImGui::TextColored(m.align.headingReliable ? UI::kColInfo : UI::kColWarn,
-                                   "航向跨窗散布 %.2f°（%s）", m.align.yawSpreadDeg,
-                                   m.align.headingReliable ? "自洽" : "低精度 IMU 航向不可靠");
+                                   I18n::trc("ins.res.yaw_spread"), m.align.yawSpreadDeg,
+                                   m.align.headingReliable ? I18n::trc("ins.res.self_consistent") : I18n::trc("ins.res.heading_unreliable"));
             }
             if (m.accelBiasApplied) {
-                ImGui::Text("静置段加计零偏：%+.3e / %+.3e / %+.3e m/s²（已扣除）",
+                ImGui::Text(I18n::trc("ins.res.accel_bias"),
                             m.accelBias[0], m.accelBias[1], m.accelBias[2]);
             }
             ImGui::PopTextWrapPos();
 
-            if (ImGui::Button("导出...", ImVec2(-FLT_MIN, 40))) onExport();
-            ImGui::TextDisabled("导出主列跟随上面选中的解；Zupt* 附加列恒为零速修正解。");
+            if (ImGui::Button(I18n::trc("common.export"), ImVec2(-FLT_MIN, 40))) onExport();
+            ImGui::TextDisabled(I18n::trc("ins.res.export_hint"));
         }
     }
 
@@ -286,7 +288,7 @@ namespace Solvers::INS {
     void Task::renderResult() {
         const bool isDone = done.load();
         const bool hasError = errorFlag();
-        if (hasError) ImGui::TextColored(UI::kColFail, "错误：%s", errorMessage().c_str());
+        if (hasError) ImGui::TextColored(UI::kColFail, I18n::trc("ins.res.error"), errorMessage().c_str());
 
         Meta m;
         const auto snap = snapshot();
@@ -310,23 +312,23 @@ namespace Solvers::INS {
 
         if (!isDone && !hasError) {
             if (m.total > 0) {
-                ImGui::TextColored(UI::kColInfo, "正在处理 [%s]：正在解算第 %zu 个历元",
+                ImGui::TextColored(UI::kColInfo, I18n::trc("ins.res.solving_epoch"),
                                    fileName.c_str(), m.total);
             } else if (aligning.load()) {
                 const double rate = m.scale.rateHz > 0.0 ? m.scale.rateHz : 200.0;
-                ImGui::TextColored(UI::kColInfo, "正在读取开头静止段做粗对准 [%s]：%.1f s",
+                ImGui::TextColored(UI::kColInfo, I18n::trc("ins.res.aligning"),
                                    fileName.c_str(), static_cast<double>(headSamples.load()) / rate);
             } else {
-                ImGui::TextColored(UI::kColInfo, "正在读取 IMU 日志 [%s] …", fileName.c_str());
+                ImGui::TextColored(UI::kColInfo, I18n::trc("ins.res.reading_imu"), fileName.c_str());
             }
             ImGui::SameLine();
-            if (ImGui::Button("停止解算")) cancel();
+            if (ImGui::Button(I18n::trc("ins.res.stop"))) cancel();
         } else if (!hasError && m.total > 0) {
-            ImGui::TextColored(UI::kColPass, "处理完成：共 %zu 个历元", m.total);
+            ImGui::TextColored(UI::kColPass, I18n::trc("ins.res.done"), m.total);
         }
 
         if (m.total == 0) {
-            if (!hasError && isDone) ImGui::TextDisabled("没有解算结果");
+            if (!hasError && isDone) ImGui::TextDisabled(I18n::trc("ins.res.no_solution"));
             return;
         }
 
@@ -367,8 +369,8 @@ namespace Solvers::INS {
                                            - ImGui::GetStyle().ItemSpacing.y);
         if (ImGui::BeginTable("##ins_main", 2,
                               ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-            ImGui::TableSetupColumn("曲线", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-            ImGui::TableSetupColumn("当前历元", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+            ImGui::TableSetupColumn(I18n::trc("ins.res.series"), ImGuiTableColumnFlags_WidthStretch, 0.6f);
+            ImGui::TableSetupColumn(I18n::trc("ins.res.current_epoch"), ImGuiTableColumnFlags_WidthStretch, 0.4f);
             ImGui::TableNextRow(ImGuiTableRowFlags_None, rowH);
             ImGui::TableSetColumnIndex(0);
             if (ImGui::BeginChild("##ins_charts"))

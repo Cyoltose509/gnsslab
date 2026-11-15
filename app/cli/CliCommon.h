@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include <map>
 #include <optional>
 #include <string>
@@ -7,6 +8,7 @@
 #include "solvers/common/Task.h"
 #include "SolverOptions.h"
 #include "core/IniFile.h"
+#include "i18n/I18n.h"
 
 class CliSource {
 public:
@@ -66,6 +68,14 @@ SolverOptions loadConfig(const CliSource &ini, Solvers::Mode mode);
 std::optional<Solvers::Mode> modeFromKey(const std::string &s);
 
 namespace Cli {
+    /// 输出语言跟 ini 的 [ui] language 走（`--language EN` 也能覆盖），不写就保持默认中文。
+    /// fetch_cli 不链 CliCommon.cpp，所以两个入口共用的这一小段放头文件里。
+    inline void setupLanguage(const CliSource &ini) {
+        const std::string code = ini.get("ui", "language", "");
+        if (!code.empty() && !I18n::setLanguage(code))
+            std::cerr << I18n::tr("cli.lang.unknown", code) << "\n";
+    }
+
     std::string defaultCSVName(Solvers::Mode m);
 
     /// 导出规格 + 落地路径。规格的每一项都能在 ini 的 [output] 段里给；

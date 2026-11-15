@@ -6,7 +6,8 @@
 #include "Core.h"
 #include "solvers/common/Config.h"
 #include "solvers/common/Task.h"
-#include "TimeStruct.h"
+#include "i18n/I18n.h"
+#include "core/TimeStruct.h"
 
 namespace Solvers::Export {
     namespace {
@@ -66,8 +67,8 @@ namespace Solvers::Export {
         out << "<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n";
         out << "  <Document>\n";
         out << "    <name>" << xmlEscape(title) << "</name>\n";
-        out << "    <description>gnssLab " << modeLabel(task.mode) << " 轨迹，" << pts.size() << " 个历元，UTC";
-        if (pts.size() >= 2) out << " " << pts.front().when << " 至 " << pts.back().when;
+        out << "    <description>" << I18n::tr("export.kml.desc_head", modeLabel(task.mode), pts.size());
+        if (pts.size() >= 2) out << I18n::tr("export.kml.desc_range", pts.front().when, pts.back().when);
         out << "</description>\n";
         out << "    <Style id=\"traj\">\n"
                 "      <LineStyle><color>ff2a2aff</color><width>2</width></LineStyle>\n"
@@ -75,7 +76,7 @@ namespace Solvers::Export {
                 "    </Style>\n";
         if (pts.size() >= 2) {
             out << "    <Placemark>\n";
-            out << "      <name>轨迹</name>\n";
+            out << "      <name>" << I18n::trc("Trajectory") << "</name>\n";
             out << "      <styleUrl>#traj</styleUrl>\n";
             out << "      <LineString>\n";
             out << "        <tessellate>1</tessellate>\n";
@@ -90,7 +91,7 @@ namespace Solvers::Export {
             out << "    </Placemark>\n";
         } else if (pts.size() == 1) {
             out << "    <Placemark>\n";
-            out << "      <name>位置</name>\n";
+            out << "      <name>" << I18n::trc("Position") << "</name>\n";
             out << "      <styleUrl>#traj</styleUrl>\n";
             out << "      <Point>\n";
             out << "        <altitudeMode>absolute</altitudeMode>\n";
@@ -99,7 +100,7 @@ namespace Solvers::Export {
             out << "      </Point>\n";
             out << "    </Placemark>\n";
         } else {
-            out << "    <!-- 区间内没有解算成功的历元，未写轨迹 -->\n";
+            out << "    <!-- " << I18n::trc("export.kml.no_epochs") << " -->\n";
         }
         out << "  </Document>\n";
         out << "</kml>\n";

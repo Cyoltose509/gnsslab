@@ -50,7 +50,6 @@ namespace Solvers::Export {
             const double x = row.get(Field::X);
             const double y = row.get(Field::Y);
             const double z = row.get(Field::Z);
-            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
             SP3::Writer::Record r;
             r.epoch = toCivil(row.stamp);
             r.pos = Eigen::Vector3d(x, y, z);

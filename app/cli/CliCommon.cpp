@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "CliCommon.h"
+#include "i18n/I18n.h"
 #include "FileUtils.h"
 #include "solvers/common/Core.h"
 #include "solvers/common/Config.h"
@@ -115,6 +116,7 @@ namespace {
         c.rtk.phaseWeight.b = ini.getD("solver", "phase_weight_b", c.rtk.phaseWeight.b);
         c.rtk.codeOverPhaseSigma = ini.getD("solver", "code_over_phase_sigma", c.rtk.codeOverPhaseSigma);
         c.rtk.excludeGeoRef = ini.getB("solver", "exclude_geo_ref", c.rtk.excludeGeoRef);
+        c.rtk.useHealth = ini.getB("solver", "rtk_use_health", c.rtk.useHealth);
         // 滤波方向与 SPP 家族同一套词表（none/forward/backward/both），缺省 none＝逐历元 LSQ；
         // 位置/速度 σ 与 SPP 共用同一组键，模糊度 σ 用 rtk_ 前缀避免与 PPP 撞车
         if (const std::string flt = ini.get("solver", "rtk_filter", ""); !flt.empty())
@@ -138,24 +140,25 @@ namespace {
         if (form == "fixed") c.refForm = RefForm::Fixed;
         else if (form == "file") c.refForm = RefForm::File;
         else if (form != "auto")
-            std::cerr << "[ref] form = " << form << " 不认识（auto | fixed | file），按 auto\n";
+            std::cerr << I18n::tr("cli.ref.form_unknown", form) << "\n";
 
         if (c.refForm == RefForm::Fixed && !c.hasRef) {
-            std::cerr << "[ref] form = fixed 但 x/y/z 全 0，本趟不做参考对比\n";
+            std::cerr << I18n::tr("cli.ref.fixed_no_xyz") << "\n";
             c.refForm = RefForm::None;
         }
         if (c.refForm == RefForm::File && c.refSp3.empty()) {
-            std::cerr << "[ref] form = file 但 sp3 为空，本趟不做参考对比（x/y/z 一并忽略）\n";
+            std::cerr << I18n::tr("cli.ref.file_no_sp3") << "\n";
             c.refForm = RefForm::None;
             c.hasRef = false;
         }
         // 模式不接受的参考形式会被 setupTruth 静默降级成「无」，这里点明，
         // 免得跑完看到一列空偏差、以为是指标没算出来。
         if (c.hasRef && !Solvers::modeAllowsRefFixed(mode))
-            std::cerr << Solvers::modeLabel(mode) << " 不接恒值参考真值，[ref] x/y/z 被忽略"
-                    << (Solvers::modeAllowsRefFile(mode) ? "（动态偏差请给 sp3）" : "") << "\n";
+            std::cerr << I18n::tr("cli.ref.no_fixed", Solvers::modeLabel(mode))
+                    << (Solvers::modeAllowsRefFile(mode) ? I18n::tr("cli.ref.no_fixed_hint") : std::string())
+                    << "\n";
         if (!c.refSp3.empty() && !Solvers::modeAllowsRefFile(mode))
-            std::cerr << Solvers::modeLabel(mode) << " 不接参考真值文件，[ref] sp3 被忽略\n";
+            std::cerr << I18n::tr("cli.ref.no_file", Solvers::modeLabel(mode)) << "\n";
     }
 }
 
@@ -258,7 +261,7 @@ namespace Cli {
             }
             if (cur.empty()) continue;
             if (const auto f = Solvers::Export::fieldByKey(cur)) spec.fields.push_back(*f);
-            else std::cerr << where << " 里的 " << cur << " 不是已知字段，忽略\n";
+            else std::cerr << I18n::tr("cli.fields.unknown", where, cur) << "\n";
             cur.clear();
         }
     }
@@ -280,10 +283,10 @@ namespace Cli {
         const std::string fmtKey = ini.get("output", "format", "csv");
         const auto fmt = Solvers::Export::formatByKey(fmtKey);
         if (!fmt) {
-            std::cerr << "[output] format = " << fmtKey << " 不认识（csv|pos|sp3|orb|traj|kml|sbet），按 csv 导出\n";
+            std::cerr << I18n::tr("cli.format.unknown", fmtKey) << "\n";
         } else if (!Solvers::Export::formatSolves(*fmt, mode)) {
-            std::cerr << Solvers::modeLabel(mode) << " 不支持 " << Solvers::Export::formatName(*fmt)
-                    << " 导出，按 csv 导出\n";
+            std::cerr << I18n::tr("cli.format.unsupported", Solvers::modeLabel(mode),
+                                  Solvers::Export::formatName(*fmt)) << "\n";
         } else {
             o.spec.format = *fmt;
         }
@@ -303,7 +306,7 @@ namespace Cli {
 
         if (const std::string sat = ini.get("output", "sp3_sat", "L01"); sat.size() == 3) o.spec.satId = sat;
         else if (o.spec.format == Format::SP3)
-            std::cerr << "[output] sp3_sat = " << sat << " 不是 3 字符（SP3 的卫星号占 3 列），按 L01 写\n";
+            std::cerr << I18n::tr("cli.sp3_sat.bad", sat) << "\n";
         o.spec.marker = ini.get("output", "sp3_marker", "gnssLab");
         o.spec.sp3Velocity = ini.getB("output", "sp3_velocity", false);
 
@@ -311,7 +314,7 @@ namespace Cli {
         if (posForm == "ecef") o.spec.posForm = Solvers::Export::PosForm::ECEF;
         else if (posForm == "enu") o.spec.posForm = Solvers::Export::PosForm::ENU;
         else if (posForm != "blh")
-            std::cerr << "[output] pos_form = " << posForm << " 不认识（blh|ecef|enu），按 blh 写\n";
+            std::cerr << I18n::tr("cli.pos_form.unknown", posForm) << "\n";
         o.spec.posVelocity = ini.getB("output", "pos_velocity", true);
         o.spec.posHeader = ini.getB("output", "pos_header", true);
 
@@ -345,23 +348,24 @@ namespace Cli {
             std::cerr << error << "\n";
             return;
         }
-        std::cout << "已写出 " << path << "（" << Solvers::Export::formatName(opt.spec.format)
-                << "，解算 " << n << " 历元）\n";
+        std::cout << I18n::tr("cli.export.done", path, Solvers::Export::formatName(opt.spec.format), n) << "\n";
     }
 
     /// 命令行上写清这次到底用哪套参考真值：静默降级最容易让人对着空偏差列找 bug。
     std::string refText(const Solvers::Task &task, const SolverOptions &cfg) {
         switch (task.truth.form) {
             case RefForm::Fixed: {
-                std::ostringstream os;
-                os << std::fixed << std::setprecision(3) << "恒值 (" << cfg.refX << ", "
-                        << cfg.refY << ", " << cfg.refZ << ')';
-                return os.str();
+                const auto fmt = [](const double v) {
+                    std::ostringstream s;
+                    s << std::fixed << std::setprecision(3) << v;
+                    return s.str();
+                };
+                return I18n::tr("cli.ref.fixed_text", fmt(cfg.refX), fmt(cfg.refY), fmt(cfg.refZ));
             }
             case RefForm::File:
-                return "文件 " + cfg.refSp3;
+                return I18n::tr("cli.ref.file_text", cfg.refSp3);
             default:
-                return "无（只解算，不出偏差）";
+                return I18n::tr("cli.ref.none_text");
         }
     }
 
@@ -370,9 +374,9 @@ namespace Cli {
         task.realtimeSec = cfg.realtimeSec;
 
         task.setupTruth(cfg);
-        std::cout << "参考真值=" << refText(task, cfg) << "\n";
+        std::cout << I18n::tr("cli.ref.line", refText(task, cfg)) << "\n";
         if (task.truth.form == RefForm::File && !std::filesystem::exists(cfg.refSp3))
-            std::cerr << "[ref] 文件不存在: " << cfg.refSp3 << "，本趟按无参考真值解\n";
+            std::cerr << I18n::tr("cli.ref.file_missing", cfg.refSp3) << "\n";
 
         if (cfg.source == "realtime") {
             std::atomic<bool> quitWaiter{false};
@@ -399,7 +403,7 @@ namespace Cli {
             task.waitDone();
         }
 
-        if (task.errorFlag()) std::cerr << "错误: " << task.errorMessage() << "\n";
+        if (task.errorFlag()) std::cerr << I18n::tr("cli.task.error", task.errorMessage()) << "\n";
         dumpTask(task, cfg, opt);
         return task.errorFlag() ? 1 : 0;
     }

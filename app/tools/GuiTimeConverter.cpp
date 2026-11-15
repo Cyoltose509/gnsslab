@@ -2,13 +2,15 @@
 #include "imgui.h"
 #include "ui/DatePicker.h"
 #include "ui/GuiColors.h"
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "util/Clock.h"
 
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <iterator>
 #include <string>
+#include "i18n/I18n.h"
 
 namespace Tools::TimeConverter {
     struct SysItem {
@@ -58,7 +60,7 @@ namespace Tools::TimeConverter {
         } catch (const std::exception &e) {
             s_Error = e.what();
         } catch (...) {
-            s_Error = "时间换算失败";
+            s_Error = I18n::tr("tool.time.err_convert");
         }
 
         s_Syncing = false;
@@ -91,13 +93,13 @@ namespace Tools::TimeConverter {
         }
 
         ImGui::SetNextWindowSize(ImVec2(620, 330), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("时间转换", p_open)) {
+        if (!ImGui::Begin(I18n::trc("tool.time.title"), p_open)) {
             ImGui::End();
             return;
         }
 
 
-        if (ImGui::Button("此刻"))
+        if (ImGui::Button(I18n::trc("tool.time.now")))
             SetToNow();
         ImGui::SameLine(0, 16);
         {
@@ -123,13 +125,13 @@ namespace Tools::TimeConverter {
         if (ImGui::BeginTable("##tsys", 7,
                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_SizingStretchSame)) {
-            ImGui::TableSetupColumn("系统", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableSetupColumn("年");
-            ImGui::TableSetupColumn("月");
-            ImGui::TableSetupColumn("日");
-            ImGui::TableSetupColumn("时");
-            ImGui::TableSetupColumn("分");
-            ImGui::TableSetupColumn("秒");
+            ImGui::TableSetupColumn(I18n::trc("common.system"), ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn(I18n::trc("tool.time.col.year"));
+            ImGui::TableSetupColumn(I18n::trc("tool.time.col.month"));
+            ImGui::TableSetupColumn(I18n::trc("tool.time.col.day"));
+            ImGui::TableSetupColumn(I18n::trc("tool.time.col.hour"));
+            ImGui::TableSetupColumn(I18n::trc("tool.time.col.min"));
+            ImGui::TableSetupColumn(I18n::trc("tool.time.col.sec"));
             ImGui::TableHeadersRow();
 
             static const char *FID[] = {"##yr", "##mo", "##dy", "##hr", "##mn", "##sc"};
@@ -184,11 +186,14 @@ namespace Tools::TimeConverter {
 
                 const double leap = gps.leapSeconds();
                 const MJD mjd = gps.toMJD();
-                ImGui::Text("跳秒: %.0f    MJD (GPS): %.6f", leap, static_cast<double>(mjd.mjd));
+                char leapText[32], mjdText[32];
+                std::snprintf(leapText, sizeof(leapText), "%.0f", leap);
+                std::snprintf(mjdText, sizeof(mjdText), "%.6f", static_cast<double>(mjd.mjd));
+                ImGui::TextUnformatted(I18n::tr("tool.time.leap_mjd", leapText, mjdText).c_str());
             } catch (const std::exception &e) {
                 ImGui::TextColored(UI::kColFail, "%s", e.what());
             } catch (...) {
-                ImGui::TextColored(UI::kColFail, "MJD 换算失败");
+                ImGui::TextColored(UI::kColFail, "%s", I18n::trc("tool.time.err_mjd"));
             }
         }
 

@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "i18n/I18n.h"
+
 namespace {
     int axisKey(const double a, const double b, const double c) {
         int ax = 0;
@@ -81,8 +83,8 @@ void Calibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std:
         M(k, 2) = lsq.getSolution(Parameter::dZ);
         b(k) = lsq.getSolution(Parameter::cdt);
 
-        if (scaleSigma && lsq.covMatrix.rows() == 4) {
-            (*scaleSigma)(k) = std::sqrt(std::max(0.0, lsq.covMatrix(0, 0))) * lsq.sigma0;
+        if (scaleSigma && lsq.Q.rows() == 4) {
+            (*scaleSigma)(k) = std::sqrt(std::max(0.0, lsq.Q(0, 0))) * lsq.sigma0;
         }
     }
     double ss = 0.0;
@@ -110,13 +112,13 @@ CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, do
 
     std::string miss;
     for (int p = 0; p < 6; ++p)
-        if (nPos[p] == 0) miss += std::string(" 位置") + posLabel(static_cast<Pos>(p));
+        if (nPos[p] == 0) miss += " " + I18n::tr("Position") + posLabel(static_cast<Pos>(p));
     for (int ax = 0; ax < 3; ++ax) {
-        if (nRot[2 * ax] == 0) miss += std::string(" 旋转") + rotLabel(static_cast<Rot>(2 * ax));
-        if (nRot[2 * ax + 1] == 0) miss += std::string(" 旋转") + rotLabel(static_cast<Rot>(2 * ax + 1));
+        if (nRot[2 * ax] == 0) miss += " " + I18n::tr("Rotation") + rotLabel(static_cast<Rot>(2 * ax));
+        if (nRot[2 * ax + 1] == 0) miss += " " + I18n::tr("Rotation") + rotLabel(static_cast<Rot>(2 * ax + 1));
     }
     if (!miss.empty()) {
-        r.errorMsg = "覆盖不足，缺少：" + miss;
+        r.errorMsg = I18n::tr("ins.calib.err_coverage", miss);
         return r;
     }
 
@@ -135,8 +137,7 @@ CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, do
         r.nPos[static_cast<int>(fst)] += static_cast<int>(samples.size());
     }
 
-    if (!seg.pos.empty()) r.dt = imuMedianDt(seg.pos.front().second);
-    else if (!seg.rot.empty()) r.dt = imuMedianDt(seg.rot.front().second);
+    r.dt = imuMedianDt(seg.pos.front().second);
 
     solveLinear(raw, f, w, r.calib.accelM, r.calib.accelB, r.accelRms, &r.accelScaleSigma);
     r.accelScaleCounts = r.calib.accelM.diagonal();
@@ -215,7 +216,7 @@ CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, do
 void Calibrator::applyNominal(CalibReport &r, const ImuScale &scale) {
     if (!scale.known()) {
         r.ok = false;
-        r.errorMsg = "型号当量未知（IMU Type 未识别），无法确定标称比例因子";
+        r.errorMsg = I18n::tr("ins.calib.err.no_nominal");
         return;
     }
     const double kA = r.dt / scale.accelMpsPerLsb;

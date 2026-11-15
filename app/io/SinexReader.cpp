@@ -8,11 +8,12 @@
 #include <sstream>
 #include <filesystem>
 
-#include "download/local/ProductMeta.h"
+#include "io/ObsDate.h"
 #include "download/local/Unpack.h"
 #include "core/Const.h"
-#include "time/TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "StringUtils.h"
+#include "i18n/I18n.h"
 
 namespace {
     /// 日解/周解的站坐标只在该时段附近有效，跨期不能复用。
@@ -71,13 +72,11 @@ void SinexReader::parseEstimate(const std::string &text) {
         const double val = Str::toDouble(tk[8]);
 
         int refYear = 0, refDoy = 0;
-        if (tk.size() > 5) {
-            double v[3]{0, 0, 0};
-            if (Str::scanDoubles(tk[5].c_str(), v, 3) >= 2) {
-                refYear = fullYear(static_cast<int>(v[0]));
-                refDoy = static_cast<int>(v[1]);
-                if (refDoy < 1 || refDoy > 366) refYear = refDoy = 0;
-            }
+        double v[3]{0, 0, 0};
+        if (Str::scanDoubles(tk[5].c_str(), v, 3) >= 2) {
+            refYear = fullYear(static_cast<int>(v[0]));
+            refDoy = static_cast<int>(v[1]);
+            if (refDoy < 1 || refDoy > 366) refYear = refDoy = 0;
         }
         if (refYear == 0 && curRefYear > 0) {
             refYear = curRefYear;
@@ -111,18 +110,18 @@ void SinexReader::parseEstimate(const std::string &text) {
 bool SinexReader::readFile(const std::string &path, std::string &err) {
     stations.clear();
     const std::string text = Download::Unpack::readPlain(path);
-    if (text.empty()) return fail("无法读取 SINEX 文件或文件为空: " + path, err);
+    if (text.empty()) return fail(I18n::tr("sinex.err.read", path), err);
     parseEstimate(text);
-    if (stations.empty()) return fail("SINEX 中未解析到任何站点坐标: " + path, err);
+    if (stations.empty()) return fail(I18n::tr("sinex.err.no_station", path), err);
     err.clear();
     return true;
 }
 
 bool SinexReader::readString(const std::string &text, std::string &err) {
     stations.clear();
-    if (text.empty()) return fail("SINEX 文本为空", err);
+    if (text.empty()) return fail(I18n::tr("sinex.err.text_empty"), err);
     parseEstimate(text);
-    if (stations.empty()) return fail("SINEX 文本中未解析到任何站点坐标", err);
+    if (stations.empty()) return fail(I18n::tr("sinex.err.text_no_station"), err);
     err.clear();
     return true;
 }
@@ -190,8 +189,8 @@ bool SinexReader::obsStationAndDOY(const std::string &obsPath, std::string &stat
     if (base.size() < 4) return false; // 文件名过短 → 无站点信息
     station = Str::toUpper(base.substr(0, 4));
 
-    // 日期只认 ProductMeta::parseObsDate（名字 → 路径 → 文件头 → 库目录四层回落，认 .gz）
-    if (const auto d = ProductMeta::parseObsDate(obsPath)) {
+    // 日期只认 parseObsDate（名字 → 路径 → 文件头 → 库目录四层回落，认 .gz）
+    if (const auto d = parseObsDate(obsPath)) {
         year = d->year;
         doy = d->doy;
     }

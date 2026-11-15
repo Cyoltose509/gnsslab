@@ -1,6 +1,5 @@
 #include "Task.h"
 
-#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -8,8 +7,10 @@
 #include "SPP.h"
 #include "StringUtils.h"
 #include "core/atmo/Troposphere.h"
-#include "io/ProductLoad.h"
-#include "solver/ppp/Core.h"
+#include "io/ProductPaths.h"
+#include "io/ProductReader.h"
+#include "solver/ppp/Static.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::PPPStatic {
     void Task::applyConfig(const SolverOptions &cfg) {
@@ -19,69 +20,70 @@ namespace Solvers::PPPStatic {
     }
 
     bool Task::initSolver(::SPP &solver) {
-        std::vector<std::future<bool> > jobs;
-        auto &ppp = dynamic_cast<PPP::Core &>(solver);
-        const auto products = ProductLoad::resolve(opts, modeKey(mode));
-        ProductLoad::core(ppp, jobs, "PPP", products.paths, opts.systems);
-        ProductLoad::loadPPPExtras(ppp, jobs, products);
-        for (auto &j: jobs) j.get();
-        orbitFrame = ppp.orbitFrame;
-        hasOrbitFrame = ppp.hasOrbitFrame;
-        const bool srcOk = ProductLoad::requireSatellite("PPP", products.paths.sp3, products.paths.brdc);
-        ProductLoad::warnTropoFallback("PPP", opts.spp.tropoMap, ppp.tropoGridReady());
-        return srcOk ? true : ProductLoad::fail(this);
+        auto &ppp = dynamic_cast<::PPPStatic &>(solver);
+        const auto d = AppConfig::ProductPaths::of(modeKey(mode)).resolved(opts);
+        // PPP 要全套精密产品：轨道/钟差/偏差/姿态/自转/天线/对流层/电离层 + 两张格网
+        ppp.prod = productsFor(d, "PPP", opts.systems,
+                               {ProductType::NAV, ProductType::ORB, ProductType::CLK, ProductType::OSB,
+                                ProductType::ATT, ProductType::ERP, ProductType::ATX, ProductType::TRO,
+                                ProductType::ION, ProductType::VMF, ProductType::GPT3})
+                      .prod;
+        orbitFrame = ppp.prod->orbitFrame;
+        hasOrbitFrame = ppp.prod->hasOrbitFrame;
+        Troposphere::warnFallback("PPP", opts.spp.tropoMap, ppp.tropoGridReady());
+        return requireOrbit(d.sp3, d.nav);
     }
 
     std::unique_ptr<::SPP> Task::makeSolver() {
-        return std::make_unique<PPP::Core>();
+        return std::make_unique<::PPPStatic>();
     }
 
     std::vector<Export::Col> Task::exportFields(const Export::Format fmt) const {
         if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = Export::floatFixColumns(false);
-        return exportRefReady() ? c : Export::withoutRefColumns(c);
+        return truthReady() ? c : Export::withoutRefColumns(c);
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
         return fmt == Export::Format::CSV ? exportFields(fmt) : std::vector<Export::Col>{};
     }
 
-    void Task::writeCsvParams(CSV::Meta &m) const {
-        m.num("码 σ (m)", opts.spp.codeSigma);
-        m.num("相位 σ (m)", opts.spp.phaseSigma);
-        m.num("高度角加权下限 (sinE)", opts.spp.minSinElev);
-        m.flag("天线改正", opts.spp.applyAtx);
-        m.flag("相位缠绕", opts.spp.applyWindup);
-        m.flag("固体潮", opts.spp.applySolidTide);
-        m.integer("滤波更新最少卫星数", opts.spp.minSatsForUpdate);
-        m.num("钟差过程 σ", opts.spp.clockProcSigma);
-        m.flag("使用 AR 固定", opts.spp.useAR);
-        m.num("模糊度初始 σ", opts.spp.ambInitSigma);
-        m.num("模糊度过程 σ", opts.spp.ambProcSigma);
-        m.num("Ratio 阈值", opts.spp.arRatioThreshold);
+    void Task::writeCSVParams(CSV::Meta &m) const {
+        m.num(I18n::trc("param.code_sigma"), opts.spp.codeSigma);
+        m.num(I18n::trc("param.phase_sigma"), opts.spp.phaseSigma);
+        m.num(I18n::trc("param.elev_weight_floor"), opts.spp.minSinElev);
+        m.flag(I18n::trc("AntennaCorrection"), opts.spp.applyAtx);
+        m.flag(I18n::trc("param.phase_windup"), opts.spp.applyWindup);
+        m.flag(I18n::trc("param.solid_tide"), opts.spp.applySolidTide);
+        m.integer(I18n::trc("param.min_sats_update"), opts.spp.minSatsForUpdate);
+        m.num(I18n::trc("param.clock_proc_sigma"), opts.spp.clockProcSigma);
+        m.flag(I18n::trc("param.use_ar"), opts.spp.useAR);
+        m.num(I18n::trc("param.amb_init_sigma"), opts.spp.ambInitSigma);
+        m.num(I18n::trc("param.amb_proc_sigma"), opts.spp.ambProcSigma);
+        m.num(I18n::trc("param.ratio_threshold"), opts.spp.arRatioThreshold);
         writeTropoParams(m);
-        m.num("码偏过程 σ", opts.spp.codeBiasProcSigma);
-        m.num("码偏初始 σ", opts.spp.codeBiasInitSigma);
-        m.num("GLO IFCB 过程 σ", opts.spp.gloIfcbProcSigma);
-        m.num("GLO IFCB 初始 σ", opts.spp.gloIfcbInitSigma);
-        m.num("位置过程 σ", opts.posProcSigma);
-        m.num("首历元位置 σ", opts.spp.firstEpochPosSigma);
+        m.num(I18n::trc("param.code_bias_proc_sigma"), opts.spp.codeBiasProcSigma);
+        m.num(I18n::trc("param.code_bias_init_sigma"), opts.spp.codeBiasInitSigma);
+        m.num(I18n::trc("param.glo_ifcb_proc_sigma"), opts.spp.gloIfcbProcSigma);
+        m.num(I18n::trc("param.glo_ifcb_init_sigma"), opts.spp.gloIfcbInitSigma);
+        m.num(I18n::trc("param.pos_proc_sigma"), opts.posProcSigma);
+        m.num(I18n::trc("param.first_epoch_pos_sigma"), opts.spp.firstEpochPosSigma);
         writeMotionParams(m);
-        m.flag("使用周跳探测", opts.spp.useCycleSlip);
-        m.num("GF 周跳阈值倍数", opts.spp.gfSlipMult);
-        m.num("ISB 过程 σ", opts.spp.isbProcSigma);
-        m.num("ISB 初始 σ", opts.spp.isbInitSigma);
-        m.flag("剔除电文标记不健康的卫星", opts.spp.useHealth);
+        m.flag(I18n::trc("param.use_cycle_slip"), opts.spp.useCycleSlip);
+        m.num(I18n::trc("param.gf_slip_mult"), opts.spp.gfSlipMult);
+        m.num(I18n::trc("param.isb_proc_sigma"), opts.spp.isbProcSigma);
+        m.num(I18n::trc("param.isb_init_sigma"), opts.spp.isbInitSigma);
+        m.flag(I18n::trc("param.drop_unhealthy"), opts.spp.useHealth);
     }
 
     void Task::writeTropoParams(CSV::Meta &m) const {
-        m.flag("对流层梯度", opts.spp.useTroGrad);
-        m.text("映射函数", Troposphere::keyOf(opts.spp.tropoMap));
-        m.num("ZTD 初值 (m)", opts.spp.ztdInitValue);
-        m.num("ZTD 初始 σ", opts.spp.ztdInitSigma);
-        m.num("ZTD 过程 σ", opts.spp.ztdProcSigma);
-        m.num("ZTD 先验 σ", opts.spp.ztdPriorSigma);
-        m.num("ZTD 约束 σ", opts.spp.troZtdSigma);
+        m.flag(I18n::trc("param.tropo_gradient"), opts.spp.useTroGrad);
+        m.text(I18n::trc("MappingFunction"), Troposphere::keyOf(opts.spp.tropoMap));
+        m.num(I18n::trc("param.ztd_init"), opts.spp.ztdInitValue);
+        m.num(I18n::trc("param.ztd_init_sigma"), opts.spp.ztdInitSigma);
+        m.num(I18n::trc("param.ztd_proc_sigma"), opts.spp.ztdProcSigma);
+        m.num(I18n::trc("param.ztd_prior_sigma"), opts.spp.ztdPriorSigma);
+        m.num(I18n::trc("param.ztd_constraint_sigma"), opts.spp.troZtdSigma);
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

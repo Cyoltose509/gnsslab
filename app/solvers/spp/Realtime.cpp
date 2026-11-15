@@ -7,7 +7,8 @@
 #include <utility>
 
 #include "Decimator.h"
-#include "io/ProductLoad.h"
+#include "io/ProductPaths.h"
+#include "io/ProductReader.h"
 #include "Log.h"
 #include "util/Clock.h"
 #include "novatel/SocketReader.h"
@@ -16,6 +17,7 @@
 #include "solvers/common/Core.h"
 #include "StringUtils.h"
 #include "Task.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Realtime {
     SPPSession::SPPSession(std::shared_ptr<SPP::Task> task, Solvers::RealtimeEndpoint endpoint)
@@ -27,28 +29,30 @@ namespace Solvers::Realtime {
         // 否则滤波方向、截止高度角、系统集与对流层模型全部落到 SPPConfig 的默认值。
         SolverOptions opts = this->task->opts;
         if (const SolverOptions::FilterMode rt = filterForRealtime(opts.filter); rt != opts.filter) {
-            LOG_WARN << "[SPP实时] 实时流没有倒序趟，滤波方向 " << filterLabel(opts.filter)
-                    << " 按 " << filterLabel(rt) << " 处理";
+            LOG_WARN << "[SPP-RT] " << I18n::tr("log.rt.no_backward", filterLabel(opts.filter),
+                                                         filterLabel(rt));
             opts.filter = rt;
         }
         spp.applyOptions(opts);
-        const auto products = ProductLoad::resolve(opts, modeKey(Mode::SPP));
-        ProductLoad::loadSPPGrids(spp, products.vmf, products.gpt3);
-        ProductLoad::warnTropoFallback("SPP实时", opts.spp.tropoMap, spp.tropoGridReady());
+        const auto d = AppConfig::ProductPaths::of(modeKey(Mode::SPP)).resolved(opts);
+        spp.prod = ProductReader::load(d, "SPP-RT", opts.systems,
+                                     {ProductType::VMF, ProductType::GPT3})
+                       .prod;
+        Troposphere::warnFallback("SPP-RT", opts.spp.tropoMap, spp.tropoGridReady());
     }
 
     SPPSession::~SPPSession() = default;
 
-    const char *SPPSession::tag() const noexcept { return "实时"; }
+    const char *SPPSession::tag() const noexcept { return "SPP-RT"; }
 
     std::string SPPSession::target() const { return endpoint.ip + ":" + endpoint.port; }
 
     void SPPSession::clearError() { task->clearError(); }
 
-    void SPPSession::setConnectError() { task->setError("正在尝试连接 " + target() + "..."); }
+    void SPPSession::setConnectError() { task->setError(I18n::tr("rt.connecting", target())); }
 
     void SPPSession::onException(const std::exception &e) {
-        task->setError(std::string("运行异常: ") + e.what());
+        task->setError(I18n::tr("rt.run_error", e.what()));
     }
 
     void SPPSession::finish() {
@@ -83,7 +87,7 @@ namespace Solvers::Realtime {
             try {
                 if (reader->getNextEpoch(obs, false)) {
                     const auto eph = reader->ephSnapshot();
-                    spp.ephTable = *eph;
+                    spp.prod->eph = *eph;
                     spp.preprocess(obs);
                     task->view.pushQCInput(obs, obs.weekSecond.sow);
                     task->view.markQcDirty();

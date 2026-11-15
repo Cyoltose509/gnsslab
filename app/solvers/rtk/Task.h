@@ -9,8 +9,8 @@
 
 #include "core/geom/EphemerisTable.h"
 #include "core/obs/ObsStruct.h"
-#include "RTK.h"
-#include "RTKConfig.h"
+#include "solver/rtk/RTK.h"
+#include "solver/rtk/RTKConfig.h"
 #include "solvers/common/Task.h"
 
 namespace Solvers::RTK {
@@ -19,6 +19,9 @@ namespace Solvers::RTK {
         /// 基准站观测（流动站观测就是基类的 view.obsPathBuf，与其它模式同源）。
         std::string baseObsPathBuf;
         std::string navPathBuf;
+
+        /// 界面里单独填的 BRDC 优先于产品池里的广播星历
+        std::string navPath() const override;
 
         bool useBaseCoord = false;
         Eigen::Vector3d baseXyz{0, 0, 0};
@@ -36,7 +39,6 @@ namespace Solvers::RTK {
         std::condition_variable pairCv;
         /// 配对队列腾出空位时通知读取端。
         std::condition_variable pairSpaceCv;
-        EphemerisTable navTable;
 
         /// 滤波方向快照：解算期间界面还能改 opts，一趟解算必须按开始时那一档跑。
         SolverOptions::FilterMode filterMode = SolverOptions::FilterMode::LSQ;
@@ -68,7 +70,7 @@ namespace Solvers::RTK {
         /// 双站导出前缀用「流动站-基准站」，单看基准站名分不清是哪个任务。
         [[nodiscard]] std::string exportStem() const override;
 
-        void writeCsvParams(CSV::Meta &m) const override;
+        void writeCSVParams(CSV::Meta &m) const override;
 
         Task() {
             mode = Mode::RTK;

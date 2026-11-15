@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -46,13 +47,17 @@ private:
     /// 新任务入列并聚焦：六个 Open* 共用的收尾。
     void attachTask(const std::shared_ptr<Solvers::Task> &task);
 
-    /// 「工具」菜单里的独立面板：菜单文字、开关、画面入口。菜单项与渲染都遍历同一张表。
+    /// 「工具」菜单里的独立面板：菜单文案的 key、开关、画面入口。菜单项与渲染都遍历同一张表，
+    /// 存 key 而不是译文，切语言后下一帧就是新文案。
     struct ToolPanel {
-        const char *menu;
+        const char *menuKey;
         bool Application::*open;
         void (*render)(bool *);
     };
     static const ToolPanel kToolPanels[3];
+
+    /// 切语言 + 记住选择 + 记一行日志，三件事绑在一起，免得漏存或漏记。
+    static void switchLanguage(std::string_view code);
 
     Gui   m_ui;
     bool  m_quitRequested      = false;

@@ -15,21 +15,33 @@
 #include "solvers/leo/Task.h"
 #include "solvers/rtk/Task.h"
 #include "core/PathMemory.h"
-#include "io/Products.h"
+#include "core/SiteTruth.h"
+#include "io/ProductPaths.h"
 #include "download/local/Store.h"
 #include "download/remote/Catalog.h"
 #include "download/remote/http/Core.h"
-#include "io/ProductLoad.h"
+#include "io/ProductReader.h"
 #include "ui/Markdown.h"
 #include "EmbeddedReadme.h"
 #include "version.h"
 #include "Log.h"
 #include "util/Clock.h"
+#include "i18n/I18n.h"
 
 #include "imgui.h"
 
 namespace {
     using TaskList = std::vector<std::shared_ptr<Solvers::Task> >;
+
+    /// 首次启动跟随系统界面语言：中文分简繁，日韩跟着走，其余一律先给英文，之后由用户自己选。
+    const char *systemLanguageCode() {
+        const LANGID id = GetUserDefaultUILanguage();
+        if (PRIMARYLANGID(id) == LANG_CHINESE)
+            return SUBLANGID(id) == SUBLANG_CHINESE_TRADITIONAL ? "ZH-TW" : "ZH-CN";
+        if (PRIMARYLANGID(id) == LANG_JAPANESE) return "JA";
+        if (PRIMARYLANGID(id) == LANG_KOREAN) return "KO";
+        return "EN";
+    }
 
     void stopAndJoinTasks(TaskList &tasks) {
         for (const auto &task: tasks) {
@@ -50,22 +62,9 @@ namespace {
         return !solving && !task->refFetching.load();
     }
 
-    /// GUI 提供的产品默认路径：按模式取各自的 Products，引擎解析缺失项时回落到这里（CLI 不注册，只认 ini）。
-    void registerProductDefaults() {
-        ProductLoad::defaultsProvider() = [](const std::string &scope) {
-            const auto &p = AppConfig::Products::of(scope);
-            ProductLoad::Defaults d;
-            d.paths = {
-                p.sp3, p.clk, p.brdc, p.osb, p.att, p.erp,
-                Download::Store::activeFile(Download::Catalog::kATXID)
-            };
-            d.tro = p.tro;
-            d.ionex = p.ionex;
-            d.vmf = p.vmf;
-            d.gpt3 = Download::Store::activeFile(Download::Catalog::kGPT3ID);
-            return d;
-        };
-        ProductLoad::siteTruthFetcher() = [](const std::string &site, const int year, const int doy,
+    /// 站点真值的取法（GUI 走下载库缓存；CLI 不注册，只用本地已有文件）。
+    void registerSiteTruth() {
+        SiteTruth::fetcher() = [](const std::string &site, const int year, const int doy,
                                              double xyz[3], bool &fromCache, std::string &detail,
                                              const Download::Http::ProgressCb &progress) {
             return Download::Catalog::ensureSiteTruth(site, year, doy, xyz, fromCache, detail, progress);
@@ -74,22 +73,32 @@ namespace {
 }
 
 const Application::ToolPanel Application::kToolPanels[3] = {
-    {"时间转换", &Application::m_showTimeConverter, Tools::TimeConverter::Render},
-    {"坐标转换", &Application::m_showCoordConverter, Tools::CoordConverter::Render},
-    {"最小二乘工具", &Application::m_showLsqSolver, Tools::LsqSolver::Render},
+    {"tool.time.title", &Application::m_showTimeConverter, Tools::TimeConverter::Render},
+    {"tool.coord.title", &Application::m_showCoordConverter, Tools::CoordConverter::Render},
+    {"tool.lsq.title", &Application::m_showLsqSolver, Tools::LsqSolver::Render},
 };
 
+void Application::switchLanguage(const std::string_view code) {
+    if (!I18n::setLanguage(code)) return;
+    AppConfig::PathMemory::instance().set("gui.language", std::string(code));
+    LOG_INFO << "[I18N] language -> " << I18n::language();
+}
+
 Application::Application() {
-    registerProductDefaults();
+    registerSiteTruth();
 }
 
 void Application::Initialize() {
     Log::init("gnsslab.log");
-    LOG_INFO << "GnssLab v" PROJECT_VERSION " 启动";
+
+    const auto &pm = AppConfig::PathMemory::instance();
+    // 繁中/日/韩是本地机翻产物，没跑过 build/translate.py 时表里没有这几列；此时中文退回简中、其余退回英文。
+    const std::string lang = pm.get("gui.language", systemLanguageCode());
+    if (!I18n::setLanguage(lang)) I18n::setLanguage(lang.rfind("ZH", 0) == 0 ? "ZH-CN" : "EN");
+    LOG_INFO << I18n::tr("log.app.start", PROJECT_VERSION, I18n::language());
 
     const std::string title = "GnssLab v" PROJECT_VERSION;
 
-    const auto &pm = AppConfig::PathMemory::instance();
     const int winW = pm.getInt("win_w", 1280, 320, 7680);
     const int winH = pm.getInt("win_h", 720, 240, 4320);
     const bool winMax = pm.getInt("win_max", 0, 0, 1) != 0;
@@ -117,7 +126,8 @@ void Application::Shutdown() {
     }
 
     AppConfig::PathMemory::instance().flush();
-    LOG_INFO << "GnssLab 退出";
+    I18n::reportMissing();
+    LOG_INFO << I18n::tr("log.app.exit");
     stopAndJoinTasks(m_tasks);
     stopReaper();
     Download::Panel::state().shutdown();
@@ -163,8 +173,7 @@ void Application::startReaper() {
                 if (task->refFetchThread.joinable()) task->refFetchThread.join();
             }
             batch.clear(); // 引用归零：历元、图表副本、QC 序列的堆内存在这一行放掉
-            LOG_INFO << "[任务] 后台释放 " << count << " 个任务的线程与内存，耗时 "
-                    << releaseCost.ms() << " ms";
+            LOG_INFO << "[TASK] " << I18n::tr("app.log.reaped", count, releaseCost.ms());
         }
     });
 }
@@ -186,62 +195,74 @@ void Application::stopReaper() {
 
 void Application::RenderMenuBar() {
     if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("任务")) {
-            if (ImGui::MenuItem("SPP解算..."))
+        if (ImGui::BeginMenu(I18n::trc("gui.menu.task"))) {
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.spp")))
                 makeSppTask();
-            if (ImGui::MenuItem("PPP (静态) 解算..."))
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.ppp_static")))
                 makePppStaticTask();
-            if (ImGui::MenuItem("PPP (动态) 解算..."))
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.ppp_kinematic")))
                 makePppKinematicTask();
-            if (ImGui::MenuItem("RTK解算..."))
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.rtk")))
                 makeRtkTask();
             ImGui::Separator();
-            if (ImGui::MenuItem("LEO定轨..."))
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.leo")))
                 makeLeoTask();
             ImGui::Separator();
-            if (ImGui::MenuItem("INS 解算..."))
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.ins")))
                 makeInsTask();
             ImGui::Separator();
-            if (ImGui::MenuItem("退出", "Alt+F4"))
+            if (ImGui::MenuItem(I18n::trc("gui.menu.task.exit"), "Alt+F4"))
                 m_quitRequested = true;
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("工具")) {
+        if (ImGui::BeginMenu(I18n::trc("gui.menu.tools"))) {
             for (const auto &tool: kToolPanels)
-                ImGui::MenuItem(tool.menu, nullptr, &(this->*tool.open));
-            if (ImGui::BeginMenu("惯导标定与对准")) {
-                if (ImGui::MenuItem("六位置法标定")) makeInsCalibTask();
-                if (ImGui::MenuItem("静态解析粗对准")) makeInsAlignTask();
-                if (ImGui::MenuItem("INS 算法验证")) makeInsVerifyTask();
+                ImGui::MenuItem(I18n::trc(tool.menuKey), nullptr, &(this->*tool.open));
+            if (ImGui::BeginMenu(I18n::trc("gui.menu.tools.ins"))) {
+                if (ImGui::MenuItem(I18n::trc("gui.menu.tools.ins_calib"))) makeInsCalibTask();
+                if (ImGui::MenuItem(I18n::trc("gui.menu.tools.ins_align"))) makeInsAlignTask();
+                if (ImGui::MenuItem(I18n::trc("gui.menu.tools.ins_verify"))) makeInsVerifyTask();
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("数据")) {
-            ImGui::MenuItem("文件下载", nullptr, &Download::Panel::state().open);
-            ImGui::MenuItem("Earthdata账号填入", nullptr, &m_showEarthdata);
+        if (ImGui::BeginMenu(I18n::trc("common.data"))) {
+            ImGui::MenuItem(I18n::trc("gui.menu.data.download"), nullptr, &Download::Panel::state().open);
+            ImGui::MenuItem(I18n::trc("gui.menu.data.earthdata"), nullptr, &m_showEarthdata);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("帮助")) {
-            if (ImGui::MenuItem("关于", nullptr))
+        if (ImGui::BeginMenu(I18n::trc("gui.menu.help"))) {
+            if (ImGui::MenuItem(I18n::trc("gui.menu.help.about"), nullptr))
                 m_showAbout = true;
+            ImGui::EndMenu();
+        }
+        // 语言放在菜单栏末尾：切换是全局且立即生效的，藏进二级菜单里反而不容易找到。
+        if (ImGui::BeginMenu(I18n::trc("gui.menu.language"))) {
+            for (const auto &lang: I18n::languages()) {
+                const bool active = lang.code == I18n::language();
+                if (ImGui::MenuItem(lang.name.data(), nullptr, active) && !active)
+                    switchLanguage(lang.code);
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
     }
 
+    const char *aboutTitle = I18n::trc("gui.about.title");
     if (m_showAbout) {
         ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
-        ImGui::OpenPopup("关于 GnssLab");
+        ImGui::OpenPopup(aboutTitle);
         m_showAbout = false;
     }
 
-    if (ImGui::BeginPopupModal("关于 GnssLab", nullptr)) {
+    if (ImGui::BeginPopupModal(aboutTitle, nullptr)) {
         ImGui::BeginChild("readme", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()),
                           ImGuiChildFlags_Borders);
-        UI::renderMarkdown(reinterpret_cast<const char *>(UI::kEmbeddedReadme), UI::kEmbeddedReadmeLen);
+        const bool chinese = I18n::language().rfind("ZH", 0) == 0;
+        UI::renderMarkdown(reinterpret_cast<const char *>(chinese ? UI::kEmbeddedReadmeZH : UI::kEmbeddedReadmeEN),
+                           chinese ? UI::kEmbeddedReadmeZHLen : UI::kEmbeddedReadmeENLen);
         ImGui::EndChild();
-        if (ImGui::Button("确定", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(I18n::trc("gui.about.ok"), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -257,23 +278,23 @@ void Application::RenderTaskTabList() {
         const std::string tag = isTool ? std::string() : std::string(Solvers::modeLabel(task->mode));
         const std::string cat = isTool ? std::string() : "[" + tag + "] ";
         const bool isRealtime = task->isRealtime;
-        const std::string defaultName = isTool ? std::string("未命名任务") : tag + "解算";
+        const std::string defaultName = isTool ? I18n::tr("gui.tab.untitled") : tag + I18n::tr("common.solution");
 
         std::string label;
         if (task->state == Solvers::Task::State::Config)
-            label = "[配置]" + cat + (task->fileName.empty() ? defaultName : task->fileName);
+            label = I18n::tr("gui.tab.config") + cat + (task->fileName.empty() ? defaultName : std::string(task->displayName()));
         else if (isRealtime)
-            label = "[实时]" + cat + task->fileName;
+            label = I18n::tr("gui.tab.realtime") + cat + task->displayName();
         else
-            label = cat + task->fileName;
+            label = cat + task->displayName();
 
         if (task->state != Solvers::Task::State::Config && !isRealtime) {
             if (task->loading.load())
-                label += " [加载中]";
+                label += " " + I18n::tr("gui.tab.loading");
             else if (task->errorFlag())
-                label += " [错误]";
+                label += " " + I18n::tr("gui.tab.error");
             else if (task->done.load())
-                label += " [已停止]";
+                label += " " + I18n::tr("gui.tab.stopped");
         }
 
         // tab ID 必须绑任务自身（cfgIndex 进程内唯一），不能用列表下标：关掉前面的页后，
@@ -292,7 +313,7 @@ void Application::RenderTaskTabList() {
         }
 
         if (!open) {
-            LOG_INFO << "[任务] 关闭标签页: " << task->fileName;
+            LOG_INFO << "[TASK] " << I18n::tr("app.log.close_tab", task->fileName);
             task->cancel();
             closingTasks.push_back(task);
             tasks.erase(tasks.begin() + i);
@@ -320,7 +341,7 @@ void Application::RenderTasks() {
         if (ImGui::Begin("##empty_hint", nullptr, flags)) {
             ImGui::Text("GnssLab");
             ImGui::Spacing();
-            ImGui::TextDisabled("任务 -> 开始处理");
+            ImGui::TextDisabled(I18n::trc("gui.empty.hint"));
         }
         ImGui::End();
         return;
@@ -364,7 +385,7 @@ void Application::attachTask(const std::shared_ptr<Solvers::Task> &task) {
 void Application::makeSppTask() {
     const auto task = std::make_shared<Solvers::SPP::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 SPP 配置：观测=" << task->view.obsPathBuf;
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_task", I18n::tr("gui.menu.task.spp"), task->view.obsPathBuf);
 
     attachTask(task);
 }
@@ -372,7 +393,7 @@ void Application::makeSppTask() {
 void Application::makePppStaticTask() {
     const auto task = std::make_shared<Solvers::PPPStatic::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 PPP (静态) 配置：观测=" << task->view.obsPathBuf;
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_task", I18n::tr("gui.menu.task.ppp_static"), task->view.obsPathBuf);
 
     attachTask(task);
 }
@@ -380,7 +401,7 @@ void Application::makePppStaticTask() {
 void Application::makePppKinematicTask() {
     const auto task = std::make_shared<Solvers::PPPKinematic::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 PPP (动态) 配置：观测=" << task->view.obsPathBuf;
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_task", I18n::tr("gui.menu.task.ppp_kinematic"), task->view.obsPathBuf);
 
     attachTask(task);
 }
@@ -388,7 +409,7 @@ void Application::makePppKinematicTask() {
 void Application::makeLeoTask() {
     const auto task = std::make_shared<Solvers::LEO::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 LEO 配置：观测=" << task->view.obsPathBuf;
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_task", I18n::tr("gui.menu.task.leo"), task->view.obsPathBuf);
 
     attachTask(task);
 }
@@ -396,8 +417,7 @@ void Application::makeLeoTask() {
 void Application::makeRtkTask() {
     const auto task = std::make_shared<Solvers::RTK::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 RTK 配置：基准=" << task->baseObsPathBuf
-            << ", 流动站=" << task->view.obsPathBuf;
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_rtk", task->baseObsPathBuf, task->view.obsPathBuf);
 
     attachTask(task);
 }
@@ -405,25 +425,25 @@ void Application::makeRtkTask() {
 void Application::makeInsTask() {
     const auto task = std::make_shared<Solvers::INS::Task>();
     task->loadFromMemory();
-    LOG_INFO << "[任务] 新建 INS 纯惯导配置：IMU=" << task->view.obsPathBuf;
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_ins", task->view.obsPathBuf);
     attachTask(task);
 }
 
 void Application::makeInsCalibTask() {
     const auto task = Tools::Ins::MakeSixPosCalibTask();
-    LOG_INFO << "[任务] 新建 六位置法标定 配置";
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_tool", I18n::tr("gui.menu.tools.ins_calib"));
     attachTask(task);
 }
 
 void Application::makeInsAlignTask() {
     const auto task = Tools::Ins::MakeStaticAlignTask();
-    LOG_INFO << "[任务] 新建 静态解析粗对准 配置";
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_tool", I18n::tr("gui.menu.tools.ins_align"));
     attachTask(task);
 }
 
 void Application::makeInsVerifyTask() {
     const auto task = Tools::Ins::MakeInsVerifyTask();
-    LOG_INFO << "[任务] 新建 INS 算法验证 配置";
+    LOG_INFO << "[TASK] " << I18n::tr("app.log.new_tool", I18n::tr("gui.menu.tools.ins_verify"));
     attachTask(task);
 }
 

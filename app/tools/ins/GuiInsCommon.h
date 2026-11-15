@@ -4,6 +4,7 @@
 #include "Log.h"
 #include "GuiInsPanel.h"
 #include "solvers/view/GuiHelpers.h"
+#include "i18n/I18n.h"
 #include "ui/FileDialog.h"
 #include "ui/GuiColors.h"
 
@@ -68,7 +69,7 @@ namespace Tools::Ins {
         task.runFailed.store(false);
         task.sampleCount.store(0);
         task.chartDirty.store(false);
-        LOG_INFO << "[" << task.fileName << "] 开始";
+        LOG_INFO << "[" << task.fileName << "] " << I18n::tr("ins.tool.log.start");
     }
 
     template<class Task>
@@ -130,12 +131,12 @@ namespace Tools::Ins {
         const std::string childId = std::string(title) + std::to_string(task.cfgIndex);
         ImGui::BeginChild(childId.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
         if (ImGui::BeginTabBar("##cfg_tabs")) {
-            if (ImGui::BeginTabItem("文件")) {
+            if (ImGui::BeginTabItem(I18n::trc("common.file"))) {
                 ImGui::Spacing();
                 fileTab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("参数")) {
+            if (ImGui::BeginTabItem(I18n::trc("common.params"))) {
                 ImGui::PushItemWidth(260);
                 paramTab();
                 ImGui::PopItemWidth();
@@ -144,7 +145,7 @@ namespace Tools::Ins {
             ImGui::EndTabBar();
         }
         ImGui::Spacing();
-        if (ImGui::Button(startLabel, ImVec2(200, 40))) onStart();
+        if (ImGui::Button(I18n::trc(startLabel), ImVec2(200, 40))) onStart();
         ImGui::SameLine();
         task.renderCancelButton();
         drawRunError(task);
@@ -310,10 +311,12 @@ namespace Tools::Ins {
             return;
         }
         task.clearError();
-        LOG_INFO << "[" << task.fileName << "] 导出 " << displayName << " → "
-                << std::filesystem::path(out).string();
+        LOG_INFO << "[" << task.fileName << "] " << I18n::tr("ins.tool.log.export", displayName,
+                                                             std::filesystem::path(out).string());
     }
 
+    /// 单位表两列：ui 是界面显示名（中文的给文案 key，纯 ASCII 单位符号直接写原文），
+    /// csv 是导出表头，属于数据契约，不随语言变。
     struct CalibUnit {
         const char *ui;
         const char *csv;
@@ -345,7 +348,7 @@ namespace Tools::Ins {
     Eigen::Vector3d basisValue(const CalibBasis &b, const CalibReport &r, double g);
 
     struct CalibQty {
-        const char *ui{};
+        const char *uiKey{};
         const char *csv{};
         CalibBasis counts;
         CalibBasis phys;
@@ -375,7 +378,7 @@ namespace Tools::Ins {
         {"Gal", "Gal", 1e2, false, true, "%.4f"},
     };
     inline constexpr CalibUnit kDsUnits[] = {
-        {"无量纲", "无量纲", 1.0, false, false, "%.6f"},
+        {"ins.unit.unitless", "ins.unit.unitless", 1.0, false, false, "%.6f"},
         {"ppm", "ppm", 1e6, false, false, "%.2f"},
         {"%", "%", 1e2, false, false, "%.4f"},
     };
@@ -388,63 +391,68 @@ namespace Tools::Ins {
         {"LSB/(°/h)", "LSB/(deg/h)", DEG_TO_RAD / 3600.0, false, false, "%.4f"},
     };
     inline constexpr CalibUnit kGyroBiasUnits[] = {
-        {"LSB/历元", "LSB/历元", 1.0, false, false, "%.3f"},
+        {"ins.unit.lsb_epoch", "ins.unit.lsb_epoch", 1.0, false, false, "%.3f"},
         {"rad/s", "rad/s", 1.0, false, true, "%.9f"},
         {"°/h", "deg/h", RAD_TO_DEG * 3600.0, false, true, "%.3f"},
     };
 
     inline constexpr CalibQty kCalibQty[Q_COUNT] = {
         {
-            "加速度计比例因子 K_a", "加速度计比例因子",
+            "ins.calib.q.acc_scale", "ins.calib.q.acc_scale",
             topVec(&CalibReport::accelScaleG), topVec(&CalibReport::accelScaleG),
             kAccScaleUnits, 3, 4, false, false, Q_ACC_SCALE_SIGMA
         },
         {
-            "加速度计比例因子 1σ", "加速度计比例因子1σ",
+            "ins.calib.q.acc_scale_sigma", "ins.calib.q.acc_scale_sigma",
             topVec(&CalibReport::accelScaleSigma, true), topVec(&CalibReport::accelScaleSigma, true),
             kAccScaleUnits, 3, 4, false, false, -1
         },
         {
-            "加速度计零偏 b_a", "加速度计零偏",
+            "ins.calib.q.acc_bias", "ins.calib.q.acc_bias",
             calVec(&ImuCalibration::accelB), topVec(&CalibReport::accelBiasPhys),
             kAccBiasUnits, 5, 4, false, false, -1
         },
         {
-            "标称比例因子 K_nom", "标称比例因子K_nom",
+            "ins.calib.q.acc_knom", "ins.calib.q.acc_knom",
             topScalar(&CalibReport::nominalAccelK, true), topScalar(&CalibReport::nominalAccelK, true),
             kAccScaleUnits, 3, 6, false, true, -1
         },
         {
-            "加速度计比例因子误差 δs_a", "加速度计比例因子误差delta_s",
+            "ins.calib.q.acc_ds", "ins.calib.q.acc_ds",
             topVec(&CalibReport::accelDeltaS), topVec(&CalibReport::accelDeltaS),
             kDsUnits, 3, 9, true, false, -1
         },
         {
-            "陀螺有效比例因子 K_eff,g", "陀螺有效比例因子K_eff,g",
+            "ins.calib.q.gyro_keff", "ins.calib.q.gyro_keff",
             topVec(&CalibReport::gyroKeff), topVec(&CalibReport::gyroKeff),
             kGyroKeffUnits, 2, 6, true, false, -1
         },
         {
-            "标称有效比例因子 K_eff,nom", "标称有效比例因子K_eff,nom",
+            "ins.calib.q.gyro_keff_nom", "ins.calib.q.gyro_keff_nom",
             topScalar(&CalibReport::nominalKeff), topScalar(&CalibReport::nominalKeff),
             kGyroKeffUnits, 2, 6, true, true, -1
         },
         {
-            "陀螺比例因子 S_g", "陀螺比例因子S_g",
+            "ins.calib.q.gyro_scale", "ins.calib.q.gyro_scale",
             calVec(&ImuCalibration::gyroScale), calVec(&ImuCalibration::gyroScale),
             kGyroScaleUnits, 2, 6, true, false, -1
         },
         {
-            "陀螺零偏 b_g", "陀螺零偏",
+            "ins.calib.q.gyro_bias", "ins.calib.q.gyro_bias",
             calVec(&ImuCalibration::gyroBias), topVec(&CalibReport::gyroBiasPhys),
             kGyroBiasUnits, 3, 4, false, false, -1
         },
         {
-            "陀螺比例因子误差 δs_g", "陀螺比例因子误差delta_s",
+            "ins.calib.q.gyro_ds", "ins.calib.q.gyro_ds",
             topVec(&CalibReport::gyroDeltaS), topVec(&CalibReport::gyroDeltaS),
             kDsUnits, 3, 6, true, false, -1
         },
     };
+
+    /// 单位显示名：给的是文案 key 就按当前语言取，纯单位符号原样返回。
+    inline const char *unitText(const char *ui) {
+        return I18n::exists(ui) ? I18n::trc(ui) : ui;
+    }
 
     inline constexpr int kCalibUiRows[] = {
         Q_ACC_SCALE, Q_ACC_BIAS, Q_ACC_DS, Q_GYRO_KEFF, Q_GYRO_SCALE, Q_GYRO_BIAS, Q_GYRO_DS

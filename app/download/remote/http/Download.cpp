@@ -1,5 +1,6 @@
 #include "download/remote/http/Core.h"
 #include "download/remote/http/Internal.h"
+#include "i18n/I18n.h"
 
 #include "Log.h"
 #include "util/Clock.h"
@@ -118,7 +119,7 @@ namespace Download::Http {
         const auto flags = std::ios::binary | std::ios::out | (append ? std::ios::app : std::ios::trunc);
         std::ofstream out(localPath.c_str(), flags);
         if (!out) {
-            LOG_ERROR << "[下载] 无法创建本地文件: " << localPath;
+            LOG_ERROR << "[DL] " << I18n::tr("dl.http.create_file_failed", localPath);
             return false;
         }
 
@@ -158,13 +159,12 @@ namespace Download::Http {
             return false;
         }
         if (ctx.hitLimit && ctx.got == maxBytes) {
-            LOG_INFO << "[下载] 按需截停，只取前 " << ctx.got << " 字节: " << url;
+            LOG_INFO << "[DL] " << I18n::tr("dl.http.head_only", ctx.got, url);
             return true;
         }
         if (r == CURLE_OK && ctx.got > 0) return true;
         rollback();
-        LOG_WARN << "[下载] 取前段失败，已取 " << ctx.got << " 字节: " << url << " — "
-                << curl_easy_strerror(r);
+        LOG_WARN << "[DL] " << I18n::tr("dl.http.head_failed", ctx.got, url, curl_easy_strerror(r));
         return false;
     }
 
@@ -175,14 +175,14 @@ namespace Download::Http {
         int stalled = 0;
         for (int attempt = 1; stalled < stalls && attempt <= 1000; ++attempt) {
             if (cancel && cancel->load()) {
-                if (log) log("下载已取消");
+                if (log) log(I18n::tr("dl.http.cancelled"));
                 return false;
             }
             const curl_off_t base = fileSize(localPath);
 
             EasyHandle c;
             if (!c.handle) {
-                if (log) log("curl_easy_init 失败");
+                if (log) log(I18n::tr("dl.http.init_failed"));
                 return false;
             }
 
@@ -198,8 +198,8 @@ namespace Download::Http {
                 out.open(localPath.c_str(), mode);
             }
             if (!out) {
-                LOG_ERROR << "[下载] 无法创建本地文件: " << localPath;
-                if (log) log("无法创建本地文件: " + localPath);
+                LOG_ERROR << "[DL] " << I18n::tr("dl.http.create_file_failed", localPath);
+                if (log) log(I18n::tr("dl.http.create_file_failed", localPath));
                 return false;
             }
 
@@ -221,8 +221,9 @@ namespace Download::Http {
             curl_easy_setopt(c.handle, CURLOPT_FAILONERROR, 1L);
 
             if (base > 0) {
-                LOG_INFO << "[下载] 续传：" << localPath << " 已有 " << base << " 字节";
-                if (log) log("续传：已有 " + std::to_string(base) + " 字节");
+                const std::string resumed = I18n::tr("dl.http.resume", base);
+                LOG_INFO << "[DL] " << localPath << " " << resumed;
+                if (log) log(resumed);
             }
 
             const CURLcode r = curl_easy_perform(c.handle);
@@ -234,20 +235,20 @@ namespace Download::Http {
             const std::string why = cbErr.empty() ? std::string(curl_easy_strerror(r)) : cbErr;
 
             if (cancel && cancel->load()) {
-                if (log) log("下载已取消");
+                if (log) log(I18n::tr("dl.http.cancelled"));
                 return false;
             }
             if (r == CURLE_OK && writeOk && cbErr.empty()) {
                 if (base > 0 && httpCode == 200) {
                     std::error_code ec;
                     std::filesystem::remove(localPath, ec);
-                    LOG_WARN << "[下载] 服务器不支持断点续传，从头重下: " << url;
-                    if (log) log("服务器不支持断点续传，从头重下");
+                    LOG_WARN << "[DL] " << I18n::tr("dl.http.no_range", url);
+                    if (log) log(I18n::tr("dl.http.no_range_short"));
                     if (++stalled >= stalls) return false;
                     Clock::sleep(Clock::milliseconds(300));
                     continue;
                 }
-                if (log) log("完成: " + localPath);
+                if (log) log(I18n::tr("dl.status.done", localPath));
                 return true;
             }
 
@@ -260,12 +261,10 @@ namespace Download::Http {
             const bool progressed = now > base;
             stalled = progressed ? 0 : stalled + 1;
             if (log)
-                log("第 " + std::to_string(attempt) + " 次连接断开（已收 " + std::to_string(now) +
-                    " 字节，续传中）: " + why);
-            LOG_WARN << "[下载] 第 " << attempt << " 次连接断开，已收 " << now << " 字节: " << url
-                    << " — " << why;
+                log(I18n::tr("dl.http.disconnected", attempt, now, why));
+            LOG_WARN << "[DL] " << I18n::tr("dl.http.disconnected_log", attempt, now, url, why);
             if (!progressed && now > 0)
-                LOG_INFO << "[下载] 保留已下载的 " << now << " 字节，下次续传: " << localPath;
+                LOG_INFO << "[DL] " << I18n::tr("dl.http.keep_partial", now, localPath);
             if (stalled >= stalls) return false;
             Clock::sleep(Clock::milliseconds(attempt < 10 ? 300 * attempt : 3000));
         }

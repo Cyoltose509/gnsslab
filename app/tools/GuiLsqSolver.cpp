@@ -6,6 +6,8 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include "i18n/I18n.h"
 
 namespace Tools::LsqSolver {
     static int s_NumObs = 4;
@@ -85,7 +87,7 @@ namespace Tools::LsqSolver {
 
     static void Solve() {
         if (s_NumObs < s_NumUnk) {
-            s_Error = "观测数 (m) 必须 >= 未知数 (n)";
+            s_Error = I18n::tr("tool.lsq.err_obs_lt_unk");
             return;
         }
         try {
@@ -104,7 +106,7 @@ namespace Tools::LsqSolver {
             varList.assign(sys.varSet.begin(), sys.varSet.end());
 
             if (varList.size() != static_cast<std::size_t>(s_NumUnk)) {
-                s_Error = "内部错误: 变量生成失败";
+                s_Error = I18n::tr("tool.lsq.err_var_fail");
                 return;
             }
 
@@ -126,11 +128,11 @@ namespace Tools::LsqSolver {
             solver.solve(sys, W);
 
             s_X = solver.state;
-            s_Q = solver.covMatrix;
+            s_Q = solver.Q;
             s_Sigma0 = solver.sigma0;
             // 法方程奇异时 LSQ 会推出 inf/nan，界面上得说清楚，别让人当成有效解
             if (!s_X.allFinite() || !s_Q.allFinite() || !std::isfinite(s_Sigma0)) {
-                s_Error = "法方程奇异或秩亏，无法求解";
+                s_Error = I18n::tr("tool.lsq.err_singular");
                 s_Solved = false;
             } else {
                 s_Solved = true;
@@ -138,7 +140,7 @@ namespace Tools::LsqSolver {
         } catch (const std::exception &e) {
             s_Error = e.what();
         } catch (...) {
-            s_Error = "解算失败 (请检查矩阵是否满秩)";
+            s_Error = I18n::tr("tool.lsq.err_failed");
         }
     }
 
@@ -149,7 +151,7 @@ namespace Tools::LsqSolver {
         }
 
         ImGui::SetNextWindowSize(ImVec2(1000, 750), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("最小二乘工具", p_open)) {
+        if (!ImGui::Begin(I18n::trc("tool.lsq.title"), p_open)) {
             ImGui::End();
             return;
         }
@@ -158,25 +160,25 @@ namespace Tools::LsqSolver {
         ImGui::BeginChild("Toolbar", ImVec2(0, 45), true);
         ImGui::AlignTextToFramePadding();
 
-        ImGui::Text("观测数 (%d):", s_NumObs);
+        ImGui::TextUnformatted(I18n::tr("tool.lsq.num_obs", s_NumObs).c_str());
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         int nObs = s_NumObs;
-        if (ImGui::InputInt("##m_input", &nObs) && nObs >= 1) ResizeMatrices(nObs, s_NumUnk);
+        if (ImGui::InputInt("##m_input", &nObs)) ResizeMatrices(nObs, s_NumUnk);
 
         ImGui::SameLine();
-        ImGui::Text("未知数 (%d):", s_NumUnk);
+        ImGui::TextUnformatted(I18n::tr("tool.lsq.num_unk", s_NumUnk).c_str());
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         int nUnk = s_NumUnk;
-        if (ImGui::InputInt("##n_input", &nUnk) && nUnk >= 1) ResizeMatrices(s_NumObs, nUnk);
+        if (ImGui::InputInt("##n_input", &nUnk)) ResizeMatrices(s_NumObs, nUnk);
 
         ImGui::SameLine(0, 30);
-        ImGui::Checkbox("自动计算", &s_AutoSolve);
+        ImGui::Checkbox(I18n::trc("tool.lsq.auto_solve"), &s_AutoSolve);
         ImGui::SameLine();
-        if (ImGui::Button("计算", ImVec2(80, 0))) Solve();
+        if (ImGui::Button(I18n::trc("tool.lsq.solve"), ImVec2(80, 0))) Solve();
         ImGui::SameLine();
-        if (ImGui::Button("清空", ImVec2(60, 0))) {
+        if (ImGui::Button(I18n::trc("common.clear"), ImVec2(60, 0))) {
             std::fill(s_H.begin(), s_H.end(), 0.0);
             std::fill(s_L.begin(), s_L.end(), 0.0);
             std::fill(s_W.begin(), s_W.end(), 0.0);
@@ -189,7 +191,7 @@ namespace Tools::LsqSolver {
 
 
         bool changed = false;
-        ImGui::SeparatorText("方程模型: Z = H * X + △");
+        ImGui::SeparatorText(I18n::trc("tool.lsq.model"));
 
         if (ImGui::BeginTable("##math_layout", 2,
                               ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX | ImGuiTableFlags_Resizable)) {
@@ -200,7 +202,7 @@ namespace Tools::LsqSolver {
 
 
             ImGui::TableSetColumnIndex(0);
-            ImGui::Text("L (%d x 1)", s_NumObs);
+            ImGui::TextUnformatted(I18n::tr("tool.lsq.shape_l", s_NumObs).c_str());
             if (ImGui::BeginTable("##L_table", 1, ImGuiTableFlags_Borders)) {
                 for (int i = 0; i < s_NumObs; ++i) {
                     ImGui::TableNextRow();
@@ -216,7 +218,7 @@ namespace Tools::LsqSolver {
 
 
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("H (%d x %d)", s_NumObs, s_NumUnk);
+            ImGui::TextUnformatted(I18n::tr("tool.lsq.shape_h", s_NumObs, s_NumUnk).c_str());
             if (ImGui::BeginTable("##H_table", s_NumUnk, ImGuiTableFlags_Borders)) {
                 for (int i = 0; i < s_NumObs; ++i) {
                     ImGui::TableNextRow();
@@ -234,7 +236,7 @@ namespace Tools::LsqSolver {
         }
 
         ImGui::Spacing();
-        ImGui::SeparatorText("权阵 W (m x m)");
+        ImGui::SeparatorText(I18n::trc("tool.lsq.weight"));
 
         if (ImGui::BeginTable("##W_table", s_NumObs, ImGuiTableFlags_Resizable)) {
             for (int i = 0; i < s_NumObs; ++i) {
@@ -255,14 +257,16 @@ namespace Tools::LsqSolver {
         if (s_AutoSolve && changed) Solve();
 
         ImGui::Spacing();
-        ImGui::SeparatorText("解算结果");
+        ImGui::SeparatorText(I18n::trc("pos.section.result"));
 
         if (!s_Error.empty()) {
-            ImGui::TextColored(UI::kColFail, "状态: %s", s_Error.c_str());
+            ImGui::TextColored(UI::kColFail, "%s", I18n::tr("common.status", s_Error).c_str());
         } else if (!s_Solved) {
-            ImGui::TextDisabled("尚未计算");
+            ImGui::TextDisabled(I18n::trc("tool.lsq.not_solved"));
         } else {
-            ImGui::Text("单位权中误差 (Sigma0): %.6f", s_Sigma0);
+            char sigma[32];
+            std::snprintf(sigma, sizeof(sigma), "%.6f", s_Sigma0);
+            ImGui::TextUnformatted(I18n::tr("tool.lsq.sigma0", sigma).c_str());
             if (ImGui::BeginTable("##result", 2,
                                   ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX | ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthStretch,0.3);

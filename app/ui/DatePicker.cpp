@@ -2,7 +2,7 @@
 
 #include "GuiColors.h"
 
-#include "TimeStruct.h"
+#include "core/TimeStruct.h"
 #include "util/Clock.h"
 
 #include "imgui.h"
@@ -10,13 +10,19 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "i18n/I18n.h"
 
 namespace UI::DatePicker {
     namespace {
         constexpr ImVec4 kAccent(0.26f, 0.59f, 0.98f, 1.00f);
         constexpr ImVec4 kAccentHover(0.33f, 0.66f, 1.00f, 1.00f);
         constexpr ImVec4 kAccentActive(0.20f, 0.50f, 0.90f, 1.00f);
-        constexpr const char *kWeekCn[7] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+        constexpr const char *kWeekKeys[7] = {
+            "date.week.sun", "date.week.mon", "date.week.tue", "date.week.wed",
+            "date.week.thu", "date.week.fri", "date.week.sat"
+        };
+
+        const char *weekName(const int i) { return I18n::trc(kWeekKeys[i]); }
         constexpr float kGap = 3.0f;
         constexpr float kCellH = 40.0f;
 
@@ -33,7 +39,7 @@ namespace UI::DatePicker {
         /// 单格宽度：中文星期字头比数字宽，按两者取大，格子才不会被字撑破。
         float cellWidth() {
             const ImGuiStyle &st = ImGui::GetStyle();
-            const float head = ImGui::CalcTextSize(kWeekCn[3]).x + 6.0f;
+            const float head = ImGui::CalcTextSize(weekName(3)).x + 6.0f;
             const float num = ImGui::CalcTextSize("30").x + st.FramePadding.x * 2.0f + 6.0f;
             return std::ceil(std::max(head, num));
         }
@@ -41,7 +47,7 @@ namespace UI::DatePicker {
         /// 标题行：两只左箭头 + 两只右箭头 + 中间年月。
         float titleRowWidth() {
             char buf[32];
-            std::snprintf(buf, sizeof buf, "0000 年 00 月");
+            std::snprintf(buf, sizeof buf, I18n::trc("date.title_fmt"), 0, 0);
             return ImGui::CalcTextSize(buf).x + ImGui::GetFrameHeight() * 4.0f + kGap * 4.0f;
         }
 
@@ -56,7 +62,7 @@ namespace UI::DatePicker {
             const float gridX = x0 + (contentW - gridW) * 0.5f;
 
             char title[32];
-            std::snprintf(title, sizeof title, "%04d 年 %d 月", s_viewYear, s_viewMonth);
+            std::snprintf(title, sizeof title, I18n::trc("date.title_fmt"), s_viewYear, s_viewMonth);
             const float titleW = ImGui::CalcTextSize(title).x;
 
             ImGui::SetCursorPosX(x0);
@@ -97,10 +103,10 @@ namespace UI::DatePicker {
             const ImVec4 dim = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
             const ImVec4 fg = ImGui::GetStyleColorVec4(ImGuiCol_Text);
             for (int i = 0; i < 7; ++i) {
-                const float tw = ImGui::CalcTextSize(kWeekCn[i]).x;
+                const float tw = ImGui::CalcTextSize(weekName(i)).x;
                 if (i) ImGui::SameLine(0.0f, kGap);
                 ImGui::SetCursorPosX(gridX + static_cast<float>(i) * (cellW + kGap) + (cellW - tw) * 0.5f);
-                ImGui::TextColored(i == 0 || i == 6 ? dim : fg, "%s", kWeekCn[i]);
+                ImGui::TextColored(i == 0 || i == 6 ? dim : fg, "%s", weekName(i));
             }
 
             const int first = weekdayOf(s_viewYear, s_viewMonth, 1);
@@ -141,7 +147,7 @@ namespace UI::DatePicker {
             ImGui::PopStyleVar();
 
             ImGui::Separator();
-            ImGui::TextUnformatted("跳到");
+            ImGui::TextUnformatted(I18n::trc("date.jump"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(78.0f);
             if (ImGui::InputInt("##goY", &year, 0, 0)) {
@@ -166,7 +172,7 @@ namespace UI::DatePicker {
                 s_viewMonth = month;
             }
 
-            if (ImGui::Button("今天")) {
+            if (ImGui::Button(I18n::trc("common.today"))) {
                 year = tY;
                 month = tM;
                 day = tD;
@@ -175,7 +181,7 @@ namespace UI::DatePicker {
                 changed = true;
             }
             ImGui::SameLine(0.0f, kGap);
-            if (ImGui::Button("关闭")) ImGui::CloseCurrentPopup();
+            if (ImGui::Button(I18n::trc("date.close"))) ImGui::CloseCurrentPopup();
             return changed;
         }
     }
@@ -190,7 +196,7 @@ namespace UI::DatePicker {
     bool button(int &year, int &month, int &day, const int *todayYmd) {
         char label[48];
         std::snprintf(label, sizeof label, "%04d-%02d-%02d  %s", year, month, day,
-                      kWeekCn[weekdayOf(year, month, day)]);
+                      weekName(weekdayOf(year, month, day)));
         if (ImGui::Button(label, ImVec2(ImGui::CalcTextSize(label).x + 22.0f, 0.0f))) {
             s_viewYear = year;
             s_viewMonth = month;

@@ -5,6 +5,7 @@
 #include "Core.h"
 #include "solvers/common/Task.h"
 #include "util/CSV.h"
+#include "i18n/I18n.h"
 
 namespace Solvers::Export {
     namespace {
@@ -30,7 +31,7 @@ namespace Solvers::Export {
         task.writeCSVMeta(w);
 
         const std::vector<Col> cols = resolveColumns(spec, Format::CSV, task);
-        for (const Col &c: cols) w.cell(c.name);
+        for (const Col &c: cols) w.cell(I18n::trc(fieldDef(c.field).colKey));
         w.endRow();
 
         Row row;
