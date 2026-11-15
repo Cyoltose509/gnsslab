@@ -3,41 +3,41 @@
 #include "core/geom/CoordConvert.h"
 #include <cmath>
 
-void PPPStatic::readback(const ObsData &obsData) {
+void PPPStatic::readback() {
     try { result.xyz = currentEstimatedPosition(); } catch (...) {}
     result.xyzFloat = result.xyz;
     result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
-    result.numSats = static_cast<int>(mEq.obsEquData.size()) / 2;
+    result.numSats = static_cast<int>(curEq.obsEquData.size()) / 2;
 
     for (const auto &[sys, par]: mCdtParam) {
         GnssEKF::tryGetSolution(par, ekf.currentUnkSet, ekf.solution, mClkEstimate[sys]);
     }
     for (char sys: mSysSeen) {
         if (!osbCoversSystem(sys)) {
-            const Variable vcb = makeCodeBiasVar(obsData.station, SatID(sys, -1), "IF");
+            const Variable vcb = makeCodeBiasVar(mCurObs->station, SatID(sys, -1), "IF");
             mCbEstimate[sys] = ekf.getSolution(vcb);
         }
     }
     // 逐 GLONASS/BDS 星 IFCB 回读
-    for (const auto &[sat, tv]: obsData.satTypeValueData) {
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
         if (sat.system != 'R' && sat.system != 'C') continue;
         if (osbCovers(sat)) continue;
         if (const FreqCombo *defp = freqComboFor(sat); !defp || !defp->available(tv, true)) continue;
-        const Variable vifb = makeIfbVar(obsData.station, sat, "IF");
+        const Variable vifb = makeIfbVar(mCurObs->station, sat, "IF");
         mIfcbEstimate[sat] = ekf.getSolution(vifb);
     }
     GnssEKF::tryGetSolution(Parameter::ztd, ekf.currentUnkSet, ekf.solution, mZtdEstimate);
-    for (const auto &[sat, tv]: obsData.satTypeValueData) {
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
         const FreqCombo *defp = freqComboFor(sat);
         if (!defp) continue;
         if (!defp->available(tv, true)) continue;
-        const Variable vamb = makeAmbiguityVar(obsData.station, sat, "IF");
+        const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
         mAmbEstimate[sat] = ekf.getSolution(vamb); // 按 Variable 取：不在集中直接返回 0，不抛
     }
 
     if (const Eigen::VectorXd postfit = ekf.postfitResidual; postfit.size() > 0) {
         int iobs = 0;
-        for (const auto &[eid, ed]: mEq.obsEquData) {
+        for (const auto &[eid, ed]: curEq.obsEquData) {
             if (iobs < postfit.size() && !eid.obsType.empty()) {
                 if (eid.obsType[0] != 'L')
                     result.postRes.set(eid.sat, postfit(iobs)); // 码(伪距)残差
@@ -48,14 +48,14 @@ void PPPStatic::readback(const ObsData &obsData) {
         }
     }
 
-    geometryDOPs(result, mEq, result.blh);
+    geometryDOPs(result, curEq, result.blh);
 
-    const Variable vdx(obsData.station, Parameter::dX);
-    const Variable vdy(obsData.station, Parameter::dY);
-    const Variable vdz(obsData.station, Parameter::dZ);
-    const Variable vox(obsData.station, Parameter::dOX);
-    const Variable voy(obsData.station, Parameter::dOY);
-    const Variable voz(obsData.station, Parameter::dOZ);
+    const Variable vdx(mCurObs->station, Parameter::dX);
+    const Variable vdy(mCurObs->station, Parameter::dY);
+    const Variable vdz(mCurObs->station, Parameter::dZ);
+    const Variable vox(mCurObs->station, Parameter::dOX);
+    const Variable voy(mCurObs->station, Parameter::dOY);
+    const Variable voz(mCurObs->station, Parameter::dOZ);
     const Eigen::MatrixXd P = ekf.Q;
     auto axisVar = [&](const Variable &pos, const Variable &off) -> double {
         if (!ekf.currentIndexData.count(pos)) return 0.0;
@@ -74,24 +74,9 @@ void PPPStatic::readback(const ObsData &obsData) {
     Q(0, 0) = sx * sx;
     Q(1, 1) = sy * sy;
     Q(2, 2) = sz * sz;
-    sigma0 = posteriorSigma0(ekf.postfitResidual, mEq.weightVector(),
+    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
                              static_cast<int>(ekf.currentUnkSet.size()));
     result.sigmaP = std::max(positionSigma(Q, sigma0), 1e-3);
     result.sigmaPFloat = result.sigmaP;
 }
 
-Eigen::Matrix3d PPPStatic::posCovariance() const {
-    if (!mCurObs || !mFilterInit || ekf.Q.size() == 0)
-        return Eigen::Matrix3d::Identity() * 1.0e12;
-    const std::string &st = mCurObs->station;
-    const auto idx = [this](const Variable &v) {
-        const auto it = ekf.currentIndexData.find(v);
-        return it == ekf.currentIndexData.end() ? -1 : it->second;
-    };
-    const int id[3] = {
-        idx(Variable(st, Parameter::dX)),
-        idx(Variable(st, Parameter::dY)),
-        idx(Variable(st, Parameter::dZ))
-    };
-    return positionCovBlock(ekf.Q, id);
-}

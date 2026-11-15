@@ -63,7 +63,7 @@ void Calibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std:
 
     static const std::string kStation = "imu_calib";
     const Variable vSx(kStation, Parameter::dX), vSy(kStation, Parameter::dY),
-            vSz(kStation, Parameter::dZ), vB(kStation, Parameter::cdt);
+            vSz(kStation, Parameter::dZ), vB(kStation, Parameter::cdt1);
     SolverLSQ lsq;
     for (int k = 0; k < 3; ++k) {
         EquSys equ;
@@ -81,7 +81,7 @@ void Calibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std:
         M(k, 0) = lsq.getSolution(Parameter::dX);
         M(k, 1) = lsq.getSolution(Parameter::dY);
         M(k, 2) = lsq.getSolution(Parameter::dZ);
-        b(k) = lsq.getSolution(Parameter::cdt);
+        b(k) = lsq.getSolution(Parameter::cdt1);
 
         if (scaleSigma && lsq.Q.rows() == 4) {
             (*scaleSigma)(k) = std::sqrt(std::max(0.0, lsq.Q(0, 0))) * lsq.sigma0;

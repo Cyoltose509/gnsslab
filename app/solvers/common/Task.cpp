@@ -10,7 +10,6 @@
 #include "core/Const.h"
 #include "core/geom/CoordConvert.h"
 #include "FileUtils.h"
-#include "Velocity.h"
 #include "io/Observer.h"
 #include "rinex/RINEXNavStore.h"
 #include "product/sp3/Reader.h"
@@ -155,40 +154,11 @@ namespace Solvers {
     }
 
     void Task::finishSolving() {
-        fillVelocityByDifference();
         {
             std::lock_guard lk(queueMutex);
             solvingDone = true;
         }
         wakeQueues();
-    }
-
-    void Task::fillVelocityByDifference() {
-        std::lock_guard lk(mutex);
-        if (epochs.empty()) return;
-
-        std::vector<double> t;
-        std::vector<Eigen::Vector3d> pos;
-        t.reserve(epochs.size());
-        pos.reserve(epochs.size());
-        for (const Epoch &ep: epochs) {
-            t.push_back(static_cast<double>(ep.week) * 604800.0 + ep.sow);
-            pos.push_back(ep.solved ? ep.sppResult.xyz : Eigen::Vector3d::Zero());
-        }
-        std::vector<Eigen::Vector3d> diff;
-        Velocity::byDifference(t, pos, diff);
-
-        int velEpochs = 0;
-        for (std::size_t i = 0; i < epochs.size(); ++i) {
-            Epoch &ep = epochs[i];
-            // 多普勒已经解出来的不动：那是一次真的测量，差分只是没观测时的兜底。
-            if (ep.solved && ep.sppResult.vel.squaredNorm() == 0.0 &&
-                diff[i].squaredNorm() > 0.0 && diff[i].allFinite())
-                ep.sppResult.vel = diff[i];
-            if (ep.sppResult.vel.squaredNorm() > 1e-4) ++velEpochs;
-        }
-        std::lock_guard plk(view.plotMutex); // plotData 归界面线程读，写入与 commitEpoch 同口径
-        view.plotData.velEpochs = velEpochs;
     }
 
     bool Task::epochLimitReached() {

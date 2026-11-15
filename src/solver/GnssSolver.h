@@ -1,47 +1,101 @@
 #pragma once
 
+#include "core/equ/EquStruct.h"
 #include "core/equ/Result.h"
 #include "core/obs/ObsStruct.h"
 #include "core/obs/Weight.h"
+#include "core/geom/CoordStruct.h"
 #include "core/geom/Ephemeris.h"
 #include "core/SatID.h"
-#include "Velocity.h"
+#include "GnssEKF.h"
+#include "SolverOptions.h"
 #include <map>
 #include <memory>
 #include <set>
 
 struct Products;
 
-/// 单站/双站解算器的公共底座
+
 class GnssSolver {
 public:
+    struct DopplerResult {
+        Eigen::Vector3d vel = Eigen::Vector3d::Zero();
+        double clockDrift = 0.0;
+        Eigen::Vector3d sigma = Eigen::Vector3d::Zero();
+        int used = 0;
+        bool ok = false;
+    };
+
     GnssSolver();
 
     virtual ~GnssSolver() = default;
 
-    /// 解算输入（星历/格网/精密产品/接收机天线）；正序与倒序解算器共用同一份，谁都不会被搬空。
-    /// RTK 只装星历那一栏，其余留空。
+
     std::shared_ptr<Products> prod;
 
     Result result{};
+
+
+    const ObsData *mCurObs = nullptr;
+
+
+    Eigen::Vector3d xyz = Eigen::Vector3d::Zero();
+    GeodeticFrame frame = Frame::WGS84;
+
+    GnssEKF ekf;
+    EquSys curEq{};
+    bool mUseFilter = false;
+    bool mFilterInit = false;
+    double sigma0 = 1.0;
 
     SatValueMap satElevData{};
     SatValueMap satAzimData{};
     std::map<SatID, PVT> satPVTTransTime{};
     std::map<SatID, PVT> satPVTRecTime{};
 
-protected:
-    /// 广播电文自报不健康的卫星直接剔除
-    bool ephUnhealthy(const SatID &sat, const Ephemeris *eph, bool enabled);
-
     std::set<SatID> mHealthWarned;
 
-    /// 多普勒测速
-    Velocity::DopplerResult estimateVelocityByDoppler(const ObsData &obs, const std::map<SatID, PVT> &pvtMap,
-                                                      const SatValueMap &elevMap,
-                                                      const Eigen::Vector3d &pos, const Weight &w);
 
-    /// 本星是否参与多普勒测速
+    int mDirection = 1;
+    bool mFilterFrozen = false;
+    bool mGapThisEpoch = false;
+    bool mForceAmbReset = false;
+    double mNominalInterval = -1.0;
+    double mKeepAmbMaxGap = 0.0;
+    CommonTime mLastEpochTime{};
+    CommonTime mLastObsTime{};
+    bool mHasLastEpoch = false;
+    bool mHasLastObs = false;
+
+
+    virtual void solve();
+
+
+    [[nodiscard]] Eigen::Matrix3d posCovariance() const;
+
+
+    virtual void applyOptions(const SolverOptions &o) = 0;
+    virtual void prepareGeometry() = 0;
+    virtual void publishResult() = 0;
+    virtual void resetFilterState() = 0;
+    virtual void initFilter() = 0;
+    virtual void updateFilter() = 0;
+
+
+    virtual void estimatePosition();
+    virtual DopplerResult estimateVelocity();
+
+    void earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d &recv);
+    void computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::Vector3d &recv,
+                         SatValueMap &elev, SatValueMap *azim) const;
+
+    void trackEpochGap();
+
+    bool ephUnhealthy(const SatID &sat, const Ephemeris *eph, bool enabled);
+
+
+    [[nodiscard]] virtual Weight dopplerWeight() const { return Weight{}; }
+
     [[nodiscard]] virtual bool wantDopplerSat(const SatID &, const TypeValueMap &) const {
         return true;
     }

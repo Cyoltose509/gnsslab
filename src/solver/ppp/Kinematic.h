@@ -17,7 +17,6 @@ public:
 
     bool processEpoch(ObsData &obs) override;
 
-protected:
     Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const override;
 
     Eigen::Vector3d reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut = nullptr, double *rmsOut = nullptr,

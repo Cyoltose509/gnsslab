@@ -11,7 +11,6 @@ namespace Solvers::Realtime {
 
         void run();
 
-    protected:
         virtual const char *tag() const noexcept = 0;
         virtual std::string target() const = 0;
 

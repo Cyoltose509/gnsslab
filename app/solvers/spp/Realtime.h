@@ -22,7 +22,6 @@ namespace Solvers::Realtime {
 
         ~SPPSession() override;
 
-    protected:
         [[nodiscard]] const char *tag() const noexcept override;
 
         [[nodiscard]] std::string target() const override;

@@ -3,7 +3,7 @@
 #include "core/Const.h"
 #include <cmath>
 
-bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
+bool PPPStatic::tryFixAmbiguities() {
     mArRatio = 0.0;
     mArNumFixed = 0;
     result.xyzFixed = Eigen::Vector3d::Zero();
@@ -20,12 +20,12 @@ bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
     std::vector<double> Bf;
     int inState = 0;
     double sMin = 1e9, sMax = -1.0, sSum = 0.0;
-    for (const auto &[sat, tv]: obsData.satTypeValueData) {
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
         const FreqCombo *defp = freqComboFor(sat);
         if (!defp) continue;
         if (!defp->available(tv, true)) continue;
         if (satPVTRecTime.count(sat) == 0) continue;
-        const Variable vamb = makeAmbiguityVar(obsData.station, sat, "IF");
+        const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
         if (!ekf.currentIndexData.count(vamb)) continue;
         const int i = ekf.currentIndexData.at(vamb);
         const double sig = std::sqrt(P(i, i));
@@ -47,14 +47,14 @@ bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
     std::vector<double> lam_n(n), cFac(n); // cFac = f2/(f1−f2)
     for (int k = 0; k < n; ++k) {
         const SatID &sat = sats[k];
-        const TypeValueMap &tv = obsData.satTypeValueData.at(sat);
+        const TypeValueMap &tv = mCurObs->satTypeValueData.at(sat);
         const FreqCombo &def = *freqComboFor(sat);
         const double f1 = def.f1, f2 = def.f2;
         lam_n[k] = def.lambdaN; // 窄巷波长(m)
         cFac[k] = f2 / (f1 - f2);
         const double lam1 = def.lambda1, lam2 = def.lambda2;
         double osbP1 = 0, osbP2 = 0, osbL1 = 0, osbL2 = 0;
-        prod->osb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, obsData.station);
+        prod->osb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, mCurObs->station);
         const double L1m = tv.at(def.phase1), L2m = tv.at(def.phase2);
         const double C1m = tv.at(def.code1), C2m = tv.at(def.code2);
         const double NwInst = def.MW_cycle(C1m, C2m, L1m, L2m, osbP1, osbP2, osbL1, osbL2);
@@ -120,14 +120,14 @@ bool PPPStatic::tryFixAmbiguities(ObsData &obsData) {
     const Eigen::VectorXd xf = x + Km * (z - H * x);
 
     Eigen::Vector3d xyzFixed(
-        xf(ekf.currentIndexData.at(Variable(obsData.station, Parameter::dX))),
-        xf(ekf.currentIndexData.at(Variable(obsData.station, Parameter::dY))),
-        xf(ekf.currentIndexData.at(Variable(obsData.station, Parameter::dZ))));
+        xf(ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dX))),
+        xf(ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dY))),
+        xf(ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dZ))));
     result.xyzFixed = xyzFixed;
     {
-        const int ix = ekf.currentIndexData.at(Variable(obsData.station, Parameter::dX));
-        const int iy = ekf.currentIndexData.at(Variable(obsData.station, Parameter::dY));
-        const int iz = ekf.currentIndexData.at(Variable(obsData.station, Parameter::dZ));
+        const int ix = ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dX));
+        const int iy = ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dY));
+        const int iz = ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dZ));
         const Eigen::MatrixXd Pf = (Eigen::MatrixXd::Identity(Nst, Nst) - Km * H) * P;
         const double vpos = Pf(ix, ix) + Pf(iy, iy) + Pf(iz, iz);
         result.sigmaPFixed = std::sqrt(std::max(vpos, 0.0));

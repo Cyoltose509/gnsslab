@@ -40,7 +40,7 @@ namespace Solvers::LEO {
 
         Task() { mode = Mode::LEO; }
 
-    protected:
+    public:
         std::unique_ptr<::SPP> makeSolver() override;
 
         /// LEO 不估对流层梯度与 ZTD，参数配置里没有这一块。

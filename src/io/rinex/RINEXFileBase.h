@@ -67,7 +67,6 @@ public:
         pushedBack = false;
     }
 
-protected:
     std::fstream *pStream = nullptr;
 
     bool nextLine(std::string &line) const {

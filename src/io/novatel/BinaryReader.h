@@ -14,7 +14,6 @@ public:
 
     void close() override;
 
-protected:
     bool getNextMessage(std::vector<std::uint8_t> &message, bool block) override;
 
 

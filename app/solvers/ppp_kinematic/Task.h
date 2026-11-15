@@ -14,7 +14,7 @@ namespace Solvers::PPPKinematic {
 
         void renderConfigPanel() override;
 
-    protected:
+    public:
         std::unique_ptr<::SPP> makeSolver() override;
     };
 

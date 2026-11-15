@@ -7,8 +7,10 @@
 #include "SolverKalman.h"
 
 class GnssEKF {
+
 public:
-    GnssEKF() : firstTime(true) {
+    GnssEKF() {
+        firstTime = true;
     }
 
     void timeUpdate(const VariableSet &varSet, VariableDataMap *csData = nullptr);
@@ -159,26 +161,10 @@ public:
 
     virtual ~GnssEKF() = default;
 
+
     VariableSet currentUnkSet;
     VariableIntMap currentIndexData;
 
-private:
-    struct VarianceTable {
-        std::array<double, Parameter::count> init;
-        std::array<double, Parameter::count> proc;
-    };
-
-    /// 按当前 σ 配置一次列出全部参数类型的初始方差与过程噪声方差，漏配用哨兵显式失败
-    [[nodiscard]] VarianceTable varianceTables() const;
-
-    std::array<int, 3> posIdx = {-1, -1, -1};
-    std::array<int, 3> velIdx = {-1, -1, -1};
-
-    bool firstTime;
-    bool useTropo = true;
-    double posProcSigma = 0.0;
-
-public:
     // 以下全部为 σ 口径：使用点平方后进 Dx/Dw 阵（原为方差口径，2026-11 统一转 σ）。
     double ambProcSigma = 1.0E-4;
     double ambInitSigma = 10.0;
@@ -197,7 +183,31 @@ public:
     Eigen::MatrixXd Q; // 后验协方差
     Eigen::VectorXd postfitResidual;
 
+    double codeBiasProcSigma = 1.0E-4;
+    double codeBiasInitSigma = 1.0;
+    double isbProcSigma = 0.0;
+    double isbInitSigma = 0.0;
+
+    double gloIfcbProcSigma = 1.0E-4;
+    double gloIfcbInitSigma = 1.0;
+
+    std::array<int, 3> posIdx = {-1, -1, -1};
+    std::array<int, 3> velIdx = {-1, -1, -1};
 private:
+    struct VarianceTable {
+        std::array<double, Parameter::count> init;
+        std::array<double, Parameter::count> proc;
+    };
+
+    /// 按当前 σ 配置一次列出全部参数类型的初始方差与过程噪声方差，漏配用哨兵显式失败
+    [[nodiscard]] VarianceTable varianceTables() const;
+
+
+
+    bool firstTime;
+    bool useTropo = true;
+    double posProcSigma = 0.0;
+
     Eigen::VectorXd Xhat;
     Eigen::MatrixXd Dx;
     VariableSet oldUnkSet;
@@ -210,13 +220,4 @@ private:
     bool hasSaved = false;
 
     std::map<Variable, double> mForceValue;
-
-public:
-    double codeBiasProcSigma = 1.0E-4;
-    double codeBiasInitSigma = 1.0;
-    double isbProcSigma = 0.0;
-    double isbInitSigma = 0.0;
-
-    double gloIfcbProcSigma = 1.0E-4;
-    double gloIfcbInitSigma = 1.0;
 };

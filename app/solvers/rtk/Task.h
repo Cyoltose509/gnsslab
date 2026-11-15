@@ -77,7 +77,7 @@ namespace Solvers::RTK {
             opts.cutoffDeg = RTKConfig{}.cutoffElevRad * RAD_TO_DEG;
         }
 
-    protected:
+    public:
         void readBody() override;
 
         void solveBody() override;

@@ -49,7 +49,7 @@ namespace Solvers::SPP {
 
         ~Task();
 
-    protected:
+    public:
         void solveBody() override;
 
         /// 前向趟：建惰性历元序列与会话，逐历元解算并回填；会话留给倒序趟按索引重放。

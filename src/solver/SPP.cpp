@@ -1,4 +1,5 @@
 #include "SPP.h"
+#include "SolverLSQ.h"
 #include "core/equ/Precision.h"
 #include "core/geom/CoordConvert.h"
 #include "core/obs/FreqCombo.h"
@@ -13,7 +14,6 @@
 #include "i18n/I18n.h"
 #include "core/geom/CoordStruct.h"
 #include "core/obs/Weight.h"
-#include "Velocity.h"
 
 namespace {
     constexpr double kMinValidXyz = 6.0e6;
@@ -22,9 +22,12 @@ namespace {
 }
 
 bool SPP::processEpoch(ObsData &obsData) {
+    mCurObs = &obsData;
     try {
-        preprocess(obsData);
-        solve(obsData);
+        // LSQ 档每历元都从零起滤波，上一历元的滤波状态不能带进来。
+        if (!mUseFilter && mFilterInit) resetFilterState();
+        satRejected.clear();
+        solve();
     } catch (const std::exception &e) {
         LOG_ERROR << I18n::tr("log.spp.solve_error", e.what());
         return false;
@@ -32,27 +35,16 @@ bool SPP::processEpoch(ObsData &obsData) {
     return true;
 }
 
-void SPP::preprocess(ObsData &obsData) {
-    if (!mUseFilter && mFilterInit) resetFilterState();
-    satRejected.clear();
-}
-
-char SPP::clockRefSys(const std::set<char> &active) {
-    if (active.count('G')) return 'G';
-    for (const char s: {'C', 'R', 'E'})
-        if (active.count(s)) return s;
-    return 'G';
-}
-
-void SPP::solve(ObsData &obsData) {
-    result.reset();
-    estimatePosition(obsData);
-    estimateVelocity(obsData);
-}
-
-void SPP::estimatePosition(ObsData &obsData) {
-    if (mFilterInit) updateFilter(obsData);
-    else initFilter(obsData);
+void SPP::publishResult() {
+    // 正常历元的 result 由 runFilter 末尾的 readback 写好，这里只收冻结历元的尾。
+    if (!mFilterFrozen) return;
+    // 冻结：本历元不发布位置，但有初值时按预测位置补一套几何，界面读数与下一历元判据都要用。
+    result.xyz = Eigen::Vector3d::Zero();
+    result.numSats = 0;
+    if (mFilterInit) {
+        xyz = currentEstimatedPosition();
+        computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+    }
 }
 
 void SPP::resetFilterState() {
@@ -61,117 +53,139 @@ void SPP::resetFilterState() {
     mHasLastEpoch = false;
 }
 
-void SPP::initFilter(ObsData &obsData) {
+void SPP::initFilter() {
     ekf.configure(mConfig.posProcSigma, false, 0.0, mConfig.clockProcSigma);
     ekf.accProcSigma = mConfig.accProcSigma;
     ekf.velInitSigma = mConfig.velInitSigma;
     ekf.motionDt = 0.0;
     ekf.isbProcSigma = mConfig.isbProcSigma;
     ekf.isbInitSigma = mConfig.isbInitSigma;
-    runFilter(obsData);
+    runFilter();
 }
 
-void SPP::updateFilter(ObsData &obsData) {
-    const double gap = mHasLastEpoch ? std::fabs(obsData.epoch - mLastEpoch) : 0.0;
+void SPP::updateFilter() {
+    const double gap = mHasLastEpoch ? std::fabs(mCurObs->epoch - mLastEpochTime) : 0.0;
     ekf.motionDt = gap > 0.0 && gap <= kMaxPredictGap ? gap : 0.0;
-    runFilter(obsData);
+    runFilter();
 }
 
-bool SPP::wantCommonClock() const {
-    if (mConfig.isbInitSigma <= 0.0) return false;
-    for (const char sys: activeSystems)
-        if (!sysCdtParam.count(sys)) return false;
-    return activeSystems.size() >= 2;
+void SPP::prepareGeometry() {
+    computeSatPos();
+    earthRotation(satPVTRecTime, xyz);
+    computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
 }
 
-void SPP::remapClockParams(const char ref) {
-    mCdtParam = sysCdtParam;
-    if (ref != 'G') {
-        mCdtParam[ref] = Parameter::cdt;
+void SPP::selectClockModel(const std::set<char> &active) {
+    mCommonClockActive = mConfig.isbInitSigma > 0.0 && !mKinematic && active.size() >= 2;
+    mClockRefSys = 'G';
+    if (!active.count('G'))
+        for (const char sys: {'C', 'R', 'E'})
+            if (active.count(sys)) {
+                mClockRefSys = sys;
+                break;
+            }
+    mCdtParam = sysCdtParams;
+    // 只有共钟参数化才需要把参考系统搬进 cdt1：独立钟时各系统槽位与参考无关。
+    if (mCommonClockActive && mClockRefSys != 'G') {
+        mCdtParam[mClockRefSys] = Parameter::cdt1;
         mCdtParam.erase('G');
     }
 }
 
-void SPP::toCommonClockEquations(const ObsData &obsData) {
-    const Variable vref(obsData.station, Parameter::cdt);
-    std::set<char> isbSys;
-    for (auto &[eid, ed]: posEquations.obsEquData) {
-        const auto it = sysCdtParam.find(eid.sat.system);
-        if (it == sysCdtParam.end()) continue;
-        const Variable vslot(obsData.station, it->second);
-        if (!ed.varCoeffData.count(vslot)) continue;
-        ed.varCoeffData.erase(vslot);
-        ed.varCoeffData[vref] = 1.0;
-        if (eid.sat.system != mClockRefSys) {
-            ed.varCoeffData[vslot] = 1.0;
-            isbSys.insert(eid.sat.system);
-        }
+void SPP::addClockTerms(EquData &ed, const SatID &sat) const {
+    const std::string st(curEq.station);
+    if (mCommonClockActive) {
+        ed.varCoeffData[Variable(st, Parameter::cdt1)] = 1.0;
+        if (const Parameter isbPar = mCdtParam.at(sat.system); isbPar != Parameter::cdt1)
+            ed.varCoeffData[Variable(st, isbPar)] = 1.0;
+    } else {
+        ed.varCoeffData[Variable(st, mCdtParam.at(sat.system))] = 1.0;
     }
-    for (auto it = posEquations.obsEquData.begin(); it != posEquations.obsEquData.end();)
-        it = it->first.sat.system == 'I' ? posEquations.obsEquData.erase(it) : std::next(it);
-    for (auto it = posEquations.varSet.begin(); it != posEquations.varSet.end();)
-        it = it->par.isClock() ? posEquations.varSet.erase(it) : std::next(it);
-    posEquations.varSet.insert(vref);
-    for (const char sys: isbSys) posEquations.varSet.insert(Variable(obsData.station, mCdtParam.at(sys)));
 }
 
-void SPP::bootstrapSolution(ObsData &obsData) {
+void SPP::bootstrapSolution() {
     lastWStats.clear();
+    SolverLSQ lsq;
     const bool isbAnyOn = mConfig.isbInitSigma > 0.0;
     if (isbAnyOn) {
         rClockBias = mPrevClockBias;
     } else {
         rClockBias.clear();
     }
-    xyz = obsData.antennaPosition;
+    xyz = mCurObs->antennaPosition;
 
-    detectIFCombinations(obsData);
+    detectIFCombinations();
+    selectClockModel(activeSystems);
 
     // 观测源没给近似坐标
     // 先用上一历元解，首历元再按卫星方向估一个量级正确的初值
     if (xyz.norm() < kMinValidXyz) xyz = mLastXyz;
     if (xyz.norm() < kMinValidXyz) {
-        computeSatPos(obsData);
-        xyz = roughInitialXyz(obsData);
+        computeSatPos();
+        xyz = estimateRoughPosition();
     }
 
     int iter(0);
     while (iter < mConfig.maxIter) {
-        computeSatPos(obsData);
-        earthRotation();
-
-        if (obsData.satTypeValueData.size() < 4) {
+        prepareGeometry();
+        if (mCurObs->satTypeValueData.size() < 4) {
             throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
                                  + std::to_string(satPVTRecTime.size()) + ")");
         }
-        satElevData.clear();
-        satAzimData.clear();
-        computeElevAzim();
 
-        linearize(obsData, iter);
+        // 迭代两轮后，按上一轮 LSQ 的 Baarda w 剔掉最差的一颗星（每历元最多一颗）
+        if (iter >= 2) {
+            SatID worstSat;
+            double worstW = 0.0;
+            for (const auto &[sat, codeList]: mCurObs->satTypeValueData) {
+                const auto itW = lastWStats.find(sat);
+                if (satRejected.count(sat) || itW == lastWStats.end() || itW->second <= worstW) continue;
+                worstW = itW->second;
+                worstSat = sat;
+            }
+            if (worstW > W_THRESHOLD) satRejected.insert(worstSat);
+        }
+        buildEquSys();
 
-        if (posEquations.obsEquData.size() < 4) {
+        if (curEq.obsEquData.size() < 4) {
             throw SVNumException("num of satellites after elevation cut is less than 4");
         }
 
-        posSolver.solve(posEquations, posEquations.weightVector().asDiagonal().toDenseMatrix());
+        lsq.solve(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
 
         const Eigen::Vector3d dxyz = {
-            posSolver.getSolution(Parameter::dX),
-            posSolver.getSolution(Parameter::dY),
-            posSolver.getSolution(Parameter::dZ)
+            lsq.getSolution(Parameter::dX),
+            lsq.getSolution(Parameter::dY),
+            lsq.getSolution(Parameter::dZ)
         };
         xyz += dxyz;
-        for (char sys: activeSystems) {
-            if (auto it = sysCdtParam.find(sys); it != sysCdtParam.end())
-                rClockBias[sys] += posSolver.getSolution(it->second);
+        // 钟改正按本历元参数化累加：共钟时系统钟 = 公共钟 + 自身 ISB。
+        for (const char sys: activeSystems) {
+            if (mCommonClockActive) {
+                const double dref = lsq.getSolution(Parameter::cdt1);
+                rClockBias[sys] += sys == mClockRefSys ? dref : dref + lsq.getSolution(mCdtParam.at(sys));
+            } else {
+                rClockBias[sys] += lsq.getSolution(mCdtParam.at(sys));
+            }
         }
 
         if (iter >= mConfig.minCheckIter && dxyz.norm() < mConfig.convEps) {
             break;
         }
 
-        buildResidualMap();
+        // 按本次解的残差算 w-test 统计量，下一轮迭代（iter>=2）据此剔掉最差的一颗星。
+        lastWStats.clear();
+        if (lsq.sigma0 > 0.0) {
+            int iobs = 0;
+            for (const auto &[eid, data]: curEq.obsEquData) {
+                if (iobs >= lsq.v.size()) break;
+                const double invW = data.weight > 0.0 ? 1.0 / data.weight : 0.0;
+                const auto hRow = lsq.H.row(iobs);
+                if (const double qvv = invW - (hRow * lsq.Q * hRow.transpose())(0, 0); qvv > 0.0)
+                    lastWStats[eid.sat] = std::abs(lsq.v[iobs]) / (lsq.sigma0 * std::sqrt(qvv));
+                ++iobs;
+            }
+        }
         iter++;
     }
 
@@ -184,26 +198,29 @@ void SPP::bootstrapSolution(ObsData &obsData) {
     if (xyz.norm() > kMinValidXyz) mLastXyz = xyz; // 供下一历元当初值
 }
 
-void SPP::estimateVelocity(const ObsData &obsData) {
-    if (xyz.norm() < kMinValidXyz) return;
-    const double a = mConfig.codeSigma / std::sqrt(2.0);
-    const Weight w(a, a, mConfig.sinElevFloor());
-    const Velocity::DopplerResult v = estimateVelocityByDoppler(obsData, satPVTRecTime, satElevData, xyz, w);
-    if (!v.ok) return;
+SPP::DopplerResult SPP::estimateVelocity() {
+    if (xyz.norm() < kMinValidXyz) return {};
+    const DopplerResult v = GnssSolver::estimateVelocity();
+    if (!v.ok || !mUseFilter || !mFilterInit) return v;
 
-    if (!mUseFilter || !mFilterInit) return;
     ekf.updateVelocity(v.vel, v.sigma);
     Eigen::Vector3d velPost = Eigen::Vector3d::Zero(), sigmaVelPost = Eigen::Vector3d::Zero();
-    if (!ekf.posteriorVelocity(obsData.station, velPost, sigmaVelPost)) return;
+    if (!ekf.posteriorVelocity(mCurObs->station, velPost, sigmaVelPost)) return v;
     result.vel = velPost;
     result.sigmaVel = sigmaVelPost;
     result.sigmaV = sigmaVelPost.norm();
-    if (!ekf.velocityCoupled) return;
+    if (!ekf.velocityCoupled) return v;
     xyz = currentEstimatedPosition();
     if (xyz.norm() > kMinValidXyz) mLastXyz = xyz;
     result.xyz = xyz;
     result.xyzFloat = xyz;
     result.blh = Coord::XYZToBLH(xyz, frame);
+    return v;
+}
+
+Weight SPP::dopplerWeight() const {
+    const double a = mConfig.codeSigma / std::sqrt(2.0);
+    return Weight(a, a, mConfig.sinElevFloor());
 }
 
 bool SPP::wantDopplerSat(const SatID &sat, const TypeValueMap &tv) const {
@@ -222,7 +239,7 @@ bool SPP::wantDopplerSat(const SatID &sat, const TypeValueMap &tv) const {
 ///    [2] 谢钢. GPS 原理与接收机设计. 第 5 章「首历元初值」法之二
 ///    与 [1][2] 的差别：此处先单位化再平均，避免北斗 GEO/MEO 混布时高轨星权重偏大。
 /// ② 再用 IF 伪距做两轮等权 Gauss-Newton（钟差当未知、不估 ISB）。
-Eigen::Vector3d SPP::roughInitialXyz(const ObsData &obsData) const {
+Eigen::Vector3d SPP::estimateRoughPosition() const {
     Eigen::Vector3d mean = Eigen::Vector3d::Zero();
     for (const auto &[sat, pvt]: satPVTTransTime) {
         if (pvt.p.norm() > 1.0) mean += pvt.p.normalized();
@@ -238,8 +255,8 @@ Eigen::Vector3d SPP::roughInitialXyz(const ObsData &obsData) const {
         for (const auto &[sat, pvt]: satPVTTransTime) {
             const FreqCombo *def = freqComboFor(sat);
             if (!def) continue;
-            const auto it = obsData.satTypeValueData.find(sat);
-            if (it == obsData.satTypeValueData.end()) continue;
+            const auto it = mCurObs->satTypeValueData.find(sat);
+            if (it == mCurObs->satTypeValueData.end()) continue;
             const TypeValueMap &tv = it->second;
             if (!tv.count(def->code1) || !tv.count(def->code2)) continue;
             const double rho = (pvt.p - x).norm();
@@ -261,60 +278,46 @@ Eigen::Vector3d SPP::roughInitialXyz(const ObsData &obsData) const {
     return x;
 }
 
-void SPP::runFilter(ObsData &obsData) {
-    mCommonClockActive = wantCommonClock();
-    if (mCommonClockActive) mClockRefSys = clockRefSys(activeSystems);
+void SPP::runFilter() {
     const bool boot = !mFilterInit;
     if (boot) {
-        // 引导只要一个收敛的线性化点，不走档位钩子（LSQ 档本身就是这次引导）。
-        bootstrapSolution(obsData);
+        bootstrapSolution();
         if (xyz.norm() < kMinValidXyz) return;
-        mCommonClockActive = wantCommonClock();
-        if (mCommonClockActive) {
-            mClockRefSys = clockRefSys(activeSystems);
-            remapClockParams(mClockRefSys);
-        }
+        selectClockModel(activeSystems);
     } else {
         xyz = currentEstimatedPosition();
         lastWStats.clear();
-        detectIFCombinations(obsData);
+        detectIFCombinations();
         // 按上一历元的参数化读回系统钟：公共钟 = 参考钟 + ISB，独立钟 = 各自槽位。
         if (mCommonClockActive) {
-            const double refClk = ekf.getSolution(Variable(obsData.station, Parameter::cdt));
-            for (const auto &[sys, par]: sysCdtParam)
-                rClockBias[sys] = sys == mClockRefSys
-                                      ? refClk
-                                      : refClk + ekf.getSolution(Variable(obsData.station, par));
+            const double refClk = ekf.getSolution(Variable(mCurObs->station, Parameter::cdt1));
+            for (const auto &[sys, par]: mCdtParam)
+                rClockBias[sys] = sys == mClockRefSys ? refClk : refClk + ekf.getSolution(Variable(mCurObs->station, par));
         } else {
-            for (const auto &[sys, par]: sysCdtParam)
-                rClockBias[sys] = ekf.getSolution(Variable(obsData.station, par));
+            for (const auto &[sys, par]: mCdtParam)
+                rClockBias[sys] = ekf.getSolution(Variable(mCurObs->station, par));
         }
+        // 读回用的是上一历元参数化，本历元参数化在系统集确定后重算。
+        selectClockModel(activeSystems);
     }
     mPrevClockBias = rClockBias;
 
-    computeSatPos(obsData);
-    earthRotation();
-    if (obsData.satTypeValueData.size() < 4) {
+    prepareGeometry();
+    if (mCurObs->satTypeValueData.size() < 4) {
         throw SVNumException("num of satellites with valid ephemeris is less than 4 ("
                              + std::to_string(satPVTRecTime.size()) + ")");
     }
-    satElevData.clear();
-    satAzimData.clear();
-    computeElevAzim();
-    linearize(obsData, 0);
-    if (posEquations.obsEquData.size() < 4) {
+    buildEquSys();
+    if (curEq.obsEquData.size() < 4) {
         throw SVNumException("num of satellites after elevation cut is less than 4");
     }
 
-    if (mCommonClockActive) toCommonClockEquations(obsData);
-    // 速度三态：常速度预测需要；观测方程里没有它的系数（H 对应列恒 0），只由多普勒量测更新。
-    // LSQ 档每历元都从引导重来、不走多普勒量测，速度态只会白占状态维数，不插。
     if (mUseFilter && mConfig.accProcSigma > 0.0) {
-        posEquations.varSet.insert(Variable(obsData.station, Parameter::dVX));
-        posEquations.varSet.insert(Variable(obsData.station, Parameter::dVY));
-        posEquations.varSet.insert(Variable(obsData.station, Parameter::dVZ));
+        curEq.varSet.insert(Variable(mCurObs->station, Parameter::dVX));
+        curEq.varSet.insert(Variable(mCurObs->station, Parameter::dVY));
+        curEq.varSet.insert(Variable(mCurObs->station, Parameter::dVZ));
     }
-    ekf.timeUpdate(posEquations.varSet, nullptr);
+    ekf.timeUpdate(curEq.varSet, nullptr);
     if (boot) {
         // 状态存绝对 ECEF 坐标与绝对钟差，与 PPP 同口径。
         ekf.setBootstrapPosition(xyz, Eigen::Vector3d(10.0 * 10.0, 10.0 * 10.0, 10.0 * 10.0)); // σ=10 m
@@ -324,23 +327,20 @@ void SPP::runFilter(ObsData &obsData) {
             const double refClk = rClockBias.count(mClockRefSys) ? rClockBias.at(mClockRefSys) : 0.0;
             for (const auto &[sys, par]: mCdtParam)
                 if (activeSystems.count(sys))
-                    clk[Variable(obsData.station, par)] =
+                    clk[Variable(mCurObs->station, par)] =
                             sys == mClockRefSys ? refClk : rClockBias[sys] - refClk;
         } else {
-            for (const char sys: activeSystems) {
-                if (const auto it = sysCdtParam.find(sys); it != sysCdtParam.end())
-                    clk[Variable(obsData.station, it->second)] = rClockBias[sys];
-            }
+            for (const char sys: activeSystems)
+                if (const auto it = mCdtParam.find(sys); it != mCdtParam.end())
+                    clk[Variable(mCurObs->station, it->second)] = rClockBias[sys];
         }
         ekf.setBootstrapStates(clk);
     }
-    ekf.measUpdate(posEquations);
+    ekf.measUpdate(curEq);
     xyz = currentEstimatedPosition();
     if (xyz.norm() > kMinValidXyz) mLastXyz = xyz;
     mFilterInit = true;
-    readbackFiltered(obsData);
-    mLastEpoch = obsData.epoch;
-    mHasLastEpoch = true;
+    readback();
 }
 
 Eigen::Vector3d SPP::currentEstimatedPosition() const {
@@ -351,14 +351,14 @@ Eigen::Vector3d SPP::currentEstimatedPosition() const {
     };
 }
 
-void SPP::readbackFiltered([[maybe_unused]] const ObsData &obsData) {
-    const Eigen::Matrix3d Q = SPP::posCovariance();
+void SPP::readback() {
+    const Eigen::Matrix3d Q = posCovariance();
     // 速度三态不进位置观测方程，算自由度时要扣掉，否则 sigma0 被系统性低估。
     const int velStates = mUseFilter && mConfig.accProcSigma > 0.0 ? 3 : 0;
-    sigma0 = posteriorSigma0(ekf.postfitResidual, posEquations.weightVector(),
+    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
                              static_cast<int>(ekf.currentUnkSet.size()) - velStates);
     result.blh = Coord::XYZToBLH(xyz, frame);
-    geometryDOPs(result, posEquations, result.blh);
+    geometryDOPs(result, curEq, result.blh);
     result.sigmaP = positionSigma(Q, sigma0);
     result.sigmaXYZ = {
         std::sqrt(std::max(Q(0, 0), 0.0)),
@@ -370,64 +370,10 @@ void SPP::readbackFiltered([[maybe_unused]] const ObsData &obsData) {
     result.numSats = static_cast<int>(satPVTRecTime.size());
 
     int iobs = 0;
-    for (const auto &[id, data]: posEquations.obsEquData) {
+    for (const auto &[id, data]: curEq.obsEquData) {
         if (iobs >= ekf.postfitResidual.size()) break;
         result.postRes.set(id.sat, ekf.postfitResidual(iobs++));
     }
-}
-
-Eigen::Matrix3d SPP::positionCovBlock(const Eigen::MatrixXd &P, const int id[3]) {
-    Eigen::Matrix3d Q = Eigen::Matrix3d::Identity() * 1.0e12;
-    if (id[0] < 0 || id[1] < 0 || id[2] < 0 || P.rows() <= id[2]) return Q;
-    for (int a = 0; a < 3; ++a)
-        for (int b = 0; b < 3; ++b) Q(a, b) = P(id[a], id[b]);
-    return Q;
-}
-
-Eigen::Matrix3d SPP::posCovariance() const {
-    // 有 EKF 后验就用它（LSQ 档每历元引导后同样有），否则回落到 LSQ 协因数阵。
-    if (ekf.Q.rows() > 0 && !ekf.currentUnkSet.empty()) {
-        int id[3] = {-1, -1, -1};
-        int i = 0;
-        for (const auto &v: ekf.currentUnkSet) {
-            if (const auto pt = v.par; pt == Parameter::dX) id[0] = i;
-            else if (pt == Parameter::dY) id[1] = i;
-            else if (pt == Parameter::dZ) id[2] = i;
-            ++i;
-        }
-        if (id[0] >= 0 && id[1] >= 0 && id[2] >= 0)
-            return positionCovBlock(ekf.Q, id);
-    }
-    if (posSolver.Q.rows() < 3) return Eigen::Matrix3d::Identity() * 1.0e12;
-    const double s2 = posSolver.sigma0 > 0.0 ? posSolver.sigma0 * posSolver.sigma0 : 1.0;
-    return posSolver.Q.topLeftCorner(3, 3) * s2;
-}
-
-void SPP::buildResidualMap() {
-    lastWStats.clear();
-
-    const auto &Ninv = posSolver.Q; // N⁻¹ (order 5×5)
-    const double s0 = posSolver.sigma0;
-    if (s0 <= 0.0) return;
-    int i = 0;
-    for (const auto &[eid, data]: posEquations.obsEquData) {
-        if (i >= posSolver.v.size()) break;
-        const double v = posSolver.v[i];
-        const double w = data.weight;
-        const double invW = w > 0.0 ? 1.0 / w : 0.0;
-        const auto hRow = posSolver.H.row(i);
-        if (const double qvv = invW - (hRow * Ninv * hRow.transpose())(0, 0); qvv > 0.0) {
-            const double wStat = std::abs(v) / (s0 * std::sqrt(qvv));
-            lastWStats[eid.sat] = wStat;
-        }
-
-        ++i;
-    }
-}
-
-void SPP::updateTropoSite(const Eigen::Vector3d &xyzEcef, const CommonTime &epoch) {
-    mTropoSite.update(prod->tropo, mConfig.tropoMap, xyzEcef, epoch, frame);
-    if (!(mTropoSite.hgt > 0.0)) mTropoSite = TropoSite{};
 }
 
 double SPP::tropoDelay(const double elevRad) const {
@@ -439,156 +385,121 @@ double SPP::tropoDelay(const double elevRad) const {
     return tropo;
 }
 
-void SPP::linearize(ObsData &obsData, const int iter) {
-    SatID outlierSat;
-    double worstW = 0.0;
-    if (iter >= 2) {
-        for (auto const &[sat, codeList]: obsData.satTypeValueData) {
-            if (satRejected.count(sat)) continue;
-            if (auto itW = lastWStats.find(sat);
-                itW != lastWStats.end() && itW->second > worstW) {
-                worstW = itW->second;
-                outlierSat = sat;
-            }
-        }
-    }
-    const bool rejectOutlier = worstW > W_THRESHOLD;
-
+void SPP::buildEquSys() {
     if (!mWeightInit) {
         const double a = mConfig.codeSigma / std::sqrt(2.0);
         mWeight = Weight(a, a, mConfig.sinElevFloor());
         mWeightInit = true;
     }
 
-    posEquations.reset();
-    posEquations.station = obsData.station;
+    curEq.reset();
+    curEq.station = mCurObs->station;
 
-    const Variable dx(obsData.station, Parameter::dX);
-    const Variable dy(obsData.station, Parameter::dY);
-    const Variable dz(obsData.station, Parameter::dZ);
-    std::map<char, Variable> cdtVars;
-    for (auto &[sys, param]: sysCdtParam)
-        cdtVars.try_emplace(sys, obsData.station, param);
+    const Variable dx(mCurObs->station, Parameter::dX);
+    const Variable dy(mCurObs->station, Parameter::dY);
+    const Variable dz(mCurObs->station, Parameter::dZ);
 
-    updateTropoSite(xyz, obsData.epoch);
+    mTropoSite.update(prod->tropo, mConfig.tropoMap, xyz, mCurObs->epoch, frame);
+    if (!(mTropoSite.hgt > 0.0)) mTropoSite = TropoSite{};
 
     activeSystems.clear();
-    int nRejPVT = 0, nRejElev = 0, nRejIF = 0, nPass = 0;
 
-    for (auto const &[sat, codeList]: obsData.satTypeValueData) {
+    for (auto const &[sat, codeList]: mCurObs->satTypeValueData) {
         const FreqCombo *defp = freqComboFor(sat);
         if (!defp) continue;
 
-        if (satRejected.count(sat)) {
-            continue;
-        }
+        if (satRejected.count(sat)) continue;
 
         if (!satPVTRecTime.count(sat)) {
             satRejected.insert(sat);
-            nRejPVT++;
             continue;
         }
-        const auto &pvt = satPVTRecTime.at(sat);
 
-        // Baarda w 检验
-        if (rejectOutlier && sat == outlierSat) {
+        // 近似坐标还没立住时不筛星，否则首历元的截止角判据会把星筛到 0 颗。
+        if (const double elev = satElevData.at(sat);
+            xyz.norm() > 1000.0 && elev < mConfig.cutoffElevRad) {
             satRejected.insert(sat);
             continue;
         }
 
-        // 高度角
-        const double elev = satElevData.at(sat);
-        if (xyz.norm() > 1000.0 && elev < mConfig.cutoffElevRad) {
+        if (!codeList.count(defp->code1) || !codeList.count(defp->code2)) {
             satRejected.insert(sat);
-            nRejElev++;
             continue;
         }
 
-        const FreqCombo &def = *defp;
-        if (!codeList.count(def.code1) || !codeList.count(def.code2)) {
-            satRejected.insert(sat);
-            nRejIF++;
-            continue;
-        }
-        const double obsVal = def.combineCodeFromObs(codeList);
-
-        // ---- 共享几何量 ----
-        double rho = (pvt.p - xyz).norm();
-        if (rho < 1.0) rho = 20000000.0;
-
-        const Eigen::Vector3d los = {
-            -(pvt.p[0] - xyz[0]) / rho,
-            -(pvt.p[1] - xyz[1]) / rho,
-            -(pvt.p[2] - xyz[2]) / rho
-        };
-
-        const double trop = tropoDelay(elev);
-
-        double weight = mWeight.weight(elev);
-
-        // ---- 逐卫星构建方程 ----
-        buildPosEquation(sat, pvt, los, rho, trop,
-                         def.code1 + "+" + def.code2, obsVal, weight, dx, dy, dz, cdtVars[sat.system]);
-
+        addSatEquation(sat, codeList, false);
         activeSystems.insert(sat.system);
-        nPass++;
     }
-    posEquations.varSet.insert(dx);
-    posEquations.varSet.insert(dy);
-    posEquations.varSet.insert(dz);
-    for (char sys: activeSystems) {
-        if (auto it = cdtVars.find(sys); it != cdtVars.end())
-            posEquations.varSet.insert(it->second);
+    curEq.varSet.insert(dx);
+    curEq.varSet.insert(dy);
+    curEq.varSet.insert(dz);
+    collectClockStates(curEq);
+}
+
+void SPP::collectClockStates(EquSys &eq) {
+    if (mCommonClockActive) {
+        // 共钟：公共钟固定占 cdt1，非参考系统各留一个 ISB 槽（参考系统自己就是 cdt1）。
+        eq.varSet.insert(Variable(mCurObs->station, Parameter::cdt1));
+        for (const char sys: activeSystems)
+            if (const Parameter isbPar = mCdtParam.at(sys); isbPar != Parameter::cdt1)
+                eq.varSet.insert(Variable(mCurObs->station, isbPar));
+        return;
     }
-    if (mConfig.isbInitSigma > 0.0 && activeSystems.size() >= 2) {
-        const char ref = clockRefSys(activeSystems);
-        for (char sys: activeSystems) {
-            if (sys == ref) continue;
-            if (!mPrevClockBias.count(sys) || !mPrevClockBias.count(ref)) continue;
-            const double prevIsb = mPrevClockBias.at(sys) - mPrevClockBias.at(ref);
-            const Variable &vclk = cdtVars.at(sys);
-            const Variable &vref = cdtVars.at(ref);
-            EquData ed;
-            ed.prefit = prevIsb - (rClockBias[sys] - rClockBias[ref]);
-            ed.varCoeffData[vclk] = 1.0;
-            ed.varCoeffData[vref] = -1.0;
-            const double var = mConfig.isbInitSigma * mConfig.isbInitSigma
-                               + mConfig.isbProcSigma * mConfig.isbProcSigma;
-            ed.weight = 1.0 / var;
-            posEquations.obsEquData[EquID(SatID('I', 0), "ISB_" + std::string(1, sys))] = ed;
-        }
+    for (const char sys: activeSystems)
+        eq.varSet.insert(Variable(mCurObs->station, mCdtParam.at(sys)));
+    // 独立钟：系统间差异在方程内没有约束，用「ISB 相对上一历元不变」的伪观测锚住随机游走。
+    if (!(mConfig.isbInitSigma > 0.0) || activeSystems.size() < 2) return;
+    for (const char sys: activeSystems) {
+        if (sys == mClockRefSys) continue;
+        if (!mPrevClockBias.count(sys) || !mPrevClockBias.count(mClockRefSys)) continue;
+        const double prevIsb = mPrevClockBias.at(sys) - mPrevClockBias.at(mClockRefSys);
+        EquData ed;
+        ed.prefit = prevIsb - (rClockBias[sys] - rClockBias[mClockRefSys]);
+        ed.varCoeffData[Variable(mCurObs->station, mCdtParam.at(sys))] = 1.0;
+        ed.varCoeffData[Variable(mCurObs->station, mCdtParam.at(mClockRefSys))] = -1.0;
+        const double var = mConfig.isbInitSigma * mConfig.isbInitSigma
+                           + mConfig.isbProcSigma * mConfig.isbProcSigma;
+        ed.weight = 1.0 / var;
+        eq.obsEquData[EquID(SatID('I', 0), "ISB_" + std::string(1, sys))] = ed;
     }
 }
 
 
-void SPP::buildPosEquation(const SatID &sat, const PVT &pvt, const Eigen::Vector3d &los,
-                           const double rho, const double trop,
-                           const std::string &obsType, const double obsVal, const double weight,
-                           const Variable &dx, const Variable &dy, const Variable &dz,
-                           const Variable &cdtVar) {
+void SPP::addSatEquation(const SatID &sat, const TypeValueMap &tv, bool) {
+    const FreqCombo &def = *freqComboFor(sat);
+    const PVT &pvt = satPVTRecTime.at(sat);
+    const double elev = satElevData.at(sat);
+
+    double rho = (pvt.p - xyz).norm();
+    if (rho < 1.0) rho = 20000000.0;
+    const Eigen::Vector3d los = {
+        -(pvt.p[0] - xyz[0]) / rho,
+        -(pvt.p[1] - xyz[1]) / rho,
+        -(pvt.p[2] - xyz[2]) / rho
+    };
+
     const double dts = pvt.clockBias * C_MPS;
     const double rel = pvt.relativityCorrection * C_MPS;
 
-    const EquID eid(sat, obsType);
     EquData ed;
-    ed.prefit = obsVal - (rho + rClockBias[sat.system] - dts - rel + trop);
+    ed.prefit = def.combineCodeFromObs(tv) - (rho + rClockBias[sat.system] - dts - rel + tropoDelay(elev));
 
-    ed.varCoeffData[dx] = los[0];
-    ed.varCoeffData[dy] = los[1];
-    ed.varCoeffData[dz] = los[2];
-    ed.varCoeffData[cdtVar] = 1.0;
+    ed.varCoeffData[Variable(mCurObs->station, Parameter::dX)] = los[0];
+    ed.varCoeffData[Variable(mCurObs->station, Parameter::dY)] = los[1];
+    ed.varCoeffData[Variable(mCurObs->station, Parameter::dZ)] = los[2];
+    addClockTerms(ed, sat);
 
-    ed.weight = weight;
-    posEquations.obsEquData[eid] = ed;
+    ed.weight = mWeight.weight(elev);
+    curEq.obsEquData[EquID(sat, def.code1 + "+" + def.code2)] = ed;
 }
 
-void SPP::computeSatPos(ObsData &obsData) {
+void SPP::computeSatPos() {
     satPVTTransTime.clear();
-    for (auto const &[sat, codeList]: obsData.satTypeValueData) {
+    for (auto const &[sat, codeList]: mCurObs->satTypeValueData) {
         const FreqCombo *defp = freqComboFor(sat);
         if (!defp) continue;
 
-        Ephemeris *eph = prod->eph.find(sat, obsData.epoch);
+        Ephemeris *eph = prod->eph.find(sat, mCurObs->epoch);
         if (!eph) continue;
         if (ephUnhealthy(sat, eph, mConfig.useHealth)) continue; // 广播电文自报不可用
 
@@ -597,16 +508,16 @@ void SPP::computeSatPos(ObsData &obsData) {
         const double obsVal = def.combineCodeFromObs(codeList);
 
         const double tau_total = (obsVal - rClockBias[sat.system]) / C_MPS;
-        CommonTime t_emit = obsData.epoch;
+        CommonTime t_emit = mCurObs->epoch;
         t_emit.m_sod -= tau_total;
 
         satPVTTransTime[sat] = eph->getPVT(t_emit, &def);
     }
 }
 
-void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaultTypes) {
+void SPP::detectIFCombinations(const IFCodeTypes &defaultTypes) {
     std::map<char, std::string> sig;
-    for (const auto &[sat, tv]: obsData.satTypeValueData) {
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
         if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sat.system)) continue;
         std::string &s = sig[sat.system];
         for (const auto &[code, v]: tv) {
@@ -619,19 +530,19 @@ void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaul
     ifCodeSig = std::move(sig);
 
     std::set<char> sysList;
-    for (const auto &[sat, tv]: obsData.satTypeValueData) sysList.insert(sat.system);
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) sysList.insert(sat.system);
 
     IFCodeTypes detected;
     mGloCombo.clear();
     for (char sys: sysList) {
         if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sys)) continue;
         if (sys == 'R') {
-            for (const auto &[sat, tv]: obsData.satTypeValueData) {
+            for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
                 if (sat.system != 'R') continue;
                 if (FreqCombo def = FreqCombo::detect('R', tv, sat.chan, mRequirePhaseForIF); !def.code1.empty() && !def.code2.empty())
                     mGloCombo[sat] = def;
             }
-        } else if (FreqCombo def = FreqCombo::detect(sys, obsData, mRequirePhaseForIF);
+        } else if (FreqCombo def = FreqCombo::detect(sys, *mCurObs, mRequirePhaseForIF);
             !def.code1.empty() && !def.code2.empty()) {
             detected[sys] = def;
         }
@@ -641,25 +552,13 @@ void SPP::detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaul
                          ? I18n::trc("log.spp.no_if")
                          : I18n::trc("log.spp.no_if_fallback"));
         ifCodeTypes = defaultTypes;
-        return;
+    } else {
+        ifCodeTypes = std::move(detected);
     }
-    ifCodeTypes = std::move(detected);
-}
 
-void SPP::earthRotation() {
-    satPVTRecTime.clear();
-    for (auto const &[sat, pvt]: satPVTTransTime) {
-        satPVTRecTime[sat] = Coord::earthRotationCorrected(pvt, xyz);
-    }
-}
-
-void SPP::computeElevAzim() {
-    for (auto const &[sat, pvt]: satPVTRecTime) {
-        const double e = Coord::elevation(xyz, pvt.p, frame);
-        const double a = Coord::azimuth(xyz, pvt.p, frame);
-        satElevData[sat] = e;
-        satAzimData[sat] = a;
-    }
+    activeSystems.clear();
+    for (const auto &[sys, def]: ifCodeTypes) activeSystems.insert(sys);
+    for (const auto &[sat, def]: mGloCombo) activeSystems.insert(sat.system);
 }
 
 void SPP::applyOptions(const SolverOptions &o) {

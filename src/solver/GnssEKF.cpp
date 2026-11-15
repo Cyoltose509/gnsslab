@@ -149,7 +149,7 @@ GnssEKF::VarianceTable GnssEKF::varianceTables() const {
     put(Parameter::dVX, velInitVar, 0.0);
     put(Parameter::dVY, velInitVar, 0.0);
     put(Parameter::dVZ, velInitVar, 0.0);
-    put(Parameter::cdt, clockInitVar, clockProcVar);
+    put(Parameter::cdt1, clockInitVar, clockProcVar);
     put(Parameter::cdt2, isbOn ? isbInitVar : clockInitVar, isbOn ? isbProcVar : clockProcVar);
     put(Parameter::cdt3, isbOn ? isbInitVar : clockInitVar, isbOn ? isbProcVar : clockProcVar);
     put(Parameter::cdt4, isbOn ? isbInitVar : clockInitVar, isbOn ? isbProcVar : clockProcVar);

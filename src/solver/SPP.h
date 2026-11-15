@@ -2,9 +2,7 @@
 
 #include "core/equ/EquStruct.h"
 #include "core/obs/ObsStruct.h"
-#include "core/equ/Result.h"
 #include "core/SatID.h"
-#include "SolverLSQ.h"
 #include "GnssSolver.h"
 #include "core/geom/Ephemeris.h"
 #include "core/geom/EphemerisTable.h"
@@ -13,25 +11,31 @@
 #include "SPPConfig.h"
 #include "SolverOptions.h"
 #include "TropoSite.h"
-#include "GnssEKF.h"
 #include "Products.h"
-#include <Eigen/Eigen>
 #include <memory>
 #include <set>
 
 
 using IFCodeTypes = std::map<char, FreqCombo>;
 
-class SPP : public GnssSolver {
-protected:
-    SPPConfig mConfig;
-    Weight mWeight;
-    bool mWeightInit = false;
 
+class SPP : public GnssSolver {
 public:
+    ~SPP() override = default;
+
+    void applyOptions(const SolverOptions &o) override;
+
+    virtual bool processEpoch(ObsData &obsData);
+
+    /// 发射时刻的广播星历卫星状态；PPP 用精密产品取代它
+    virtual void computeSatPos();
+
+    void prepareGeometry() override;
+
     [[nodiscard]] bool tropoGridReady() const { return prod->tropo.readyFor(mConfig.tropoMap); }
 
-    void detectIFCombinations(const ObsData &obsData, const IFCodeTypes &defaultTypes = {});
+    /// 逐系统探测可用 IF 组合，结果落 ifCodeTypes / mGloCombo
+    void detectIFCombinations(const IFCodeTypes &defaultTypes = {});
 
     void setCutoffElevDeg(const double deg) { mConfig.cutoffElevRad = deg * DEG_TO_RAD; }
 
@@ -42,85 +46,44 @@ public:
 
     void setEnabledSystems(const std::set<char> &s) { mConfig.enabledSystems = s; }
 
-    virtual void applyOptions(const SolverOptions &o);
-
-    virtual bool processEpoch(ObsData &obsData);
-
-    virtual void preprocess(ObsData &obsData);
-
-protected:
-    virtual void solve(ObsData &obsData);
-    virtual void estimatePosition(ObsData &obsData);
-    virtual void resetFilterState();
-    virtual void initFilter(ObsData &obsData);
-    virtual void updateFilter(ObsData &obsData);
-    void bootstrapSolution(ObsData &obsData);
-
-    void runFilter(ObsData &obsData);
-
-    void readbackFiltered(const ObsData &obsData);
-
-    [[nodiscard]] static Eigen::Matrix3d positionCovBlock(const Eigen::MatrixXd &P, const int id[3]);
-
-public:
-    virtual void computeSatPos(ObsData &obsData);
-
-    void computeElevAzim();
-
-    void earthRotation();
-
     [[nodiscard]] double getClockBias(const char sys) const {
         const auto it = rClockBias.find(sys);
         return it != rClockBias.end() ? it->second : 0.0;
     }
 
-    virtual ~SPP() = default;
+    void publishResult() override;
 
-    Eigen::Vector3d xyz{0, 0, 0};
-    GeodeticFrame frame = Frame::WGS84;
+    void resetFilterState() override;
 
-    GnssEKF ekf;
-    int mDirection = 1;
-    bool mUseFilter = false;
-    bool mFilterInit = false;
-    double sigma0 = 1.0;
+    void initFilter() override;
 
-    [[nodiscard]] virtual Eigen::Matrix3d posCovariance() const;
-    std::set<SatID> satRejected{};
+    void updateFilter() override;
 
-protected:
-    bool mRequirePhaseForIF = false;
+    void bootstrapSolution();
 
-    std::map<char, double> rClockBias{};
-    std::map<char, double> mPrevClockBias{};
+    void runFilter();
 
-    CommonTime mLastEpoch{};
-    bool mHasLastEpoch = false;
+    /// 从 EKF 解回读进 result 与镜像成员；PPP 覆写成超集（另读钟、码偏、模糊度、相位残差）。
+    virtual void readback();
 
-    static inline std::map<char, Parameter> sysCdtParam = {
-        {'G', Parameter::cdt},
-        {'C', Parameter::cdt2},
-        {'R', Parameter::cdt3},
-        {'E', Parameter::cdt4},
-    };
+    DopplerResult estimateVelocity() override;
 
-    [[nodiscard]] static char clockRefSys(const std::set<char> &active);
+    [[nodiscard]] Weight dopplerWeight() const override;
 
-    bool mCommonClockActive = false;
-    char mClockRefSys = 'G';
-    std::map<char, Parameter> mCdtParam = sysCdtParam;
+    /// 本历元钟参数化唯一入口：公共钟开关、参考系统、各系统钟槽位一起定。
+    void selectClockModel(const std::set<char> &active);
 
-    [[nodiscard]] virtual bool wantCommonClock() const;
+    /// 把本系统的钟系数写进方程：共钟写「公共钟 cdt1 + 非参考系统 ISB 槽」，否则写本系统槽位。
+    /// SPP 的码方程与 PPP 的码/相位方程共用这一份，禁各写一遍。
+    void addClockTerms(EquData &ed, const SatID &sat) const;
 
-    void remapClockParams(char ref);
+    /// 本历元的钟状态收进方程组：共钟只留公共钟 cdt1 与各非参考系统的 ISB 槽；独立钟各留自带槽位，
+    /// 另用「ISB 与上一历元相同」的伪观测锚住其随机游走（系统间差异在方程内无约束）。
+    void collectClockStates(EquSys &eq);
 
-    void toCommonClockEquations(const ObsData &obsData);
+    [[nodiscard]] bool wantDopplerSat(const SatID &sat, const TypeValueMap &tv) const override;
 
     [[nodiscard]] Eigen::Vector3d currentEstimatedPosition() const;
-
-    IFCodeTypes ifCodeTypes{};
-
-    std::map<SatID, FreqCombo> mGloCombo;
 
     [[nodiscard]] const FreqCombo *freqComboFor(const SatID &sat) const {
         if (sat.system == 'R') {
@@ -131,42 +94,40 @@ protected:
         return it == ifCodeTypes.end() ? nullptr : &it->second;
     }
 
+    SPPConfig mConfig;
+    Weight mWeight;
+    bool mWeightInit = false;
+    bool mRequirePhaseForIF = false;
+    bool mKinematic = false;
+
+    std::set<SatID> satRejected{};
+
+    std::map<char, double> rClockBias{};
+    std::map<char, double> mPrevClockBias{};
+
+    bool mCommonClockActive = false;
+    char mClockRefSys = 'G';
+    std::map<char, Parameter> mCdtParam = sysCdtParams;
+
+    IFCodeTypes ifCodeTypes{};
+    std::map<SatID, FreqCombo> mGloCombo;
     std::map<char, std::string> ifCodeSig;
-
-    std::set<char> activeSystems;
-
-
+    std::set<char> activeSystems; // 本历元参与解算的系统：detectIFCombinations 按组合填，SPP 的 buildEquSys 再按实际建方程的星收窄
     std::map<SatID, double> lastWStats;
-    std::map<SatID, double> lastResidMag;
 
+    /// 整历元建方程组：清 curEq、筛星、逐星调 addSatEquation、收 activeSystems 与状态集。
+    virtual void buildEquSys();
 
-    virtual void buildResidualMap();
-
-    void estimateVelocity(const ObsData &obsData);
-
-    bool wantDopplerSat(const SatID &sat, const TypeValueMap &tv) const override;
+    /// 给一颗星填本历元方程：SPP 只填码，PPP 覆写后填码+相位（probe 是预fit 探测趟）。
+    virtual void addSatEquation(const SatID &sat, const TypeValueMap &tv, bool probe);
 
 private:
+
     TropoSite mTropoSite;
-
-
     Eigen::Vector3d mLastXyz{0, 0, 0};
 
-
-    [[nodiscard]] Eigen::Vector3d roughInitialXyz(const ObsData &obsData) const;
-
-    void updateTropoSite(const Eigen::Vector3d &xyzEcef, const CommonTime &epoch);
+    /// 观测源没给近似坐标时的粗糙起点（方位对、量级对），供 LSQ 引导用。
+    [[nodiscard]] Eigen::Vector3d estimateRoughPosition() const;
 
     [[nodiscard]] double tropoDelay(double elevRad) const;
-
-    EquSys posEquations{};
-    SolverLSQ posSolver{};
-
-    void linearize(ObsData &obsData, int iter);
-
-    void buildPosEquation(const SatID &sat, const PVT &pvt, const Eigen::Vector3d &los,
-                          double rho, double trop,
-                          const std::string &obsType, double obsVal, double weight,
-                          const Variable &dx, const Variable &dy,
-                          const Variable &dz, const Variable &cdtVar);
 };

@@ -26,9 +26,19 @@ public:
 
     RTKConfig mConfig;
 
-    void applyOptions(const SolverOptions &o);
+    void applyOptions(const SolverOptions &o) override;
 
     bool processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph);
+
+    void prepareGeometry() override;
+
+    void publishResult() override;
+
+    void resetFilterState() override;
+
+    void initFilter() override;
+
+    void updateFilter() override;
 
     Eigen::Vector3d mBase{0, 0, 0}; // 基准站
     Eigen::Vector3d mBaseUser{0, 0, 0}; // 配置页显式填入的基站坐标
@@ -38,16 +48,10 @@ public:
     std::set<SatID> mUsedSats;
 
 private:
-    GnssEKF ekf;
-
-    bool mUseFilter = false;
-    bool mFilterInit = false;
     double mPosProcSigma = 10.0;
 
-    Eigen::Vector3d mFilterXYZ{0, 0, 0};
 
-
-    [[nodiscard]] std::optional<SatID> selectRefSatelite(const std::vector<SatID> &candidates) const;
+    [[nodiscard]] std::optional<SatID> selectRefSatellite(const std::vector<SatID> &candidates) const;
 
     Eigen::Vector3d mRoverApprox{0, 0, 0};
     int mGfCommonMode = 2;
@@ -55,8 +59,9 @@ private:
     std::size_t mRoverEphSize = 0;
     Eigen::Vector3d mBaselineSigmaFixed = Eigen::Vector3d::Zero();
 
-    std::map<SatID, double> satRoverElevData;
-    std::map<SatID, PVT> satPVTRoverRecTime;
+    // 基类的 satPVTRecTime/satElevData/satAzimData 存流动站（「当前接收机」语义），基准站另立一套。
+    std::map<SatID, double> satBaseElevData;
+    std::map<SatID, PVT> satPVTBaseRecTime;
 
 
     struct SdVar {
@@ -75,59 +80,19 @@ private:
     };
 
 
-    struct FloatState {
-        EquSys eq{};
-        Eigen::VectorXd x{};
-        Eigen::MatrixXd P{};
-        Eigen::VectorXd v{};
-        std::map<Variable, int> index{};
-        double sigma0 = 1.0;
-    };
-
-
-    struct DDCache {
-        SatID sat, ref;
-        char sys = 0;
-        PVT pvtBase, pvtRover;
-        double obsBase[4] = {0, 0, 0, 0};
-        double obsRover[4] = {0, 0, 0, 0};
-        double refObsBase[4] = {0, 0, 0, 0};
-        double refObsRover[4] = {0, 0, 0, 0};
-        double phaseVar = 0, codeVar = 0;
-        double refPhaseVar = 0, refCodeVar = 0;
-        Variable amb[2];
-        double ambInit[2] = {0, 0};
-        double lambda[2] = {0, 0};
-        PVT refPvtBase, refPvtRover;
-    };
-
-    const ObsData *mRtkBase = nullptr;
-    const ObsData *mRtkRover = nullptr;
+    const ObsData *mRtkBase = nullptr; // 基准站观测；流动站观测在基类 mCurObs
     std::map<char, SysCombo> mRtkCombos;
     std::map<char, std::vector<SatID> > mPartSats;
     std::map<char, std::map<std::string, std::map<SatID, double> > > mRtkFixedMap;
     EphemerisTable *mEph = nullptr;
     std::set<SatID> mRtkSlipExclude;
 
-    std::vector<DDCache> mDDCache;
 
 
-    FloatState mFloat;
-
-
-    bool solveFloat(EquSys &eq, Eigen::Vector3d &baseline);
-
-
-    void initFilter();
-
-
-    void updateFilter();
+    bool solveFloat(Eigen::Vector3d &baseline);
 
 
     void rebaseAmbiguities();
-
-
-    void resetFilterState();
 
 
     void collectVars(EquSys &eq, bool fixed) const;
@@ -142,14 +107,7 @@ private:
     [[nodiscard]] Eigen::Vector3d predictedPosition() const;
 
 
-    [[nodiscard]] static Eigen::Matrix3d positionCov(const FloatState &fs);
-
-
-    void captureFilteredState();
-
-
-    static void extractAmbiguities(const FloatState &fs, Eigen::VectorXd &b, Eigen::MatrixXd &Qb,
-                                   std::vector<Variable> &aVars);
+    void extractAmbiguities(Eigen::VectorXd &b, Eigen::MatrixXd &Qb, std::vector<Variable> &aVars) const;
 
 
     void computeSdVariance();
@@ -179,22 +137,13 @@ private:
 
     void detectFreqCombinations();
 
-    bool buildGeometry();
-
-    void buildDDCache();
-
-
-    bool estimatePosition();
 
     void readback(const EquSys &eqFloat, const Eigen::VectorXd &residual, const Eigen::Vector3d &posEcef);
 
 
-    void estimateVelocity();
-
     void detectSlips();
 
-    void addDoubleDiffEquation(EquSys &eq, const DDCache &c,
-                               const Eigen::Vector3d &ddLos, double ddGeom,
+    void addDoubleDiffEquation(EquSys &eq, const SatID &sat, const Eigen::Vector3d &ddLos, double ddGeom,
                                int freq, bool isPhase, bool fixed) const;
 
 

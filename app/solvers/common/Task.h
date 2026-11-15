@@ -178,7 +178,7 @@ namespace Solvers {
             }
         }
 
-    protected:
+    public:
         virtual void readBody();
 
 
@@ -199,9 +199,6 @@ namespace Solvers {
 
 
         void finishSolving();
-
-
-        void fillVelocityByDifference();
 
 
         virtual void wakeQueues();

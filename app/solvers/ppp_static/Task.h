@@ -23,7 +23,7 @@ namespace Solvers::PPPStatic {
 
         void writeCSVParams(CSV::Meta &m) const override;
 
-    protected:
+    public:
         virtual void writeTropoParams(CSV::Meta &m) const;
 
         virtual void writeMotionParams(CSV::Meta &m) const {}

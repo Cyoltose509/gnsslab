@@ -60,7 +60,6 @@ public:
 
     void chooseObs(ObsData &obsData);
 
-protected:
     RINEXHeader rinexHeader;
     std::map<char, std::set<std::string> > sysTypes;
     std::map<std::string, int> mGloChan;
@@ -87,7 +86,6 @@ class RINEX2ObsReader : public RINEXObsReader {
 public:
     static CommonTime parseTime(const std::string &line);
 
-protected:
     void readHeaderLabel(const std::string &label, const std::string &line) override;
 
     [[nodiscard]] bool isEpochLine(const std::string &line) const override;
@@ -110,7 +108,6 @@ class RINEX3ObsReader : public RINEXObsReader {
 public:
     static CommonTime parseTime(const std::string &line);
 
-protected:
     void readHeaderLabel(const std::string &label, const std::string &line) override;
 
     [[nodiscard]] bool isEpochLine(const std::string &line) const override;

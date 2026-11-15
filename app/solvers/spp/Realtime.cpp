@@ -88,7 +88,6 @@ namespace Solvers::Realtime {
                 if (reader->getNextEpoch(obs, false)) {
                     const auto eph = reader->ephSnapshot();
                     spp.prod->eph = *eph;
-                    spp.preprocess(obs);
                     task->view.pushQCInput(obs, obs.weekSecond.sow);
                     task->view.markQcDirty();
                     if (!dec.accept(obs.weekSecond.sow)) continue;

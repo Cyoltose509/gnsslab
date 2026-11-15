@@ -12,6 +12,8 @@
 
 #include "core/SatID.h"
 
+
+
 class Parameter {
 public:
     enum ParameterName {
@@ -22,7 +24,7 @@ public:
         dVX,
         dVY,
         dVZ,
-        cdt,
+        cdt1,
         cdt2,
         cdt3,
         cdt4,
@@ -58,7 +60,7 @@ public:
 
     /// 接收机钟差类：cdt 是参考系统钟，cdt2~4 是其余系统的钟（各系统各一个，同时充当 ISB 载体）
     [[nodiscard]] bool isClock() const {
-        return paraName >= cdt && paraName <= cdt4;
+        return paraName >= cdt1 && paraName <= cdt4;
     }
 
 
@@ -69,7 +71,7 @@ public:
 private:
     ParameterName paraName;
     inline static const std::string paraNameStrings[static_cast<int>(count)] = {
-        "Unknown", "dX", "dY", "dZ", "dVX", "dVY", "dVZ", "cdt", "cdt2", "cdt3", "cdt4", "ifb",
+        "Unknown", "dX", "dY", "dZ", "dVX", "dVY", "dVZ", "cdt1", "cdt2", "cdt3", "cdt4", "ifb",
         "iono", "ambiguity", "ztd", "dOX", "dOY", "dOZ", "codeBias"
     };
 };
@@ -259,4 +261,12 @@ struct EquSys {
         varSet.clear();
         station = "";
     }
+};
+
+
+const std::map<char, Parameter> sysCdtParams = {
+    {'G', Parameter::cdt1},
+    {'C', Parameter::cdt2},
+    {'R', Parameter::cdt3},
+    {'E', Parameter::cdt4},
 };

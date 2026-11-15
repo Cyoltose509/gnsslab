@@ -113,8 +113,6 @@ set(LIB_SOURCES
         solver/ppp/Kinematic.cpp
         solver/LEO.h
         solver/LEO.cpp
-        solver/Velocity.h
-        solver/Velocity.cpp
         solver/SolverLSQ.h
         solver/SolverLSQ.cpp
         solver/SolverKalman.h

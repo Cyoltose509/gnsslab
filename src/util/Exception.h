@@ -20,7 +20,6 @@ public:
         return message.c_str();
     }
 
-protected:
     std::string message;
 };
 

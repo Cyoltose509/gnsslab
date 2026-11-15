@@ -36,16 +36,15 @@ public:
 
     void applyOptions(const SolverOptions &o) override;
 
-protected:
     Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const override;
 
-    void buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) override;
+    void buildEquSys() override;
 
     Eigen::Vector3d recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch,
                                           const SatID &sat) const override;
 
     // 首历元引导
-    void bootstrapFirstEpoch(ObsData &obsData) override;
+    void bindRefPosition() override;
 
 private:
     mutable Eigen::Vector3d mLastGoodAnchor = Eigen::Vector3d::Zero(); // 质量门控重锚定：最近一个可信锚点

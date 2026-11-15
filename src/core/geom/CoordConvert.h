@@ -43,20 +43,4 @@ namespace Coord {
 
     void geometricRangeAndLos(const Eigen::Vector3d &satPos, const Eigen::Vector3d &recvPos,
                               double &rho, Eigen::Vector3d &losUnit);
-
-    /// 地球自转(Sagnac)改正：把卫星在发射时刻 tTx 的 PVT 旋转到接收时刻 tRx 的 ECEF 框架。
-    /// recv 取本站坐标；两站相距千米级时各自旋转的差异在毫米量级，PPP/SPP 单站无此问题。
-    [[nodiscard]] inline PVT earthRotationCorrected(const PVT &pvtTx, const Eigen::Vector3d &recv) {
-        const double tau = (pvtTx.p - recv).norm() / C_MPS;   // 信号传播时间
-        const double ang = OMEGA_EARTH * tau;                 // +ωτ
-        const double c = std::cos(ang), s = std::sin(ang);
-        Eigen::Matrix3d rot;                                  // R(−ωτ)
-        rot <<  c, s, 0,
-               -s, c, 0,
-                0, 0, 1;
-        PVT pvtRx = pvtTx;
-        pvtRx.p = rot * pvtTx.p;
-        pvtRx.v = rot * pvtTx.v;
-        return pvtRx;
-    }
 }

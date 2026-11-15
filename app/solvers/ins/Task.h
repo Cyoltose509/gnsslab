@@ -104,7 +104,7 @@ namespace Solvers::INS {
 
         [[nodiscard]] std::size_t resultEpochCount() const override;
 
-    protected:
+    public:
         /// 读线程：边解码边压队列，队列满就等解算侧腾位。
         void readBody() override;
         void solveBody() override;

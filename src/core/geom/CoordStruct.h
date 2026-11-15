@@ -5,15 +5,12 @@
 #include <Eigen/Eigen>
 #include "core/Const.h"
 
-/// 椭球几何：XYZ↔BLH、ENU/NED、仰角方位角、子午/卯酉圈半径只认 a/f/e² 这三个数。
-/// 引力常数与自转角速度不在这里——那组常数按星座取，见 Ephemeris.h 的 EphConst。
 struct GeodeticFrame {
     const char *name;  // 仅用于界面与日志显示
     double a;          // 长半轴 (m)
     double f;          // 扁率
     double e2;         // 第一偏心率平方
 
-    /// 吃规格书原值：长半轴与扁率倒数 1/f，f 与 e² = f(2−f) 由构造算出来。
     constexpr GeodeticFrame(const char *n, const double a_, const double invF)
         : name(n), a(a_), f(1.0 / invF), e2(f * (2.0 - f)) {
     }
@@ -62,15 +59,11 @@ namespace Frame {
     inline constexpr GeodeticFrame PZ90{"PZ90", 6378136.0, 298.257839};
 }
 
-/// 正常重力场的定义常数，口径取自指导书 1.5（1）的 GRS80 公式 (34)(35)：
-///   (34) γ0 = γe (1 + k2 sin²φ + k4 sin⁴φ)
-///   (35) γ(φ,h) = γ0 − (h0 − hLat sin²φ)·h + h2·h²，h 按米
-/// 注意 (34) 只到 sin⁴φ；再往上加 sin⁶/sin⁸ 会让 γ0 高出 4.5e-9 m/s²，
-/// 与示例数据参考轨迹差出一个常值加速度（1 小时高程差 0.19 m）。
+/// 正常重力场的定义常数
 struct NormalGravityModel {
-    double gammaE;            // 赤道正常重力 γe (m/s²)
-    double k2, k4;            // γ0 的 sin²φ / sin⁴φ 系数
-    double h0, hLat, h2;      // 高度改正系数，按米
+    double gammaE;
+    double k2, k4;
+    double h0, hLat, h2;
 };
 
 namespace NormalGravity {
@@ -153,8 +146,7 @@ public:
     [[nodiscard]] double N() const { return this->y(); }
     [[nodiscard]] double U() const { return this->z(); }
 };
-// 导航系局部坐标（NED：x=北 y=东 z=地）。与 ENU 是同一局部水平面的两种轴向命名，
-// 差一个置换 + 天向符号，互转见 CoordConvert.h 的 ENUToNED / NEDToENU。
+
 class NED : public Eigen::Vector3d {
 public:
     NED() : Eigen::Vector3d(0.0, 0.0, 0.0) {

@@ -100,7 +100,6 @@ namespace NovAtel {
 
         std::map<char, std::vector<std::string> > availableTypes;
 
-    protected:
         struct Header {
             int type;
             int week;

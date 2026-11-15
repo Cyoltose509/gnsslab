@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <cmath>
 
-void PPPStatic::resetSlipDetectors(const ObsData &obsData) {
+void PPPStatic::resetSlipDetectors() {
     for (const auto &sat: mPrevSatSet) {
-        if (obsData.satTypeValueData.find(sat) == obsData.satTypeValueData.end())
+        if (mCurObs->satTypeValueData.find(sat) == mCurObs->satTypeValueData.end())
             mSlipDetectors[sat].reset();
     }
 }
@@ -30,9 +30,10 @@ double PPPStatic::pcvCorrection(const SatID &sat) const {
              + prod->atx.satPCVIF(sat, def, nadirDeg, t));
 }
 
-void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
-                                      double mapW, double tropoFixed, const bool probeOnly) {
+void PPPStatic::addSatEquation(const SatID &sat, const TypeValueMap &tv, const bool probe) {
     const FreqCombo &def = *freqComboFor(sat);
+    const double mapW = mSatMap.at(sat);
+    const double tropoFixed = mSatTropoFixed.at(sat);
     const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
     const PVT &pvt = satPVTRecTime.at(sat);
     const double elev = satElevData.count(sat) ? satElevData.at(sat) : 0.0;
@@ -93,7 +94,7 @@ void PPPStatic::addSatelliteEquations(const SatID &sat, const TypeValueMap &tv,
     const double codePrefit = P_IF - (rho - dts - rel) - clkMean - ztdMean * mapW - tropoFixed - cbMean - ifcbMean;
     const double phasePrefit = L_IF - (rho - dts - rel) - ambMean - clkMean - ztdMean * mapW - tropoFixed - windup_m;
 
-    if (probeOnly) {
+    if (probe) {
         mPrefitProbe[sat] = PrefitRec{codePrefit, phasePrefit,
                                       mCsData && mCsData->count(vamb) > 0};
         return;
@@ -128,35 +129,24 @@ void PPPStatic::addObservationEquation(const EquID &eid, double prefit, const Ei
     ed.varCoeffData[vdx] = los[0];
     ed.varCoeffData[vdy] = los[1];
     ed.varCoeffData[vdz] = los[2];
-    if (mCommonClockActive) {
-        const Variable vcommon(mCurObs->station, Parameter::cdt);
-        ed.varCoeffData[vcommon] = 1.0;
-        if (const Parameter isbPar = mCdtParam.at(eid.sat.system); isbPar != Parameter::cdt) {
-            // 非参考系统再叠加 ISB 状态
-            const Variable visb(mCurObs->station, isbPar);
-            ed.varCoeffData[visb] = 1.0;
-        }
-    } else {
-        const Variable vclk(mCurObs->station, mCdtParam.at(eid.sat.system));
-        ed.varCoeffData[vclk] = 1.0;
-    }
+    addClockTerms(ed, eid.sat);
     if (hasAmb) {
         const Variable vamb = makeAmbiguityVar(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vamb] = 1.0;
-        mVarSet.insert(vamb);
+        curEq.varSet.insert(vamb);
     } else if ((eid.sat.system == 'R' || eid.sat.system == 'C') && !osbCovers(eid.sat)) {
         // 逐 GLONASS/BDS 星 IFCB
         const Variable vifb = makeIfbVar(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vifb] = 1.0;
-        mVarSet.insert(vifb);
+        curEq.varSet.insert(vifb);
     } else if (!osbCoversSystem(eid.sat.system)) {
         // 逐系统码偏
         const Variable vcb = makeCodeBiasVar(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vcb] = 1.0;
-        mVarSet.insert(vcb);
+        curEq.varSet.insert(vcb);
     }
     ed.weight = w.weight(elev);
-    mEq.obsEquData[eid] = ed;
+    curEq.obsEquData[eid] = ed;
 }
 
 void PPPStatic::recvWindupBasis(const Eigen::Vector3d &recv, Eigen::Vector3d &exr, Eigen::Vector3d &eyr) const {
@@ -221,7 +211,6 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     const FreqCombo &def = *freqComboFor(sat);
     resetAmb = false;
     slipReset = false;
-    if (!mEpochFirstIter) return;
     CycleSlip &det = mSlipDetectors[sat];
     det.configure(def, 0.0, mGfSlipMult); // PPP 默认仅用 MW（GF 关闭）
     double osbP1 = 0.0, osbP2 = 0.0, osbL1 = 0.0, osbL2 = 0.0;
@@ -237,7 +226,7 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     if (r.slip) ++slipVerdicts;
 }
 
-void PPPStatic::processSatellite(const SatID &sat, const TypeValueMap &tv) {
+void PPPStatic::prepareSatellite(const SatID &sat, const TypeValueMap &tv) {
     const FreqCombo *defp = freqComboFor(sat);
     if (!defp) return;
     if (!defp->available(tv, true)) return;

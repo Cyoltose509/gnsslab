@@ -24,7 +24,6 @@ namespace NovAtel {
 
         bool open(const std::string &) override { return false; }
 
-    protected:
         bool getNextMessage(std::vector<std::uint8_t> &message, bool block) override;
 
     private:

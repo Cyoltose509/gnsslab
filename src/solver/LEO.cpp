@@ -61,12 +61,12 @@ Eigen::Vector3d LEO::recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const 
     return M.transpose() * prod->recvAnt.total();
 }
 
-void LEO::bootstrapFirstEpoch(ObsData &obsData) {
+void LEO::bindRefPosition() {
     if (!mFirstEpoch) return;
     // 初值只许来自观测文件头或解算自身。参考轨道是真值，只用于 commitEpoch() 事后对比，
     // 拿它当起算点会让精度评估自证其说。星载 RINEX 缺 APPROX POSITION XYZ 时这里留 0，
     // 由后续 LSQ 迭代从该线性化点自行收敛；不私造粗定位，不凭空造初值。
-    if (!isSaneECEF(mRefPos)) mRefPos = obsData.antennaPosition;
+    if (!isSaneECEF(mRefPos)) mRefPos = mCurObs->antennaPosition;
     xyz = mRefPos;
     mFirstEpoch = false;
 }
@@ -136,13 +136,13 @@ Eigen::Vector3d LEO::predictPosition(const double dt, const CommonTime &epoch) c
     mReanchorPos = fb;
     return fb;
 }
-void LEO::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) {
-    PPPStatic::buildEquSys(obsData, xyzEst, csData, firstIter);
+void LEO::buildEquSys() {
+    PPPStatic::buildEquSys();
     if (!mGeomWeak || mEpochPdop <= kPdopReject) return;
     // 4 颗星近共面（实测 PDOP 7.5e6）时位置在法向完全不可观：码观测会把位置状态直接
     // 拉到 3e8 m，之后整段解不回来；降到 PDOP 200 时码解也已带 70–140 m 误差。
     // 这类历元不给解比给错解好。
-    mEq.obsEquData.clear();
+    curEq.obsEquData.clear();
 }
 
 bool LEO::processEpoch(ObsData &obs) {
@@ -195,7 +195,7 @@ bool LEO::processEpoch(ObsData &obs) {
     }
     if (mSppGood) {
         xyz = mReanchorPos;
-        computeElevAzim();
+        computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
         // 加速度取相邻历元速度的差分。退化几何下速度本身就带百米级误差，差出来的不是加速度，
         // 只在 SPP 锚点可信的连续历元上更新，其余历元沿用上一段的有效值。
         if (ok && result.xyz.squaredNorm() > 1e12) {

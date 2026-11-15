@@ -16,24 +16,24 @@ namespace {
 }
 
 // 首历元精确初位置
-std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsData) {
+std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
     Eigen::Vector3d xc = mRefPos;
     if (!isSaneECEF(xc))
         xc = mCurObs ? mCurObs->antennaPosition : Eigen::Vector3d::Zero();
     const bool anchorTrusted = isSaneECEF(xc);
     if (!anchorTrusted) {
-        // 星载 RINEX 缺头坐标时不私造线性化点：交给下面的 LSQ 迭代自行收敛，
-        // xyz 只供仰角与权重，不写回 mRefPos；不收敛就本历元不发布，下历元重试。
         xyz = xc;
-        computeElevAzim();
+        computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
     }
     VariableDataMap csData;
     SolverLSQ solver;
     const int maxIter = mConfig.maxReanchorIter > 0 ? mConfig.maxReanchorIter : 8;
     for (int it = 0; it < maxIter; ++it) {
-        buildEquSys(obsData, xc, csData, true);
-        for (auto it2 = mEq.obsEquData.begin(); it2 != mEq.obsEquData.end();) {
-            if (const auto &eid = it2->first; !eid.obsType.empty() && eid.obsType[0] == 'L') it2 = mEq.obsEquData.erase(it2);
+        mEpochXyz = xc;
+        mCsData = &csData;
+        buildEquSys();
+        for (auto it2 = curEq.obsEquData.begin(); it2 != curEq.obsEquData.end();) {
+            if (const auto &eid = it2->first; !eid.obsType.empty() && eid.obsType[0] == 'L') it2 = curEq.obsEquData.erase(it2);
             else {
                 for (auto vit = it2->second.varCoeffData.begin();
                      vit != it2->second.varCoeffData.end();) {
@@ -46,17 +46,17 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsDat
                 ++it2;
             }
         }
-        mVarSet.clear();
-        for (const auto &[eid, ed]: mEq.obsEquData)
-            for (const auto &[v, c]: ed.varCoeffData) mVarSet.insert(v);
+        curEq.varSet.clear();
+        for (const auto &[eid, ed]: curEq.obsEquData)
+            for (const auto &[v, c]: ed.varCoeffData) curEq.varSet.insert(v);
         {
             const auto blhAnchor = Coord::XYZToBLH(xc, Frame::WGS84); // B/L 为弧度
             const double cB = std::cos(blhAnchor.B()), sB = std::sin(blhAnchor.B());
             const double cL = std::cos(blhAnchor.L()), sL = std::sin(blhAnchor.L());
             const Eigen::Vector3d up(cB * cL, cB * sL, sB); // 测地垂直基向量
-            const Variable vdx(obsData.station, Parameter::dX);
-            const Variable vdy(obsData.station, Parameter::dY);
-            const Variable vdz(obsData.station, Parameter::dZ);
+            const Variable vdx(mCurObs->station, Parameter::dX);
+            const Variable vdy(mCurObs->station, Parameter::dY);
+            const Variable vdz(mCurObs->station, Parameter::dZ);
             // 钉高只许用于可信的线性化点（接收机自报/文件头坐标）：不可信锚点可能差几十米，
             // 钉住会把首历元的高程错误锁进先验与模糊度，之后靠伪距极难爬出来。
             if (mPinInitHeight && anchorTrusted) {
@@ -66,23 +66,22 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsDat
                 ed.varCoeffData[vdy] = up.y();
                 ed.varCoeffData[vdz] = up.z();
                 ed.weight = 1e4;
-                mEq.obsEquData[EquID(SatID('P', 0), std::string("INIT_UP"))] = ed;
+                curEq.obsEquData[EquID(SatID('P', 0), std::string("INIT_UP"))] = ed;
             }
-            mVarSet.insert(vdx);
-            mVarSet.insert(vdy);
-            mVarSet.insert(vdz);
+            curEq.varSet.insert(vdx);
+            curEq.varSet.insert(vdy);
+            curEq.varSet.insert(vdz);
         }
         int nRealSat = 0;
         {
             std::set<SatID> satsInEq;
-            for (const auto &[eid, ed]: mEq.obsEquData)
+            for (const auto &[eid, ed]: curEq.obsEquData)
                 satsInEq.insert(eid.sat);
             nRealSat = static_cast<int>(satsInEq.size());
         }
         if (nRealSat < 4) return {mRefPos, false};
-        mEq.varSet = mVarSet;
         try {
-            solver.solve(mEq, mEq.weightVector().asDiagonal().toDenseMatrix());
+            solver.solve(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
         } catch (...) {
             return {mRefPos, false};
         }
@@ -96,7 +95,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsDat
     }
     for (const auto &[sys, par]: mCdtParam) {
         // 配置滤掉的系统不在 varSet 里，getSolution 会抛异常。
-        if (!mVarSet.count(Variable(obsData.station, par))) continue;
+        if (!curEq.varSet.count(Variable(mCurObs->station, par))) continue;
         try { mClkBase[sys] = solver.getSolution(par); } catch (...) { mClkBase[sys] = 0.0; }
     }
     try {
@@ -109,11 +108,10 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::solveInitialPosition(ObsData &obsDat
     return {xc, true};
 }
 
-void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, VariableDataMap &csData, bool firstIter) {
-    mEq.reset();
-    mEq.station = obsData.station;
-    mVarSet.clear();
-    csData.clear();
+void PPPStatic::buildEquSys() {
+    curEq.reset();
+    curEq.station = mCurObs->station;
+    mCsData->clear();
 
     if (!mWeightInit) {
         const double minSin = mConfig.sinElevFloor(); // 0 = 跟随截止角
@@ -122,71 +120,66 @@ void PPPStatic::buildEquSys(ObsData &obsData, const Eigen::Vector3d &xyzEst, Var
         mWeightInit = true;
     }
 
-    const Variable vdx(obsData.station, Parameter::dX);
-    const Variable vdy(obsData.station, Parameter::dY);
-    const Variable vdz(obsData.station, Parameter::dZ);
-    mVarSet.insert(vdx);
-    mVarSet.insert(vdy);
-    mVarSet.insert(vdz);
+    const Variable vdx(mCurObs->station, Parameter::dX);
+    const Variable vdy(mCurObs->station, Parameter::dY);
+    const Variable vdz(mCurObs->station, Parameter::dZ);
+    curEq.varSet.insert(vdx);
+    curEq.varSet.insert(vdy);
+    curEq.varSet.insert(vdz);
 
-    resetSlipDetectors(obsData);
+    resetSlipDetectors();
 
-    // 填充每历元共享派生量
-    mCurObs = &obsData;
-    mEpochXyz = xyzEst;
-    mEpochTide = computeTideDisplacement(xyzEst, obsData.epoch);
+    // 填充每历元共享派生量（mEpochXyz 由调用方按本轮的线性化点设好）
+    mEpochTide = computeTideDisplacement(mEpochXyz, mCurObs->epoch);
     // 锚点不可信时（低于截止角的星不足 4 颗）本历元不筛星。
     int nAboveCutoff = 0;
     for (const auto &[sat, e]: satElevData) if (e >= mConfig.cutoffElevRad) ++nAboveCutoff;
     mSkipElevCutoff = nAboveCutoff < 4;
-    mEpochFirstIter = firstIter;
     mSatMap.clear();
     mSatTropoFixed.clear();
     mSysSeen.clear();
     mCurrentSatSet.clear();
-    mCommonClockActive = wantCommonClock();
-    mCsData = &csData;
     mGfEpoch = CycleSlipEpoch{};
 
-    mEpochTropo.update(prod->tropo, mConfig.tropoMap, xyzEst, obsData.epoch);
+    mEpochTropo.update(prod->tropo, mConfig.tropoMap, mEpochXyz, mCurObs->epoch);
     if (!prod->tro.empty()) {
         if (double gn = 0.0, ge = 0.0, sgn = 0.0, sge = 0.0;
-            prod->tro.getTropoGrad(mCurObs->station, obsData.epoch, gn, ge, sgn, sge)) {
+            prod->tro.getTropoGrad(mCurObs->station, mCurObs->epoch, gn, ge, sgn, sge)) {
             mEpochTropo.gradN = gn;
             mEpochTropo.gradE = ge;
         }
     }
 
-    for (const auto &[sat, tv]: obsData.satTypeValueData)
-        processSatellite(sat, tv);
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData)
+        prepareSatellite(sat, tv);
 
     mPrefitProbe.clear();
-    for (const auto &[sat, tv]: obsData.satTypeValueData)
-        if (mSatMap.count(sat)) addSatelliteEquations(sat, tv, mSatMap.at(sat), mSatTropoFixed.at(sat), true);
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData)
+        if (mSatMap.count(sat)) addSatEquation(sat, tv, true);
 
     decidePrefitGate();
-    for (const auto &[sat, tv]: obsData.satTypeValueData)
-        if (mSatMap.count(sat)) addSatelliteEquations(sat, tv, mSatMap.at(sat), mSatTropoFixed.at(sat), false);
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData)
+        if (mSatMap.count(sat)) addSatEquation(sat, tv, false);
 
     {
         SatIDSet gfExcludeSet;
         const SatIDSet gfApplySet = mGfEpoch.decide(mGfCommonMode, gfExcludeSet);
         for (const auto &sat: gfApplySet) {
-            const TypeValueMap &tv = obsData.satTypeValueData.at(sat);
+            const TypeValueMap &tv = mCurObs->satTypeValueData.at(sat);
             const double map = mSatMap.at(sat);
             resetAmbiguity(sat, tv, map, mSatTropoFixed.at(sat), true);
         }
 
-        for (auto &[eid, ed]: mEq.obsEquData)
+        for (auto &[eid, ed]: curEq.obsEquData)
             if (gfExcludeSet.count(eid.sat))
                 ed.weight = 1.0e-20;
         mForceAmbReset = false;
     }
     for (char sys: mSysSeen)
         if (auto it = mCdtParam.find(sys); it != mCdtParam.end())
-            mVarSet.insert(Variable(obsData.station, it->second));
+            curEq.varSet.insert(Variable(mCurObs->station, it->second));
     // 公共钟模型下每颗星都引用 cdt，参考系统本历元未必有星，状态集必须无条件带上它。
-    if (mCommonClockActive) mVarSet.insert(Variable(obsData.station, Parameter::cdt));
+    if (mCommonClockActive) curEq.varSet.insert(Variable(mCurObs->station, Parameter::cdt1));
 
     addZTDConstraint();
 
@@ -244,8 +237,8 @@ void PPPStatic::decidePrefitGate() {
 void PPPStatic::addZTDConstraint() {
     if (!mHasTropo) return;
     const Variable vztd(mCurObs->station, Parameter::ztd);
-    mVarSet.insert(vztd);
-    for (auto &[eid, ed]: mEq.obsEquData) {
+    curEq.varSet.insert(vztd);
+    for (auto &[eid, ed]: curEq.obsEquData) {
         const double map = mSatMap.count(eid.sat) ? mSatMap.at(eid.sat) : 1.0;
         ed.varCoeffData[vztd] = map;
     }
@@ -268,6 +261,6 @@ void PPPStatic::addZTDConstraint() {
         ed.prefit = ztdTarget - ztdCur;
         ed.varCoeffData[vztd] = 1.0;
         ed.weight = 1.0 / (ztdSigma * ztdSigma);
-        mEq.obsEquData[eid] = ed;
+        curEq.obsEquData[eid] = ed;
     }
 }

@@ -27,7 +27,6 @@ namespace Solvers::Realtime {
 
         ~RTKSession() override;
 
-    protected:
         const char *tag() const noexcept override;
 
         std::string target() const override;
