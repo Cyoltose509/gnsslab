@@ -22,6 +22,7 @@ struct SPPConfig {
 
     bool useAR = true;
     bool useCycleSlip = true;
+    bool useGfCycleSlip = true; // 叠 GF 周跳探测（0/1）；MW 判跳即时重置，GF 判跳交历元末共模裁决
     double gfSlipMult = 3.0;
     bool applyWindup = true;
     bool applySolidTide = true;

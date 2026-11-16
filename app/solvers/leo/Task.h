@@ -47,8 +47,8 @@ namespace Solvers::LEO {
         void writeTropoParams(CSV::Meta &m) const override {
         }
 
-        /// 运动检测两项插在周跳参数之前。
-        void writeMotionParams(CSV::Meta &m) const override;
+        /// 运动检测两项在 PPP 参数之后单列。
+        void writeCSVParams(CSV::Meta &m) const override;
     };
 
     /// LEO 的参数默认值：动态滤波初值，关掉周跳与固体潮，运动阈值放宽到 100 m。

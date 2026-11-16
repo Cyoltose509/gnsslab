@@ -40,7 +40,4 @@ namespace Coord {
     double elevation(const XYZ &refXYZ, const XYZ &targetXYZ, const GeodeticFrame &frame = Frame::WGS84);
 
     double azimuth(const XYZ &refXYZ, const XYZ &targetXYZ, const GeodeticFrame &frame = Frame::WGS84);
-
-    void geometricRangeAndLos(const Eigen::Vector3d &satPos, const Eigen::Vector3d &recvPos,
-                              double &rho, Eigen::Vector3d &losUnit);
 }

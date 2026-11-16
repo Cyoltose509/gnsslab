@@ -31,6 +31,13 @@ namespace Download::Http {
     bool probeFile(const std::string &url, bool &exists, std::string &err,
                    const std::atomic<bool> *cancel = nullptr);
 
+    /// 取远端文件的 Last-Modified，格式化成 UTC 的 YYYYMMDDHHMMSS（纯数字，可直接比大小）：
+    /// 固定文件名的产品没有版本号可比，只能靠它判断远端有没有换过。
+    /// 返回 false 时按 `reachable` 判性质：false＝根本没连上（网络问题，调用方该报错重试），
+    /// true＝连上了但服务器没给时间戳（产品本身不可判更新，调用方只能回落）。
+    bool probeModified(const std::string &url, std::string &stamp, bool &reachable, std::string &err,
+                       const std::atomic<bool> *cancel = nullptr);
+
     void forgetDownHosts();
 
 

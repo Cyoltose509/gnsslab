@@ -26,8 +26,6 @@ namespace Solvers::PPPStatic {
     public:
         virtual void writeTropoParams(CSV::Meta &m) const;
 
-        virtual void writeMotionParams(CSV::Meta &m) const {}
-
         std::unique_ptr<::SPP> makeSolver() override;
 
         /// PPP 不做实时

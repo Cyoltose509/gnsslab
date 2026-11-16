@@ -97,7 +97,7 @@ namespace Solvers::LEO {
         if (fmt == Export::Format::ORB) return orbCols();
         // 低轨多一组 RTN（径向/切向/法向偏差），和 ENU 一样只在有真值时才有意义。
         const std::vector<Export::Col> c = Export::floatFixColumns(true);
-        return truthReady() ? c : Export::withoutRefColumns(c);
+        return columnsForTruth(c);
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
@@ -105,7 +105,8 @@ namespace Solvers::LEO {
         return fmt == Export::Format::CSV ? exportFields(fmt) : std::vector<Export::Col>{};
     }
 
-    void Task::writeMotionParams(CSV::Meta &m) const {
+    void Task::writeCSVParams(CSV::Meta &m) const {
+        PPPKinematic::Task::writeCSVParams(m);
         m.num(I18n::trc("param.motion_threshold"), opts.motionThresh);
         m.num(I18n::trc("param.spp_pred_threshold"), opts.sppVsPredThresh);
     }

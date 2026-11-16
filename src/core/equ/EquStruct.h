@@ -155,6 +155,19 @@ public:
 
     bool operator!=(const Variable &right) const;
 
+    static Variable makeAmbiguity(const std::string &station, const SatID &sat, const std::string &obsType) {
+        return {station, sat, Parameter::ambiguity, ObsID(std::string(1, sat.system), obsType)};
+    }
+
+    static Variable makeIfb(const std::string &station, const SatID &sat, const std::string &obsType) {
+        return {station, sat, Parameter::ifb, ObsID(std::string(1, sat.system), obsType)};
+    }
+
+    // 码偏逐系统一个：PRN 抹成 -1，同系统各星折叠到同一状态
+    static Variable makeCodeBias(const std::string &station, const SatID &sat, const std::string &obsType) {
+        return {station, SatID(sat.system, -1), Parameter::codeBias, ObsID(std::string(1, sat.system), obsType)};
+    }
+
 
     [[nodiscard]] std::string toString() const {
         std::stringstream ss;
@@ -176,20 +189,6 @@ public:
 inline std::ostream &operator<<(std::ostream &os, const Variable &v) {
     os << v.toString();
     return os;
-}
-
-// 模糊度状态变量构造
-inline Variable makeAmbiguityVar(const std::string &station, const SatID &sat, const std::string &obsType) {
-    return {station, sat, Parameter::ambiguity, ObsID(std::string(1, sat.system), obsType)};
-}
-
-inline Variable makeCodeBiasVar(const std::string &station, const SatID &sat, const std::string &obsType) {
-    return {station, SatID(sat.system, -1), Parameter::codeBias, ObsID(std::string(1, sat.system), obsType)};
-}
-
-// 逐 GLONASS 星 / 频点 IFCB（Inter-Frequency Code Bias）状态量构造
-inline Variable makeIfbVar(const std::string &station, const SatID &sat, const std::string &obsType) {
-    return {station, sat, Parameter::ifb, ObsID(std::string(1, sat.system), obsType)};
 }
 
 typedef std::set<Variable> VariableSet;
@@ -242,7 +241,8 @@ struct EquData {
     double prefit = 0.0;
     std::map<Variable, double> varCoeffData;
     double weight = 1.0;
-    double varBudget = 0.0; // 完整误差方差预算(对流层+轨道/钟差)，仅供后验抗差 sigma 使用，不改滤波权
+    double varBudget = 0.0;
+    bool isPhase = false;
 };
 
 // 所有观测方程数据，包括未知参数和每个方程的数据

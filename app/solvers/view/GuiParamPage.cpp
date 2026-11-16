@@ -315,7 +315,7 @@ namespace {
         };
     }
 
-    /// 周跳组：SPP 家族走 SPPConfig；RTK 走 RTKConfig，多一个 GF 开关。
+    /// 周跳组：SPP 家族走 SPPConfig；RTK 走 RTKConfig，两边字段同名同义。
     SolverGroup slipGroup(const bool rtk) {
         SolverGroup g{"param.group.cycle_slip", {}};
         if (rtk) {
@@ -328,6 +328,8 @@ namespace {
             return g;
         }
         g.fields.push_back(flag("param.use_cycle_slip", "useCycleSlip", &SPPConfig::useCycleSlip,
+                                &SolverOptions::spp));
+        g.fields.push_back(flag("param.use_gf_slip", "useGfCycleSlip", &SPPConfig::useGfCycleSlip,
                                 &SolverOptions::spp));
         g.fields.push_back(field("param.gf_slip_mult", "gfSlipMult", &SPPConfig::gfSlipMult,
                                  &SolverOptions::spp));

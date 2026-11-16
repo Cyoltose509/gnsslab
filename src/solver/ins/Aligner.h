@@ -32,15 +32,35 @@ struct AlignQuality {
 
 
 
+/// 静止段样本下标区间 [begin, end)；粗对准与静置段标定共用同一段。
+struct StaticSpan {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    /// 段末之后紧跟的连续运动样本数：还很大说明段没结束，缓冲要接着读。
+    std::size_t tailMove = 0;
+
+    [[nodiscard]] std::size_t size() const { return end > begin ? end - begin : 0; }
+};
+
+
 class Aligner {
 public:
+    /// 解析粗对准能用的最短静止时长 (s)，由 INS::align 与本类共用这一个数。
+    static constexpr double kMinStaticSec = 20.0;
+    static constexpr double kBlockSec = 1.0;       // 分块时长，只决定统计颗粒度
+    static constexpr double kRotateFrac = 5.0;     // 判「在转」门限：地球自转角速率的 5 倍（≈75 °/h）
+    static constexpr double kAccelFrac = 0.05;     // 判「在动」门限：比力模长偏离静置值 5%（约 0.5 m/s²）
+    static constexpr std::size_t kRefBlocks = 20;  // 参考中值回看的块数，约 20 s
+    static constexpr std::size_t kStatBlock = 200; // 求均值用的块长，约 1 s @200 Hz
+    static constexpr std::size_t kMoveRun = 3;     // 连续多少块超限才算真运动，单块是触碰扰动
 
     static Euler solve(const ImuLog &log,
                           std::size_t begin, std::size_t end,
                           const SiteParams &sp);
 
-    /// 从开头逐窗算姿态，到姿态/角速度持续变化为止；返回静止段末端样本下标，0 = 数据太短。
-    static std::size_t staticHead(const ImuLog &log, const ImuScale &scale, const SiteParams &sp);
+    /// 按模型自身采样率分块统计角速率，块均值相对邻近块与近期中值的变化超过 5 倍地球自转角速率、
+    /// 且连续 kMoveRun 块才算转动；取最长的那段静止（搬运会把记录切段，长的那段才是就位后的静置）。
+    static StaticSpan detectStatic(const ImuLog &log, const ImuScale &scale);
 
     static ATTQuat solveQuat(const ImuLog &log,
                              std::size_t begin, std::size_t end,

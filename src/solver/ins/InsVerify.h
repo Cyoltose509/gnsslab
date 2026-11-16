@@ -52,6 +52,10 @@ namespace Ins {
     /// 循环由调用方驱动（GUI 逐帧发布进度、CLI 一路跑到底），本层不回调界面。
     class Verifier {
     public:
+        static constexpr std::size_t kImuStride = 7;       // IMU.bin：t, Δθ(3), Δv(3)
+        static constexpr std::size_t kRefStride = 10;      // PureINS.bin：t, φ, λ, h, vN, vE, vD, roll, pitch, heading
+        static constexpr std::size_t kMaxCurvePts = 4000;
+
         Verifier(const std::string &imuPath, const std::string &refPath, const VerifyOptions &opt);
 
         [[nodiscard]] bool ready() const { return m_ready; }

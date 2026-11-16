@@ -6,60 +6,122 @@
 #include "MathUtils.h"
 
 namespace {
+    struct BlockMeans {
+        std::vector<Eigen::Vector3d> acc;
+        std::vector<Eigen::Vector3d> gyr;
+    };
+
+    BlockMeans collectBlockMeans(const ImuLog &log, const std::size_t begin, const std::size_t end,
+                                 const std::size_t w) {
+        BlockMeans out;
+        if (w == 0) return out;
+        for (std::size_t b = begin; b + w <= end; b += w) {
+            Eigen::Vector3d acc = Eigen::Vector3d::Zero(), gyr = Eigen::Vector3d::Zero();
+            for (std::size_t i = b; i < b + w; ++i) {
+                acc += Eigen::Vector3d(log[i].ax, log[i].ay, log[i].az);
+                gyr += Eigen::Vector3d(log[i].gx, log[i].gy, log[i].gz);
+            }
+            out.acc.push_back(acc / static_cast<double>(w));
+            out.gyr.push_back(gyr / static_cast<double>(w));
+        }
+        return out;
+    }
+
+    Eigen::Vector3d medianOf(std::vector<Eigen::Vector3d> v) {
+        if (v.empty()) return Eigen::Vector3d::Zero();
+        const auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
+        Eigen::Vector3d m;
+        for (int k = 0; k < 3; ++k) {
+            std::nth_element(v.begin(), mid, v.end(),
+                             [k](const Eigen::Vector3d &a, const Eigen::Vector3d &b) { return a[k] < b[k]; });
+            m[k] = (*mid)[k];
+        }
+        return m;
+    }
+
+    // 逐块均值取中位数：短时搬动、触碰只污染少数块，中位数把它们挡在估计之外。
     DCM alignMeanDCM(const ImuLog &log,
-                                 const std::size_t begin, const std::size_t end, const SiteParams &sp,
-                                 Eigen::Vector3d &accMean, Eigen::Vector3d &gyrMean) {
+                      const std::size_t begin, const std::size_t end, const SiteParams &sp,
+                      Eigen::Vector3d &accMean, Eigen::Vector3d &gyrMean) {
         accMean = Eigen::Vector3d::Zero();
         gyrMean = Eigen::Vector3d::Zero();
         if (end <= begin) return DCM();
+
+        const std::size_t n = end - begin;
+        const std::size_t w = std::min(Aligner::kStatBlock, n);
+        const BlockMeans bm = collectBlockMeans(log, begin, end, w);
+        if (bm.gyr.size() >= 3) {
+            accMean = medianOf(bm.acc);
+            gyrMean = medianOf(bm.gyr);
+            return alignDCM(-accMean, gyrMean, sp);
+        }
+
         for (std::size_t i = begin; i < end; ++i) {
             accMean += Eigen::Vector3d(log[i].ax, log[i].ay, log[i].az);
             gyrMean += Eigen::Vector3d(log[i].gx, log[i].gy, log[i].gz);
         }
-        const auto n = static_cast<double>(end - begin);
-        accMean /= n;
-        gyrMean /= n;
+        accMean /= static_cast<double>(n);
+        gyrMean /= static_cast<double>(n);
         return alignDCM(-accMean, gyrMean, sp);
     }
 }
 
-std::size_t Aligner::staticHead(const ImuLog &log, const ImuScale &scale, const SiteParams &sp) {
+StaticSpan Aligner::detectStatic(const ImuLog &log, const ImuScale &scale) {
     const double rate = scale.rateHz > 0.0 ? scale.rateHz : 200.0;
-    const std::size_t w = std::max<std::size_t>(200, static_cast<std::size_t>(2.0 * rate));
-    if (log.size() < 2 * w) return 0;
+    const double lsbToRad = scale.gyroRadPerLsb * rate;   // LSB → rad/s
+    const auto w = static_cast<std::size_t>(std::lround(kBlockSec * rate));
+    if (!(lsbToRad > 0.0) || w == 0) return {};
 
-    const Euler ref = solve(log, 0, w, sp);
-    Eigen::Vector3d accRef = Eigen::Vector3d::Zero();
-    for (std::size_t i = 0; i < w; ++i)
-        accRef += Eigen::Vector3d(log[i].ax, log[i].ay, log[i].az);
+    const BlockMeans bm = collectBlockMeans(log, 0, log.size(), w);
+    const std::size_t n = bm.gyr.size();
+    const std::size_t need = static_cast<std::size_t>(std::lround(kMinStaticSec * rate)) / w;
+    if (n < std::max<std::size_t>(need, 2)) return {};
 
-    constexpr double kAttTolRad = 0.5 * DEG_TO_RAD;
-    constexpr double kGyroTolRad = 1.0e-3;
-    constexpr double kAccelTol = 0.02;
-    constexpr int kRun = 3;
-    std::size_t first = 0;
-    int run = 0;
-    for (std::size_t b = w; b + w <= log.size(); b += w) {
-        const Euler att = solve(log, b, b + w, sp);
-        Eigen::Vector3d acc = Eigen::Vector3d::Zero(), gyr = Eigen::Vector3d::Zero();
-        for (std::size_t i = b; i < b + w; ++i) {
-            acc += Eigen::Vector3d(log[i].ax, log[i].ay, log[i].az);
-            gyr += Eigen::Vector3d(log[i].gx, log[i].gy, log[i].gz);
+    const double tol = kRotateFrac * OMEGA_EARTH;
+    std::vector<bool> over(n, false);
+    for (std::size_t k = 1; k < n; ++k) {
+        const std::size_t lo = k > kRefBlocks ? k - kRefBlocks : 0;
+        const auto from = static_cast<std::ptrdiff_t>(lo);
+        const auto to = static_cast<std::ptrdiff_t>(k);
+        const Eigen::Vector3d ref = medianOf({bm.gyr.begin() + from, bm.gyr.begin() + to});
+        const double gRef = medianOf({bm.acc.begin() + from, bm.acc.begin() + to}).norm();
+        over[k] = (bm.gyr[k] - bm.gyr[k - 1]).norm() * lsbToRad > tol ||
+                  (bm.gyr[k] - ref).norm() * lsbToRad > tol ||
+                  (gRef > 0.0 && std::fabs(bm.acc[k].norm() / gRef - 1.0) > kAccelFrac);
+    }
+
+    // 单块超限是触碰、说话这类扰动，持续 kMoveRun 块以上才认作真的在动。
+    std::vector<bool> moving(n, false);
+    for (std::size_t k = 0; k < n;) {
+        if (!over[k]) {
+            ++k;
+            continue;
         }
-        const double omega = gyr.norm() / static_cast<double>(w) * scale.gyroRadPerLsb * rate;
-        const bool changed = std::fabs(att.roll - ref.roll) > kAttTolRad ||
-                             std::fabs(att.pitch - ref.pitch) > kAttTolRad ||
-                             omega > kGyroTolRad ||
-                             (accRef.norm() > 0.0 &&
-                              std::fabs(acc.norm() / accRef.norm() - 1.0) > kAccelTol);
-        if (changed) {
-            if (run == 0) first = b;
-            if (++run >= kRun) return first;
-        } else {
-            run = 0;
+        const std::size_t s = k;
+        while (k < n && over[k]) ++k;
+        if (k - s >= kMoveRun)
+            for (std::size_t i = s; i < k; ++i) moving[i] = true;
+    }
+
+    // 取最长的那段静止：搬运把记录切成前后两段时，长的那段才是设备就位后的静置。
+    std::size_t bestBegin = 0, bestCount = 0;
+    for (std::size_t k = 0; k < n;) {
+        if (moving[k]) {
+            ++k;
+            continue;
+        }
+        const std::size_t s = k;
+        while (k < n && !moving[k]) ++k;
+        if (k - s > bestCount) {
+            bestBegin = s;
+            bestCount = k - s;
         }
     }
-    return log.size();
+
+    // 段末之后连续运动的长度：够长才说明这段静置真的到头了，否则只是又被搬了一下。
+    std::size_t tailBlocks = 0;
+    for (std::size_t k = bestBegin + bestCount; k < n && moving[k]; ++k) ++tailBlocks;
+    return {bestBegin * w, (bestBegin + bestCount) * w, tailBlocks * w};
 }
 
 Euler Aligner::solve(const ImuLog &log,

@@ -15,10 +15,6 @@ void CycleSlip::reset() {
     mwVar = 0;
     mwCnt = 0;
     pendActive = false;
-    gfPrev = 0;
-    gfHasPrev = false;
-    mGfWlPrev = 0;
-    mGfWlHasPrev = false;
 }
 
 void CycleSlip::flushGf() {
@@ -140,13 +136,14 @@ CycleSlip::Result CycleSlip::feed(const SatID &sat, const TypeValueMap &tv, cons
         }
     }
 
-    if (arcIdx >= 1 && gfThres > 0.0 && gfSlipSet.count(arcIdx - 1)) {
+    // 当前历元的索引就是 arcIdx（push 前取的 size），detectGF 的 slip[k] 判的是 k 与 k-1 之间。
+    if (arcIdx >= 1 && gfThres > 0.0 && gfSlipSet.count(arcIdx)) {
         mwMean = mw;
         mwVar = 0;
         mwCnt = 0;
         pendActive = false;
         gfSlip = true;
-        gfArtifact = gfArtifactSet.count(arcIdx - 1) > 0;
+        gfArtifact = gfArtifactSet.count(arcIdx) > 0;
     }
 
     r.slip = mwSlip;
@@ -209,13 +206,4 @@ void CycleSlip::detectGF(const std::vector<double> &LGF, const std::vector<doubl
                 slip[k] = 1;
         }
     }
-}
-
-bool CycleSlip::gfWideLaneSlip(const double L1, const double L2, const double thr) {
-    const double gf = FreqCombo::GF_phase(L1, L2);
-    bool slip = false;
-    if (mGfWlHasPrev) slip = std::fabs(gf - mGfWlPrev) > thr;
-    mGfWlPrev = gf;
-    mGfWlHasPrev = true;
-    return slip;
 }

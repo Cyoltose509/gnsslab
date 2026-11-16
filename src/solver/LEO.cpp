@@ -12,29 +12,6 @@
 #include "core/SatID.h"
 #include "i18n/I18n.h"
 
-namespace {
-    /// 4 星近共面时 PDOP 可上千，1 m 码噪声被放大成公里级，这样的 SPP 位置不能作线性化点
-    constexpr double kPdopLimit = 50.0;
-    /// PDOP 到这个量级位置在法向完全不可观：码解实测带 70–140 m 误差，本历元不给解
-    constexpr double kPdopReject = 100.0;
-    /// SPP 不可信时位置只剩相位撑着，偏离本历元锚点这么多就认为滤波已散
-    constexpr double kSppFailJumpM = 300.0;
-    /// 判定解算结果可信的最长外推跨度(s)：低轨断档一分钟以上很常见
-    constexpr double kMotionTrustSpanS = 300.0;
-    /// 加速度包络(m/s^2)：真实运动不可能超过它，用来给外推邻域定上界
-    constexpr double kAccelEnvelope = 9.0;
-    /// 相邻历元速度差分的加速度上限(m/s^2)：超过这个量级只可能是解算跳变，不是真实运动
-    constexpr double kAccelLimit = 15.0;
-    /// 位置状态离开可信锚点运动外推超过这么多，就认定状态被钟跳带走了(m)
-    constexpr double kPosStateJumpM = 200.0;
-    /// 断档恢复首历元的发布门限：PDOP × 码 σ 超过它就不发布该历元位置(m)
-    constexpr double kSppPosGateM = 10.0;
-    /// 发布位置至少要 5 颗星：4 星恰好解 XYZ+钟，残差恒为 0 没有冗余；
-    /// 再少就是纯状态外推，位置和多普勒速度会一起沿轨道漂，实测能累积到几十公里。
-    constexpr int kMinPublishSats = 5;
-}
-
-
 void LEO::setAntennaOffset(const AntennaOffset &offset, const std::string &source) {
     prod->recvAnt = offset;
     prod->recvAntSrc = source;
@@ -149,7 +126,7 @@ bool LEO::processEpoch(ObsData &obs) {
     const bool prevSolved = mPrevEpochSolved;
     mPrevEpochSolved = false;
     const bool ok = PPPKinematic::processEpoch(obs);
-    const bool hasSol = ok && result.xyz.squaredNorm() > 1e12;
+    const bool hasSol = ok && isSaneECEF(result.xyz);
     // 轨道高度物理包络 + 最少 5 星：跑到地球内部/上万公里外，或星数不足只剩状态外推，
     // 都会输出「标了 Float 却带假位置」的行，一律不发布。
     if (hasSol) {
@@ -179,7 +156,7 @@ bool LEO::processEpoch(ObsData &obs) {
             if (const double thr = 0.5 * kAccelEnvelope * g * g + kSppFailJumpM;
                 isSaneECEF(pred) && (result.xyz - pred).norm() > thr) {
                 result.xyz = Eigen::Vector3d::Zero();
-                ekf.setBootstrapPosition(pred, 10.0 * 10.0); // σ=10 m
+                ekf.setBootstrapPosition(pred, GnssEKF::kBootstrapPosVar);
                 return false;
             }
         }
@@ -198,7 +175,7 @@ bool LEO::processEpoch(ObsData &obs) {
         computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
         // 加速度取相邻历元速度的差分。退化几何下速度本身就带百米级误差，差出来的不是加速度，
         // 只在 SPP 锚点可信的连续历元上更新，其余历元沿用上一段的有效值。
-        if (ok && result.xyz.squaredNorm() > 1e12) {
+        if (ok && isSaneECEF(result.xyz)) {
             if (mHasPrevVel) {
                 if (const double dtv = obs.epoch - mPrevVelTime; dtv != 0.0 && std::fabs(dtv) <= 1.5) {
                     const Eigen::Vector3d a = (mRecvVel - mPrevVel) / dtv;
@@ -210,7 +187,7 @@ bool LEO::processEpoch(ObsData &obs) {
             mHasPrevVel = true;
         }
     }
-    mPrevEpochSolved = result.xyz.squaredNorm() > 1e12;
+    mPrevEpochSolved = isSaneECEF(result.xyz);
     return ok;
 }
 

@@ -107,7 +107,6 @@ set(LIB_SOURCES
         solver/ppp/Static.cpp
         solver/ppp/Equation.cpp
         solver/ppp/Epoch.cpp
-        solver/ppp/Readback.cpp
         solver/ppp/AR.cpp
         solver/ppp/Kinematic.h
         solver/ppp/Kinematic.cpp

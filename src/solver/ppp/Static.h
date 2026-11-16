@@ -9,6 +9,12 @@
 
 class PPPStatic : public SPP {
 public:
+    /// 码预fit 粗差门限(m)，判之前先扣掉同系统中位数
+    static constexpr double kPrefitGateM = 30.0;
+    /// 相位预fit 粗差门限(m)：静态站历元间位置不变，运动学/LEO 含运动预测误差
+    static constexpr double kPhasePrefitGateStaticM = 5.0;
+    static constexpr double kPhasePrefitGateKinematicM = 30.0;
+
     PPPStatic() {
         mRequirePhaseForIF = true;
     }
@@ -47,6 +53,9 @@ public:
     /// 首历元锚定参考位置：把观测文件头/接收机自报的近似坐标收进 mRefPos 当作起算点。
     virtual void bindRefPosition();
 
+    /// 首历元引导：开相位前先用码方程迭代出线性化点，写进 xyz。
+    bool bootstrapSolution() override;
+
     void initFilter() override;
 
     void updateFilter() override;
@@ -56,9 +65,6 @@ public:
     void solve() override;
 
     void publishResult() override;
-
-    /// 从 EKF 读回位置、钟、码偏、模糊度与码/相位残差（`SPP::readback` 的超集）。
-    void readback() override;
 
     void resetFilterState() override;
 
@@ -71,9 +77,6 @@ public:
     bool mApplyWindup = true; // 相位缠绕总开关
 
     bool mApplySolidTide = true; // 固体潮
-
-    bool mUseCycleSlip = true;
-    double mGfSlipMult = 3.0; // GF 周跳阈值倍数（×单周跳阶跃）
 
     bool mHasTropo = true; // 估计 ZTD
     bool mUseTroGrad = true; // TRO 水平梯度固定改正开关（默认开；关=退化为仅 ZTD，便于 A/B）
@@ -154,6 +157,8 @@ public:
     int mProcEpoch = 0; // 已处理历元计数
 
     // ---- 状态回读 ----
+    // 两份 map 都是「系统 sys 的钟态先验/估计」：参考系统=绝对钟(cdt1)，其余=相对参考的 ISB(cdt2~4)，
+    // 即 Variable(station, mCdtParam[sys]) 的值。物理含义随参数化而异，状态空间语义均匀。
     std::map<char, double> mClkBase;
     std::map<char, double> mClkEstimate;
     double mZtdBase = 0.0;
@@ -180,9 +185,6 @@ public:
 
     std::map<SatID, CycleSlip> mSlipDetectors;
     std::set<SatID> mPrevSatSet;
-    int mGfCommonMode = 2; // GF 共模抑制阈值
-    long slipVerdicts = 0; // 本运行累计 Slip 判定数
-    long ambResets = 0; // 本运行累计模糊度重置(newArc/Slip/Gap)数
 
 private:
     /// 钟差先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值。

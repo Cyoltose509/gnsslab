@@ -5,13 +5,6 @@
 #include "Log.h"
 #include "GnssEKF.h"
 
-namespace {
-    constexpr double kMinVeloSigma = 0.01; // m/s：多普勒测速 σ 下限，防止残余估出 1e-4 量级后变成无穷权
-    constexpr double kVeloGate = 4.0;      // 速度新息 χ² 门限（σ 倍数）
-    constexpr double kVarianceUnset = -1.0; // 方差表未配置哨兵：新增参数类型漏填表时显式失败
-}
-
-
 void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
     currentUnkSet = varSet;
     const int n = static_cast<int>(currentUnkSet.size());

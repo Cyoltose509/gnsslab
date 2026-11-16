@@ -3,12 +3,10 @@
 #include "core/equ/EquStruct.h"
 #include "core/obs/ObsStruct.h"
 #include "core/SatID.h"
-#include "SolverLSQ.h"
 #include "core/obs/FreqCombo.h"
 #include "core/geom/EphemerisTable.h"
 #include "core/geom/Ephemeris.h"
 #include "core/obs/CycleSlip.h"
-#include "GnssEKF.h"
 #include "GnssSolver.h"
 #include "RTKConfig.h"
 #include "SolverOptions.h"
@@ -20,6 +18,10 @@
 
 class RTK : public GnssSolver {
 public:
+    static constexpr auto kRover = "rover";
+    static constexpr double kPrefitGateSigma = 4.0;
+    static constexpr std::size_t kGateMinObs = 8;
+
     RTK() = default;
 
     ~RTK() override = default;
@@ -38,6 +40,9 @@ public:
 
     void initFilter() override;
 
+    /// 首历元引导：从概略坐标出发迭代解双差方程，把线性化点写进 xyz（滤波档与 LSQ 档共用）。
+    bool bootstrapSolution() override;
+
     void updateFilter() override;
 
     Eigen::Vector3d mBase{0, 0, 0}; // 基准站
@@ -54,12 +59,11 @@ private:
     [[nodiscard]] std::optional<SatID> selectRefSatellite(const std::vector<SatID> &candidates) const;
 
     Eigen::Vector3d mRoverApprox{0, 0, 0};
-    int mGfCommonMode = 2;
     std::size_t mBaseEphSize = 0;
     std::size_t mRoverEphSize = 0;
-    Eigen::Vector3d mBaselineSigmaFixed = Eigen::Vector3d::Zero();
+    Eigen::Vector3d mBaselineSigmaFixed = Eigen::Vector3d::Zero(); // 固定基线三分量 σ（未乘 sigma0）
 
-    // 基类的 satPVTRecTime/satElevData/satAzimData 存流动站（「当前接收机」语义），基准站另立一套。
+    // 基类的 satPVTRecTime/satElevData/satAzimData 存流动站
     std::map<SatID, double> satBaseElevData;
     std::map<SatID, PVT> satPVTBaseRecTime;
 
@@ -80,22 +84,18 @@ private:
     };
 
 
-    const ObsData *mRtkBase = nullptr; // 基准站观测；流动站观测在基类 mCurObs
-    std::map<char, SysCombo> mRtkCombos;
+    const ObsData *mBaseObs = nullptr; // 基准站观测；流动站观测在基类 mCurObs
+    std::map<char, SysCombo> mSysCombos;
     std::map<char, std::vector<SatID> > mPartSats;
-    std::map<char, std::map<std::string, std::map<SatID, double> > > mRtkFixedMap;
+    VariableDataMap mFixedMap;
     EphemerisTable *mEph = nullptr;
-    std::set<SatID> mRtkSlipExclude;
+    std::set<SatID> mSlipExclude;
 
-
-
-    bool solveFloat(Eigen::Vector3d &baseline);
 
 
     void rebaseAmbiguities();
 
 
-    void collectVars(EquSys &eq, bool fixed) const;
 
 
     void applyFixedSolution(double s0);
@@ -113,12 +113,7 @@ private:
     void computeSdVariance();
 
 
-    void buildStochasticModel(const EquSys &eq);
-
-
     void buildWeightMatrix(const EquSys &eq);
-
-    void solveIteration(SolverLSQ &solver, EquSys &eq) const;
 
     bool tryFixAmbiguities(const std::vector<Variable> &aVars, const Eigen::VectorXd &b,
                            const Eigen::MatrixXd &Qb);
@@ -138,25 +133,9 @@ private:
     void detectFreqCombinations();
 
 
-    void readback(const EquSys &eqFloat, const Eigen::VectorXd &residual, const Eigen::Vector3d &posEcef);
-
-
     void detectSlips();
 
-    void addDoubleDiffEquation(EquSys &eq, const SatID &sat, const Eigen::Vector3d &ddLos, double ddGeom,
-                               int freq, bool isPhase, bool fixed) const;
-
-
-    static const char *freqLabel(const int freq, const bool isPhase) {
-        return freq == 1 ? (isPhase ? "L1" : "C1") : isPhase ? "L2" : "C2";
-    }
-
-    static Variable ambVar(const SatID &sat, const int freqIdx) {
-        return makeAmbiguityVar("rover", sat, freqLabel(freqIdx, true));
-    }
-
-    static Eigen::Vector3d estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph,
-                                                  const std::set<char> &systems, double cutoffElevDeg);
+     [[nodiscard]] Eigen::Vector3d estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph) const;
 
     std::map<SatID, CycleSlip> mSlipDetBase;
     std::map<SatID, CycleSlip> mSlipDetRover;

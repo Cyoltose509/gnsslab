@@ -4,6 +4,11 @@
 
 class PPPKinematic : public PPPStatic {
 public:
+    /// 加速度包络(m/s^2)：真实运动不可能超过它，用来给外推邻域定上界
+    static constexpr double kAccelEnvelope = 9.0;
+    /// 每历元重锚定的 Baarda 最大剔除轮数：BDS GEO 最多 4 颗，全部被剔也到此为止。
+    static constexpr int kMaxBaardaRounds = 4;
+
     PPPKinematic() {
         mRequirePhaseForIF = true;
         mKinematic = true;

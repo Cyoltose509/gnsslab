@@ -8,11 +8,6 @@
 #include <map>
 #include <set>
 
-namespace {
-    // 每历元重锚定的 Baarda 最大剔除轮数：BDS GEO 最多 4 颗，全部被剔也到此为止。
-    constexpr int kMaxBaardaRounds = 4;
-}
-
 Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut, double *rmsOut,
                                           double *pdopOut, char sysOnly) const {
     if (!mCurObs) return seedIn;
@@ -179,7 +174,7 @@ bool PPPKinematic::processEpoch(ObsData &obs) {
     try {
         if (!PPPStatic::processEpoch(obs)) return false;
         bool diverged = false;
-        if (mReanchorPos.squaredNorm() > 1e12 && result.xyz.squaredNorm() > 1e12) {
+        if (isSaneECEF(mReanchorPos) && isSaneECEF(result.xyz)) {
             if ((result.xyz - mReanchorPos).norm() > mDivergeJumpThresh) {
                 // 重锚定的初值必须取本历元的可信锚点：已经发散的 result.xyz 作初值时
                 // SPP 会收敛到另一个错解，再 setBootstrapPosition 就把位置状态永久写坏。
@@ -187,7 +182,7 @@ bool PPPKinematic::processEpoch(ObsData &obs) {
                 const Eigen::Vector3d fresh = reanchorSPP(seed);
                 result.xyz = fresh;
                 result.xyzFloat = fresh; // 浮点解同源，否则 CSV 里两套位置打架
-                ekf.setBootstrapPosition(fresh, 10.0 * 10.0); // 位置状态拉回重锚定点(σ=10 m)
+                ekf.setBootstrapPosition(fresh, GnssEKF::kBootstrapPosVar);
                 mForceAmbReset = true;
                 ++mDivergeRecovers;
                 diverged = true;
@@ -196,7 +191,7 @@ bool PPPKinematic::processEpoch(ObsData &obs) {
 
         // 无解历元（result 被置零）不能再进差分：0 与上一历元位置之差会差出几百万 m/s，
         // 下一历元按它外推就直接飞到几万公里外，整段再也回不来。
-        if (result.xyz.squaredNorm() <= 1e12) return false;
+        if (!isSaneECEF(result.xyz)) return false;
 
         // 速度取相邻历元位置差分；跨中断的差分是弦速度而不是真实速度。
         // LEO 96 s 断档恢复首历元实测位置误差 316 m，直接差分出 316 m/s 的速度误差，
@@ -220,7 +215,7 @@ bool PPPKinematic::processEpoch(ObsData &obs) {
         if (mMotionThresh > 0.0 && mHasMotionRef && !mGapThisEpoch) {
             if (const double dt = obs.epoch - mMotionRefEpoch; mDirection * dt > 0.0 && mDirection * dt <= 5.0) {
                 const Eigen::Vector3d pred = mMotionRefPos + mMotionRefVel * dt;
-                if (const double thr = mMotionThresh + 0.5 * 9.0 * dt * dt; isSaneECEF(pred) && (result.xyz - pred).norm() > thr) {
+                if (const double thr = mMotionThresh + 0.5 * kAccelEnvelope * dt * dt; isSaneECEF(pred) && (result.xyz - pred).norm() > thr) {
                     result.xyz = Eigen::Vector3d::Zero();
                     return false;
                 }

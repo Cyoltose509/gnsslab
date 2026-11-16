@@ -36,6 +36,7 @@ dl.http.http_status,服务器返回 HTTP {0},Server returned HTTP {0}
 dl.http.init_failed,curl_easy_init 失败,curl_easy_init failed
 dl.http.keep_partial,保留已{{Download}}的 {0} 字节，下次续传: {1},Keeping the {0} bytes already downloaded for the next resume: {1}
 dl.http.no_credentials,未填写 Earthdata 账号或密码,Earthdata user name or password is not set
+dl.http.no_last_modified,服务器未给出修改时间,Server did not send Last-Modified
 dl.http.no_range,服务器不支持断点续传，从头重下: {0},Server does not support resuming; restarting from scratch: {0}
 dl.http.no_range_short,服务器不支持断点续传，从头重下,Server does not support resuming; restarting from scratch
 dl.http.parse_list_failed,解析目录失败: {0},Failed to parse the directory listing: {0}
@@ -51,7 +52,6 @@ dl.prod.import_copy_failed,导入拷贝失败 {0} → {1}: {2},Import copy faile
 dl.prod.import_done,手工导入 {0} {1}（{2}）,Manual import of {0} {1} ({2})
 dl.prod.import_validate_failed,导入校验未通过 {0}: {1},Import validation failed {0}: {1}
 dl.prod.imported,已导入,Imported
-dl.prod.index_fetch_failed,{{Index}}获取失败: {0},{{Index}} fetch failed: {0}
 dl.prod.index_no_match,{{Index}}中无匹配,no match in the {{Index}}
 dl.prod.index_no_match_long,{{Index}}中未找到匹配文件,No matching file found in the {{Index}}
 dl.prod.inflate_failed,{{Unpack}}失败（压缩包可能已损坏）,{{Unpack}} failed (the archive may be corrupted)

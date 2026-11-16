@@ -95,6 +95,9 @@ namespace Solvers::SPP {
                 {F::Pdop, "PDOP"}, {F::Gdop, "GDOP"}, {F::Hdop, "HDOP"},
                 {F::Vdop, "VDOP"}, {F::Tdop, "TDOP"},
                 {F::SigmaP, "SigmaP"}, {F::SigmaV, "SigmaV"},
+                {F::SigmaE, "SigmaE", "Sigma-ENU"},
+                {F::SigmaN, "SigmaN", "Sigma-ENU"},
+                {F::SigmaU, "SigmaU", "Sigma-ENU"},
                 {F::Sats, "SatCount"}, {F::Rms3dF, "3dRMS/m"},
             };
         }
@@ -298,6 +301,8 @@ namespace Solvers::SPP {
                         res.xyz = out.xyz;
                         res.xyzFloat = out.xyz;
                         if (res.xyzFixed.squaredNorm() > 1.0) res.xyzFixed = out.xyz;
+                        // 三分量 σ 跟着同比例缩，否则与融合后的 σ 不同源，导出列会打架。
+                        if (res.sigmaP > 0.0) res.sigmaXYZ *= out.sigma / res.sigmaP;
                         res.sigmaP = out.sigma;
                         res.sigmaPFloat = out.sigma;
                         if (res.sigmaPFixed > 0.0) res.sigmaPFixed = out.sigma;
@@ -363,22 +368,18 @@ namespace Solvers::SPP {
     std::vector<Export::Col> Task::exportFields(const Export::Format fmt) const {
         if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = sppFields();
-        return truthReady() ? c : Export::withoutRefColumns(c);
+        return columnsForTruth(c);
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
         if (fmt != Export::Format::CSV) return {};
         const std::vector<Export::Col> c = sppCSV();
-        return truthReady() ? c : Export::withoutRefColumns(c);
+        return columnsForTruth(c);
     }
 
     void Task::writeCSVParams(CSV::Meta &m) const {
-        m.num(I18n::trc("param.code_sigma"), opts.spp.codeSigma);
-        m.num(I18n::trc("param.elev_weight_floor"), opts.spp.minSinElev);
+        writeCommonParams(m);
         m.text(I18n::trc("MappingFunction"), Troposphere::keyOf(opts.spp.tropoMap));
-        m.num(I18n::trc("param.isb_proc_sigma"), opts.spp.isbProcSigma);
-        m.num(I18n::trc("param.isb_init_sigma"), opts.spp.isbInitSigma);
-        m.flag(I18n::trc("param.drop_unhealthy"), opts.spp.useHealth);
     }
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg) {

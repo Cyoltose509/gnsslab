@@ -125,6 +125,7 @@ export.lbl.gyro,{{Gyroscope}}{{Bias}} (X/Y/Z),{{Gyroscope}} {{Bias}} (X/Y/Z)
 export.lbl.ref_xyz,参考{{Coordinate}} (X/Y/Z),Reference {{Coordinate}} (X/Y/Z)
 export.lbl.rph,{{AttitudeAngle}} (R/P/H),{{AttitudeAngle}} (R/P/H)
 export.lbl.rtn,{{Orbit}}{{Deviation}} (R/T/N),{{Orbit}} {{Deviation}} (R/T/N)
+export.lbl.sig_enu,{{Position}} σ (E/N/U),{{Position}} σ (E/N/U)
 export.lbl.sig_p,{{Position}} σ,{{Position}} σ
 export.lbl.sig_v,{{Velocity}} σ,{{Velocity}} σ
 export.lbl.vel_ned,{{Velocity}} (N/E/D),{{Velocity}} (N/E/D)

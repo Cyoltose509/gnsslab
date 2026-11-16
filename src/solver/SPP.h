@@ -59,12 +59,10 @@ public:
 
     void updateFilter() override;
 
-    void bootstrapSolution();
+    /// 首历元引导：IF 组合与钟模型定好后，用迭代 LSQ 解出位置与钟，写进 xyz / rClockBias。
+    bool bootstrapSolution() override;
 
-    void runFilter();
-
-    /// 从 EKF 解回读进 result 与镜像成员；PPP 覆写成超集（另读钟、码偏、模糊度、相位残差）。
-    virtual void readback();
+    void filterEpoch();
 
     DopplerResult estimateVelocity() override;
 

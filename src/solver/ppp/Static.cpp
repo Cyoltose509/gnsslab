@@ -1,5 +1,6 @@
 #include "Static.h"
 #include "core/Const.h"
+#include "core/equ/Precision.h"
 #include "i18n/I18n.h"
 #include "Log.h"
 #include "core/TimeStruct.h"
@@ -105,16 +106,80 @@ void PPPStatic::solve() {
 void PPPStatic::publishResult() {
     SPP::publishResult();
     if (mFilterFrozen) return;
+    try { result.xyz = currentEstimatedPosition(); } catch (...) {}
+    result.xyzFloat = result.xyz;
+    result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
+    result.numSats = static_cast<int>(curEq.obsEquData.size()) / 2;
+
+    for (const auto &[sys, par]: mCdtParam)
+        GnssEKF::tryGetSolution(par, ekf.currentUnkSet, ekf.solution, mClkEstimate[sys]);
+    for (char sys: mSysSeen) {
+        if (!osbCoversSystem(sys)) {
+            const Variable vcb = Variable::makeCodeBias(mCurObs->station, SatID(sys, -1), "IF");
+            mCbEstimate[sys] = ekf.getSolution(vcb);
+        }
+    }
+    // 逐 GLONASS/BDS 星 IFCB 回读
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
+        if (sat.system != 'R' && sat.system != 'C') continue;
+        if (osbCovers(sat)) continue;
+        if (const FreqCombo *defp = freqComboFor(sat); !defp || !defp->available(tv, true)) continue;
+        const Variable vifb = Variable::makeIfb(mCurObs->station, sat, "IF");
+        mIfcbEstimate[sat] = ekf.getSolution(vifb);
+    }
+    GnssEKF::tryGetSolution(Parameter::ztd, ekf.currentUnkSet, ekf.solution, mZtdEstimate);
+    for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
+        const FreqCombo *defp = freqComboFor(sat);
+        if (!defp || !defp->available(tv, true)) continue;
+        const Variable vamb = Variable::makeAmbiguity(mCurObs->station, sat, "IF");
+        mAmbEstimate[sat] = ekf.getSolution(vamb); // 不在集中直接返回 0，不抛
+    }
+    readbackResidual(curEq, ekf.postfitResidual);
+    geometryDOPs(result, curEq, result.blh);
+
+    const Variable vdx(mCurObs->station, Parameter::dX);
+    const Variable vdy(mCurObs->station, Parameter::dY);
+    const Variable vdz(mCurObs->station, Parameter::dZ);
+    const Variable vox(mCurObs->station, Parameter::dOX);
+    const Variable voy(mCurObs->station, Parameter::dOY);
+    const Variable voz(mCurObs->station, Parameter::dOZ);
+    const Eigen::MatrixXd P = ekf.Q;
+    auto axisVar = [&](const Variable &pos, const Variable &off) -> double {
+        if (!ekf.currentIndexData.count(pos)) return 0.0;
+        const int ip = ekf.currentIndexData.at(pos);
+        double v = P(ip, ip);
+        if (ekf.currentIndexData.count(off)) {
+            const int io = ekf.currentIndexData.at(off);
+            v += P(io, io) + 2.0 * P(ip, io);
+        }
+        return v;
+    };
+    Eigen::Matrix3d Q = Eigen::Matrix3d::Zero();
+    Q.diagonal() << axisVar(vdx, vox), axisVar(vdy, voy), axisVar(vdz, voz);
+    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
+                             static_cast<int>(ekf.currentUnkSet.size()));
+    result.sigmaXYZ = Q.diagonal().array().max(0.0).sqrt().matrix() * sigma0;
+    result.sigmaP = std::max(positionSigma(Q, sigma0), 1e-3);
+    result.sigmaPFloat = result.sigmaP;
+
     const bool arFixed = mUseAR && tryFixAmbiguities();
     result.stat = arFixed ? 1 : 2;
-    readback();
 
     if (arFixed) {
         result.xyz = result.xyzFixed;
         result.blh = Coord::XYZToBLH(result.xyzFixed, Frame::WGS84); // blh 跟着换成固定解，否则与 xyz 打架
+        result.sigmaP = result.sigmaPFixed;
     }
     xyz = result.xyz;
     computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+}
+
+bool PPPStatic::bootstrapSolution() {
+    const auto [pos, ok] = estimateInitialPosition();
+    mAmbEstimate.clear(); // 引导内部建方程会顺带填它，这里重置，留给 initFilter 的正式建方程重填
+    if (!ok) return false;
+    xyz = pos;
+    return true;
 }
 
 void PPPStatic::initFilter() {
@@ -123,62 +188,55 @@ void PPPStatic::initFilter() {
         mFilterFrozen = true;
         return;
     }
-    Eigen::Vector3d xyzRef ;
-    bool deferInit = false;
-    {
-        if (auto [pos, flag] = estimateInitialPosition(); !flag) deferInit = true;
-        else xyzRef = pos;
-        mAmbEstimate.clear();
-    }
-    if (deferInit) {
+    if (!bootstrapSolution()) {
         mFilterFrozen = true;
-    } else {
-        mEpochXyz = xyzRef;
-        mCsData = &mEpochStates;
-        buildEquSys();
-        mFilterFrozen = static_cast<int>(curEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
-        if (!mFilterFrozen) {
-            ekf.configure(mConfig.posProcSigma, mHasTropo, mConfig.ambProcSigma, mConfig.clockProcSigma);
-            ekf.isbProcSigma = mConfig.isbProcSigma;
-            ekf.isbInitSigma = mConfig.isbInitSigma;
-            ekf.posFloorSigma = mConfig.posFloorSigma;
-            ekf.ztdInitSigma = mConfig.ztdInitSigma;
-            ekf.ambInitSigma = mConfig.ambInitSigma;
-            ekf.ztdProcSigma = mConfig.ztdProcSigma;
-            const double fpvVar = mConfig.firstEpochPosSigma * mConfig.firstEpochPosSigma;
-            ekf.posFloorSigmaVec = Eigen::Vector3d(mConfig.posFloorSigma, mConfig.posFloorSigma, mConfig.posFloorSigma);
-            ekf.ztdInitValue = mConfig.ztdInitValue;
-            ekf.codeBiasProcSigma = mConfig.codeBiasProcSigma;
-            ekf.codeBiasInitSigma = mConfig.codeBiasInitSigma;
-            ekf.timeUpdate(curEq.varSet, &mEpochStates);
-            ekf.setBootstrapPosition(xyzRef, Eigen::Vector3d(fpvVar, fpvVar, fpvVar));
-            {
-                std::map<Variable, double> bootVals;
-                std::map<Variable, double> bootVars;
-                for (const auto &[sys, par]: mCdtParam) {
-                    if (const auto it = mClkBase.find(sys); it != mClkBase.end()) {
-                        // mClkBase 里参考系统存绝对钟、其余系统已存相对参考的 ISB，与方程里
-                        // clockPrior(sys)+clockPrior(ref) 同口径，落状态时不能再减一次参考钟。
-                        bootVals[Variable(mCurObs->station, par)] = it->second;
-                        // 参考系统钟差用 clockInitSigma(白噪声)；ISB 载体(cdt2~4)用 isbInitSigma(常数/随机游走)。
-                        const bool isbOn = par != Parameter::cdt1 && ekf.isbInitSigma > 0.0;
-                        bootVars[Variable(mCurObs->station, par)] =
-                                isbOn ? ekf.isbInitSigma * ekf.isbInitSigma : ekf.clockInitSigma * ekf.clockInitSigma;
-                    }
-                }
-                if (mHasTropo) {
-                    bootVals[Variable(mCurObs->station, Parameter::ztd)] =
-                            mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
-                    bootVars[Variable(mCurObs->station, Parameter::ztd)] =
-                            mConfig.ztdInitSigma * mConfig.ztdInitSigma;
-                }
-                if (!bootVals.empty()) ekf.setBootstrapStates(bootVals, &bootVars);
-            }
-            ekf.setBootstrapAmbiguity(mCurObs->station, mAmbEstimate, nullptr);
-            ekf.measUpdate(curEq);
-            mFilterInit = true;
-        }
+        return;
     }
+    mEpochXyz = xyz;
+    mCsData = &mEpochStates;
+    buildEquSys();
+    mFilterFrozen = static_cast<int>(curEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
+    if (mFilterFrozen) return;
+
+    ekf.configure(mConfig.posProcSigma, mHasTropo, mConfig.ambProcSigma, mConfig.clockProcSigma);
+    ekf.isbProcSigma = mConfig.isbProcSigma;
+    ekf.isbInitSigma = mConfig.isbInitSigma;
+    ekf.posFloorSigma = mConfig.posFloorSigma;
+    ekf.ztdInitSigma = mConfig.ztdInitSigma;
+    ekf.ambInitSigma = mConfig.ambInitSigma;
+    ekf.ztdProcSigma = mConfig.ztdProcSigma;
+    const double fpvVar = mConfig.firstEpochPosSigma * mConfig.firstEpochPosSigma;
+    ekf.posFloorSigmaVec = Eigen::Vector3d(mConfig.posFloorSigma, mConfig.posFloorSigma, mConfig.posFloorSigma);
+    ekf.ztdInitValue = mConfig.ztdInitValue;
+    ekf.codeBiasProcSigma = mConfig.codeBiasProcSigma;
+    ekf.codeBiasInitSigma = mConfig.codeBiasInitSigma;
+    ekf.timeUpdate(curEq.varSet, &mEpochStates);
+    ekf.setBootstrapPosition(xyz, Eigen::Vector3d(fpvVar, fpvVar, fpvVar));
+    {
+        std::map<Variable, double> bootVals;
+        std::map<Variable, double> bootVars;
+        for (const auto &[sys, par]: mCdtParam) {
+            if (const auto it = mClkBase.find(sys); it != mClkBase.end()) {
+                // mClkBase 里参考系统存绝对钟、其余系统已存相对参考的 ISB，与方程里
+                // clockPrior(sys)+clockPrior(ref) 同口径，落状态时不能再减一次参考钟。
+                bootVals[Variable(mCurObs->station, par)] = it->second;
+                // 参考系统钟差用 clockInitSigma(白噪声)；ISB 载体(cdt2~4)用 isbInitSigma(常数/随机游走)。
+                const bool isbOn = par != Parameter::cdt1 && ekf.isbInitSigma > 0.0;
+                bootVars[Variable(mCurObs->station, par)] =
+                        isbOn ? ekf.isbInitSigma * ekf.isbInitSigma : ekf.clockInitSigma * ekf.clockInitSigma;
+            }
+        }
+        if (mHasTropo) {
+            bootVals[Variable(mCurObs->station, Parameter::ztd)] =
+                    mZtdBaseValid ? mZtdBase : mConfig.ztdInitValue;
+            bootVars[Variable(mCurObs->station, Parameter::ztd)] =
+                    mConfig.ztdInitSigma * mConfig.ztdInitSigma;
+        }
+        if (!bootVals.empty()) ekf.setBootstrapStates(bootVals, &bootVars);
+    }
+    ekf.setBootstrapAmbiguity(mCurObs->station, mAmbEstimate, nullptr);
+    ekf.measUpdate(curEq);
+    mFilterInit = true;
 }
 
 void PPPStatic::updateFilter() {
@@ -199,7 +257,7 @@ void PPPStatic::updateFilter() {
                 for (const auto &[eid, ed]: curEq.obsEquData) {
                     if (eid.sat.system != sys) continue;
                     if (eid.sat.id == 0) continue; // 伪观测(ZTD 先验等)
-                    if (eid.obsType.empty() || eid.obsType[0] == 'L') continue; // 仅码
+                    if (ed.isPhase) continue; // 仅码
                     sw += ed.weight;
                     swp += ed.weight * ed.prefit;
                 }
@@ -279,6 +337,7 @@ void PPPStatic::applyOptions(const SolverOptions &o) {
     mConfig.troZtdSigma = c.troZtdSigma;
     mUseAR = c.useAR;
     mUseCycleSlip = c.useCycleSlip;
+    mUseGfCycleSlip = c.useGfCycleSlip;
     mGfSlipMult = c.gfSlipMult;
     mUseTroGrad = c.useTroGrad;
     mApplyWindup = c.applyWindup;

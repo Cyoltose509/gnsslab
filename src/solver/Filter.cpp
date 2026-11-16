@@ -1,5 +1,6 @@
 #include "Filter.h"
 #include "core/equ/Precision.h"
+#include "core/geom/CoordStruct.h"
 
 #include <algorithm>
 #include <exception>
@@ -32,7 +33,7 @@ std::size_t Filter::runForward(const Session &session) {
         const bool goOn = session.onEpoch(i, *session.solver, out);
         if (trail) {
             Trail t;
-            t.valid = goOn && out.solved && session.solver->result.xyzFloat.squaredNorm() > 1e12;
+            t.valid = goOn && out.solved && isSaneECEF(session.solver->result.xyzFloat);
             if (t.valid) {
                 t.pos = session.solver->result.xyzFloat;
                 t.cov = session.solver->posCovariance();
@@ -73,7 +74,7 @@ std::size_t Filter::runBackward(const Session &session) const {
         } catch (...) {
         }
 
-        const bool bwdValid = ok && bwd->result.xyzFloat.squaredNorm() > 1e12;
+        const bool bwdValid = ok && isSaneECEF(bwd->result.xyzFloat);
         const bool fwdValid = i < mTrail.size() && mTrail[i].valid;
         Out out;
         if (!fwdValid) {

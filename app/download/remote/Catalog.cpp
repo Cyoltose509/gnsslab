@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -72,7 +73,20 @@ namespace Download::Catalog {
                 if (std::smatch m; std::regex_search(fileName, m, re) && m.size() > 1) return safeVersion(m[1].str());
             } catch (const std::regex_error &) {
             }
-            return safeVersion(File::stripExt(fileName));
+            // 名字里没有版本号（别名 igs20.atx、固定名 gpt3_5.grd）：与自动更新的回落同一口径，
+            // 否则同一份文件会攒出 latest / igs20 / gpt3_5 三种版本串，去重与比较都没法写。
+            return "latest";
+        }
+
+        /// 版本号是纯数字时给出数值，否则 -1：只有两边都是数字才比得出大小。
+        long long versionNumber(const std::string &v) {
+            long long n = 0;
+            const char *const first = v.data();
+            const char *const last = first + v.size();
+            if (auto [ptr, ec] = std::from_chars(first, last, n);
+                ec == std::errc{} && ptr == last && !v.empty())
+                return n;
+            return -1;
         }
 
         std::mutex g_mtx;
@@ -136,7 +150,14 @@ namespace Download::Catalog {
                 detail = err;
                 return false;
             }
-            if (const auto cur = Store::active(p.id); cur && cur->version == version) {
+            // 无版本号的固定别名只在首次安装时用：它和已装的版本化文件是同一份内容，顶掉之后
+            // 下次拿到版本号再反向顶回来，来回各下一遍。远端索引也可能被缓存成旧的一份，同样不动。
+            const auto cur = Store::active(p.id);
+            const bool unversioned = version == "latest";
+            const long long remoteVer = versionNumber(version);
+            const long long localVer = cur ? versionNumber(cur->version) : -1;
+            if (cur && (unversioned || cur->version == version ||
+                        (remoteVer >= 0 && localVer >= 0 && remoteVer < localVer))) {
                 detail = I18n::trc("dl.prod.up_to_date");
                 return true;
             }
@@ -148,7 +169,8 @@ namespace Download::Catalog {
                 detail = I18n::tr("dl.prod.mkdir_local_failed");
                 return false;
             }
-            Store::clearStagingExcept(p.id, version == "latest" ? std::string() : name);
+            // 只保留本次要下的那个名字的断点续传临时文件；回落名与版本名共存时别互相清。
+            Store::clearStagingExcept(p.id, name);
             const double have = stagedBytes(p.id, name);
             if (have > 0.0)
                 LOG_INFO << "[PROD] " << I18n::tr("dl.prod.resume", typeLabel(p.type),
@@ -480,7 +502,11 @@ namespace Download::Catalog {
         fileName.clear();
         version.clear();
 
-        if (std::string body; p.pattern && *p.pattern && Http::fetchText(p.indexUrl, body, err)) {
+        if (p.pattern && *p.pattern) {
+            std::string body;
+            // 索引取不到（超时/DNS/5xx）时远端到底有什么是未知的，不能当成「没有版本化文件名」去
+            // 回落固定名——那会把本地已装好的版本顶掉，下一次检查拿到版本号又反向顶回来。
+            if (!Http::fetchText(p.indexUrl, body, err)) return false;
             try {
                 const std::regex re(p.pattern);
                 int best = -1;
@@ -494,16 +520,30 @@ namespace Download::Catalog {
                 if (best >= 0) return true;
             } catch (const std::regex_error &e) {
                 err = I18n::tr("dl.prod.regex_error", e.what());
+                return false;
             }
         }
 
         if (p.fallback && *p.fallback) {
             fileName = p.fallback;
             version = "latest";
-            LOG_WARN << "[PROD] " << I18n::tr("dl.prod.no_versioned_name", typeLabel(p.type),
-                                              err.empty()
-                                                  ? I18n::tr("dl.prod.index_no_match")
-                                                  : I18n::tr("dl.prod.index_fetch_failed", err),
+            std::string why = I18n::tr("dl.prod.index_no_match");
+            // 固定文件名的产品（GPT3）压根没有版本化名，能比的只有远端的 Last-Modified：
+            // 取到就把它当版本号，此后「改没改过」退化成一次 HEAD。连不上就别断言「最新」，
+            // 只有连上了而服务器确实不给时间戳，才退回「不可判更新」。
+            if (!(p.pattern && *p.pattern)) {
+                std::string stamp;
+                bool reachable = false;
+                if (Http::probeModified(std::string(p.indexUrl) + p.fallback, stamp, reachable, why)) {
+                    version = stamp;
+                    return true;
+                }
+                if (!reachable) {
+                    err = why;
+                    return false;
+                }
+            }
+            LOG_WARN << "[PROD] " << I18n::tr("dl.prod.no_versioned_name", typeLabel(p.type), why,
                                               p.fallback);
             return true;
         }

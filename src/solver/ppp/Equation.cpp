@@ -34,7 +34,7 @@ void PPPStatic::addSatEquation(const SatID &sat, const TypeValueMap &tv, const b
     const FreqCombo &def = *freqComboFor(sat);
     const double mapW = mSatMap.at(sat);
     const double tropoFixed = mSatTropoFixed.at(sat);
-    const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
+    const Variable vamb = Variable::makeAmbiguity(mCurObs->station, sat, "IF");
     const PVT &pvt = satPVTRecTime.at(sat);
     const double elev = satElevData.count(sat) ? satElevData.at(sat) : 0.0;
     const double azim = satAzimData.count(sat) ? satAzimData.at(sat) : 0.0;
@@ -73,9 +73,9 @@ void PPPStatic::addSatEquation(const SatID &sat, const TypeValueMap &tv, const b
     const double dts = pvt.clockBias * C_MPS;
     const double rel = pvt.relativityCorrection * C_MPS;
     const Eigen::Vector3d recvEff = recvEffFor(sat);
-    double rho = 0.0;
-    Eigen::Vector3d los;
-    Coord::geometricRangeAndLos(pvt.p, recvEff, rho, los);
+    const Eigen::Vector3d d = recvEff - pvt.p;
+    const double rho = d.norm();
+    const Eigen::Vector3d los = d.normalized();
 
     Eigen::Vector3d exr, eyr;
     recvWindupBasis(mEpochXyz, exr, eyr);
@@ -125,23 +125,24 @@ void PPPStatic::addObservationEquation(const EquID &eid, double prefit, const Ei
     const Variable vdy(mCurObs->station, Parameter::dY);
     const Variable vdz(mCurObs->station, Parameter::dZ);
     EquData ed;
+    ed.isPhase = hasAmb;
     ed.prefit = prefit;
     ed.varCoeffData[vdx] = los[0];
     ed.varCoeffData[vdy] = los[1];
     ed.varCoeffData[vdz] = los[2];
     addClockTerms(ed, eid.sat);
     if (hasAmb) {
-        const Variable vamb = makeAmbiguityVar(mCurObs->station, eid.sat, "IF");
+        const Variable vamb = Variable::makeAmbiguity(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vamb] = 1.0;
         curEq.varSet.insert(vamb);
     } else if ((eid.sat.system == 'R' || eid.sat.system == 'C') && !osbCovers(eid.sat)) {
         // 逐 GLONASS/BDS 星 IFCB
-        const Variable vifb = makeIfbVar(mCurObs->station, eid.sat, "IF");
+        const Variable vifb = Variable::makeIfb(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vifb] = 1.0;
         curEq.varSet.insert(vifb);
     } else if (!osbCoversSystem(eid.sat.system)) {
         // 逐系统码偏
-        const Variable vcb = makeCodeBiasVar(mCurObs->station, eid.sat, "IF");
+        const Variable vcb = Variable::makeCodeBias(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vcb] = 1.0;
         curEq.varSet.insert(vcb);
     }
@@ -198,10 +199,8 @@ double PPPStatic::computeIfAmbiguity(const SatID &sat, const TypeValueMap &tv,
 void PPPStatic::resetAmbiguity(const SatID &sat, const TypeValueMap &tv,
                                const double map, const double tropoFixed,
                                const bool isSlipReset) {
-    ++ambResets;
-    const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
+    const Variable vamb = Variable::makeAmbiguity(mCurObs->station, sat, "IF");
     (*mCsData)[vamb] = isSlipReset ? 2.0 : 1.0;
-    if (isSlipReset) ++slipVerdicts;
     mAmbEstimate[sat] = computeIfAmbiguity(sat, tv, map, tropoFixed);
     if (isSlipReset) ekf.forceValue(vamb, mAmbEstimate[sat]);
 }
@@ -212,7 +211,7 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     resetAmb = false;
     slipReset = false;
     CycleSlip &det = mSlipDetectors[sat];
-    det.configure(def, 0.0, mGfSlipMult); // PPP 默认仅用 MW（GF 关闭）
+    det.configure(def, mUseGfCycleSlip ? 1.0 : 0.0, mGfSlipMult); // GF 关掉时只吃 MW
     double osbP1 = 0.0, osbP2 = 0.0, osbL1 = 0.0, osbL2 = 0.0;
     prod->osb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, osbStation());
     osbP1 = -osbP1;
@@ -223,7 +222,6 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     const bool newArc = mPrevSatSet.find(sat) == mPrevSatSet.end();
     resetAmb = r.gap || newArc || (mUseCycleSlip && r.slip);
     slipReset = mUseCycleSlip && r.slip;
-    if (r.slip) ++slipVerdicts;
 }
 
 void PPPStatic::prepareSatellite(const SatID &sat, const TypeValueMap &tv) {

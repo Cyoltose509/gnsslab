@@ -13,17 +13,6 @@
 #include "Log.h"
 #include "i18n/I18n.h"
 
-namespace {
-    constexpr double kDopplerWeightScale = 1.0 / 40.0;
-    constexpr int kMinDopplerSats = 4;
-    constexpr double kMinDopplerXyzSq = 1.0e10;
-    /// 解算中断超过这么久（星数不足导致滤波冻结）就认为相位弧段不可信，模糊度必须重来
-    constexpr double kAmbSolveGapReset = 5.0;
-    /// 超过这个间隔，运动外推已不代表本历元状态
-    constexpr double kGapLimit = 60.0;
-}
-
-
 GnssSolver::GnssSolver() : prod(std::make_shared<Products>()) {
 }
 
@@ -66,7 +55,7 @@ void GnssSolver::trackEpochGap() {
         const double solveGap = mHasLastEpoch ? mDirection * (mCurObs->epoch - mLastEpochTime) : 0.0;
         // 门限按标称采样间隔缩放。
         if (const double solveGapLimit = std::max(kAmbSolveGapReset, 1.5 * mNominalInterval);
-            (mNominalInterval > 0.0 && obsGap > 1.5 * mNominalInterval) || obsGap > kGapLimit ||
+            (mNominalInterval > 0.0 && obsGap > 1.5 * mNominalInterval) || obsGap > kMaxMotionGapS ||
             (mNominalInterval > 0.0 && solveGap > solveGapLimit)) {
             if (!(mKeepAmbMaxGap > 0.0 && obsGap <= mKeepAmbMaxGap)) mForceAmbReset = true;
         }
@@ -75,9 +64,9 @@ void GnssSolver::trackEpochGap() {
     mHasLastObs = true;
     if (mHasLastEpoch) {
         if (const double gap = std::fabs(mCurObs->epoch - mLastEpochTime);
-            (mNominalInterval > 0.0 && gap > 1.5 * mNominalInterval) || gap > kGapLimit) {
+            (mNominalInterval > 0.0 && gap > 1.5 * mNominalInterval) || gap > kMaxMotionGapS) {
             mGapThisEpoch = true;
-        } else if (mNominalInterval < 0.0 && gap >= 1.0 && gap <= kGapLimit) mNominalInterval = gap;
+        } else if (mNominalInterval < 0.0 && gap >= 1.0 && gap <= kMaxMotionGapS) mNominalInterval = gap;
     }
 }
 
@@ -118,12 +107,24 @@ bool GnssSolver::ephUnhealthy(const SatID &sat, const Ephemeris *eph, const bool
     return true;
 }
 
+void GnssSolver::readbackResidual(const EquSys &eq, const Eigen::VectorXd &residual) {
+    int iobs = 0;
+    for (const auto &[eid, ed]: eq.obsEquData) {
+        if (iobs >= residual.size()) break;
+        if (ed.isPhase)
+            result.postResPhase.set(eid.sat, residual(iobs));
+        else
+            result.postRes.set(eid.sat, residual(iobs));
+        ++iobs;
+    }
+}
+
 
 GnssSolver::DopplerResult GnssSolver::estimateVelocity() {
     DopplerResult out;
     // 用 result.xyz 而非 xyz：RTK 固定解只写 result（基线固定解优于浮点解），SPP/PPP 两者同值。
     const Eigen::Vector3d &pos = result.xyz;
-    if (!pos.allFinite() || pos.squaredNorm() < kMinDopplerXyzSq) return out;
+    if (!isSaneECEF(pos)) return out;
 
     const Weight w = dopplerWeight();
     // 每颗星一行 u·v + δṫ = -λ·D + u·v_sv，u 为接收机指向卫星的单位矢量。

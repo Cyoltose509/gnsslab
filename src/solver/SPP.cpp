@@ -15,12 +15,6 @@
 #include "core/geom/CoordStruct.h"
 #include "core/obs/Weight.h"
 
-namespace {
-    constexpr double kMinValidXyz = 6.0e6;
-    /// 常速度预测的最长跨历元间隔：超过此时速度已不代表本历元运动状态
-    constexpr double kMaxPredictGap = 60.0;
-}
-
 bool SPP::processEpoch(ObsData &obsData) {
     mCurObs = &obsData;
     try {
@@ -36,7 +30,7 @@ bool SPP::processEpoch(ObsData &obsData) {
 }
 
 void SPP::publishResult() {
-    // 正常历元的 result 由 runFilter 末尾的 readback 写好，这里只收冻结历元的尾。
+    // 正常历元的 result 由 filterEpoch 末尾写好，这里只收冻结历元的尾。
     if (!mFilterFrozen) return;
     // 冻结：本历元不发布位置，但有初值时按预测位置补一套几何，界面读数与下一历元判据都要用。
     result.xyz = Eigen::Vector3d::Zero();
@@ -60,13 +54,13 @@ void SPP::initFilter() {
     ekf.motionDt = 0.0;
     ekf.isbProcSigma = mConfig.isbProcSigma;
     ekf.isbInitSigma = mConfig.isbInitSigma;
-    runFilter();
+    filterEpoch();
 }
 
 void SPP::updateFilter() {
     const double gap = mHasLastEpoch ? std::fabs(mCurObs->epoch - mLastEpochTime) : 0.0;
-    ekf.motionDt = gap > 0.0 && gap <= kMaxPredictGap ? gap : 0.0;
-    runFilter();
+    ekf.motionDt = gap > 0.0 && gap <= kMaxMotionGapS ? gap : 0.0;
+    filterEpoch();
 }
 
 void SPP::prepareGeometry() {
@@ -103,7 +97,7 @@ void SPP::addClockTerms(EquData &ed, const SatID &sat) const {
     }
 }
 
-void SPP::bootstrapSolution() {
+bool SPP::bootstrapSolution() {
     lastWStats.clear();
     SolverLSQ lsq;
     const bool isbAnyOn = mConfig.isbInitSigma > 0.0;
@@ -119,8 +113,8 @@ void SPP::bootstrapSolution() {
 
     // 观测源没给近似坐标
     // 先用上一历元解，首历元再按卫星方向估一个量级正确的初值
-    if (xyz.norm() < kMinValidXyz) xyz = mLastXyz;
-    if (xyz.norm() < kMinValidXyz) {
+    if (!isSaneECEF(xyz)) xyz = mLastXyz;
+    if (!isSaneECEF(xyz)) {
         computeSatPos();
         xyz = estimateRoughPosition();
     }
@@ -195,11 +189,13 @@ void SPP::bootstrapSolution() {
     if (isbAnyOn) {
         mPrevClockBias = rClockBias;
     }
-    if (xyz.norm() > kMinValidXyz) mLastXyz = xyz; // 供下一历元当初值
+    if (!isSaneECEF(xyz)) return false;
+    mLastXyz = xyz; // 供下一历元当初值
+    return true;
 }
 
 SPP::DopplerResult SPP::estimateVelocity() {
-    if (xyz.norm() < kMinValidXyz) return {};
+    if (!isSaneECEF(xyz)) return {};
     const DopplerResult v = GnssSolver::estimateVelocity();
     if (!v.ok || !mUseFilter || !mFilterInit) return v;
 
@@ -211,7 +207,7 @@ SPP::DopplerResult SPP::estimateVelocity() {
     result.sigmaV = sigmaVelPost.norm();
     if (!ekf.velocityCoupled) return v;
     xyz = currentEstimatedPosition();
-    if (xyz.norm() > kMinValidXyz) mLastXyz = xyz;
+    if (isSaneECEF(xyz)) mLastXyz = xyz;
     result.xyz = xyz;
     result.xyzFloat = xyz;
     result.blh = Coord::XYZToBLH(xyz, frame);
@@ -278,11 +274,10 @@ Eigen::Vector3d SPP::estimateRoughPosition() const {
     return x;
 }
 
-void SPP::runFilter() {
+void SPP::filterEpoch() {
     const bool boot = !mFilterInit;
     if (boot) {
-        bootstrapSolution();
-        if (xyz.norm() < kMinValidXyz) return;
+        if (!bootstrapSolution()) return;
         selectClockModel(activeSystems);
     } else {
         xyz = currentEstimatedPosition();
@@ -320,7 +315,7 @@ void SPP::runFilter() {
     ekf.timeUpdate(curEq.varSet, nullptr);
     if (boot) {
         // 状态存绝对 ECEF 坐标与绝对钟差，与 PPP 同口径。
-        ekf.setBootstrapPosition(xyz, Eigen::Vector3d(10.0 * 10.0, 10.0 * 10.0, 10.0 * 10.0)); // σ=10 m
+        ekf.setBootstrapPosition(xyz, Eigen::Vector3d::Constant(GnssEKF::kBootstrapPosVar));
         std::map<Variable, double> clk;
         if (mCommonClockActive) {
             // 公共钟参数化：参考系统存绝对钟差，其余槽位存相对参考系统的 ISB。
@@ -338,9 +333,22 @@ void SPP::runFilter() {
     }
     ekf.measUpdate(curEq);
     xyz = currentEstimatedPosition();
-    if (xyz.norm() > kMinValidXyz) mLastXyz = xyz;
+    if (isSaneECEF(xyz)) mLastXyz = xyz;
     mFilterInit = true;
-    readback();
+
+    const Eigen::Matrix3d Q = posCovariance();
+    // 速度三态不进位置观测方程，算自由度时要扣掉，否则 sigma0 被系统性低估。
+    const int velStates = mUseFilter && mConfig.accProcSigma > 0.0 ? 3 : 0;
+    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
+                             static_cast<int>(ekf.currentUnkSet.size()) - velStates);
+    result.blh = Coord::XYZToBLH(xyz, frame);
+    geometryDOPs(result, curEq, result.blh);
+    result.sigmaXYZ = Q.diagonal().array().max(0.0).sqrt().matrix() * sigma0;
+    result.sigmaP = positionSigma(Q, sigma0);
+    result.xyz = xyz;
+    result.xyzFloat = xyz;
+    result.numSats = static_cast<int>(satPVTRecTime.size());
+    readbackResidual(curEq, ekf.postfitResidual);
 }
 
 Eigen::Vector3d SPP::currentEstimatedPosition() const {
@@ -349,31 +357,6 @@ Eigen::Vector3d SPP::currentEstimatedPosition() const {
         GnssEKF::getSolution(Parameter::dY, ekf.currentUnkSet, ekf.solution),
         GnssEKF::getSolution(Parameter::dZ, ekf.currentUnkSet, ekf.solution)
     };
-}
-
-void SPP::readback() {
-    const Eigen::Matrix3d Q = posCovariance();
-    // 速度三态不进位置观测方程，算自由度时要扣掉，否则 sigma0 被系统性低估。
-    const int velStates = mUseFilter && mConfig.accProcSigma > 0.0 ? 3 : 0;
-    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
-                             static_cast<int>(ekf.currentUnkSet.size()) - velStates);
-    result.blh = Coord::XYZToBLH(xyz, frame);
-    geometryDOPs(result, curEq, result.blh);
-    result.sigmaP = positionSigma(Q, sigma0);
-    result.sigmaXYZ = {
-        std::sqrt(std::max(Q(0, 0), 0.0)),
-        std::sqrt(std::max(Q(1, 1), 0.0)),
-        std::sqrt(std::max(Q(2, 2), 0.0))
-    };
-    result.xyz = xyz;
-    result.xyzFloat = xyz;
-    result.numSats = static_cast<int>(satPVTRecTime.size());
-
-    int iobs = 0;
-    for (const auto &[id, data]: curEq.obsEquData) {
-        if (iobs >= ekf.postfitResidual.size()) break;
-        result.postRes.set(id.sat, ekf.postfitResidual(iobs++));
-    }
 }
 
 double SPP::tropoDelay(const double elevRad) const {
@@ -417,7 +400,7 @@ void SPP::buildEquSys() {
 
         // 近似坐标还没立住时不筛星，否则首历元的截止角判据会把星筛到 0 颗。
         if (const double elev = satElevData.at(sat);
-            xyz.norm() > 1000.0 && elev < mConfig.cutoffElevRad) {
+            isSaneECEF(xyz) && elev < mConfig.cutoffElevRad) {
             satRejected.insert(sat);
             continue;
         }
@@ -447,7 +430,6 @@ void SPP::collectClockStates(EquSys &eq) {
     }
     for (const char sys: activeSystems)
         eq.varSet.insert(Variable(mCurObs->station, mCdtParam.at(sys)));
-    // 独立钟：系统间差异在方程内没有约束，用「ISB 相对上一历元不变」的伪观测锚住随机游走。
     if (!(mConfig.isbInitSigma > 0.0) || activeSystems.size() < 2) return;
     for (const char sys: activeSystems) {
         if (sys == mClockRefSys) continue;

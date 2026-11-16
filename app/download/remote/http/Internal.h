@@ -46,6 +46,7 @@ namespace Download::Http {
         std::string finalUrl;
         long http = 0;
         CURLcode code = CURLE_OK;
+        long long modified = -1; // 远端的 Last-Modified（Unix 秒，UTC）；服务器没给则 -1
         std::string err;
     };
 

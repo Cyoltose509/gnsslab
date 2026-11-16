@@ -118,12 +118,5 @@ namespace Coord {
         if (az < 0.0) az += PI * 2.0;
         return az;
     }
-
-    void geometricRangeAndLos(const Eigen::Vector3d &satPos, const Eigen::Vector3d &recvPos,
-                              double &rho, Eigen::Vector3d &losUnit) {
-        const Eigen::Vector3d d = recvPos - satPos;
-        rho = d.norm();
-        losUnit = d.normalized();
-    }
 }
 

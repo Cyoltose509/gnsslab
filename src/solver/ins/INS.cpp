@@ -16,23 +16,14 @@
 
 
 namespace {
-    constexpr double kE2 = Frame::CGCS2000.e2;
-    // 零速修正内参
-    constexpr double kZuptAttGain = 0.05;      // 静止姿态向重力方向的单历元修正比例
-    constexpr double kZuptGyroEstTau = 10.0;   // 陀螺零偏一阶滤波时间常数 (s)
-    constexpr double kZuptGyroBiasCap = 1e-4;  // 陀螺零偏估计钳位 (rad/s)
-    // 静置段标定内参
-    constexpr double kAccBiasApplyTol = 0.05;  // 加计零偏可信阈值 (m/s^2)，超过则不扣
-
-
     double meridianRadius(const double lat, const double h) {
-        const double s = std::sin(lat), w2 = 1.0 - kE2 * s * s;
-        return Frame::CGCS2000.a * (1.0 - kE2) / (w2 * std::sqrt(w2)) + h;
+        const double s = std::sin(lat), w2 = 1.0 - Frame::CGCS2000.e2 * s * s;
+        return Frame::CGCS2000.a * (1.0 - Frame::CGCS2000.e2) / (w2 * std::sqrt(w2)) + h;
     }
 
     double primeVerticalRadius(const double lat, const double h) {
         const double s = std::sin(lat);
-        return Frame::CGCS2000.a / std::sqrt(1.0 - kE2 * s * s) + h;
+        return Frame::CGCS2000.a / std::sqrt(1.0 - Frame::CGCS2000.e2 * s * s) + h;
     }
 
     // ω^n_ie (式 6.180i), NED
@@ -125,22 +116,25 @@ bool INS::resolveScale(const ImuLog &head, const ImuModel *detected, const ImuSc
 bool INS::align(const ImuLog &log, const double latRad) {
     alignOk = false;
     alignError.clear();
+    alignBegin = 0;
+    alignCount = 0;
     const double rate = scale.rateHz > 0.0 ? scale.rateHz : 200.0;
     SiteParams sp;
     sp.latDeg = latRad * RAD_TO_DEG;
     sp.g = gravity;
-    std::size_t end = 0;
+    StaticSpan span;
     try {
-        end = Aligner::staticHead(log, scale, sp);
-        if (end < static_cast<std::size_t>(20.0 * rate)) {
+        span = Aligner::detectStatic(log, scale);
+        if (span.size() < static_cast<std::size_t>(Aligner::kMinStaticSec * rate)) {
             alignError = I18n::tr("ins.align.head_too_short");
             return false;
         }
-        alignAtt = Aligner::solve(log, 0, end, sp);
-        alignEarthRateErrDeg = Aligner::diagnose(log, 0, end, sp, scale).earthRateErrDeg;
+        alignAtt = Aligner::solve(log, span.begin, span.end, sp);
+        alignEarthRateErrDeg = Aligner::diagnose(log, span.begin, span.end, sp, scale).earthRateErrDeg;
         std::vector<double> yaws;
         for (int k = 0; k < 5; ++k)
-            yaws.push_back(Aligner::solve(log, end * k / 5, end * (k + 1) / 5, sp).yaw);
+            yaws.push_back(Aligner::solve(log, span.begin + span.size() * k / 5,
+                                          span.begin + span.size() * (k + 1) / 5, sp).yaw);
         alignYawSpreadDeg = circularSpreadDeg(yaws);
     } catch (const std::exception &ex) {
         alignError = I18n::tr("ins.align.failed", ex.what());
@@ -148,16 +142,17 @@ bool INS::align(const ImuLog &log, const double latRad) {
     }
 
     Eigen::Vector3d sum = Eigen::Vector3d::Zero(), sq = Eigen::Vector3d::Zero();
-    for (std::size_t i = 0; i < end; ++i) {
+    for (std::size_t i = span.begin; i < span.end; ++i) {
         const Eigen::Vector3d w(log[i].gx, log[i].gy, log[i].gz);
         sum += w;
         sq += w.cwiseProduct(w);
     }
-    const double n = static_cast<double>(end);
+    const double n = static_cast<double>(span.size());
     const Eigen::Vector3d mean = sum / n;
     alignGyroSigmaRad = std::sqrt(std::max(0.0, (sq / n - mean.cwiseProduct(mean)).sum())) *
                         scale.gyroRadPerLsb * rate;
-    alignCount = end;
+    alignBegin = span.begin;
+    alignCount = span.size();
     alignHeadingReliable = alignEarthRateErrDeg < 1.0 && alignYawSpreadDeg < 0.5;
     alignOk = true;
     return true;
@@ -188,21 +183,23 @@ void INS::init(const InsInit &init) {
     zuptDiag = {};
     zuptHoldN = static_cast<std::size_t>(std::max(1, static_cast<int>(zuptHoldSec * scale.rateHz)));
     zuptWinN = static_cast<std::size_t>(std::max(1.0, scale.rateHz));
+    zuptEstWarmN = static_cast<std::size_t>(std::max(1.0, kZuptEstWarmSec * scale.rateHz));
     prevRaw = {};
     hasPrevRaw = false;
 }
 
 
-void INS::calibrate(const ImuLog &head, const std::size_t end) {
+void INS::calibrate(const ImuLog &head) {
     accelBias.setZero();
     biasApplied = false;
     gyroBiasDiag.setZero();
     zuptFRef.setZero();
     zuptWRef.setZero();
     zuptHasRef = false;
-    if (end <= 1) return;
+    const std::size_t end = alignBegin + alignCount;
+    if (end <= alignBegin + 1 || end > head.size()) return;
     double hSumCalib = 0.0;
-    for (std::size_t i = 0; i < end; ++i) {
+    for (std::size_t i = alignBegin; i < end; ++i) {
         const InsEpoch e = makeEpoch(head[i], i > 0 ? &head[i - 1] : nullptr);
         zuptFRef += e.dvel;
         zuptWRef += e.dtheta;
@@ -301,6 +298,9 @@ void INS::holdStill(const InsEpoch &e, const Eigen::Vector3d &fMean, const Eigen
     // 静止：速度、位置都不应变，姿态以重力方向为准。
     s.vned.setZero();
     s.llh = prevLlh;
+    // 姿态修正与零偏估计都要求静止保持 zuptEstWarmN：稳速推行时比力偏差可能落进
+    // 容差造成误判静（实测最长 ~3 s），此时 fMean 含水平加速度，朝它修正会注入假倾斜。
+    if (quiet < static_cast<int>(zuptEstWarmN)) return;
     const Eigen::Vector3d vn = s.qbn.rotate(fMean);
     const Eigen::Vector3d tgt(0.0, 0.0, -gravity);
     const Eigen::Vector3d axis = vn.cross(tgt);
@@ -308,11 +308,22 @@ void INS::holdStill(const InsEpoch &e, const Eigen::Vector3d &fMean, const Eigen
     if (sn > 1e-12) {
         const double ang = std::atan2(sn, vn.dot(tgt));
         const Eigen::Vector3d dphi = axis / sn * ang; // n 系待补转角
-        s.qbn = (ATTQuat::fromRotationVector(kZuptAttGain * dphi) * s.qbn).normalized();
-        // 待补转角持续同号即陀螺在推姿态：按一阶滤波折算成机体系零偏，供运动段扣除
-        const double a = std::min(1.0, e.h / kZuptGyroEstTau);
-        gyroEst = (1.0 - a) * gyroEst +
-                  a * (s.qbn.conjugated().rotate(dphi) / e.h);
+        // 限速：起步过渡的判静窗滞后期间 dphi 可达 1~2°，全速修正（0.1 s 收敛）
+        // 一次就转过去；真实修正需求只有陀螺零偏量级，限速后暂态注入 ≤0.1°。
+        const double step = std::min(kZuptAttGain * ang, kZuptAttRateMax * e.h);
+        const Eigen::Vector3d corr = axis / sn * step;
+        s.qbn = (ATTQuat::fromRotationVector(corr) * s.qbn).normalized();
+        // 稳态下待补角 φ = b·h/gain、dphi = −φ，故零偏 b = −gain·dphi/h；
+        // dphi 只有水平分量，估的是横滚/俯仰零偏，航向零偏静止下不可观，不在其中。
+        // 稳态下待补角 φ = b·h/gain、dphi = −φ，故零偏 b = −gain·dphi/h；
+        // dphi 只有水平分量，估的是横滚/俯仰零偏，航向零偏静止下不可观，不在其中。
+        // 暂态（起步过渡、误判静）下 dphi/h 会被采样间隔放大成天文数字，
+        // 隐含零偏超过钳位即说明该历元不在稳态，跳过不更新。
+        const Eigen::Vector3d implied = kZuptAttGain * s.qbn.conjugated().rotate(dphi) / e.h;
+        if (implied.norm() <= kZuptGyroBiasCap) {
+            const double a = std::min(1.0, e.h / kZuptGyroEstTau);
+            gyroEst = (1.0 - a) * gyroEst - a * implied;
+        }
         gyroEst = gyroEst.cwiseMax(-kZuptGyroBiasCap).cwiseMin(kZuptGyroBiasCap);
     }
 }

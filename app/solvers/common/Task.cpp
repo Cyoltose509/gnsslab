@@ -384,7 +384,9 @@ namespace Solvers {
             double se = 0.0, sn = 0.0, su = 0.0;
             if (res.sigmaXYZ.allFinite() && res.sigmaXYZ.squaredNorm() > 0.0) {
                 const DCM R = DCM::fromECEFToENU(blh[0], blh[1]);
-                const Eigen::Vector3d varEnu = R * res.sigmaXYZ.cwiseProduct(res.sigmaXYZ);
+                // 方差传播只取平方项：Σ_j R²(i,j)·σ²(j)，直接 R·σ² 会正负相消。
+                const Eigen::Vector3d varEnu =
+                        R.matrix().cwiseProduct(R.matrix()) * res.sigmaXYZ.cwiseProduct(res.sigmaXYZ);
                 se = std::sqrt(std::max(0.0, varEnu[0]));
                 sn = std::sqrt(std::max(0.0, varEnu[1]));
                 su = std::sqrt(std::max(0.0, varEnu[2]));
@@ -401,12 +403,24 @@ namespace Solvers {
     }
 
 
+    std::vector<Export::Col> Task::columnsForTruth(std::vector<Export::Col> cols) const {
+        return truthReady() ? cols : Export::withoutRefColumns(cols);
+    }
+
     std::vector<Export::Col> Task::exportFields(const Export::Format) const {
         return {};
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
         return fmt == Export::Format::CSV ? exportFields(fmt) : std::vector<Export::Col>{};
+    }
+
+    void Task::writeCommonParams(CSV::Meta &m) const {
+        m.num(I18n::trc("param.code_sigma"), opts.spp.codeSigma);
+        m.num(I18n::trc("param.elev_weight_floor"), opts.spp.minSinElev);
+        m.num(I18n::trc("param.isb_proc_sigma"), opts.spp.isbProcSigma);
+        m.num(I18n::trc("param.isb_init_sigma"), opts.spp.isbInitSigma);
+        m.flag(I18n::trc("param.drop_unhealthy"), opts.spp.useHealth);
     }
 
     void Task::writeCSVMeta(CSV::Writer &w) const {

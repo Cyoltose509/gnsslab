@@ -68,6 +68,7 @@ namespace {
         c.spp.ambProcSigma = ini.getD("solver", "amb_proc_sigma", c.spp.ambProcSigma);
         c.spp.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.spp.keepAmbMaxGap);
         c.spp.useCycleSlip = ini.getB("solver", "use_cycle_slip", c.spp.useCycleSlip);
+        c.spp.useGfCycleSlip = ini.getB("solver", "use_gf_cycle_slip", c.spp.useGfCycleSlip);
         c.spp.gfSlipMult = ini.getD("solver", "gf_slip_mult", c.spp.gfSlipMult);
         c.spp.codeBiasProcSigma = ini.getD("solver", "code_bias_proc_sigma", c.spp.codeBiasProcSigma);
         c.spp.codeBiasInitSigma = ini.getD("solver", "code_bias_init_sigma", c.spp.codeBiasInitSigma);

@@ -10,6 +10,7 @@
 #include "util/Clock.h"
 
 #include <atomic>
+#include <cstdio>
 #include <exception>
 #include <map>
 #include <mutex>
@@ -124,9 +125,12 @@ namespace Download::Http {
         curl_easy_setopt(c.handle, CURLOPT_LOW_SPEED_LIMIT, 64L);
         curl_easy_setopt(c.handle, CURLOPT_LOW_SPEED_TIME, 120L);
         curl_easy_setopt(c.handle, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(c.handle, CURLOPT_FILETIME, 1L);
 
         r.code = curl_easy_perform(c.handle);
         curl_easy_getinfo(c.handle, CURLINFO_RESPONSE_CODE, &r.http);
+        if (long ft = -1; curl_easy_getinfo(c.handle, CURLINFO_FILETIME, &ft) == CURLE_OK && ft > 0)
+            r.modified = ft;
         char *finalUrl = nullptr;
         curl_easy_getinfo(c.handle, CURLINFO_EFFECTIVE_URL, &finalUrl);
         if (finalUrl) r.finalUrl = finalUrl;
@@ -255,6 +259,33 @@ namespace Download::Http {
         }
         err = "HTTP " + std::to_string(r.http);
         return false;
+    }
+
+    bool probeModified(const std::string &url, std::string &stamp, bool &reachable, std::string &err,
+                       const std::atomic<bool> *cancel) {
+        stamp.clear();
+        reachable = false;
+        const Response r = request(url, kProbeFetch, cancel);
+        if (!r.err.empty()) {
+            err = r.err;
+            return false;
+        }
+        reachable = true;
+        if (r.http < 200 || r.http >= 300) {
+            err = "HTTP " + std::to_string(r.http);
+            return false;
+        }
+        if (r.modified <= 0) {
+            err = I18n::tr("dl.http.no_last_modified");
+            return false;
+        }
+        const std::tm tm = Clock::UTC(static_cast<std::time_t>(r.modified));
+        char buf[20];
+        std::snprintf(buf, sizeof buf, "%04d%02d%02d%02d%02d%02d",
+                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                      tm.tm_hour, tm.tm_min, tm.tm_sec);
+        stamp = buf;
+        return true;
     }
 
     void forgetDownHosts() {

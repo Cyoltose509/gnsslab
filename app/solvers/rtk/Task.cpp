@@ -379,7 +379,7 @@ namespace Solvers::RTK {
         if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = Export::floatFixColumns(false, true);
         // 基线列不受影响；REF/偏差/3dRMS 这些「相对参考」的列没挂真值就剔除。
-        return truthReady() ? c : Export::withoutRefColumns(c);
+        return columnsForTruth(c);
     }
 
     std::string Task::exportStem() const {

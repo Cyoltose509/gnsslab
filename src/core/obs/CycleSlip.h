@@ -30,8 +30,6 @@ public:
                          std::vector<char> &slip, std::vector<char> &artifact,
                          double mult = 3.0);
 
-    bool gfWideLaneSlip(double L1, double L2, double thr = 0.12);
-
 private:
     void flushGf();
 
@@ -42,13 +40,8 @@ private:
     double mwMean = 0, mwVar = 0;
     int mwCnt = 0;
 
-    double gfPrev = 0;
-    bool gfHasPrev = false;
     double gfThres = 0.0;
     double gfSlipMult = 3.0;
-
-    double mGfWlPrev = 0;
-    bool mGfWlHasPrev = false;
 
     std::vector<double> gfLbuf;
     std::vector<double> gfPbuf;

@@ -10,6 +10,15 @@
 // → 静置段标定(calibrate) → 逐历元推进(update) 的次序推进，前四步都直接修改自身成员。
 class INS {
 public:
+    // 零速修正内参
+    static constexpr double kZuptAttGain = 0.05;            // 静止姿态向重力方向的单历元修正比例
+    static constexpr double kZuptAttRateMax = 0.1 * DEG_TO_RAD; // 姿态修正限速 (rad/s)：真实需求只有零偏量级
+    static constexpr double kZuptGyroEstTau = 10.0;         // 陀螺零偏一阶滤波时间常数 (s)
+    static constexpr double kZuptEstWarmSec = 10.0;         // 零偏估计的静止保持时长：误判静一般 <3 s，真停 >50 s
+    static constexpr double kZuptGyroBiasCap = 1e-4;        // 陀螺零偏估计钳位 (rad/s)
+    // 静置段标定内参
+    static constexpr double kAccBiasApplyTol = 0.05;        // 加计零偏可信阈值 (m/s^2)，超过则不扣
+
     NavState s;
 
     // ---- 配置（直填） ----
@@ -30,7 +39,8 @@ public:
     bool alignOk = false;
     std::string alignError;
     Euler alignAtt;                              // 对准姿态 (rad)
-    std::size_t alignCount = 0;                  // 开头静止段样本数（也是静置标定段）
+    std::size_t alignBegin = 0;                  // 静止段起样本下标
+    std::size_t alignCount = 0;                  // 静止段样本数（也是静置标定段）
     double alignEarthRateErrDeg = 0.0;
     double alignYawSpreadDeg = 0.0;
     double alignGyroSigmaRad = 0.0;
@@ -61,7 +71,7 @@ public:
     bool resolveScale(const ImuLog &head, const ImuModel *detected, const ImuScale &manual);
     bool align(const ImuLog &head, double latRad);  // scale 必须已知；只用当量与站点参数，init 前调用
     void init(const InsInit &init);
-    void calibrate(const ImuLog &head, std::size_t end);  // init 之后；end = 开头静止段样本数
+    void calibrate(const ImuLog &head);  // init 之后；静置段取 alignBegin/alignCount
     InsEpoch toEpoch(const ImuSample &sm);  // 当量/名义间隔/加计零偏/上一样本全取自成员
     void update(const InsEpoch &e);
 
@@ -84,4 +94,5 @@ private:
     int quiet = 0;
     std::size_t zuptHoldN = 1;   // 连续判静样本数（zuptHoldSec × rateHz，init 时换算）
     std::size_t zuptWinN = 1;    // 判静滑动窗样本数（rateHz，init 时换算）
+    std::size_t zuptEstWarmN = 1; // 零偏估计的静止保持样本数（init 时换算）
 };

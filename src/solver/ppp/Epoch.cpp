@@ -7,14 +7,6 @@
 #include <cmath>
 #include <map>
 
-namespace {
-    /// 码预fit 粗差门限(m)，判之前先扣掉同系统中位数
-    constexpr double kPrefitGateM = 30.0;
-    /// 相位预fit 粗差门限(m)：静态站历元间位置不变，运动学/LEO 含运动预测误差
-    constexpr double kPhasePrefitGateStaticM = 5.0;
-    constexpr double kPhasePrefitGateKinematicM = 30.0;
-}
-
 // 首历元精确初位置
 std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
     Eigen::Vector3d xc = mRefPos;
@@ -33,7 +25,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
         mCsData = &csData;
         buildEquSys();
         for (auto it2 = curEq.obsEquData.begin(); it2 != curEq.obsEquData.end();) {
-            if (const auto &eid = it2->first; !eid.obsType.empty() && eid.obsType[0] == 'L') it2 = curEq.obsEquData.erase(it2);
+            if (it2->second.isPhase) it2 = curEq.obsEquData.erase(it2);
             else {
                 for (auto vit = it2->second.varCoeffData.begin();
                      vit != it2->second.varCoeffData.end();) {

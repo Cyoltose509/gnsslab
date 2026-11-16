@@ -41,7 +41,7 @@ namespace Solvers::PPPStatic {
     std::vector<Export::Col> Task::exportFields(const Export::Format fmt) const {
         if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = Export::floatFixColumns(false);
-        return truthReady() ? c : Export::withoutRefColumns(c);
+        return columnsForTruth(c);
     }
 
     std::vector<Export::Col> Task::exportDefaults(const Export::Format fmt) const {
@@ -49,9 +49,8 @@ namespace Solvers::PPPStatic {
     }
 
     void Task::writeCSVParams(CSV::Meta &m) const {
-        m.num(I18n::trc("param.code_sigma"), opts.spp.codeSigma);
+        writeCommonParams(m);
         m.num(I18n::trc("param.phase_sigma"), opts.spp.phaseSigma);
-        m.num(I18n::trc("param.elev_weight_floor"), opts.spp.minSinElev);
         m.flag(I18n::trc("AntennaCorrection"), opts.spp.applyAtx);
         m.flag(I18n::trc("param.phase_windup"), opts.spp.applyWindup);
         m.flag(I18n::trc("param.solid_tide"), opts.spp.applySolidTide);
@@ -68,12 +67,9 @@ namespace Solvers::PPPStatic {
         m.num(I18n::trc("param.glo_ifcb_init_sigma"), opts.spp.gloIfcbInitSigma);
         m.num(I18n::trc("param.pos_proc_sigma"), opts.posProcSigma);
         m.num(I18n::trc("param.first_epoch_pos_sigma"), opts.spp.firstEpochPosSigma);
-        writeMotionParams(m);
         m.flag(I18n::trc("param.use_cycle_slip"), opts.spp.useCycleSlip);
+        m.flag(I18n::trc("param.use_gf_slip"), opts.spp.useGfCycleSlip);
         m.num(I18n::trc("param.gf_slip_mult"), opts.spp.gfSlipMult);
-        m.num(I18n::trc("param.isb_proc_sigma"), opts.spp.isbProcSigma);
-        m.num(I18n::trc("param.isb_init_sigma"), opts.spp.isbInitSigma);
-        m.flag(I18n::trc("param.drop_unhealthy"), opts.spp.useHealth);
     }
 
     void Task::writeTropoParams(CSV::Meta &m) const {

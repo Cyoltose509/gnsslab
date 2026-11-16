@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <vector>
 #include <limits>
@@ -38,19 +39,10 @@ struct EphemerisTable {
         return gps.empty() && bds.empty() && gal.empty() && glo.empty();
     }
 
-    /// 把观测源自带的星历（other 可为空）按历元补进来。
-    /// 「观测源自带星历」指 NovAtel 日志里嵌的 GPSEPHEM/GLOEPHEM 等记录：reader 逐历元
-    /// 累积出快照，经 Observer::Item::eph 带出。外部导航文件（BRDC/nav）之外，这是第二
-    /// 个星历来源；缺了它，只给日志不给星历文件的实时单站解算就没有可用星历。
-    ///
-    /// 合并规则（三个约束缺一不可）：
-    /// 1. 不能整体替换：日志内星历每颗星只保留最新一条（LogReader::storeEph 是覆盖而非追加），
-    ///    那条可能已过期数小时，整体替换会把 BRDC 里可用的换成过期的 → 该星全程无 PVT。
-    /// 2. 判缺按「该历元附近（EPH_MAX_AGE_SEC 内）是否已有**可用**星历」，而非「PRN 是否已存在」：
-    ///    只按 PRN 判时，日期对不上的 BRDC 会被误认为已有而不补，日志内当天正确的星历进不来
-    ///    → 整段解算全部无 PVT。
-    /// 3. 目标表已有可用条目时保留不动（不覆盖），源表条目按参考时刻去重后并入，
-    ///    最终由 pickClosest 按历元挑最近的一条。
+    [[nodiscard]] std::size_t size() const {
+        return gps.size() + bds.size() + gal.size() + glo.size();
+    }
+
     void mergeEmbedded(const std::shared_ptr<EphemerisTable> &other, const CommonTime &epoch) {
         if (!other) return;
         mergeMapForEpoch(gps, other->gps, epoch);

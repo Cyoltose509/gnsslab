@@ -138,6 +138,9 @@ namespace Solvers {
 
 
 
+        [[nodiscard]] std::vector<Export::Col> columnsForTruth(std::vector<Export::Col> cols) const;
+
+
         [[nodiscard]] virtual std::vector<Export::Col> exportFields(Export::Format fmt) const;
 
 
@@ -145,6 +148,9 @@ namespace Solvers {
 
 
         void writeCSVMeta(CSV::Writer &w) const;
+
+
+        void writeCommonParams(CSV::Meta &m) const;
 
 
         virtual void writeCSVParams(CSV::Meta &m) const {

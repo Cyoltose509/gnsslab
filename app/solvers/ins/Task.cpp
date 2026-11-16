@@ -12,6 +12,7 @@
 #include "core/Const.h"
 #include "core/geom/CoordConvert.h"
 #include "Exception.h"
+#include "solver/ins/Aligner.h"
 #include "solver/ins/INS.h"
 #include "Log.h"
 #include "Observer.h"
@@ -21,8 +22,14 @@ namespace Solvers::INS {
     namespace {
         /// 无型号日志要够开头的三个反推窗口才定得出当量
         constexpr std::size_t kScaleHeadSamples = 12000;
-        /// 攒给粗对准与零偏标定的头段时长
+        /// 攒给粗对准与零偏标定的首批头段时长
         constexpr double kAlignHeadSec = 120.0;
+        /// 段后连续运动够这么长，才算静置结束；否则只是又被搬了一下
+        constexpr double kRunoffSec = 30.0;
+        /// 判出静置段还没到头就再读这么多秒重判
+        constexpr double kAlignExtendSec = 60.0;
+        /// 回放时的读取上限，只防超长日志把整份数据塞进内存
+        constexpr double kAlignMaxSec = 3600.0;
         /// 每多少个历元把解算结果发布一批给界面
         constexpr std::size_t kFlushEpochs = 200;
 
@@ -231,16 +238,27 @@ namespace Solvers::INS {
         }
         const ImuScale scale = r->scale;
 
-        // 攒开头一段做粗对准与零偏标定：静止段再长也只截这么长，之后就是逐样本推进。
+        // 攒开头一段做粗对准与零偏标定。静置有多长就攒多长：判出的段后面
+        // 还没出现足够长的连续运动，说明段没到头，接着读再判。
         aligning = true;
         ImuLog head;
-        const double headSec = c.specifyAttitude ? 2.0 : kAlignHeadSec;
-        const std::size_t alignNeed = static_cast<std::size_t>(headSec * scale.rateHz);
-        while (head.size() < alignNeed) {
-            ImuSample s;
-            if (!nextImu(s)) break;
-            head.push_back(s);
-            headSamples.store(static_cast<int>(head.size()));
+        const bool replay = std::filesystem::exists(c.imuPath);
+        const double capSec = c.specifyAttitude ? 2.0 : (replay ? kAlignMaxSec : kAlignHeadSec);
+        const auto capSamples = static_cast<std::size_t>(capSec * scale.rateHz);
+        const auto headSamplesNeed = static_cast<std::size_t>(kAlignHeadSec * scale.rateHz);
+        std::size_t alignNeed = std::min(capSamples, headSamplesNeed);
+        while (true) {
+            while (head.size() < alignNeed) {
+                ImuSample s;
+                if (!nextImu(s)) break;
+                head.push_back(s);
+                headSamples.store(static_cast<int>(head.size()));
+            }
+            if (head.size() < alignNeed || head.size() >= capSamples || !replay) break;
+            const StaticSpan span = Aligner::detectStatic(head, scale);
+            if (span.tailMove >= static_cast<std::size_t>(kRunoffSec * scale.rateHz)) break;
+            alignNeed = std::min(capSamples,
+                                 head.size() + static_cast<std::size_t>(kAlignExtendSec * scale.rateHz));
         }
         aligning = false;
 
@@ -264,10 +282,8 @@ namespace Solvers::INS {
         zupt.zuptHoldSec = c.zuptHoldSec;
 
         InsInit init;
-        init.t0 = head.front().tow;
         init.llh = llh;
         init.vned = Eigen::Vector3d(c.vN, c.vE, c.vD);
-        std::size_t staticEnd = 0;
         if (!c.specifyAttitude) {
             if (!zupt.align(head, llh[0])) {
                 bail(zupt.alignError);
@@ -276,7 +292,6 @@ namespace Solvers::INS {
             init.rollDeg = zupt.alignAtt.roll * RAD_TO_DEG;
             init.pitchDeg = zupt.alignAtt.pitch * RAD_TO_DEG;
             init.headingDeg = zupt.alignAtt.yaw * RAD_TO_DEG;
-            staticEnd = zupt.alignCount;
             {
                 std::lock_guard lk(resMutex);
                 r->align.used = true;
@@ -298,10 +313,18 @@ namespace Solvers::INS {
             init.headingDeg = c.headingDeg;
         }
 
+        // 导航从对准段末端起算：段内的上电沉降、搬运不是载体运动，喂进编排只会积出假速度。
+        const std::size_t solveFrom = c.specifyAttitude ? 0 : zupt.alignBegin + zupt.alignCount;
+        if (solveFrom >= head.size()) {
+            bail(I18n::tr("ins.err.short_static", head.size()));
+            return;
+        }
+        init.t0 = head[solveFrom].tow;
+
         free.init(init);
         zupt.init(init);
         // 静置段标定：加计零偏进转换、参考矢量进判据，全部落在 zupt 实例内。
-        zupt.calibrate(head, staticEnd);
+        zupt.calibrate(head);
         if (zupt.biasApplied) {
             {
                 std::lock_guard lk(resMutex);
@@ -312,7 +335,7 @@ namespace Solvers::INS {
             accelBias << zupt.accelBias.transpose();
             gyroBias << zupt.gyroBiasDiag.transpose();
             LOG_INFO << "[INS] " << I18n::tr("ins.log.static_bias", accelBias.str(), gyroBias.str());
-        } else if (staticEnd > 1) {
+        } else if (zupt.alignCount > 1) {
             LOG_INFO << "[INS] " << I18n::tr("ins.log.bias_too_large", zupt.accelBias.norm());
         }
 
@@ -339,12 +362,13 @@ namespace Solvers::INS {
             batchZuptCount = 0;
         };
 
-        // 头段第一个样本就是初始时刻，其余回填队列，逐历元推进只留一条循环。
+        // 起算样本就是初始时刻，其余回填队列，逐历元推进只留一条循环。
         {
             std::lock_guard lk(queueMutex);
-            imuQueue.insert(imuQueue.begin(), head.begin() + 1, head.end());
+            const auto from = static_cast<std::ptrdiff_t>(solveFrom + 1);
+            imuQueue.insert(imuQueue.begin(), head.begin() + from, head.end());
         }
-        zupt.prevRaw = head.front(); // 转换接续点：首个被转换样本是 head[1]
+        zupt.prevRaw = head[solveFrom]; // 转换接续点：首个被转换样本是 head[solveFrom+1]
         zupt.hasPrevRaw = true;
 
         while (true) {

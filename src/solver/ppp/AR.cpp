@@ -1,6 +1,7 @@
 #include "Static.h"
 #include "ARLambda.h"
 #include "core/Const.h"
+#include "core/geom/CoordConvert.h"
 #include <cmath>
 
 bool PPPStatic::tryFixAmbiguities() {
@@ -25,7 +26,7 @@ bool PPPStatic::tryFixAmbiguities() {
         if (!defp) continue;
         if (!defp->available(tv, true)) continue;
         if (satPVTRecTime.count(sat) == 0) continue;
-        const Variable vamb = makeAmbiguityVar(mCurObs->station, sat, "IF");
+        const Variable vamb = Variable::makeAmbiguity(mCurObs->station, sat, "IF");
         if (!ekf.currentIndexData.count(vamb)) continue;
         const int i = ekf.currentIndexData.at(vamb);
         const double sig = std::sqrt(P(i, i));
@@ -124,13 +125,17 @@ bool PPPStatic::tryFixAmbiguities() {
         xf(ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dY))),
         xf(ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dZ))));
     result.xyzFixed = xyzFixed;
+    result.blhFixed = Coord::XYZToBLH(xyzFixed, Frame::WGS84);
     {
         const int ix = ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dX));
         const int iy = ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dY));
         const int iz = ekf.currentIndexData.at(Variable(mCurObs->station, Parameter::dZ));
         const Eigen::MatrixXd Pf = (Eigen::MatrixXd::Identity(Nst, Nst) - Km * H) * P;
-        const double vpos = Pf(ix, ix) + Pf(iy, iy) + Pf(iz, iz);
-        result.sigmaPFixed = std::sqrt(std::max(vpos, 0.0));
+        // 固定解只取对角（与 RTK 的 Qfix 同口径），三分量与 sigmaP 共乘一个 sigma0
+        result.sigmaXYZ = Eigen::Vector3d(std::sqrt(std::max(Pf(ix, ix), 0.0)),
+                                          std::sqrt(std::max(Pf(iy, iy), 0.0)),
+                                          std::sqrt(std::max(Pf(iz, iz), 0.0))) * sigma0;
+        result.sigmaPFixed = result.sigmaXYZ.norm();
     }
     mArNumFixed = n;
     ++mArSuccess;

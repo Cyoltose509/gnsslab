@@ -9,6 +9,12 @@
 class GnssEKF {
 
 public:
+    /// 重锚定/冷启动的位置先验方差(m^2)：σ=10 m，松到让首历元量测主导
+    static constexpr double kBootstrapPosVar = 10.0 * 10.0;
+    static constexpr double kMinVeloSigma = 0.01;  // m/s：多普勒测速 σ 下限，防止残余估出 1e-4 量级后变成无穷权
+    static constexpr double kVeloGate = 4.0;       // 速度新息 χ² 门限（σ 倍数）
+    static constexpr double kVarianceUnset = -1.0; // 方差表未配置哨兵：新增参数类型漏填表时显式失败
+
     GnssEKF() {
         firstTime = true;
     }
@@ -148,7 +154,7 @@ public:
                                const VariableDataMap *csData = nullptr) {
         if (currentUnkSet.empty()) return;
         for (const auto &[sat, value]: amb) {
-            const Variable vamb = makeAmbiguityVar(station, sat, "IF");
+            const Variable vamb = Variable::makeAmbiguity(station, sat, "IF");
             if (csData) {
                 if (const auto itc = csData->find(vamb); itc == csData->end() || itc->second < 0.5) continue; // 仅新弧段/周跳重置
             }

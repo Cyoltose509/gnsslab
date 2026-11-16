@@ -8,12 +8,6 @@
 #include "i18n/I18n.h"
 
 namespace {
-    /// IMU.bin：t, Δθ(3), Δv(3)。
-    constexpr std::size_t kImuStride = 7;
-    /// PureINS.bin：t, φ, λ, h, vN, vE, vD, roll, pitch, heading。
-    constexpr std::size_t kRefStride = 10;
-    constexpr std::size_t kMaxCurvePts = 4000;
-
     double wrapDeg(double d) {
         while (d > 180.0) d -= 360.0;
         while (d <= -180.0) d += 360.0;
