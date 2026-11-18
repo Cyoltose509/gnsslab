@@ -1,11 +1,10 @@
 #include "InsVerify.h"
 
 #include <algorithm>
-#include <utility>
 
 #include "core/Const.h"
 #include "core/geom/Geodesy.h"
-#include "i18n/I18n.h"
+#include "Exception.h"
 
 namespace {
     double wrapDeg(double d) {
@@ -22,27 +21,13 @@ namespace {
 Ins::Verifier::Verifier(const std::string &imuPath, const std::string &refPath, const VerifyOptions &opt) {
     report.tol = opt.tol;
     m_refRec.resize(kRefStride);
-    if (!m_imu.open(imuPath, kImuStride) || m_imu.bad()) {
-        m_error = m_imu.error().empty() ? I18n::tr("ins.verify.err.imu_open", imuPath) : m_imu.error();
-        return;
-    }
-    if (!m_ref.open(refPath, kRefStride) || m_ref.bad()) {
-        m_error = m_ref.error().empty() ? I18n::tr("ins.verify.err.ref_open", refPath) : m_ref.error();
-        return;
-    }
-    if (m_imu.empty()) {
-        m_error = I18n::tr("ins.verify.err.imu_columns", imuPath);
-        return;
-    }
-    if (m_ref.empty()) {
-        m_error = I18n::tr("ins.verify.err.ref_columns", refPath);
-        return;
-    }
+    m_imu.open(imuPath, kImuStride);
+    m_ref.open(refPath, kRefStride);
+    if (m_imu.empty()) throw InvalidRequest("Ins::Verifier: IMU binary has no record (" + imuPath + ")");
+    if (m_ref.empty()) throw InvalidRequest("Ins::Verifier: reference binary has no record (" + refPath + ")");
     report.refEpochs = m_ref.count();
     m_curveStride = std::max<std::size_t>(1, report.refEpochs / kMaxCurvePts);
 
-    // 增量在 t 处覆盖 [t−dt, t]（后向约定）：初始状态落在起始时刻那条记录上，
-    // 第一个能消费的增量是下一条。
     const double *rec = nullptr;
     bool found = false;
     while (m_imu.next(rec)) {
@@ -51,28 +36,23 @@ Ins::Verifier::Verifier(const std::string &imuPath, const std::string &refPath, 
             break;
         }
     }
-    if (!found || m_imu.consumed() >= m_imu.count()) {
-        m_error = I18n::tr("ins.verify.err.imu_short");
-        return;
-    }
+    if (!found || m_imu.consumed() >= m_imu.count())
+        throw InvalidRequest("Ins::Verifier: IMU stream ends before the start time (" + imuPath + ")");
 
-    InsInit init = opt.init;
-    init.t0 = rec[0];
-    m_ins.init(init);
-    m_t0 = m_tPrev = init.t0;
+    NavState x0 = opt.init;
+    x0.t = rec[0];
+    m_ins.init(x0);
+    m_t0 = m_tPrev = x0.t;
 
     while (m_ref.next(rec)) {
-        if (rec[0] >= init.t0) {
+        if (rec[0] >= x0.t) {
             std::copy_n(rec, kRefStride, m_refRec.begin());
             m_refPending = true;
             break;
         }
     }
-    if (!m_refPending) {
-        m_error = I18n::tr("ins.verify.err.ref_early");
-        return;
-    }
-    m_ready = true;
+    if (!m_refPending)
+        throw InvalidRequest("Ins::Verifier: reference trajectory has no record at the start time (" + refPath + ")");
 }
 
 void Ins::Verifier::compare(const NavState &ns, const double *rec) {
@@ -116,17 +96,15 @@ void Ins::Verifier::compare(const NavState &ns, const double *rec) {
 
 bool Ins::Verifier::step() {
     const double *rec = nullptr;
-    if (!m_imu.next(rec)) {
-        if (m_imu.bad()) m_error = m_imu.error();
-        return false;
-    }
+    if (!m_imu.next(rec)) return false;
     InsEpoch e;
     e.t = rec[0];
     e.dtheta = triple(rec, 1);
     e.dvel = triple(rec, 4);
     e.h = e.t - m_tPrev;
     ++m_imuEpochs;
-    if (!validEpochGap(e.h)) {  // 时间戳断档：这一步不推进，也不与参考比
+    if (!validEpochGap(e.h)) {
+        // 时间戳断档：这一步不推进，也不与参考比
         m_tPrev = e.t;
         return true;
     }
@@ -141,7 +119,6 @@ bool Ins::Verifier::step() {
             std::copy_n(q, kRefStride, m_refRec.begin());
         } else {
             m_refPending = false;
-            if (m_ref.bad()) m_error = m_ref.error();
         }
     }
     m_tPrev = e.t;
@@ -151,31 +128,11 @@ bool Ins::Verifier::step() {
 void Ins::Verifier::finish() {
     if (m_hasLast && report.compared % m_curveStride != 0) report.series.push_back(m_last);
     report.imuEpochs = m_imuEpochs;
-    report.pass = report.maxLatDeg <= report.tol.latLonDeg && report.maxLonDeg <= report.tol.latLonDeg &&
-                  report.maxHM <= report.tol.hM && report.maxV <= report.tol.vMps &&
-                  report.maxRollDeg <= report.tol.attDeg && report.maxPitchDeg <= report.tol.attDeg &&
+    report.pass = report.maxLatDeg <= report.tol.latLonDeg &&
+                  report.maxLonDeg <= report.tol.latLonDeg &&
+                  report.maxHM <= report.tol.hM &&
+                  report.maxV <= report.tol.vMps &&
+                  report.maxRollDeg <= report.tol.attDeg &&
+                  report.maxPitchDeg <= report.tol.attDeg &&
                   report.maxHeadingDeg <= report.tol.attDeg;
-}
-
-bool Ins::verifySample(const std::string &imuPath, const std::string &refPath, const VerifyOptions &opt,
-                       VerifyReport &out, std::string &error) {
-    out = VerifyReport{};
-    error.clear();
-    Verifier v(imuPath, refPath, opt);
-    if (!v.ready()) {
-        error = v.error();
-        return false;
-    }
-    while (v.step()) {}
-    if (!v.error().empty()) {
-        error = v.error();
-        return false;
-    }
-    v.finish();
-    if (v.report.compared == 0) {
-        error = I18n::tr("ins.verify.err.no_overlap");
-        return false;
-    }
-    out = std::move(v.report);
-    return true;
 }

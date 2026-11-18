@@ -11,7 +11,6 @@
 #include <set>
 
 #include "Log.h"
-#include "i18n/I18n.h"
 #include "core/geom/CoordStruct.h"
 #include "core/obs/Weight.h"
 
@@ -23,7 +22,7 @@ bool SPP::processEpoch(ObsData &obsData) {
         satRejected.clear();
         solve();
     } catch (const std::exception &e) {
-        LOG_ERROR << I18n::tr("log.spp.solve_error", e.what());
+        LOG_ERROR << "[SPP] solve failed: " << e.what();
         return false;
     }
     return true;
@@ -37,7 +36,7 @@ void SPP::publishResult() {
     result.numSats = 0;
     if (mFilterInit) {
         xyz = currentEstimatedPosition();
-        computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+        computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
     }
 }
 
@@ -66,23 +65,23 @@ void SPP::updateFilter() {
 void SPP::prepareGeometry() {
     computeSatPos();
     earthRotation(satPVTRecTime, xyz);
-    computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+    computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
 }
 
-void SPP::selectClockModel(const std::set<char> &active) {
+void SPP::selectClockModel(const std::set<SatSystem> &active) {
     mCommonClockActive = mConfig.isbInitSigma > 0.0 && !mKinematic && active.size() >= 2;
-    mClockRefSys = 'G';
-    if (!active.count('G'))
-        for (const char sys: {'C', 'R', 'E'})
+    mClockRefSys = SatSystem::G;
+    if (!active.count(SatSystem::G))
+        for (const SatSystem sys: {SatSystem::C, SatSystem::R, SatSystem::E})
             if (active.count(sys)) {
                 mClockRefSys = sys;
                 break;
             }
     mCdtParam = sysCdtParams;
     // 只有共钟参数化才需要把参考系统搬进 cdt1：独立钟时各系统槽位与参考无关。
-    if (mCommonClockActive && mClockRefSys != 'G') {
+    if (mCommonClockActive && mClockRefSys != SatSystem::G) {
         mCdtParam[mClockRefSys] = Parameter::cdt1;
-        mCdtParam.erase('G');
+        mCdtParam.erase(SatSystem::G);
     }
 }
 
@@ -154,7 +153,7 @@ bool SPP::bootstrapSolution() {
         };
         xyz += dxyz;
         // 钟改正按本历元参数化累加：共钟时系统钟 = 公共钟 + 自身 ISB。
-        for (const char sys: activeSystems) {
+        for (const SatSystem sys: activeSystems) {
             if (mCommonClockActive) {
                 const double dref = lsq.getSolution(Parameter::cdt1);
                 rClockBias[sys] += sys == mClockRefSys ? dref : dref + lsq.getSolution(mCdtParam.at(sys));
@@ -325,7 +324,7 @@ void SPP::filterEpoch() {
                     clk[Variable(mCurObs->station, par)] =
                             sys == mClockRefSys ? refClk : rClockBias[sys] - refClk;
         } else {
-            for (const char sys: activeSystems)
+            for (const SatSystem sys: activeSystems)
                 if (const auto it = mCdtParam.find(sys); it != mCdtParam.end())
                     clk[Variable(mCurObs->station, it->second)] = rClockBias[sys];
         }
@@ -423,15 +422,15 @@ void SPP::collectClockStates(EquSys &eq) {
     if (mCommonClockActive) {
         // 共钟：公共钟固定占 cdt1，非参考系统各留一个 ISB 槽（参考系统自己就是 cdt1）。
         eq.varSet.insert(Variable(mCurObs->station, Parameter::cdt1));
-        for (const char sys: activeSystems)
+        for (const SatSystem sys: activeSystems)
             if (const Parameter isbPar = mCdtParam.at(sys); isbPar != Parameter::cdt1)
                 eq.varSet.insert(Variable(mCurObs->station, isbPar));
         return;
     }
-    for (const char sys: activeSystems)
+    for (const SatSystem sys: activeSystems)
         eq.varSet.insert(Variable(mCurObs->station, mCdtParam.at(sys)));
     if (!(mConfig.isbInitSigma > 0.0) || activeSystems.size() < 2) return;
-    for (const char sys: activeSystems) {
+    for (const SatSystem sys: activeSystems) {
         if (sys == mClockRefSys) continue;
         if (!mPrevClockBias.count(sys) || !mPrevClockBias.count(mClockRefSys)) continue;
         const double prevIsb = mPrevClockBias.at(sys) - mPrevClockBias.at(mClockRefSys);
@@ -442,7 +441,7 @@ void SPP::collectClockStates(EquSys &eq) {
         const double var = mConfig.isbInitSigma * mConfig.isbInitSigma
                            + mConfig.isbProcSigma * mConfig.isbProcSigma;
         ed.weight = 1.0 / var;
-        eq.obsEquData[EquID(SatID('I', 0), "ISB_" + std::string(1, sys))] = ed;
+        eq.obsEquData[EquID(SatID(static_cast<SatSystem>('I'), 0), "ISB_" + std::string(1, charFrom(sys)))] = ed;
     }
 }
 
@@ -498,7 +497,7 @@ void SPP::computeSatPos() {
 }
 
 void SPP::detectIFCombinations(const IFCodeTypes &defaultTypes) {
-    std::map<char, std::string> sig;
+    std::map<SatSystem, std::string> sig;
     for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
         if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sat.system)) continue;
         std::string &s = sig[sat.system];
@@ -511,28 +510,28 @@ void SPP::detectIFCombinations(const IFCodeTypes &defaultTypes) {
     if (sig == ifCodeSig && (!ifCodeTypes.empty() || !mGloCombo.empty())) return;
     ifCodeSig = std::move(sig);
 
-    std::set<char> sysList;
+    std::set<SatSystem> sysList;
     for (const auto &[sat, tv]: mCurObs->satTypeValueData) sysList.insert(sat.system);
 
     IFCodeTypes detected;
     mGloCombo.clear();
-    for (char sys: sysList) {
+    for (SatSystem sys: sysList) {
         if (!mConfig.enabledSystems.empty() && !mConfig.enabledSystems.count(sys)) continue;
-        if (sys == 'R') {
+        if (sys == SatSystem::R) {
             for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
-                if (sat.system != 'R') continue;
-                if (FreqCombo def = FreqCombo::detect('R', tv, sat.chan, mRequirePhaseForIF); !def.code1.empty() && !def.code2.empty())
+                if (sat.system != SatSystem::R) continue;
+                if (FreqCombo def = FreqCombo::detect(SatSystem::R, FreqCombo::collectCodes(tv), sat.chan, mRequirePhaseForIF); !def.code1.empty() && !def.code2.empty())
                     mGloCombo[sat] = def;
             }
-        } else if (FreqCombo def = FreqCombo::detect(sys, *mCurObs, mRequirePhaseForIF);
+        } else if (FreqCombo def = FreqCombo::detect(sys, FreqCombo::collectCodes(*mCurObs, sys), 0, mRequirePhaseForIF);
             !def.code1.empty() && !def.code2.empty()) {
             detected[sys] = def;
         }
     }
     if (detected.empty() && mGloCombo.empty()) {
         LOG_WARN << (defaultTypes.empty()
-                         ? I18n::trc("log.spp.no_if")
-                         : I18n::trc("log.spp.no_if_fallback"));
+                         ? "no usable IF combination detected"
+                         : "no usable IF combination detected; falling back to the defaults");
         ifCodeTypes = defaultTypes;
     } else {
         ifCodeTypes = std::move(detected);

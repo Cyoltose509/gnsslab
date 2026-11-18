@@ -27,11 +27,7 @@ FreqCombo FreqCombo::fromFreq(const double f1, const double f2) {
     return d;
 }
 
-FreqCombo FreqCombo::detect(const char sys, const std::vector<std::string> &codes, const bool requirePhase) {
-    return detect(sys, codes, 0, requirePhase);
-}
-
-FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, int channel, bool requirePhase) {
+FreqCombo FreqCombo::detect(SatSystem sys, const std::vector<std::string> &codes, int channel, bool requirePhase) {
     FreqCombo invalid;
     auto findCode = [&](const char kind, const char band) -> std::string {
         std::string first;
@@ -45,17 +41,17 @@ FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, int
     };
 
     std::string code1, code2;
-    if (sys == 'G') {
+    if (sys == SatSystem::G) {
         for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);
         for (char b: {'2', '5', '7'}) if (code2.empty()) code2 = findCode('C', b);
-    } else if (sys == 'C') {
+    } else if (sys == SatSystem::C) {
         for (char b: {'2', '1'}) if (code1.empty()) code1 = findCode('C', b);
         for (char b: {'6', '7', '5'}) if (code2.empty()) code2 = findCode('C', b);
-    } else if (sys == 'R') {
+    } else if (sys == SatSystem::R) {
         // GLONASS FDMA：每星频率由通道号 k 决定，但"频段"与 GPS 同构（'1'=G1, '2'=G2）
         for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);
         for (char b: {'2', '1'}) if (code2.empty()) code2 = findCode('C', b);
-    } else if (sys == 'E') {
+    } else if (sys == SatSystem::E) {
         // Galileo CDMA：E1 作 f1，E5a/E5b/E5/E6 选其一作 f2（优先 E5a）
         for (char b: {'1', '2'}) if (code1.empty()) code1 = findCode('C', b);
         for (char b: {'5', '7', '8', '6'}) if (code2.empty()) code2 = findCode('C', b);
@@ -81,7 +77,7 @@ FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, int
 
     // GLONASS 频率随通道号 k 变化（FDMA），必须逐星给定；其余系统频率仅由 (sys, band) 决定
     double f1, f2;
-    if (sys == 'R') {
+    if (sys == SatSystem::R) {
         f1 = getGlonassFreq(code1[1], channel);
         f2 = getGlonassFreq(code2[1], channel);
     } else {
@@ -98,21 +94,18 @@ FreqCombo FreqCombo::detect(char sys, const std::vector<std::string> &codes, int
     return d;
 }
 
-// 单颗卫星（逐星，GLONASS 每星通道号不同），需显式给出通道号
-FreqCombo FreqCombo::detect(const char sys, const TypeValueMap &tv, const int channel, const bool requirePhase) {
+std::vector<std::string> FreqCombo::collectCodes(const TypeValueMap &tv) {
     std::vector<std::string> codes;
     for (const auto &[c, _]: tv) codes.push_back(c);
-    return detect(sys, codes, channel, requirePhase);
+    return codes;
 }
 
-
-// 从整段 ObsData 收集某系统的观测码
-FreqCombo FreqCombo::detect(const char sys, const ObsData &obs, const bool requirePhase) {
+std::vector<std::string> FreqCombo::collectCodes(const ObsData &obs, const SatSystem sys) {
     std::vector<std::string> codes;
     for (const auto &[sat, tv]: obs.satTypeValueData)
         if (sat.system == sys)
             for (const auto &[c, _]: tv) codes.push_back(c);
-    return detect(sys, codes, requirePhase);
+    return codes;
 }
 
 bool FreqCombo::available(const TypeValueMap &tv, const bool requirePhase) const {

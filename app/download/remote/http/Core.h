@@ -43,7 +43,8 @@ namespace Download::Http {
 
     bool downloadFile(const std::string &url, const std::string &localPath,
                       const ProgressCb &progress, const LogCb &log, int stalls = 5,
-                      int idleSec = 60, const std::atomic<bool> *cancel = nullptr);
+                      int idleSec = 60, const std::atomic<bool> *cancel = nullptr,
+                      bool *cancelled = nullptr);
 
     /// 只取远端的 maxBytes 字节
     bool downloadPartial(const std::string &url, const std::string &localPath, long long maxBytes,

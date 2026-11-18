@@ -156,16 +156,16 @@ public:
     bool operator!=(const Variable &right) const;
 
     static Variable makeAmbiguity(const std::string &station, const SatID &sat, const std::string &obsType) {
-        return {station, sat, Parameter::ambiguity, ObsID(std::string(1, sat.system), obsType)};
+        return {station, sat, Parameter::ambiguity, ObsID(std::string(1, charFrom(sat.system)), obsType)};
     }
 
     static Variable makeIfb(const std::string &station, const SatID &sat, const std::string &obsType) {
-        return {station, sat, Parameter::ifb, ObsID(std::string(1, sat.system), obsType)};
+        return {station, sat, Parameter::ifb, ObsID(std::string(1, charFrom(sat.system)), obsType)};
     }
 
     // 码偏逐系统一个：PRN 抹成 -1，同系统各星折叠到同一状态
     static Variable makeCodeBias(const std::string &station, const SatID &sat, const std::string &obsType) {
-        return {station, SatID(sat.system, -1), Parameter::codeBias, ObsID(std::string(1, sat.system), obsType)};
+        return {station, SatID(sat.system, -1), Parameter::codeBias, ObsID(std::string(1, charFrom(sat.system)), obsType)};
     }
 
 
@@ -264,9 +264,9 @@ struct EquSys {
 };
 
 
-const std::map<char, Parameter> sysCdtParams = {
-    {'G', Parameter::cdt1},
-    {'C', Parameter::cdt2},
-    {'R', Parameter::cdt3},
-    {'E', Parameter::cdt4},
+const std::map<SatSystem, Parameter> sysCdtParams = {
+    {SatSystem::G, Parameter::cdt1},
+    {SatSystem::C, Parameter::cdt2},
+    {SatSystem::R, Parameter::cdt3},
+    {SatSystem::E, Parameter::cdt4},
 };

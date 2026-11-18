@@ -32,8 +32,7 @@ struct CalibReport {
 
     int nPos[6] = {0, 0, 0, 0, 0, 0};
     int nRot[6] = {0, 0, 0, 0, 0, 0};
-    bool ok = false;
-    std::string errorMsg;
+    std::string errorMsg; // 空即成功；非空是缺段清单，界面直接显示
 };
 
 class Calibrator {
@@ -91,7 +90,8 @@ public:
 
     static CalibReport calibrate(const CalibSegments &seg,
                                  double turnAngle,
-                                 double g);
+                                 double g,
+                                 double rateHz);
 
 
 

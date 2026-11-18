@@ -1,7 +1,6 @@
 #include "Static.h"
 #include "core/Const.h"
 #include "core/equ/Precision.h"
-#include "i18n/I18n.h"
 #include "Log.h"
 #include "core/TimeStruct.h"
 #include <cmath>
@@ -51,7 +50,9 @@ void PPPStatic::computeSatPos() {
             } else {
                 if (!eph) continue;
                 if (mFallbackWarned.insert(sat).second)
-                    LOG_WARN << "[FALLBACK] " << I18n::tr("log.ppp.clk_fallback", sat.toString());
+                    LOG_WARN << "[FALLBACK] " << sat.toString()
+                            << ": precise clock does not cover this epoch, using broadcast ephemeris"
+                               " (orbit still from SP3)";
                 CommonTime te = t_emit;
                 te.m_sod -= eph->getPVT(t0, &def).clockBias;
                 pvt = prod->sp3.getPVT(sat, te);
@@ -61,7 +62,9 @@ void PPPStatic::computeSatPos() {
         } else {
             if (!eph) continue;
             if (mFallbackWarned.insert(sat).second)
-                LOG_WARN << "[FALLBACK] " << I18n::tr("log.ppp.orbit_fallback", sat.toString());
+                LOG_WARN << "[FALLBACK] " << sat.toString()
+                        << ": precise orbit does not cover this epoch, whole satellite falls back to"
+                           " the broadcast ephemeris";
             if (!clkOk) t_emit.m_sod -= eph->getPVT(t0, &def).clockBias;
             pvt = eph->getPVT(t_emit, &def);
         }
@@ -113,7 +116,7 @@ void PPPStatic::publishResult() {
 
     for (const auto &[sys, par]: mCdtParam)
         GnssEKF::tryGetSolution(par, ekf.currentUnkSet, ekf.solution, mClkEstimate[sys]);
-    for (char sys: mSysSeen) {
+    for (SatSystem sys: mSysSeen) {
         if (!osbCoversSystem(sys)) {
             const Variable vcb = Variable::makeCodeBias(mCurObs->station, SatID(sys, -1), "IF");
             mCbEstimate[sys] = ekf.getSolution(vcb);
@@ -121,7 +124,7 @@ void PPPStatic::publishResult() {
     }
     // 逐 GLONASS/BDS 星 IFCB 回读
     for (const auto &[sat, tv]: mCurObs->satTypeValueData) {
-        if (sat.system != 'R' && sat.system != 'C') continue;
+        if (sat.system != SatSystem::R && sat.system != SatSystem::C) continue;
         if (osbCovers(sat)) continue;
         if (const FreqCombo *defp = freqComboFor(sat); !defp || !defp->available(tv, true)) continue;
         const Variable vifb = Variable::makeIfb(mCurObs->station, sat, "IF");
@@ -171,7 +174,7 @@ void PPPStatic::publishResult() {
         result.sigmaP = result.sigmaPFixed;
     }
     xyz = result.xyz;
-    computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+    computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
 }
 
 bool PPPStatic::bootstrapSolution() {
@@ -249,7 +252,7 @@ void PPPStatic::updateFilter() {
     if (!mFilterFrozen) {
         ekf.timeUpdate(curEq.varSet, &mEpochStates);
         {
-            std::map<char, double> sysDclk;
+            std::map<SatSystem, double> sysDclk;
             double dclkRef = 0.0;
             bool haveRef = false;
             for (const auto &[sys, par]: mCdtParam) {
@@ -287,7 +290,7 @@ void PPPStatic::updateFilter() {
                         ed.prefit -= dclkRef * it->second; // 所有星方程均含 cdt(系数1)，
                 }
                 ekf.shiftState(vcommon, dclkRef);
-                for (char sys: mSysSeen) {
+                for (SatSystem sys: mSysSeen) {
                     const Parameter par = mCdtParam.at(sys);
                     if (par == Parameter::cdt1) continue; // 参考系统无 ISB
                     const auto itd = sysDclk.find(sys);
@@ -337,8 +340,8 @@ void PPPStatic::applyOptions(const SolverOptions &o) {
     mConfig.troZtdSigma = c.troZtdSigma;
     mUseAR = c.useAR;
     mUseCycleSlip = c.useCycleSlip;
-    mUseGfCycleSlip = c.useGfCycleSlip;
-    mGfSlipMult = c.gfSlipMult;
+    mUseGFCycleSlip = c.useGFCycleSlip;
+    mGFSlipMult = c.GFSlipMult;
     mUseTroGrad = c.useTroGrad;
     mApplyWindup = c.applyWindup;
     mConfig.codeBiasProcSigma = c.codeBiasProcSigma;

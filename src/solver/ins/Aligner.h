@@ -13,7 +13,7 @@ struct AlignQuality {
     double dcmOrthoErr = 0.0;
 
 
-
+    Euler att; // 由均值解出的姿态，与 Aligner::solve 返回同一份
     double earthRateErrDeg = 0.0;
 
 
@@ -61,11 +61,6 @@ public:
     /// 按模型自身采样率分块统计角速率，块均值相对邻近块与近期中值的变化超过 5 倍地球自转角速率、
     /// 且连续 kMoveRun 块才算转动；取最长的那段静止（搬运会把记录切段，长的那段才是就位后的静置）。
     static StaticSpan detectStatic(const ImuLog &log, const ImuScale &scale);
-
-    static ATTQuat solveQuat(const ImuLog &log,
-                             std::size_t begin, std::size_t end,
-                             const SiteParams &sp);
-
 
     static AlignQuality diagnose(const ImuLog &log,
                                  std::size_t begin, std::size_t end,

@@ -16,7 +16,7 @@
 #include "StringUtils.h"
 #include "core/TimeStruct.h"
 
-#include "ui/DragBar.h"
+#include "ui/Splitter.h"
 #include "imgui.h"
 
 #include <algorithm>
@@ -348,7 +348,7 @@ namespace Download::Acquire {
         } else {
             Widgets::remoteList(snap, opt, "##acqList", I18n::trc("common.file"), listH);
         }
-        UI::heightGrip("##acqGrip", p.height, 96.0f, maxH);
+        UI::splitHandle("##acqGrip", p.height, 96.0f, maxH);
 
         if (ImGui::SmallButton((std::string(I18n::trc("dl.ui.collapse")) + "##acqClose").c_str()))
             p.open = false;

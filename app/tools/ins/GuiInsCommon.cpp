@@ -3,6 +3,8 @@
 #include "ui/ParamPage.h"
 
 #include <algorithm>
+#include <cstdio>
+
 #include "i18n/I18n.h"
 
 namespace Tools::Ins {
@@ -14,7 +16,6 @@ namespace Tools::Ins {
 
 
         constexpr auto kInsPrefix = "ins_";
-
 
 
         const std::vector<Group<CalibParams> > &calibSchema() {
@@ -143,198 +144,77 @@ namespace Tools::Ins {
     }
 
 
-    bool ScaleResolution::observe(const RecordScaleInfo &info) {
-        switch (info.kind) {
-            case RecordScale::Model:
-                if (!recordModel) {
-                    recordModel = info.model;
-                    return true;
-                }
-                if (info.model->type == recordModel->type) return true;
-                conflict = I18n::tr("ins.scale.model_conflict", recordModel->name, info.model->name);
-                return false;
-            case RecordScale::UnknownType:
-                if (unknownType < 0) unknownType = info.type;
-                return true;
-            case RecordScale::NoType:
-                ++noType;
-                return true;
+    void InsToolTask::renderConfigPanel() {
+        const std::string childId = std::string(cfgKey) + std::to_string(cfgIndex);
+        ImGui::BeginChild(childId.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+        if (ImGui::BeginTabBar("##cfg_tabs")) {
+            if (ImGui::BeginTabItem(I18n::trc("common.file"))) {
+                ImGui::Spacing();
+                renderFileTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(I18n::trc("common.params"))) {
+                ImGui::PushItemWidth(260);
+                renderParamTab();
+                ImGui::PopItemWidth();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
+        ImGui::Spacing();
+        if (ImGui::Button(I18n::trc(startKey), ImVec2(200, 40))) startRun();
+        ImGui::SameLine();
+        renderCancelButton();
+        if (errorFlag() && !hasResult.load())
+            drawAlert(AlertLevel::Error, errorMessage().c_str());
+        ImGui::EndChild();
+    }
+
+    void InsToolTask::beginRun() {
+        if (worker.joinable()) worker.join();
+        clearError();
+        state = State::Running;
+        loading = true;
+        stop = false;
+        hasResult.store(false);
+        runFailed.store(false);
+        sampleCount.store(0);
+        chartDirty.store(false);
+        LOG_INFO << "[" << fileName << "] " << I18n::tr("ins.tool.log.start");
+    }
+
+    void InsToolTask::endRun() {
+        loading = false;
+        state = State::Done;
+    }
+
+    void InsToolTask::abortRun(const std::string &msg) {
+        LOG_ERROR << "[" << fileName << "] " << msg;
+        runFailed.store(true);
+        setError(msg);
+        endRun();
+    }
+
+    void InsToolTask::finishRun() {
+        chartDirty.store(true);
+        hasResult.store(true);
+        endRun();
+    }
+
+    bool InsToolTask::stoppedAndEnd() {
+        if (!stop.load()) return false;
+        endRun();
         return true;
     }
 
-    bool ScaleResolution::resolve(ScaleFallback &sf, const std::vector<ImuLog> &staticCandidates, const double g) {
-        if (recordModel) {
-            scale = recordModel->scale;
-            modelName = recordModel->name;
-            modelType = recordModel->type;
-            src = ScaleSource::Record;
-            return true;
-        }
-        if (sf.accepted.load(std::memory_order_relaxed)) {
-            adoptManual(sf.scale());
-            return true;
-        }
-        for (const ImuLog &seg: staticCandidates)
-            if (tryGuess(seg, g)) return true;
-        sf.request(guessAccel, guessRate, failMessage());
-        return false;
+    bool InsToolTask::drawResultError() {
+        if (!errorFlag()) return false;
+        drawAlert(AlertLevel::Error, errorMessage().c_str());
+        return true;
     }
 
-    std::string ScaleResolution::failMessage() const {
-        if (unknownType >= 0) return I18n::tr("ins.scale.unknown_type", unknownType);
-        if (!note.empty()) return I18n::tr("ins.scale.no_selftype_note", note);
-        return I18n::tr("ins.scale.no_selftype");
-    }
-
-    std::string ScaleResolution::describe() const {
-        switch (src) {
-            case ScaleSource::Record: return I18n::tr("ins.scale.record_label", modelName, modelType);
-            case ScaleSource::Guess: return I18n::tr("ins.scale.guess_describe", modelName);
-            case ScaleSource::Manual: return I18n::tr("ins.scale.manual");
-            default: return {};
-        }
-    }
-
-    std::string ScaleResolution::recordLabel() const {
-        if (!recordModel) return {};
-        return I18n::tr("ins.scale.record_label", recordModel->name, recordModel->type);
-    }
-
-    ScaleNotice ScaleResolution::notice(const bool settled) const {
-        if (!settled) {
-            if (!recordModel) return {};
-            return {true, AlertLevel::Info, I18n::tr("ins.scale.src_record_short", recordLabel())};
-        }
-        if (!known()) {
-            std::string t = I18n::tr("ins.scale.unknown_head");
-            if (unknownType >= 0) t += I18n::tr("ins.scale.unknown_why_type", unknownType);
-            else if (!note.empty()) t += I18n::tr("ins.scale.unknown_why_guess", note);
-            return {true, AlertLevel::Warn, t + I18n::tr("ins.punct.period")};
-        }
-        bool weak = src != ScaleSource::Record;
-        std::string t;
-        switch (src) {
-            case ScaleSource::Record: t = I18n::tr("ins.scale.src_record", recordLabel());
-                break;
-            case ScaleSource::Guess: t = I18n::tr("ins.scale.src_guess", modelName);
-                break;
-            case ScaleSource::Manual: t = I18n::tr("ins.scale.src_manual");
-                break;
-            default: return {};
-        }
-        if (noType > 0) {
-            t += I18n::tr("ins.scale.no_type_note", noType);
-            weak = true;
-        } else {
-            t += I18n::tr("ins.punct.period");
-        }
-        return {true, weak ? AlertLevel::Warn : AlertLevel::Info, t};
-    }
-
-    void ScaleResolution::adoptManual(const ImuScale &s) {
-        scale = s;
-        modelName.clear();
-        modelType = -1;
-        src = ScaleSource::Manual;
-    }
-
-    bool ScaleResolution::tryGuess(const ImuLog &staticSeg, const double g) {
-        if (staticSeg.empty()) return false;
-        const ImuScaleGuess gs = guessImuScale(staticSeg, g);
-        if (gs.model) {
-            scale = gs.model->scale;
-            modelName = gs.model->name;
-            modelType = gs.model->type;
-            src = ScaleSource::Guess;
-            return true;
-        }
-        if (note.empty()) note = gs.note;
-        if (!(guessAccel > 0.0)) guessAccel = gs.accelMpsPerLsb;
-        if (!(guessRate > 0.0)) guessRate = gs.rateHz;
-        return false;
-    }
-
-    void ScaleIdentifier::probeSample(const ImuSample &s) {
-        if (probe.size() < kScaleProbeSamples) probe.push_back(s);
-    }
-
-    void ScaleIdentifier::offerProbe() {
-        if (res.hasRecord() || probe.empty()) return;
-        candidates.push_back(std::move(probe));
-        probe.clear();
-    }
-
-    void ScaleIdentifier::offerStatic(const ImuLog &seg) {
-        if (res.hasRecord() || seg.empty()) return;
-        candidates.push_back(seg);
-    }
-
-    bool ScaleIdentifier::resolve(const double g) {
-        return res.resolve(sf, candidates, g);
-    }
-
-    std::string ScaleIdentifier::failText() const {
-        return res.failMessage() + I18n::tr("ins.scale.fill_manual_hint");
-    }
-
-    bool ScaleIdentifier::mixedModel() const {
-        return !res.conflict.empty();
-    }
-
-    std::string ScaleIdentifier::failureMessage(const std::string &path) const {
-        return mixedModel() ? res.conflict : I18n::tr("ins.err.open_imu", path);
-    }
-
-    void keepManualScaleFor(ScaleFallback &sf, const std::string &sig) {
-        if (sf.accepted.load(std::memory_order_relaxed) && sf.sig != sig) sf.reset();
-        sf.sig = sig;
-    }
-
-    bool drawScaleFallback(ScaleFallback &sf, const bool allowSkip) {
-        if (!sf.asked.load(std::memory_order_acquire)) {
-            if (sf.accepted.load(std::memory_order_relaxed) &&
-                ImGui::SmallButton((std::string(I18n::trc("ins.scale.edit_manual")) +
-                                    "##kf_edit").c_str())) {
-                sf.accepted.store(false, std::memory_order_relaxed);
-                sf.asked.store(true, std::memory_order_release);
-            }
-            return false;
-        }
-        drawAlert(AlertLevel::Warn, sf.reason.empty() ? I18n::trc("ins.scale.no_guess")
-                                                      : sf.reason.c_str());
-        ImGui::TextDisabled("%s", I18n::trc("ins.scale.manual_panel_hint"));
-        ImGui::Spacing();
-        auto field = [](const char *id, const char *label, const char *unit, std::atomic<double> &v,
-                        const char *fmt) {
-            ImGui::TextUnformatted(I18n::trc(label));
-            ImGui::SameLine(160.0f);
-            ImGui::SetNextItemWidth(140.0f);
-            double val = v.load(std::memory_order_relaxed);
-            if (ImGui::InputDouble(id, &val, 0.0, 0.0, fmt)) v.store(val, std::memory_order_relaxed);
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", unit);
-        };
-        field("##kf_a", "ins.scale.k_a", "(m/s)/LSB", sf.accelMpsPerLsb, "%.6e");
-        field("##kf_g", "ins.scale.k_g", "°/LSB", sf.gyroDegPerLsb, "%.6e");
-        field("##kf_r", "SamplingRate", "Hz", sf.rateHz, "%.3f");
-        ImGui::Spacing();
-
-        bool retry = false;
-        ImGui::BeginDisabled(!sf.scale().known());
-        if (ImGui::Button(I18n::trc("ins.scale.recount"), ImVec2(160, 0))) {
-            sf.accepted.store(true, std::memory_order_relaxed);
-            sf.asked.store(false, std::memory_order_release);
-            retry = true;
-        }
-        ImGui::EndDisabled();
-        if (allowSkip) {
-            ImGui::SameLine();
-            if (ImGui::Button(I18n::trc("ins.scale.skip_check"), ImVec2(150, 0)))
-                sf.asked.store(false, std::memory_order_release);
-        }
-        ImGui::Spacing();
-        return retry;
+    bool InsToolTask::renderResultPrologue() {
+        return drawResultError() && runFailed.load();
     }
 
 
@@ -392,13 +272,13 @@ namespace Tools::Ins {
 
     void drawCompChart(const char *title, const std::vector<double> &t,
                        const std::vector<double> &a, const std::vector<double> &b,
-                       const std::vector<double> &c, const bool chartNew) {
+                       const std::vector<double> &c, const bool chartNew, const float h) {
         if (t.empty() || a.empty()) {
             ImGui::TextDisabled("%s", I18n::trc("ins.no_data"));
             return;
         }
         const int n = static_cast<int>(t.size());
-        if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kFileChartH))) {
+        if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, h))) {
             ImPlot::SetupAxes(I18n::trc("ins.chart.x_time"), I18n::trc("common.value"));
             ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
             const double xmax = t.back() - t.front();
@@ -411,8 +291,8 @@ namespace Tools::Ins {
     }
 
     void drawScaleBars(const char *title, const bool ready, const double v[3], const ImVec4 &fill,
-                       const char *fmt) {
-        if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kChartHeight))) {
+                       const float h, const char *fmt) {
+        if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, h))) {
             if (ready) {
                 ImPlot::SetupAxes(I18n::trc("ins.chart.x_axis"), I18n::trc("common.value"),
                                   ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
@@ -462,9 +342,9 @@ namespace Tools::Ins {
         const std::size_t lo = s.size() * 2 / 3;
         double ny = 0, np = 0, nr = 0;
         for (std::size_t i = lo; i < s.size(); ++i) {
-            ny += s[i].yaw;
-            np += s[i].pitch;
-            nr += s[i].roll;
+            ny += s[i].att.yaw;
+            np += s[i].att.pitch;
+            nr += s[i].att.roll;
         }
         const auto m = static_cast<double>(s.size() - lo);
         ny /= m;
@@ -472,9 +352,9 @@ namespace Tools::Ins {
         nr /= m;
         double vy = 0, vp = 0, vr = 0;
         for (std::size_t i = lo; i < s.size(); ++i) {
-            vy += (s[i].yaw - ny) * (s[i].yaw - ny);
-            vp += (s[i].pitch - np) * (s[i].pitch - np);
-            vr += (s[i].roll - nr) * (s[i].roll - nr);
+            vy += (s[i].att.yaw - ny) * (s[i].att.yaw - ny);
+            vp += (s[i].att.pitch - np) * (s[i].att.pitch - np);
+            vr += (s[i].att.roll - nr) * (s[i].att.roll - nr);
         }
         ym = ny * RAD_TO_DEG;
         ysd = std::sqrt(vy / m) * RAD_TO_DEG;

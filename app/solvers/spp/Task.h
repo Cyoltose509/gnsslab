@@ -65,6 +65,8 @@ namespace Solvers::SPP {
         std::unique_ptr<Realtime::Session> makeSession() override;
 
     private:
+        /// 一趟解算的配置快照，前后两趟都读它，不现场读界面可改的 opts。
+        SolverOptions solveOpts;
         /// 前向趟的解算器：倒序趟要从它接管精密产品，活到两趟都跑完。
         std::unique_ptr<::SPP> fwdSolver;
         /// 前向趟建好的会话（含惰性历元序列），倒序趟复用同一份。

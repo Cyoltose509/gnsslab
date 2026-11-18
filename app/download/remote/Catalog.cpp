@@ -449,6 +449,7 @@ namespace Download::Catalog {
 
     bool ensureSiteTruth(const std::string &site, const int year, const int doy, double xyz[3],
                          bool &fromCache, std::string &detail, const Http::ProgressCb &progress) {
+        static std::mutex siteTruthMtx;
         fromCache = false;
         const std::string want = Str::toUpper(site.substr(0, std::min<std::size_t>(4, site.size())));
         if (want.size() < 4) {
@@ -462,20 +463,23 @@ namespace Download::Catalog {
         std::string err;
         Eigen::Vector3d v;
         int usedYear = 0, usedDoy = 0;
-        if (SinexReader have; have.readFile(cache, err) &&
-                              have.getStation(want, year, doy, v, &usedYear, &usedDoy)) {
-            xyz[0] = v.x();
-            xyz[1] = v.y();
-            xyz[2] = v.z();
-            fromCache = true;
-            detail = I18n::tr("dl.truth.cache_hit", want);
-            if (usedYear > 0) {
-                char stamp[24];
-                std::snprintf(stamp, sizeof stamp, I18n::trc("dl.truth.solution_stamp"),
-                              usedYear, usedDoy);
-                detail += stamp;
+        {
+            std::lock_guard lk(siteTruthMtx);
+            if (SinexReader have; have.readFile(cache, err) &&
+                                  have.getStation(want, year, doy, v, &usedYear, &usedDoy)) {
+                xyz[0] = v.x();
+                xyz[1] = v.y();
+                xyz[2] = v.z();
+                fromCache = true;
+                detail = I18n::tr("dl.truth.cache_hit", want);
+                if (usedYear > 0) {
+                    char stamp[24];
+                    std::snprintf(stamp, sizeof stamp, I18n::trc("dl.truth.solution_stamp"),
+                                  usedYear, usedDoy);
+                    detail += stamp;
+                }
+                return true;
             }
-            return true;
         }
 
         std::string block;
@@ -488,8 +492,11 @@ namespace Download::Catalog {
             return false;
         }
         // 同一期解只留一份：重复追加会让缓存无限膨胀，同一站还会出现多条同历元记录。
-        if (SinexReader cached; !cached.readFile(cache, err) || !cached.hasSolution(want, refYear, refDoy)) {
-            if (std::ofstream fo(cache, std::ios::binary | std::ios::app); fo) fo << block;
+        {
+            std::lock_guard lk(siteTruthMtx);
+            if (SinexReader cached; !cached.readFile(cache, err) || !cached.hasSolution(want, refYear, refDoy)) {
+                if (std::ofstream fo(cache, std::ios::binary | std::ios::app); fo) fo << block;
+            }
         }
         xyz[0] = v.x();
         xyz[1] = v.y();

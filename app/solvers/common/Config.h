@@ -98,16 +98,18 @@ namespace Solvers {
         {SolverOptions::FilterMode::Both},
     };
 
-    inline std::string sysSetToString(const std::set<char> &s) {
+    inline std::string sysSetToString(const std::set<SatSystem> &s) {
         std::string out;
-        for (char c: {'G', 'R', 'E', 'C'}) if (s.count(c)) out += c;
+        for (const SatSystem sys: {SatSystem::G, SatSystem::R, SatSystem::E, SatSystem::C})
+            if (s.count(sys)) out += charFrom(sys);
         return out;
     }
 
-    inline std::set<char> stringToSysSet(const std::string &s) {
-        std::set<char> out;
-        for (char c: s) if (c == 'G' || c == 'R' || c == 'E' || c == 'C') out.insert(c);
-        return out.empty() ? std::set{'G', 'R', 'E', 'C'} : out;
+    inline std::set<SatSystem> stringToSysSet(const std::string &s) {
+        std::set<SatSystem> out;
+        for (const char c: s)
+            if (const SatSystem sys = satSystemFrom(c); isKnownSystem(sys)) out.insert(sys);
+        return out.empty() ? std::set<SatSystem>{SatSystem::G, SatSystem::R, SatSystem::E, SatSystem::C} : out;
     }
 
     struct RealtimeEndpoint {

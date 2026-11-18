@@ -2,7 +2,6 @@
 
 #include "core/Const.h"
 #include "Log.h"
-#include "i18n/I18n.h"
 
 #include <string>
 
@@ -156,6 +155,7 @@ namespace Troposphere {
     /// 选了要格网的模型却没读到格网：本模型自带参数照样能算，提醒一声
     inline void warnFallback(const char *tag, const Map m, const bool gridReady) {
         if (gridReady) return;
-        LOG_WARN << "[" << tag << "] " << I18n::tr("pl.log.tropo_fallback", nameOf(m));
+        LOG_WARN << "[" << tag << "] troposphere model " << nameOf(m)
+                << " selected but its grid is missing; mapping falls back to GMF";
     }
 }

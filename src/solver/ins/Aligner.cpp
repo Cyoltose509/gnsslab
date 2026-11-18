@@ -49,8 +49,7 @@ namespace {
 
         const std::size_t n = end - begin;
         const std::size_t w = std::min(Aligner::kStatBlock, n);
-        const BlockMeans bm = collectBlockMeans(log, begin, end, w);
-        if (bm.gyr.size() >= 3) {
+        if (const BlockMeans bm = collectBlockMeans(log, begin, end, w); bm.gyr.size() >= 3) {
             accMean = medianOf(bm.acc);
             gyrMean = medianOf(bm.gyr);
             return alignDCM(-accMean, gyrMean, sp);
@@ -67,31 +66,30 @@ namespace {
 }
 
 StaticSpan Aligner::detectStatic(const ImuLog &log, const ImuScale &scale) {
-    const double rate = scale.rateHz > 0.0 ? scale.rateHz : 200.0;
+    const double rate = scale.rateHz;
     const double lsbToRad = scale.gyroRadPerLsb * rate;   // LSB → rad/s
     const auto w = static_cast<std::size_t>(std::lround(kBlockSec * rate));
     if (!(lsbToRad > 0.0) || w == 0) return {};
 
-    const BlockMeans bm = collectBlockMeans(log, 0, log.size(), w);
-    const std::size_t n = bm.gyr.size();
-    const std::size_t need = static_cast<std::size_t>(std::lround(kMinStaticSec * rate)) / w;
-    if (n < std::max<std::size_t>(need, 2)) return {};
+    const auto [acc, gyr] = collectBlockMeans(log, 0, log.size(), w);
+    const std::size_t n = gyr.size();
+    if (n < std::max<std::size_t>(static_cast<std::size_t>(std::lround(kMinStaticSec * rate)) / w, 2)) return {};
 
-    const double tol = kRotateFrac * OMEGA_EARTH;
-    std::vector<bool> over(n, false);
+    constexpr double tol = kRotateFrac * OMEGA_EARTH;
+    std::vector over(n, false);
     for (std::size_t k = 1; k < n; ++k) {
         const std::size_t lo = k > kRefBlocks ? k - kRefBlocks : 0;
         const auto from = static_cast<std::ptrdiff_t>(lo);
         const auto to = static_cast<std::ptrdiff_t>(k);
-        const Eigen::Vector3d ref = medianOf({bm.gyr.begin() + from, bm.gyr.begin() + to});
-        const double gRef = medianOf({bm.acc.begin() + from, bm.acc.begin() + to}).norm();
-        over[k] = (bm.gyr[k] - bm.gyr[k - 1]).norm() * lsbToRad > tol ||
-                  (bm.gyr[k] - ref).norm() * lsbToRad > tol ||
-                  (gRef > 0.0 && std::fabs(bm.acc[k].norm() / gRef - 1.0) > kAccelFrac);
+        const Eigen::Vector3d ref = medianOf({gyr.begin() + from, gyr.begin() + to});
+        const double gRef = medianOf({acc.begin() + from, acc.begin() + to}).norm();
+        over[k] = (gyr[k] - gyr[k - 1]).norm() * lsbToRad > tol ||
+                  (gyr[k] - ref).norm() * lsbToRad > tol ||
+                  (gRef > 0.0 && std::fabs(acc[k].norm() / gRef - 1.0) > kAccelFrac);
     }
 
     // 单块超限是触碰、说话这类扰动，持续 kMoveRun 块以上才认作真的在动。
-    std::vector<bool> moving(n, false);
+    std::vector moving(n, false);
     for (std::size_t k = 0; k < n;) {
         if (!over[k]) {
             ++k;
@@ -134,16 +132,6 @@ Euler Aligner::solve(const ImuLog &log,
     return alignMeanDCM(log, begin, end, sp, acc, gyr).toEuler();
 }
 
-ATTQuat Aligner::solveQuat(const ImuLog &log,
-                           const std::size_t begin, std::size_t end,
-                           const SiteParams &sp) {
-    if (end == 0 || end > log.size()) end = log.size();
-    if (end <= begin) return ATTQuat::identity();
-
-    Eigen::Vector3d acc, gyr;
-    return ATTQuat::fromDCM(alignMeanDCM(log, begin, end, sp, acc, gyr));
-}
-
 AlignQuality Aligner::diagnose(const ImuLog &log,
                                const std::size_t begin, const std::size_t end,
                                const SiteParams &sp,
@@ -167,6 +155,7 @@ AlignQuality Aligner::diagnoseMeans(const Eigen::Vector3d &accMean, const Eigen:
     const DCM C = alignDCM(gB, wB, sp);
     const ATTQuat qAtt = ATTQuat::fromDCM(C);
 
+    q.att = C.toEuler();
     q.axisX = C.col(0);
     q.axisY = C.col(1);
     q.axisZ = C.col(2);
@@ -214,8 +203,8 @@ std::vector<AttitudeSample> Aligner::alignSeries(const ImuLog &log, const int wi
         acc += (Eigen::Vector3d(log[i].ax, log[i].ay, log[i].az) - acc) / n;
         gyr += (Eigen::Vector3d(log[i].gx, log[i].gy, log[i].gz) - gyr) / n;
 
-        const Euler e = alignDCM(-acc, gyr, sp).toEuler();
-        out.push_back({log[i].tow, e.roll, e.pitch, e.yaw});
+        const auto [roll, pitch, yaw] = alignDCM(-acc, gyr, sp).toEuler();
+        out.push_back({log[i].tow, {roll, pitch, yaw}});
     }
     return out;
 }
@@ -233,10 +222,8 @@ void Aligner::AlignStream::step(const ImuSample &s, AttitudeSample &out) {
     const auto n = static_cast<double>(count - lo + 1);
     acc += (Eigen::Vector3d(s.ax, s.ay, s.az) - acc) / n;
     gyr += (Eigen::Vector3d(s.gx, s.gy, s.gz) - gyr) / n;
-    const Euler e = alignDCM(-acc, gyr, sp).toEuler();
-    out.roll = e.roll;
-    out.pitch = e.pitch;
-    out.yaw = e.yaw;
+    const auto [roll, pitch, yaw] = alignDCM(-acc, gyr, sp).toEuler();
     out.tow = s.tow;
+    out.att = {roll, pitch, yaw};
     ++count;
 }

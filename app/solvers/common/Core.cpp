@@ -610,28 +610,37 @@ namespace Solvers {
     }
 
     bool Core::loadTruth() {
-        truth.fileReady = false;
+        {
+            std::lock_guard lk(truthFileMtx);
+            truth.fileReady = false;
+        }
         if (truth.form != RefForm::File || truth.sp3Path.empty()) return false;
         try {
-            truth.reader.read(truth.sp3Path);
-            const auto &data = truth.reader.getData();
+            SP3::Reader rd;
+            rd.read(truth.sp3Path);
+            const auto &data = rd.getData();
             if (data.empty()) {
                 LOG_WARN << "[REF] " << I18n::tr("core.log.sp3_no_orbit", truth.sp3Path);
                 return false;
             }
             // 真值 SP3 一般只含一颗 LEO 星，直接取第一颗 L 星；
             // 没有 L 星时仍按 L 系统取编号（与旧 LEO 口径一致：插值取不到 → 参考退化为解自身）。
-            truth.sat = SatID();
-            for (const auto &[sat, recs]: data)
-                if (!recs.empty() && sat.system == 'L') {
-                    truth.sat = sat;
+            SatID sat;
+            for (const auto &[s, recs]: data)
+                if (!recs.empty() && s.system == static_cast<SatSystem>('L')) {
+                    sat = s;
                     break;
                 }
-            if (truth.sat.id < 0) truth.sat = SatID('L', data.begin()->first.id);
-            truth.fileReady = true;
+            if (sat.id < 0) sat = SatID(static_cast<SatSystem>('L'), data.begin()->first.id);
+            {
+                std::lock_guard lk(truthFileMtx);
+                truth.reader = std::move(rd);
+                truth.sat = sat;
+                truth.fileReady = true;
+            }
             LOG_INFO << "[REF] " << I18n::tr("core.log.sp3_loaded", truth.sp3Path,
-                                                     std::string(1, truth.sat.system) +
-                                                     std::to_string(truth.sat.id));
+                                                     std::string(1, charFrom(sat.system)) +
+                                                     std::to_string(sat.id));
             return true;
         } catch (const std::exception &e) {
             LOG_ERROR << "[REF] " << I18n::tr("core.log.sp3_failed", truth.sp3Path, e.what());

@@ -7,6 +7,10 @@
 #include <vector>
 
 #include "StringUtils.h"
+#include "core/Const.h"
+#include "solvers/ins/ImuScaleProbe.h"
+#include "ui/GuiColors.h"
+#include "ui/ImGuiLabel.h"
 #include "i18n/I18n.h"
 
 static int inputTextResizeCallback(ImGuiInputTextCallbackData *data) {
@@ -27,6 +31,49 @@ namespace Solvers::Helpers {
             if (const char *clip = ImGui::GetClipboardText()) p.count = Str::scanMeters(clip, p.xyz, 3);
         ImGui::PopID();
         return p;
+    }
+
+    void renderImuScale(ImuScale &scale, INS::ScaleDetect &detect, const std::string &imuPath,
+                        const double gravity, const char *id) {
+        ImGui::PushID(id);
+        detect.poll(scale);
+        double gyroDeg = scale.gyroRadPerLsb * RAD_TO_DEG;
+        ImGui::PushItemWidth(150);
+        const bool accelEdited = ImGui::InputDouble(UI::idLabel("ins.scale.k_a", "##ka"),
+                                                    &scale.accelMpsPerLsb, 0.0, 0.0, "%.6e");
+        const bool gyroEdited = ImGui::InputDouble(UI::idLabel("ins.scale.k_g", "##kg"),
+                                                   &gyroDeg, 0.0, 0.0, "%.6e");
+        const bool rateEdited = ImGui::InputDouble(UI::idLabel("ins.scale.rate", "##rate"),
+                                                   &scale.rateHz, 0.0, 0.0, "%.2f");
+        ImGui::PopItemWidth();
+        scale.gyroRadPerLsb = gyroDeg * DEG_TO_RAD;
+        bool manual = accelEdited || gyroEdited || rateEdited;
+        if (const PasteResult p = clipboardXYZButton("scale_paste"); p.count > 0) {
+            scale.accelMpsPerLsb = p.xyz[0];
+            scale.gyroRadPerLsb = p.xyz[1] * DEG_TO_RAD;
+            if (p.count > 2) scale.rateHz = p.xyz[2];
+            manual = true;
+        }
+        if (manual) {
+            detect.level = INS::ScaleDetect::Level::None;
+            detect.text = I18n::tr("ins.scale.manual_note");
+        }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(imuPath.empty() || detect.running());
+        if (ImGui::Button(I18n::trc(detect.running() ? "ins.scale.probing" : "ins.scale.detect")))
+            detect.start(imuPath, gravity);
+        ImGui::EndDisabled();
+        if (detect.text.empty()) {
+            ImGui::PopID();
+            return;
+        }
+        const ImVec4 col = detect.level == INS::ScaleDetect::Level::Pass ? UI::kColPass
+                           : detect.level == INS::ScaleDetect::Level::Warn ? UI::kColWarn
+                           : detect.level == INS::ScaleDetect::Level::Fail ? UI::kColFail
+                                                                         : UI::kColMute;
+        ImGui::TextColored(col, "%s", detect.text.c_str());
+        ImGui::PopID();
     }
 
     void renderEpochNav(int &selectedEpoch, const int epochCount,

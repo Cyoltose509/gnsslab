@@ -19,13 +19,13 @@ public:
 
     bool read(const std::string &path);
 
-    bool read(const std::string &path, const std::set<char> &allowedSys);
+    bool read(const std::string &path, const std::set<SatSystem> &allowedSys);
 
     /// append=true：把 path 里的钟差并入已有 data（按卫星合并、重排、重建相对时刻），
     /// 用于跨日弧加载相邻多日 CLK。append=false 与 read(path, sys) 等价。
     bool read(const std::string &path, bool append);
 
-    bool read(const std::string &path, const std::set<char> &allowedSys, bool append);
+    bool read(const std::string &path, const std::set<SatSystem> &allowedSys, bool append);
 
     [[nodiscard]] bool empty() const { return data.empty(); }
 

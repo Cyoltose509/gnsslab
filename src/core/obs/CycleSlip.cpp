@@ -2,32 +2,32 @@
 #include "core/Const.h"
 #include "MathUtils.h"
 
-void CycleSlip::configure(const FreqCombo &fcIn, const double gfThresh, const double gfMult) {
+void CycleSlip::configure(const FreqCombo &fcIn, const double GFThresh, const double GFMult) {
     fc = fcIn;
     lam1 = fc.f1 > 0 ? C_MPS / fc.f1 : fc.lambda1;
     lam2 = fc.f2 > 0 ? C_MPS / fc.f2 : fc.lambda2;
-    gfThres = gfThresh;
-    gfSlipMult = gfMult > 0.0 ? gfMult : 3.0;
+    this->GFThresh = GFThresh;
+    GFSlipMult = GFMult > 0.0 ? GFMult : 3.0;
 }
 
 void CycleSlip::reset() {
-    mwMean = 0;
-    mwVar = 0;
-    mwCnt = 0;
+    MWMean = 0;
+    MWVar = 0;
+    MWCnt = 0;
     pendActive = false;
 }
 
-void CycleSlip::flushGf() {
-    gfLbuf.clear();
-    gfPbuf.clear();
-    gfObuf.clear();
-    gfSlipSet.clear();
-    gfArtifactSet.clear();
+void CycleSlip::flushGF() {
+    GFLbuf.clear();
+    GFPbuf.clear();
+    GFObuf.clear();
+    GFSlipSet.clear();
+    GFArtifactSet.clear();
     reset();
 }
 
 CycleSlip::Result CycleSlip::feedGap() {
-    flushGf();
+    flushGF();
     Result r;
     r.gap = true;
     return r;
@@ -56,99 +56,99 @@ CycleSlip::Result CycleSlip::feed(const SatID &sat, const TypeValueMap &tv, cons
         }
     }
     if (((lli1 | lli2) & 0x3) != 0) {
-        flushGf();
+        flushGF();
         r.slip = true;
         return r;
     }
 
 
-    const double mw = fc.MW_meter(C1, C2, L1, L2, osbP1, osbP2, osbL1, osbL2); // MW (米)
+    const double MW = fc.MW_meter(C1, C2, L1, L2, osbP1, osbP2, osbL1, osbL2); // MW (米)
     // 物理上不可能的 MW 偏差阈值(米)
-    static constexpr double kMwOutlierM = 1000.0;
-    if (std::fabs(mw) > kMwOutlierM) {
-        mwMean = 0;
-        mwVar = 0;
-        mwCnt = 0;
+    static constexpr double kMWOutlierM = 1000.0;
+    if (std::fabs(MW) > kMWOutlierM) {
+        MWMean = 0;
+        MWVar = 0;
+        MWCnt = 0;
         pendActive = false;
         return r;
     }
 
-    const double gfL = FreqCombo::GF_phase(L1, L2); // = L2 - L1 (米)
-    const double gfP = FreqCombo::GF_code(C1, C2); // = P2 - P1 (米)
-    const int arcIdx = static_cast<int>(gfLbuf.size());
-    gfLbuf.push_back(gfL);
-    gfPbuf.push_back(gfP);
-    gfObuf.push_back(1);
+    const double GFL = FreqCombo::GF_phase(L1, L2); // = L2 - L1 (米)
+    const double GFP = FreqCombo::GF_code(C1, C2); // = P2 - P1 (米)
+    const int arcIdx = static_cast<int>(GFLbuf.size());
+    GFLbuf.push_back(GFL);
+    GFPbuf.push_back(GFP);
+    GFObuf.push_back(1);
 
-    if (gfThres > 0.0 && gfLbuf.size() >= 6) {
-        std::vector<char> slip(gfLbuf.size(), 0), artifact(gfLbuf.size(), 0);
-        detectGF(gfLbuf, gfPbuf, gfObuf, lam1, lam2, slip, artifact, gfSlipMult);
+    if (GFThresh > 0.0 && GFLbuf.size() >= 6) {
+        std::vector<char> slip(GFLbuf.size(), 0), artifact(GFLbuf.size(), 0);
+        detectGF(GFLbuf, GFPbuf, GFObuf, lam1, lam2, slip, artifact, GFSlipMult);
         for (std::size_t k = 0; k < slip.size(); ++k) {
-            if (slip[k]) gfSlipSet.insert(static_cast<int>(k));
-            if (artifact[k]) gfArtifactSet.insert(static_cast<int>(k));
+            if (slip[k]) GFSlipSet.insert(static_cast<int>(k));
+            if (artifact[k]) GFArtifactSet.insert(static_cast<int>(k));
         }
     }
 
     bool mwSlip = false;
-    bool gfSlip = false;
-    bool gfArtifact = false;
+    bool GFSlip = false;
+    bool GFArtifact = false;
 
     if (pendActive) {
-        const double meanK = (mwCntB * mwMeanB + pendMw) / (mwCntB + 1.0);
-        const double varK = (mwCntB * mwVarB + pendDev * pendDev) / (mwCntB + 1.0);
-        const double devNext = mw - meanK;
-        if (std::fabs(devNext) > kMwOutlierM) {
+        const double meanK = (MWCntB * MWMeanB + pendMW) / (MWCntB + 1.0);
+        const double varK = (MWCntB * MWVarB + pendDev * pendDev) / (MWCntB + 1.0);
+        const double devNext = MW - meanK;
+        if (std::fabs(devNext) > kMWOutlierM) {
             pendActive = false;
             return r;
         }
         const bool slip = varK > 0.0 && std::fabs(devNext) >= 4.0 * std::sqrt(varK)
-                          && std::fabs(mw - pendMw) <= 1.0;
+                          && std::fabs(MW - pendMW) <= 1.0;
         if (slip) {
-            mwMean = mw;
-            mwVar = 0;
-            mwCnt = 0;
+            MWMean = MW;
+            MWVar = 0;
+            MWCnt = 0;
             pendActive = false;
             mwSlip = true;
         } else {
-            mwMean = meanK;
-            mwVar = varK;
-            mwCnt++;
+            MWMean = meanK;
+            MWVar = varK;
+            MWCnt++;
             pendActive = false;
         }
     }
 
     {
-        if (const double dev = mw - mwMean; mwCnt >= 5 && mwVar > 0.0 && std::fabs(dev) >= 4.0 * std::sqrt(mwVar)) {
-            if (std::fabs(dev) > kMwOutlierM) {
+        if (const double dev = MW - MWMean; MWCnt >= 5 && MWVar > 0.0 && std::fabs(dev) >= 4.0 * std::sqrt(MWVar)) {
+            if (std::fabs(dev) > kMWOutlierM) {
                 pendActive = false;
                 return r;
             }
             pendActive = true;
-            pendMw = mw;
+            pendMW = MW;
             pendDev = dev;
-            mwMeanB = mwMean;
-            mwVarB = mwVar;
-            mwCntB = mwCnt;
+            MWMeanB = MWMean;
+            MWVarB = MWVar;
+            MWCntB = MWCnt;
         } else {
-            mwMean = (mwCnt * mwMean + mw) / (mwCnt + 1.0);
-            mwVar = (mwCnt * mwVar + dev * dev) / (mwCnt + 1.0);
-            mwCnt++;
+            MWMean = (MWCnt * MWMean + MW) / (MWCnt + 1.0);
+            MWVar = (MWCnt * MWVar + dev * dev) / (MWCnt + 1.0);
+            MWCnt++;
         }
     }
 
     // 当前历元的索引就是 arcIdx（push 前取的 size），detectGF 的 slip[k] 判的是 k 与 k-1 之间。
-    if (arcIdx >= 1 && gfThres > 0.0 && gfSlipSet.count(arcIdx)) {
-        mwMean = mw;
-        mwVar = 0;
-        mwCnt = 0;
+    if (arcIdx >= 1 && GFThresh > 0.0 && GFSlipSet.count(arcIdx)) {
+        MWMean = MW;
+        MWVar = 0;
+        MWCnt = 0;
         pendActive = false;
-        gfSlip = true;
-        gfArtifact = gfArtifactSet.count(arcIdx) > 0;
+        GFSlip = true;
+        GFArtifact = GFArtifactSet.count(arcIdx) > 0;
     }
 
     r.slip = mwSlip;
-    r.gf = gfSlip;
-    r.artifact = gfArtifact;
+    r.GF = GFSlip;
+    r.artifact = GFArtifact;
     return r;
 }
 
@@ -199,11 +199,14 @@ void CycleSlip::detectGF(const std::vector<double> &LGF, const std::vector<doubl
     const double thr = mult * step;
     for (int k = 1; k < n; ++k) {
         if (!ok[k] || !ok[k - 1]) continue;
-        if (std::fabs(LGF[k] - LGF[k - 1]) > thr) {
-            if (std::fabs(PGF[k] - PGF[k - 1]) > 0.10)
-                artifact[k] = 1;
-            else
-                slip[k] = 1;
-        }
+        const double dL = LGF[k] - LGF[k - 1];
+        if (std::fabs(dL) <= thr) continue;
+        const double dP = PGF[k] - PGF[k - 1];
+        // 一阶电离层在 GF 相位/码上等幅反号，dL+dP 抵消它；剩下的才是周跳/伪影。
+        if (std::fabs(dL + dP) <= thr) continue;
+        if (std::fabs(dP) > 0.10)
+            artifact[k] = 1;
+        else
+            slip[k] = 1;
     }
 }

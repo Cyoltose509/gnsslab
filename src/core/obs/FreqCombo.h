@@ -24,15 +24,12 @@ public:
     static FreqCombo fromFreq(double f1, double f2);
 
 
-    static FreqCombo detect(char sys, const std::vector<std::string> &codes, bool requirePhase = true);
+    [[nodiscard]] static std::vector<std::string> collectCodes(const TypeValueMap &tv);
 
+    [[nodiscard]] static std::vector<std::string> collectCodes(const ObsData &obs, SatSystem sys);
 
-    static FreqCombo detect(char sys, const std::vector<std::string> &codes, int channel, bool requirePhase);
-
-
-    static FreqCombo detect(char sys, const TypeValueMap &tv, int channel, bool requirePhase);
-
-    static FreqCombo detect(char sys, const ObsData &obs, bool requirePhase = true);
+    [[nodiscard]] static FreqCombo detect(SatSystem sys, const std::vector<std::string> &codes,
+                                          int channel, bool requirePhase = true);
 
     [[nodiscard]] double combineCode(double P1, double P2) const;
     [[nodiscard]] double combinePhase(double L1, double L2) const;

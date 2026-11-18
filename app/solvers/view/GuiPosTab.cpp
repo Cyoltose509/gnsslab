@@ -10,7 +10,7 @@
 #include <set>
 
 #include "implot.h"
-#include "ui/DragBar.h"
+#include "ui/Splitter.h"
 #include "ui/GuiColors.h"
 #include "i18n/I18n.h"
 
@@ -463,8 +463,8 @@ namespace Solvers::Charts {
                     }
                 }
 
-                static double cx = 0.0, cy = 0.0;
-                static bool wasHeld = false;
+                double &cx = *v.planDragX, &cy = *v.planDragY;
+                bool &wasHeld = *v.planDragHeld;
                 bool held = false;
                 ImPlot::DragPoint(0, &cx, &cy, ImVec4(0.95f, 0.6f, 0.1f, 1.0f), 7.0f,
                                   ImPlotDragToolFlags_NoFit, nullptr, nullptr, &held);
@@ -502,14 +502,14 @@ namespace Solvers::Charts {
                 const ImGuiStyle &style = ImGui::GetStyle();
                 const float defH = std::clamp(ImGui::GetContentRegionAvail().y - style.ItemSpacing.y,
                                               280.0f, 720.0f);
-                float &rowH = UI::dragHeight("spp_enu_row", defH);
+                float &rowH = UI::splitHeight("spp_enu_row", defH);
                 bool newed = v.s.newed;
                 if (!v.showEnPlan) {
                     renderENUPlot(v.s.axis, v.p.enu_e, v.p.enu_n, v.p.enu_u,
                                   *v.selectedEpoch, newed,
                                   v.hasFloatSeries, v.p.float_e, v.p.float_n, v.p.float_u, v.epochCount, rowH,
                                   v.solvingEpoch);
-                    UI::heightGrip("##enuGrip", rowH, 180.0f, 1200.0f);
+                    UI::splitHandle("##enuGrip", rowH, 180.0f, 1200.0f);
                     return;
                 }
                 const float availX = ImGui::GetContentRegionAvail().x;
@@ -540,13 +540,13 @@ namespace Solvers::Charts {
                                   std::max(220.0f, rowH * 0.55f), v.solvingEpoch);
                     renderENPlanView(v, std::min(rowH, 380.0f));
                 }
-                UI::heightGrip("##enuGrip", rowH, 180.0f, 1200.0f);
+                UI::splitHandle("##enuGrip", rowH, 180.0f, 1200.0f);
             }
         }
 
 
         void renderSkyResidualRow(const PosTabView &v) {
-            float &rowH = UI::dragHeight(
+            float &rowH = UI::splitHeight(
                 "spp_sky_row",
                 std::max(280.0f, std::min(ImGui::GetContentRegionAvail().x * 0.30f, 480.0f)));
             if (ImGui::BeginTable("##skyres", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
@@ -584,7 +584,7 @@ namespace Solvers::Charts {
                 }
                 ImGui::EndTable();
             }
-            UI::heightGrip("##skyGrip", rowH, 200.0f, 1200.0f);
+            UI::splitHandle("##skyGrip", rowH, 200.0f, 1200.0f);
         }
 
 
@@ -620,7 +620,7 @@ namespace Solvers::Charts {
             if (v.showSigmaDop && v.epochCount > 0 && !v.s.axis.kept.empty()) {
                 sectionHeader(I18n::trc("pos.section.sigma"));
                 const bool newed = v.s.newed;
-                float &ph = UI::dragHeight("spp_sigma_row", 350.0f);
+                float &ph = UI::splitHeight("spp_sigma_row", 350.0f);
 
                 struct Col {
                     const char *name;
@@ -670,7 +670,7 @@ namespace Solvers::Charts {
                             }
                         }
                         ImGui::EndTable();
-                        UI::heightGrip("##sigmaGrip", ph, 160.0f, 1200.0f);
+                        UI::splitHandle("##sigmaGrip", ph, 160.0f, 1200.0f);
                     }
                 }
             }
@@ -680,7 +680,7 @@ namespace Solvers::Charts {
         void renderRtnDeviation(const PosTabView &v) {
             if (!v.showRtn || v.rtnTimes.empty()) return;
             sectionHeader(I18n::trc("pos.section.rtn"));
-            float &ph = UI::dragHeight("spp_rtn_row", 380.0f);
+            float &ph = UI::splitHeight("spp_rtn_row", 380.0f);
             if (ImPlot::BeginPlot(I18n::trc("pos.section.rtn"), ImVec2(-1, ph))) {
                 ImPlot::SetupAxes("Epoch", I18n::trc("pos.axis.deviation_m"));
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
@@ -700,7 +700,7 @@ namespace Solvers::Charts {
                 epochCursor(2, v.selectedEpoch, v.epochCount);
                 ImPlot::EndPlot();
             }
-            UI::heightGrip("##rtnGrip", ph, 160.0f, 1200.0f);
+            UI::splitHandle("##rtnGrip", ph, 160.0f, 1200.0f);
         }
 
     }

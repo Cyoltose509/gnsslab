@@ -121,6 +121,7 @@ ins.err.blh_prefix,初始{{Position}} BLH 非法：{0},Invalid initial {{Positio
 ins.err.decode,IMU 日志解码失败：{0},IMU log decoding failed: {0}
 ins.err.no_records,IMU 日志中没有可解码的六轴计数记录,No decodable 6-axis counter records in the IMU log
 ins.err.open_imu,无法打开 IMU 日志：{0},Cannot open IMU log: {0}
+ins.err.scale_missing,还没填 IMU 当量：请在文件页填两个当量与采样率，或点「自动检测」。,"IMU decode scale is not set: fill the two scales and the sampling rate on the file tab, or click Auto-detect."
 ins.err.scale_not_ready,IMU {{DecodeScale}}未就绪,IMU {{DecodeScale}} not ready
 ins.err.short_static,IMU 有效样本不足 20 s（{0} 个），无法自动解析{{CoarseAlignment}}；请勾选「指定{{InitialAttitude}}角」并手填,"Fewer than 20 s of valid IMU samples ({0}); automatic {{CoarseAlignment}} is not possible. Enable ""Specify {{InitialAttitude}}"" and enter the angles manually"
 ins.imu_log_file,IMU 日志,IMU log
@@ -128,7 +129,7 @@ ins.log.bias_too_large,{{Static}}段{{SpecificForce}}偏离{{Gravity}}投影 {0}
 ins.log.cancelled,任务被取消：解算线程未启动,task cancelled: solving thread not started
 ins.log.coarse_align,"静态{{CoarseAlignment}}: 开头 {0}s, roll={1} pitch={2} yaw={3} deg, {{Heading}}散布={4} deg","{{CoarseAlignment}}: first {0}s, roll={1} pitch={2} yaw={3} deg, {{Heading}} spread={4} deg"
 ins.log.done,"解算完成: {0} {{Epoch}}, {{SamplingRate}} {1} Hz","done: {0} {{Epoch}}, {{SamplingRate}} {1} Hz"
-ins.log.scale,{{DecodeScale}}：{0}，{{SamplingRate}} {1} Hz,"{{DecodeScale}}: {0}, {{SamplingRate}} {1} Hz"
+ins.log.scale,{{DecodeScale}}：{0} (m/s)/LSB，{1} rad/LSB，{{SamplingRate}} {2} Hz,"{{DecodeScale}}: {0} (m/s)/LSB, {1} rad/LSB, {{SamplingRate}} {2} Hz"
 ins.log.start_file,开始解算: IMU={0},start: IMU={0}
 ins.log.static_bias,"{{Static}}段{{Accelerometer}}{{Bias}}: {0} m/s^2（已在{{SpecificForce}}{{Increment}}中扣除）, {{Gyroscope}}偏离{{EarthRotation}} {1} rad/s（含{{Heading}}误差，未扣）","{{Static}} segment {{Accelerometer}} {{Bias}}: {0} m/s^2 (removed from the {{SpecificForce}} {{Increment}}), {{Gyroscope}} deviation from {{EarthRotation}} {1} rad/s (contains {{Heading}} error, not removed)"
 ins.log.zupt_stat,"零速{{Criterion}}: 生效 {0}%, {{SpecificForce}}{{Deviation}} max={1} m/s^2 (超限 {2}), {{AngularRate}}{{Deviation}} max={3} rad/s (超限 {4})","{{ZeroVelocityUpdate}} {{Criterion}}: applied {0}%, {{SpecificForce}} {{Deviation}} max={1} m/s^2 ({2} over limit), {{AngularRate}} {{Deviation}} max={3} rad/s ({4} over limit)"
@@ -181,7 +182,6 @@ ins.res.no_solution,没有解算结果,No solution
 ins.res.not_applied,未生效,not applied
 ins.res.reading_imu,正在读取 IMU 日志 [%s] …,Reading IMU log [%s] …
 ins.res.scale,"{{DecodeScale}}：%.3e (m/s)/LSB, %.3e rad/LSB @ %.0f Hz","{{DecodeScale}}: %.3e (m/s)/LSB, %.3e rad/LSB @ %.0f Hz"
-ins.res.scale_source,{{DecodeScale}}来源：%s,{{DecodeScale}} source: %s
 ins.res.self_consistent,自洽,consistent
 ins.res.series,曲线,Series
 ins.res.solving_epoch,正在处理 [%s]：正在解算第 %zu 个{{Epoch}},Processing [%s]: solving {{Epoch}} %zu
@@ -194,29 +194,15 @@ ins.res.yaw_spread,{{Heading}}跨窗散布 %.2f°（%s）,{{Heading}} spread acr
 ins.res.zupt_count,{{ZeroVelocityUpdate}}累计生效 %zu 次,{{ZeroVelocityUpdate}} applied %zu times
 ins.res.zupt_h,{{ZeroVelocityUpdate}} h,{{ZeroVelocityUpdate}} h
 ins.res.zupt_v,{{ZeroVelocityUpdate}} |v|,{{ZeroVelocityUpdate}} |v|
-ins.scale.edit_manual,修改手填{{DecodeScale}}…,Edit manual {{DecodeScale}}…
-ins.scale.fill_manual_hint,请在下方填入这台设备手册上的{{DecodeScale}}后重算。,Enter the {{DecodeScale}} from this device's manual below and recompute.
-ins.scale.guess_describe,{0}（量级反推）,{0} (inferred from magnitude)
-ins.scale.k_a,{{Accelerometer}}{{DecodeScale}} k_a,{{Accelerometer}} {{DecodeScale}} k_a
-ins.scale.k_g,{{Gyroscope}}{{DecodeScale}} k_g,{{Gyroscope}} {{DecodeScale}} k_g
-ins.scale.manual,用户手填{{DecodeScale}},User-entered {{DecodeScale}}
-ins.scale.manual_panel_hint,请按这台设备手册填写{{DecodeScale}}，然后点「以此{{DecodeScale}}重算」。,"Enter the {{DecodeScale}} from this device's manual, then click Recompute with this {{DecodeScale}}."
-ins.scale.model_conflict,选中的文件混用了不同 {{IMUModel}}（{0} 与 {1}），{{DecodeScale}}无法统一。请按型号分两批{{Calibration}}。,"The selected files mix different {{IMUModel}} ({0} and {1}), so the {{DecodeScale}} cannot be unified. Run {{Calibration}} in two batches by model."
-ins.scale.no_guess,无法自动确定{{DecodeScale}}：记录里没有 {{IMUModel}}，{{Static}}段量级也反推不出唯一型号。,Cannot determine the {{DecodeScale}} automatically: the record has no {{IMUModel}} and the {{Static}} segment magnitude does not single out a unique model.
-ins.scale.no_selftype,记录里没有 {{IMUModel}}自描述，也没有可用的{{Static}}段反推{{DecodeScale}}。,The record has no {{IMUModel}} self-description and no {{Static}} segment is available to infer the {{DecodeScale}}.
-ins.scale.no_selftype_note,记录里没有 {{IMUModel}}自描述，也无法用{{Static}}段反推{{DecodeScale}}：{0}。,The record has no {{IMUModel}} self-description and the {{DecodeScale}} cannot be inferred from the {{Static}} segment: {0}.
-ins.scale.no_type_note,；本批有 {0} 个文件没有 {{IMUModel}}自描述，已按上述{{DecodeScale}}处理。,; {0} file(s) in this batch have no {{IMUModel}} self-description and were processed with the {{DecodeScale}} above.
-ins.scale.record_label,{0}（Type={1}）,{0} (Type={1})
-ins.scale.recount,以此{{DecodeScale}}重算,Recompute with this {{DecodeScale}}
-ins.scale.skip_check,跳过{{DecodeScale}}校验,Skip {{DecodeScale}} check
-ins.scale.src_guess,{{DecodeScale}}来源：由{{Static}}段量级反推的 {0},"{{DecodeScale}} source: {0}, inferred from the {{Static}} segment magnitude"
-ins.scale.src_manual,{{DecodeScale}}来源：用户按手册手填,{{DecodeScale}} source: entered by the user from the manual
-ins.scale.src_record,{{DecodeScale}}来源：记录自描述的 {0},{{DecodeScale}} source: {0} as self-described in the record
-ins.scale.src_record_short,{{DecodeScale}}来源：记录自描述的 {0}。,{{DecodeScale}} source: {0} as self-described in the record.
-ins.scale.unknown_head,未能确定{{DecodeScale}}，|f| 与 |ω| 的模长校验不可用,{{DecodeScale}} undetermined; the |f| and |ω| magnitude check is unavailable
-ins.scale.unknown_type,记录里的 IMU Type={0} 不在内置型号表内，无法确定{{DecodeScale}}。,"IMU Type={0} in the record is not in the built-in model table, so the {{DecodeScale}} cannot be determined."
-ins.scale.unknown_why_guess,：{{Static}}段反推{{DecodeScale}}失败，{0},": inferring the {{DecodeScale}} from the {{Static}} segment failed, {0}"
-ins.scale.unknown_why_type,：记录里的 IMU Type={0} 不在内置型号表内,: IMU Type={0} in the record is not in the built-in model table
+ins.scale.detect,自动检测,Auto-detect
+ins.scale.k_a,{{Accelerometer}}当量 k_a ((m/s)/LSB),{{Accelerometer}} scale k_a ((m/s)/LSB)
+ins.scale.k_g,{{Gyroscope}}当量 k_g (°/LSB),{{Gyroscope}} scale k_g (°/LSB)
+ins.scale.manual_note,手填,Manual
+ins.scale.probe_failed,自动检测失败：记录里没有 IMU 型号，开头也找不到{{Static}}段。请按设备手册手填三个量。,"Auto-detect failed: the log declares no IMU model and no {{Static}} segment is found at the start. Enter the three values from the device manual."
+ins.scale.probe_record,{0}（Type={1}，{2} Hz）,"{0} (Type={1}, {2} Hz)"
+ins.scale.probe_reverse,{{Static}}段反推 {0}（Type={1}，{2} Hz）,"Derived from the {{Static}} segment: {0} (Type={1}, {2} Hz)"
+ins.scale.probing,检测中…,Detecting…
+ins.scale.rate,{{SamplingRate}} (Hz),{{SamplingRate}} (Hz)
 ins.seg.x_ccw,X逆转,X CCW
 ins.seg.x_cw,X正转,X CW
 ins.seg.x_down,X下,X down
@@ -250,16 +236,10 @@ ins.verify.csv.horizontal_max,水平{{Deviation}}折米最大值 (m),Max horizon
 ins.verify.csv.max_v,{{Velocity}} (m/s),{{Velocity}} (m/s)
 ins.verify.csv.t0,起始时标 (s),Start time (s)
 ins.verify.csv.t1,截止时标 (s),End time (s)
-ins.verify.err.imu_columns,"IMU {{Increment}}文件里没有完整的 7 列记录（t, Δθ×3, Δv×3）：{0}","The IMU {{Increment}} file has no complete 7-column records (t, Δθ×3, Δv×3): {0}"
-ins.verify.err.imu_open,无法打开 IMU {{Increment}}文件：{0},Cannot open the IMU {{Increment}} file: {0}
-ins.verify.err.imu_short,IMU 文件在起始时刻之后不足两条记录，无法推进机械编排。,The IMU file has fewer than two records after the start time; mechanization cannot proceed.
 ins.verify.err.no_imu,请先选择 IMU {{Increment}}文件（IMU.bin）。,Select the IMU {{Increment}} file first (IMU.bin).
 ins.verify.err.no_overlap,参考{{Trajectory}}与 IMU 时段没有交集，未产生任何比对点。,"The reference {{Trajectory}} and the IMU time span do not overlap, so no comparison point was produced."
 ins.verify.err.no_ref,请先选择参考{{Trajectory}}文件（PureINS.bin）。,Select the reference {{Trajectory}} file first (PureINS.bin).
 ins.verify.err.no_result,尚无验证结果，无法导出。请先完成一次验证。,"No verification result yet, nothing to export. Run a verification first."
-ins.verify.err.ref_columns,"参考{{Trajectory}}文件里没有完整的 10 列记录（t, φ, λ, h, v×3, 姿态×3）：{0}","The reference {{Trajectory}} file has no complete 10-column records (t, φ, λ, h, v×3, attitude×3): {0}"
-ins.verify.err.ref_early,参考{{Trajectory}}全部早于 IMU 起始时刻，没有可比对的数据。,The whole reference {{Trajectory}} precedes the IMU start time; nothing to compare.
-ins.verify.err.ref_open,无法打开参考{{Trajectory}}文件：{0},Cannot open the reference {{Trajectory}} file: {0}
 ins.verify.export.points,导出逐点误差 CSV,Export per-point error CSV
 ins.verify.export_hint,验证完成后才能导出。,Available after the verification finishes.
 ins.verify.file_imu,IMU {{Increment}}文件,IMU {{Increment}} file

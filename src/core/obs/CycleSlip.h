@@ -9,11 +9,11 @@ public:
     struct Result {
         bool gap = false;      // 本历元无有效观测，弧段中断
         bool slip = false;     // 重设模糊度 / 剔除该星
-        bool gf = false;       // GF 判跳，交 CycleSlipEpoch 裁决
+        bool GF = false;       // GF 判跳，交 CycleSlipEpoch 裁决
         bool artifact = false; // 上述 GF 跳判为伪影（码相跳不一致）
     };
 
-    void configure(const FreqCombo &fcIn, double gfThresh = 0.0, double gfMult = 3.0);
+    void configure(const FreqCombo &fcIn, double GFThresh = 0.0, double GFMult = 3.0);
 
     void reset();
 
@@ -31,28 +31,28 @@ public:
                          double mult = 3.0);
 
 private:
-    void flushGf();
+    void flushGF();
 
     FreqCombo fc;
     double lam1 = 0, lam2 = 0;
 
 
-    double mwMean = 0, mwVar = 0;
-    int mwCnt = 0;
+    double MWMean = 0, MWVar = 0;
+    int MWCnt = 0;
 
-    double gfThres = 0.0;
-    double gfSlipMult = 3.0;
+    double GFThresh = 0.0;
+    double GFSlipMult = 3.0;
 
-    std::vector<double> gfLbuf;
-    std::vector<double> gfPbuf;
-    std::vector<char> gfObuf;
-    std::set<int> gfSlipSet;
-    std::set<int> gfArtifactSet;
+    std::vector<double> GFLbuf;
+    std::vector<double> GFPbuf;
+    std::vector<char> GFObuf;
+    std::set<int> GFSlipSet;
+    std::set<int> GFArtifactSet;
 
     bool pendActive = false;
-    double pendMw = 0, pendDev = 0;
-    double mwMeanB = 0, mwVarB = 0;
-    int mwCntB = 0;
+    double pendMW = 0, pendDev = 0;
+    double MWMeanB = 0, MWVarB = 0;
+    int MWCntB = 0;
 };
 
 
@@ -60,31 +60,31 @@ class CycleSlipEpoch {
 public:
 
     void record(const SatID &sat, const bool isArtifact = false) {
-        (isArtifact ? gfArtifact : gfSats).insert(sat);
+        (isArtifact ? GFArtifact : GFSats).insert(sat);
     }
 
     void record(const SatID &sat, const CycleSlip::Result &r) {
-        if (r.gf) record(sat, r.artifact);
+        if (r.GF) record(sat, r.artifact);
     }
 
-    SatIDSet decide(const int kCommonMode, SatIDSet &excludeOut) {
+    SatIDSet decide(const int commonModeMinSats, SatIDSet &excludeOut) {
         excludeOut.clear();
-        if (const int total = static_cast<int>(gfSats.size() + gfArtifact.size()); kCommonMode > 0 && total >= kCommonMode) {
-            excludeOut = gfSats;
-            excludeOut.insert(gfArtifact.begin(), gfArtifact.end());
+        if (const int total = static_cast<int>(GFSats.size() + GFArtifact.size()); commonModeMinSats > 0 && total >= commonModeMinSats) {
+            excludeOut = GFSats;
+            excludeOut.insert(GFArtifact.begin(), GFArtifact.end());
             return {};
         }
 
-        excludeOut = gfArtifact;
-        return gfSats;
+        excludeOut = GFArtifact;
+        return GFSats;
     }
 
     void clear() {
-        gfSats.clear();
-        gfArtifact.clear();
+        GFSats.clear();
+        GFArtifact.clear();
     }
 
 private:
-    SatIDSet gfSats;
-    SatIDSet gfArtifact;
+    SatIDSet GFSats;
+    SatIDSet GFArtifact;
 };

@@ -27,21 +27,21 @@ namespace {
         return s.size() >= 2;
     }
 
-    std::pair<std::string, std::string> ifBandCodes(const char sys) {
+    std::pair<std::string, std::string> ifBandCodes(const SatSystem sys) {
         switch (sys) {
-            case 'G': return {"G01", "G02"};
-            case 'C': return {"C02", "C06"};
-            case 'R': return {"R01", "R02"};
-            case 'E': return {"E01", "E05"};
-            case 'J': return {"J01", "J02"};
+            case SatSystem::G: return {"G01", "G02"};
+            case SatSystem::C: return {"C02", "C06"};
+            case SatSystem::R: return {"R01", "R02"};
+            case SatSystem::E: return {"E01", "E05"};
+            case static_cast<SatSystem>('J'): return {"J01", "J02"};
             default: return {"", ""};
         }
     }
 
-    std::pair<std::string, std::string> atxBands(const char sys, const FreqCombo &def) {
+    std::pair<std::string, std::string> atxBands(const SatSystem sys, const FreqCombo &def) {
         const auto band = [&](const std::string &code) -> std::string {
             if (code.size() >= 2 && std::isdigit(static_cast<unsigned char>(code[1])))
-                return std::string(1, sys) + '0' + code[1];
+                return std::string(1, charFrom(sys)) + '0' + code[1];
             return {};
         };
         std::string b1 = band(def.code1), b2 = band(def.code2);
@@ -195,7 +195,7 @@ bool ATXReader::read(const std::string &path) {
                 std::vector<std::string> rcvParts;
                 while (ss >> tok) {
                     if (isSatId(tok) && !hasSat) {
-                        firstSat = SatID(tok[0], std::stoi(tok.substr(1)));
+                        firstSat = SatID(satSystemFrom(tok[0]), std::stoi(tok.substr(1)));
                         hasSat = true;
                     } else if (tok != "TYPE" && tok != "/" && tok != "SERIAL" && tok != "NO") {
                         rcvParts.push_back(tok);
@@ -337,7 +337,7 @@ Eigen::Vector3d ATXReader::getSatPCO(const SatID &sat, const std::string &band, 
 }
 
 
-Eigen::Vector3d ATXReader::getRcvPCOENU(const std::string &rcvType, const char sys,
+Eigen::Vector3d ATXReader::getRcvPCOENU(const std::string &rcvType, const SatSystem sys,
                                         const FreqCombo &def, const CommonTime &t) const {
     if (!tab) return {0, 0, 0};
     const std::string key = rcvKey(rcvType);
@@ -402,7 +402,7 @@ double ATXReader::pcvAt(const BandEntries &tbl, const std::string &band,
     return e ? e->grid.value(zenDeg, azDeg) : 0.0;
 }
 
-double ATXReader::rcvPCVIF(const std::string &rcvType, const char sys, const FreqCombo &def,
+double ATXReader::rcvPCVIF(const std::string &rcvType, const SatSystem sys, const FreqCombo &def,
                            const double zenDeg, const double azDeg, const CommonTime &t) const {
     auto [b1, b2] = atxBands(sys, def);
     if (b1.empty() || b2.empty()) return 0.0;

@@ -18,6 +18,7 @@
 #include "GuiHelpers.h"
 #include "i18n/I18n.h"
 #include "ui/ImGuiLabel.h"
+#include "ui/Splitter.h"
 
 
 namespace QualityControl {
@@ -179,30 +180,30 @@ namespace QualityControl {
     void drawPlot(QcUiState &qs, const std::string &baseName,
                   const char *id, const char *title, const float defH,
                   const std::function<void()> &body) {
-            auto h = defH;
-            if (h < 80.0f) h = 80.0f;
+        float &h = UI::splitHeight("qc_plot_row", defH);
+        if (h < 80.0f) h = 80.0f;
 
-            const float w = ImGui::GetContentRegionAvail().x;
+        const float w = ImGui::GetContentRegionAvail().x;
 
-            qs.contentY[id] = ImGui::GetCursorPosY();
-            qs.lastIds.emplace_back(id);
-            qs.plotDefs[id] = {title, body};
+        qs.contentY[id] = ImGui::GetCursorPosY();
+        qs.lastIds.emplace_back(id);
+        qs.plotDefs[id] = {title, body};
 
-            if (ImGui::BeginChild((std::string("##frame_") + id).c_str(),
-                                  ImVec2(w, h), ImGuiChildFlags_Borders)) {
-                if (ImPlot::BeginPlot(title, ImVec2(-1, -1))) {
-                    body();
-                    ImPlot::EndPlot();
-                }
+        if (ImGui::BeginChild((std::string("##frame_") + id).c_str(),
+                              ImVec2(w, h), ImGuiChildFlags_Borders)) {
+            if (ImPlot::BeginPlot(title, ImVec2(-1, -1))) {
+                body();
+                ImPlot::EndPlot();
             }
-            ImGui::EndChild();
-
-
-            const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
-            qs.curRect[id] = ImVec4(rmin.x, rmin.y, rmax.x - rmin.x, rmax.y - rmin.y);
-
-            plotExportBtn(id, rmin, rmax.x - rmin.x, rmax.y - rmin.y, baseName);
         }
+        ImGui::EndChild();
+
+        const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
+        qs.curRect[id] = ImVec4(rmin.x, rmin.y, rmax.x - rmin.x, rmax.y - rmin.y);
+
+        plotExportBtn(id, rmin, rmax.x - rmin.x, rmax.y - rmin.y, baseName);
+        UI::splitHandle((std::string("##grip_") + id).c_str(), h, 120.0f, 1200.0f);
+    }
 
 
         const char *kSysColHdrs[] = {
@@ -235,28 +236,29 @@ namespace QualityControl {
 
             auto cellText = [&](const int col, const char s) -> std::string {
                 const bool tot = s == 'T';
+                const SatSystem sys = satSystemFrom(s);
                 char b[64];
                 switch (col) {
                     case 0: return tot ? I18n::trc("qc.system_total") : Solvers::Helpers::systemName(s);
-                    case 1: std::snprintf(b, sizeof(b), "%.2f", tot ? rep.overallCompleteness : rep.sysCompleteness.at(s)); return b;
-                    case 2: return std::to_string(tot ? totalSlips : rep.sysSlips.at(s));
+                    case 1: std::snprintf(b, sizeof(b), "%.2f", tot ? rep.overallCompleteness : rep.sysCompleteness.at(sys)); return b;
+                    case 2: return std::to_string(tot ? totalSlips : rep.sysSlips.at(sys));
                     case 3: {
-                        const int sl = tot ? totalSlips : rep.sysSlips.at(s);
+                        const int sl = tot ? totalSlips : rep.sysSlips.at(sys);
                         if (sl <= 0) return "∞";
-                        std::snprintf(b, sizeof(b), "%.1f", tot ? static_cast<double>(rep.totalEpochs) / sl : rep.sysSlipRatio.at(s));
+                        std::snprintf(b, sizeof(b), "%.1f", tot ? static_cast<double>(rep.totalEpochs) / sl : rep.sysSlipRatio.at(sys));
                         return b;
                     }
-                    case 4: return std::to_string(tot ? totalOutliers : atOr(rep.sysOutliers, s));
-                    case 5: return std::to_string(tot ? totalClockJumps : atOr(rep.sysClockJumps, s));
-                    case 6: std::snprintf(b, sizeof(b), "%.3f", tot ? (cnt ? sumMp1 / cnt : 0.0) : rep.sysMp1.at(s)); return b;
-                    case 7: std::snprintf(b, sizeof(b), "%.3f", tot ? (cnt ? sumMp2 / cnt : 0.0) : rep.sysMp2.at(s)); return b;
-                    case 8: std::snprintf(b, sizeof(b), "%.3f", tot ? (cnt ? sumSigRho / cnt : 0.0) : rep.sysSigRho.at(s)); return b;
-                    case 9: std::snprintf(b, sizeof(b), "%.4f", tot ? (cnt ? sumSigPh / cnt : 0.0) : rep.sysSigPhase.at(s)); return b;
-                    case 10: std::snprintf(b, sizeof(b), "%.1f", tot ? rep.overallCnr1 : atOr(rep.sysCnr1, s)); return b;
-                    case 11: std::snprintf(b, sizeof(b), "%.1f", tot ? rep.overallCnr2 : atOr(rep.sysCnr2, s)); return b;
+                    case 4: return std::to_string(tot ? totalOutliers : atOr(rep.sysOutliers, sys));
+                    case 5: return std::to_string(tot ? totalClockJumps : atOr(rep.sysClockJumps, sys));
+                    case 6: std::snprintf(b, sizeof(b), "%.3f", tot ? (cnt ? sumMp1 / cnt : 0.0) : rep.sysMp1.at(sys)); return b;
+                    case 7: std::snprintf(b, sizeof(b), "%.3f", tot ? (cnt ? sumMp2 / cnt : 0.0) : rep.sysMp2.at(sys)); return b;
+                    case 8: std::snprintf(b, sizeof(b), "%.3f", tot ? (cnt ? sumSigRho / cnt : 0.0) : rep.sysSigRho.at(sys)); return b;
+                    case 9: std::snprintf(b, sizeof(b), "%.4f", tot ? (cnt ? sumSigPh / cnt : 0.0) : rep.sysSigPhase.at(sys)); return b;
+                    case 10: std::snprintf(b, sizeof(b), "%.1f", tot ? rep.overallCnr1 : atOr(rep.sysCnr1, sys)); return b;
+                    case 11: std::snprintf(b, sizeof(b), "%.1f", tot ? rep.overallCnr2 : atOr(rep.sysCnr2, sys)); return b;
                     default:
                         if (tot) { std::snprintf(b, sizeof(b), "%.4f", rep.comprehensive.overallE); return b; }
-                        const auto itE = rep.comprehensive.sysE.find(s);
+                        const auto itE = rep.comprehensive.sysE.find(sys);
                         if (itE == rep.comprehensive.sysE.end()) return "-";
                         std::snprintf(b, sizeof(b), "%.4f", itE->second);
                         return b;
@@ -295,8 +297,8 @@ namespace QualityControl {
                     }
                 }
 
-                for (const char s: {'G', 'R', 'E', 'C'})
-                    if (rep.sysCompleteness.count(s)) writeRow(s);
+                for (const SatSystem sys: {SatSystem::G, SatSystem::R, SatSystem::E, SatSystem::C})
+                    if (rep.sysCompleteness.count(sys)) writeRow(charFrom(sys));
                 if (!rep.sysCompleteness.empty()) writeRow('T');
                 ImGui::EndTable();
             }
@@ -331,9 +333,9 @@ namespace QualityControl {
                                      std::vector<const SatQC *> &toPlot, bool &allView) {
             ImGui::SeparatorText(I18n::trc("qc.section.by_sat"));
             for (auto &sat: rep.satOrder) {
-                if (sysSel == 0 || (sysSel == 1 && sat.system == 'G') ||
-                    (sysSel == 2 && sat.system == 'R') || (sysSel == 3 && sat.system == 'E') ||
-                    (sysSel == 4 && sat.system == 'C')) list.push_back(sat);
+                if (sysSel == 0 || (sysSel == 1 && sat.system == SatSystem::G) ||
+                    (sysSel == 2 && sat.system == SatSystem::R) || (sysSel == 3 && sat.system == SatSystem::E) ||
+                    (sysSel == 4 && sat.system == SatSystem::C)) list.push_back(sat);
             }
             if (list.empty()) {
                 ImGui::Text(I18n::trc("qc.no_sats"));
@@ -650,7 +652,7 @@ namespace QualityControl {
                 const std::string id = qs.exportQueue.front();
                 if (const auto it = plotDefs.find(id); it != plotDefs.end()) {
                     const float pw = std::min(ImGui::GetIO().DisplaySize.x - 40.0f, 1920.0f);
-                    constexpr float ph = kPlotH + 60.0f;
+                    const float ph = UI::splitHeight("qc_plot_row", kPlotH) + 60.0f;
                     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
                     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
                     if (ImGui::Begin("##qc_overlay", nullptr,

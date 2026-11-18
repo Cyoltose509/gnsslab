@@ -3,6 +3,7 @@
 #include <cmath>
 #include <string>
 #include <string_view>
+#include "core/SatSystem.h"
 static constexpr double W_THRESHOLD = 3.29;
 ///  PI
 constexpr double PI = 3.141592653589793238462643383280;
@@ -135,19 +136,19 @@ inline double getGlonassFreq(const char band, const int channel) {
     }
 }
 
-constexpr double getFreq(const char sys, const int &n) {
-    if (sys == 'G') {
+constexpr double getFreq(const SatSystem sys, const int &n) {
+    if (sys == SatSystem::G) {
         if (n == 1) return L1_FREQ_GPS;
         if (n == 2) return L2_FREQ_GPS;
         if (n == 5) return L5_FREQ_GPS;
-    } else if (sys == 'C') {
+    } else if (sys == SatSystem::C) {
         if (n == 1) return L1_FREQ_BDS;
         if (n == 2) return L2_FREQ_BDS;
         if (n == 5) return L5_FREQ_BDS;
         if (n == 7) return L7_FREQ_BDS;
         if (n == 8) return L8_FREQ_BDS;
         if (n == 6) return L6_FREQ_BDS;
-    } else if (sys == 'E') {
+    } else if (sys == SatSystem::E) {
         if (n == 1) return L1_FREQ_GAL;
         if (n == 5) return L5_FREQ_GAL;
         if (n == 7) return L7_FREQ_GAL;
@@ -157,13 +158,13 @@ constexpr double getFreq(const char sys, const int &n) {
     return 0.0;
 }
 
-constexpr double getFreq(const char sys, const std::string_view type) noexcept {
+constexpr double getFreq(const SatSystem sys, const std::string_view type) noexcept {
     if (type.size() < 2) return 0.0;
 
     const char band = type[1];
 
     switch (sys) {
-        case 'G':
+        case SatSystem::G:
             switch (band) {
                 case '1': return L1_FREQ_GPS;
                 case '2': return L2_FREQ_GPS;
@@ -172,7 +173,7 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
             }
             break;
 
-        case 'C':
+        case SatSystem::C:
             switch (band) {
                 // BDS B1 频段同时含 B1C(1575.420) 与 B1I(1561.098)，由第3字符(I/C)区分。
                 case '1': return type.size() >= 3 && type[2] == 'I' ? L2_FREQ_BDS : L1_FREQ_BDS;
@@ -185,7 +186,7 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
             }
             break;
 
-        case 'E':
+        case SatSystem::E:
             switch (band) {
                 case '1': return L1_FREQ_GAL; // E1
                 case '5': return L5_FREQ_GAL; // E5a
@@ -196,7 +197,7 @@ constexpr double getFreq(const char sys, const std::string_view type) noexcept {
             }
             break;
 
-        case 'R':
+        case SatSystem::R:
             // GLONASS FDMA
             switch (band) {
                 case '1': return getGlonassFreq('1', 0);
@@ -336,6 +337,7 @@ constexpr void fundamentalArguments(const double t, double f[5]) {
         f[i] = std::fmod(f[i] * ARCSEC_TO_RAD, 2.0 * PI);
     }
 }
+
 constexpr void iau1980Nutation(const double t, const double f[5], double &dpsi, double &deps) {
     dpsi = deps = 0.0;
     for (const auto &i: NUTATION_1980) {
@@ -346,4 +348,12 @@ constexpr void iau1980Nutation(const double t, const double f[5], double &dpsi, 
     }
     dpsi *= 1e-4 * ARCSEC_TO_RAD;
     deps *= 1e-4 * ARCSEC_TO_RAD;
+}
+
+
+/// 正常重力 γ(B,h)：B 为大地纬度 (rad)，h 为椭球高 (m)。
+inline double getGravity(const double latRad, const double hMeters) {
+    const double s2 = std::sin(latRad) * std::sin(latRad);
+    const double gamma = 9.7803267715 * (1.0 + 0.0052790414 * s2 + 0.0000232718 * s2 * s2);
+    return gamma - (3.087691089e-6 - 4.397731e-9 * s2) * hMeters + 0.721e-12 * hMeters * hMeters;
 }

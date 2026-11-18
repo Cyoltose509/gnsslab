@@ -62,8 +62,6 @@ namespace NovAtel {
 
         [[nodiscard]] int detectedImuType() const { return mImuType; }
 
-        [[nodiscard]] const ImuModel *detectedImuModel() const { return findImuModel(mImuType); }
-
         bool getNextImu(ImuSample &s) {
             std::vector<std::uint8_t> message;
             while (getNextMessage(message, true)) {
@@ -98,7 +96,7 @@ namespace NovAtel {
             mEphSnap = std::move(nxt);
         }
 
-        std::map<char, std::vector<std::string> > availableTypes;
+        std::map<SatSystem, std::vector<std::string> > availableTypes;
 
         struct Header {
             int type;

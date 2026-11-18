@@ -268,7 +268,7 @@ namespace Solvers::Charts {
 
         for (auto &[sat, pts]: tracks) {
             if (pts.size() < 2) continue;
-            ImU32 trkCol = getSatCol(sat.system);
+            ImU32 trkCol = getSatCol(charFrom(sat.system));
             trkCol = IM_COL32((trkCol >> IM_COL32_R_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_G_SHIFT) & 0xFF,
                               (trkCol >> IM_COL32_B_SHIFT) & 0xFF, 120);
@@ -317,7 +317,7 @@ namespace Solvers::Charts {
         for (auto &[sat, sp]: curPts) {
             if (sp.elDeg <= 0.0f) continue;
             ImVec2 p = pt(sp.azDeg, sp.elDeg);
-            const ImU32 col = getSatCol(sat.system);
+            const ImU32 col = getSatCol(charFrom(sat.system));
             if (sp.used) {
                 dl->AddCircleFilled(p, 6.0f, col);
                 dl->AddText(ImVec2(p.x - 10.0f, p.y - 24.0f), col, sat.toString().c_str());

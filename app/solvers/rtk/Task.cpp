@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <ostream>
 #include <string>
+#include <vector>
 
 #include "Decimator.h"
 #include "Log.h"
@@ -152,16 +154,16 @@ namespace Solvers::RTK {
         const Clock::Stopwatch total;
 
         // 快照一份再灌给解算器：解算期间 GUI 理论上还能改 opts，一趟解算的口径必须钉死。
-        const SolverOptions o = opts;
-        filterMode = o.filter;
-        rtk.applyOptions(o);
+        solveOpts = opts;
+        rtk.applyOptions(solveOpts);
         rtk.mBaseUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
-        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start", o.cutoffDeg, filterLabel(o.filter));
+        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start", solveOpts.cutoffDeg,
+                                         filterLabel(solveOpts.filter));
 
         replay.clear();
         try {
             runForward();
-            if (filterHasBackward(filterMode)) runBackward();
+            if (filterHasBackward(solveOpts.filter)) runBackward();
         } catch (const std::exception &e) {
             setError(I18n::tr("rtk.err.solve", e.what()));
         } catch (...) {
@@ -178,8 +180,8 @@ namespace Solvers::RTK {
     }
 
     void Task::runForward() {
-        const bool solve = filterSolvesForward(filterMode);
-        const bool keep = filterHasBackward(filterMode);
+        const bool solve = filterSolvesForward(solveOpts.filter);
+        const bool keep = filterHasBackward(solveOpts.filter);
         solvePhase = solve ? SolvePhase::Forward : SolvePhase::Scan;
         while (true) {
             RTKPair item;
@@ -217,22 +219,31 @@ namespace Solvers::RTK {
         if (n == 0) return;
 
         const Clock::Stopwatch backwardCost;
-        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.backward", n, filterLabel(filterMode));
+        LOG_INFO << "[RTK] " << I18n::tr("rtk.log.backward", n, filterLabel(solveOpts.filter));
         solvePhase = SolvePhase::Backward;
         solveEpoch = 0;
         // 纯后向档正序没解过，参考点由倒序趟自己重建
-        if (!filterSolvesForward(filterMode)) initializedRefECEF = false;
+        if (!filterSolvesForward(solveOpts.filter)) initializedRefECEF = false;
 
         // 与 SPP 的倒序趟同理：新解算器不继承前向状态，从末历元重新收敛
         ::RTK bwd;
-        bwd.applyOptions(opts);
+        bwd.applyOptions(solveOpts);
         bwd.prod = rtk.prod; // 与正序共用同一份星历，不倒空
-        bwd.mBaseUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
+        bwd.mBaseUser = rtk.mBaseUser; // 前向已按快照钉死，倒向不重读界面
 
         const auto publish = [this] {
             std::lock_guard lk(mutex);
             std::lock_guard plk(view.plotMutex);
+            // 卫星残差序列只在正序趟画过，倒序刷新整表时原样保留
+            auto resT = std::move(view.plotData.satResTimes);
+            auto resV = std::move(view.plotData.satResVals);
+            auto resPT = std::move(view.plotData.satResPhaseTimes);
+            auto resPV = std::move(view.plotData.satResPhaseVals);
             view.plotData.replaceAll(epochs, refECEF, mode);
+            view.plotData.satResTimes = std::move(resT);
+            view.plotData.satResVals = std::move(resV);
+            view.plotData.satResPhaseTimes = std::move(resPT);
+            view.plotData.satResPhaseVals = std::move(resPV);
             view.skyTracks.clear();
             view.skyTracksBuilt = 0;
         };
@@ -394,8 +405,8 @@ namespace Solvers::RTK {
         m.flag(I18n::trc("param.full_covariance"), opts.rtk.fullCovariance);
         m.num(I18n::trc("param.ratio_threshold"), opts.rtk.arThreshold);
         m.flag(I18n::trc("param.use_cycle_slip"), opts.rtk.useCycleSlip);
-        m.flag(I18n::trc("param.use_gf_slip"), opts.rtk.useGfCycleSlip);
-        m.num(I18n::trc("param.gf_slip_mult"), opts.rtk.gfSlipMult);
+        m.flag(I18n::trc("param.use_gf_slip"), opts.rtk.useGFCycleSlip);
+        m.num(I18n::trc("param.gf_slip_mult"), opts.rtk.GFSlipMult);
         m.num(I18n::trc("param.phase_weight_floor"), opts.rtk.phaseWeight.minSinElev);
         m.num(I18n::trc("param.code_phase_sigma_ratio"), opts.rtk.codeOverPhaseSigma);
         m.integer(I18n::trc("param.dd_min_sats"), opts.rtk.minSats);

@@ -42,9 +42,9 @@ void RINEX3ObsReader::readHeaderLabel(const std::string &label, const std::strin
         const char sysStr = line.empty() ? ' ' : line[0];
         const int numObs = Str::toInt(Str::sub(line, 3, 3));
         constexpr int maxObsPerLine = 13;
-        for (int i = 0; i < maxObsPerLine && static_cast<int>(mObsTypes[sysStr].size()) < numObs; i++) {
+        for (int i = 0; i < maxObsPerLine && static_cast<int>(mObsTypes[satSystemFrom(sysStr)].size()) < numObs; i++) {
             std::string typeStr = Str::sub(line, 4 * i + 7, 3);
-            mObsTypes[sysStr].push_back(typeStr);
+            mObsTypes[satSystemFrom(sysStr)].push_back(typeStr);
         }
         rinexHeader.mapObsTypes = mObsTypes;
     } else if (label == "SYS / PHASE SHIFT") {

@@ -79,9 +79,9 @@ public:
     // PPP 逐星在 prepareSatellite 里 feed（MW 跳即时重开模糊度），GF 跳攒到历元末 decide；
     // RTK 两站各一份检测器、历元前独立跑一趟，才赶得在选参考星之前出剔除集。
     bool mUseCycleSlip = true;
-    bool mUseGfCycleSlip = true;
-    double mGfSlipMult = 3.0; // GF 周跳阈值倍数（×单周跳阶跃）
-    int mGfCommonMode = 2; // GF 共模抑制阈值：本历元 GF 判跳星数达此值即全判伪影
+    bool mUseGFCycleSlip = true;
+    double mGFSlipMult = 3.0; // GF 周跳阈值倍数（×单周跳阶跃）
+    int mGFCommonModeMinSats = 2; // 本历元 GF 判跳星数达此值即判为共模误差，全部软排除而不重置模糊度
 
 
     virtual void solve();
@@ -107,7 +107,7 @@ public:
     void earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d &recv);
 
     void computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::Vector3d &recv,
-                         SatValueMap &elev, SatValueMap *azim) const;
+                         SatValueMap &elev, SatValueMap &azim) const;
 
     void trackEpochGap();
 

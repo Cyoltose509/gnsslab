@@ -57,7 +57,7 @@ namespace Solvers {
         RefForm form = RefForm::None;
         Eigen::Vector3d fixed = Eigen::Vector3d::Zero();
         std::string sp3Path;
-        SatID sat = SatID('L', 49);
+        SatID sat = SatID(static_cast<SatSystem>('L'), 49);
         bool fileReady = false;
         SP3::Reader reader;
     };
@@ -186,6 +186,8 @@ namespace Solvers {
         bool planTrack = false;
         Eigen::Vector3d planOrigin{0, 0, 0};
         bool planOriginSet = false;
+        double planDragX = 0.0, planDragY = 0.0;
+        bool planDragHeld = false;
 
         bool hasResidual = false;
 
@@ -326,6 +328,7 @@ namespace Solvers {
         XYZ refECEF{0, 0, 0};
         std::atomic<bool> initializedRefECEF{false};
         Truth truth;
+        mutable std::mutex truthFileMtx;
 
 
         Frame::Ref orbitFrame = Frame::Ref::IGS14;
@@ -358,6 +361,7 @@ namespace Solvers {
 
         [[nodiscard]] bool truthReady() const {
             if (truth.form == RefForm::Fixed) return truth.fixed.squaredNorm() > 1.0;
+            std::lock_guard lk(truthFileMtx);
             return truth.form == RefForm::File && truth.fileReady;
         }
 

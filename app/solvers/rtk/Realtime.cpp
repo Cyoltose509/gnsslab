@@ -180,13 +180,15 @@ namespace Solvers::Realtime {
             baseTab->view.markQcDirty();
             if (!dec.accept(rover.weekSecond.sow)) continue;
 
-            if (!task->solvePair(base, rover, *eph)) return true;
-            lastCommit = Clock::now();
-            lastCommitSow = static_cast<long long>(rover.weekSecond.sow);
-            if (stallWarned) {
-                stallWarned = false;
-                LOG_INFO << "[RTK-RT] " << I18n::tr("rtk.rt.recovered", lastCommitSow);
-                task->clearError();
+            // 单历元失败只提交空解，不是断流；只有成功历元才算一次 commit。
+            if (task->solvePair(base, rover, *eph)) {
+                lastCommit = Clock::now();
+                lastCommitSow = static_cast<long long>(rover.weekSecond.sow);
+                if (stallWarned) {
+                    stallWarned = false;
+                    LOG_INFO << "[RTK-RT] " << I18n::tr("rtk.rt.recovered", lastCommitSow);
+                    task->clearError();
+                }
             }
         }
         return true;

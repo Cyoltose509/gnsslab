@@ -296,6 +296,8 @@ namespace Download::Fetcher {
                     std::string err;
                     const int n = RINEX::mergeObsFiles(files, out, err);
                     if (n <= 0) {
+                        std::error_code cleanEc;
+                        fs::remove(out, cleanEc);
                         LOG_ERROR << "[DL] " << I18n::tr("dl.fetch.merge_obs_failed", key, err);
                         return;
                     }
@@ -460,7 +462,8 @@ namespace Download::Fetcher {
 
         /// 下载到正式文件名
         bool downloadTo(const Pending &p, const Http::ProgressCb &progress,
-                        const std::atomic<bool> *cancel, std::string &local, std::string &log) {
+                        const std::atomic<bool> *cancel, std::string &local, std::string &log,
+                        bool *cancelled = nullptr) {
             const FileMeta m = metaFromPending(p);
             local = Store::datePath(m.type, m.year, m.doy, m.filename);
             const std::string part = local + ".part";
@@ -469,7 +472,7 @@ namespace Download::Fetcher {
 
             LOG_INFO << "[DL] " << I18n::tr("dl.fetch.start", m.filename, p.url);
             if (!Http::downloadFile(p.url, part, progress, [&log](const std::string &s) { log = s; },
-                                    5, 60, cancel))
+                                    5, 60, cancel, cancelled))
                 return false;
 
             std::error_code mvEc;
@@ -563,8 +566,9 @@ namespace Download::Fetcher {
             };
 
             std::string log, local;
-            bool ok = downloadTo(p, onProgress, cancel.get(), local, log);
-            const bool paused = !ok && cancel->load();
+            bool cancelled = false;
+            bool ok = downloadTo(p, onProgress, cancel.get(), local, log, &cancelled);
+            const bool paused = !ok && cancelled;
             if (ok) {
                 // 解压/合并交给后台队列：几百个成员逐个落明文会占住这条下载通道。
                 enqueuePost({m.filename, local, m});
@@ -773,8 +777,9 @@ namespace Download::Fetcher {
                      const Unpack::Progress &unpack, const std::function<void(const std::string &)> &stage) {
         Fetched r;
         std::string log, local;
-        if (!downloadTo(p, progress, cancel, local, log)) {
-            r.paused = cancel != nullptr && cancel->load();
+        bool cancelled = false;
+        if (!downloadTo(p, progress, cancel, local, log, &cancelled)) {
+            r.paused = cancelled;
             r.err = log.empty() ? I18n::tr("dl.fetch.interrupted") : log;
             return r;
         }

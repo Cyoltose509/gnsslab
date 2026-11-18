@@ -18,14 +18,19 @@
 #include "FileUtils.h"
 #include "solvers/common/Core.h"
 #include "solvers/common/Config.h"
+#include "core/Const.h"
 #include "core/IniFile.h"
+#include "solvers/ins/ImuScaleProbe.h"
 
-static std::set<char> parseSystems(const std::string &s) {
-    std::set<char> out;
-    for (char c: s)
-        if (c >= 'a' && c <= 'z') out.insert(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
-        else if (c >= 'A' && c <= 'Z') out.insert(c);
-    if (out.empty()) out = {'G', 'C'};
+static std::set<SatSystem> parseSystems(const std::string &s) {
+    std::set<SatSystem> out;
+    for (const char c: s) {
+        const SatSystem sys = satSystemFrom(c >= 'a' && c <= 'z'
+                                                 ? static_cast<char>(std::toupper(static_cast<unsigned char>(c)))
+                                                 : c);
+        if (isKnownSystem(sys)) out.insert(sys);
+    }
+    if (out.empty()) out = {SatSystem::G, SatSystem::C};
     return out;
 }
 
@@ -68,8 +73,8 @@ namespace {
         c.spp.ambProcSigma = ini.getD("solver", "amb_proc_sigma", c.spp.ambProcSigma);
         c.spp.keepAmbMaxGap = ini.getD("solver", "keep_amb_max_gap", c.spp.keepAmbMaxGap);
         c.spp.useCycleSlip = ini.getB("solver", "use_cycle_slip", c.spp.useCycleSlip);
-        c.spp.useGfCycleSlip = ini.getB("solver", "use_gf_cycle_slip", c.spp.useGfCycleSlip);
-        c.spp.gfSlipMult = ini.getD("solver", "gf_slip_mult", c.spp.gfSlipMult);
+        c.spp.useGFCycleSlip = ini.getB("solver", "use_gf_cycle_slip", c.spp.useGFCycleSlip);
+        c.spp.GFSlipMult = ini.getD("solver", "gf_slip_mult", c.spp.GFSlipMult);
         c.spp.codeBiasProcSigma = ini.getD("solver", "code_bias_proc_sigma", c.spp.codeBiasProcSigma);
         c.spp.codeBiasInitSigma = ini.getD("solver", "code_bias_init_sigma", c.spp.codeBiasInitSigma);
         c.spp.gloIfcbProcSigma = ini.getD("solver", "glo_ifcb_proc_sigma", c.spp.gloIfcbProcSigma);
@@ -110,8 +115,8 @@ namespace {
         c.rtk.maxIterFix = ini.getInt("solver", "max_iter_fix", c.rtk.maxIterFix);
         c.rtk.minSats = ini.getInt("solver", "min_sats", c.rtk.minSats);
         c.rtk.useCycleSlip = ini.getB("solver", "use_cycle_slip", c.rtk.useCycleSlip);
-        c.rtk.useGfCycleSlip = ini.getB("solver", "use_gf_cycle_slip", c.rtk.useGfCycleSlip);
-        c.rtk.gfSlipMult = ini.getD("solver", "gf_slip_mult", c.rtk.gfSlipMult);
+        c.rtk.useGFCycleSlip = ini.getB("solver", "use_gf_cycle_slip", c.rtk.useGFCycleSlip);
+        c.rtk.GFSlipMult = ini.getD("solver", "gf_slip_mult", c.rtk.GFSlipMult);
         c.rtk.phaseWeight.minSinElev = ini.getD("solver", "min_sin_elev", c.rtk.phaseWeight.minSinElev);
         c.rtk.phaseWeight.a = ini.getD("solver", "phase_weight_a", c.rtk.phaseWeight.a);
         c.rtk.phaseWeight.b = ini.getD("solver", "phase_weight_b", c.rtk.phaseWeight.b);
@@ -217,6 +222,13 @@ SolverOptions loadConfig(const CliSource &ini, const Solvers::Mode mode) {
         c.ins.manual.accelMpsPerLsb = ini.getD("input", "ins_accel_lsb", 0.0);
         c.ins.manual.gyroRadPerLsb = ini.getD("input", "ins_gyro_lsb", 0.0);
         c.ins.manual.rateHz = ini.getD("input", "ins_rate_hz", 0.0);
+        // 命令行没有界面可按「自动检测」，当量留空时就按文件探一次，探不出来仍让解算报错。
+        if (!c.ins.manual.known() && !c.ins.imuPath.empty()) {
+            const Solvers::INS::ScaleProbe probe = Solvers::INS::probeScale(
+                c.ins.imuPath, getGravity(c.ins.latDeg * DEG_TO_RAD, c.ins.hM));
+            if (probe.ok()) c.ins.manual = probe.scale;
+            std::cout << probe.note << "\n";
+        }
     }
 
     // 只读本模式用得到的字段：SPP 家族走观测模型，RTK 走双差参数，INS 不读 GNSS 参数。

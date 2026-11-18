@@ -63,7 +63,7 @@ public:
 
     static Action classify(const CommonTime &baseEpoch, const CommonTime &roverEpoch, double tol);
 
-    static EphemerisTable *selectEph(const EphPtr &baseEph, const EphPtr &roverEph);
+    static EphPtr selectEph(const EphPtr &baseEph, const EphPtr &roverEph);
 
 private:
     bool ensurePrimed();

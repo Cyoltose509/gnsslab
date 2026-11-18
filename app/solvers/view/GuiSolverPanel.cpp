@@ -124,7 +124,7 @@ namespace Solvers::SolverPanel {
         if (core.view.selectedSatIdx >= 0 && core.view.selectedSatIdx < static_cast<int>(visIdx.size())) {
             const int oi = visIdx[core.view.selectedSatIdx];
             v.showObsDetail = true;
-            v.detailSystem = cur.satIds[oi].system;
+            v.detailSystem = charFrom(cur.satIds[oi].system);
             v.detailObs = cur.rawObs.of(static_cast<std::size_t>(oi));
         }
 
@@ -318,20 +318,29 @@ namespace Solvers {
                 liveMsg = I18n::tr("solver.solving_epoch", cur);
         }
 
+        XYZ refSnap;
+        {
+            std::lock_guard lk(mutex);
+            refSnap = refECEF;
+        }
         if (ImGui::BeginTabBar("##qa_tabs")) {
             if (ImGui::BeginTabItem(I18n::trc("solver.tab.position"))) {
                 Charts::PosTabView v(view.plotSeries, view.skyTracks);
+                v.planDragX = &view.plotSeries.planDragX;
+                v.planDragY = &view.plotSeries.planDragY;
+                v.planDragHeld = &view.plotSeries.planDragHeld;
                 v.epochCount = epochCount;
                 if (modeHasFilter(mode))
                     v.filterDirectionText = I18n::tr("solver.filter_direction", filterLabel(opts.filter));
                 v.selectedEpoch = &selectedEpochLocal;
                 v.selectedSatIdx = &view.selectedSatIdx;
                 v.resMode = &view.resMode;
-                v.refECEF = &refECEF;
+                v.refECEF = &refSnap;
                 v.onRefChanged = [&] {
                     XYZ ref;
                     {
                         std::lock_guard lk(mutex);
+                        refECEF = refSnap;
                         ref = refECEF;
                     }
                     std::lock_guard plk(view.plotMutex);

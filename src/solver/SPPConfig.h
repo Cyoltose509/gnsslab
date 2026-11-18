@@ -8,7 +8,7 @@
 
 struct SPPConfig {
     double cutoffElevRad = 15.0 * DEG_TO_RAD;
-    std::set<char> enabledSystems{};
+    std::set<SatSystem> enabledSystems{};
     double codeSigma = 1.273;
     double minSinElev = 0.0;
 
@@ -22,8 +22,8 @@ struct SPPConfig {
 
     bool useAR = true;
     bool useCycleSlip = true;
-    bool useGfCycleSlip = true; // 叠 GF 周跳探测（0/1）；MW 判跳即时重置，GF 判跳交历元末共模裁决
-    double gfSlipMult = 3.0;
+    bool useGFCycleSlip = true; // 叠 GF 周跳探测（0/1）；MW 判跳即时重置，GF 判跳交历元末共模裁决
+    double GFSlipMult = 3.0;
     bool applyWindup = true;
     bool applySolidTide = true;
     bool applyAtx = true;

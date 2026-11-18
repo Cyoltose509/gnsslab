@@ -28,10 +28,10 @@ struct EphemerisTable {
     }
 
     [[nodiscard]] Ephemeris *find(const SatID &sat, const CommonTime &epoch) {
-        if (sat.system == 'G') return pickClosest(gps, sat.id, epoch);
-        if (sat.system == 'C') return pickClosest(bds, sat.id, epoch);
-        if (sat.system == 'E') return pickClosest(gal, sat.id, epoch);
-        if (sat.system == 'R') return pickClosest(glo, sat.id, epoch);
+        if (sat.system == SatSystem::G) return pickClosest(gps, sat.id, epoch);
+        if (sat.system == SatSystem::C) return pickClosest(bds, sat.id, epoch);
+        if (sat.system == SatSystem::E) return pickClosest(gal, sat.id, epoch);
+        if (sat.system == SatSystem::R) return pickClosest(glo, sat.id, epoch);
         return nullptr;
     }
 

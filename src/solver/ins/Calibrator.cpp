@@ -75,7 +75,7 @@ void Calibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std:
             d.prefit = raw[i](k);
             d.weight = w[i];
             d.varCoeffData = {{vSx, f[i](0)}, {vSy, f[i](1)}, {vSz, f[i](2)}, {vB, 1.0}};
-            equ.obsEquData[EquID(SatID('P', static_cast<int>(i)), "acc")] = d;
+            equ.obsEquData[EquID(SatID(static_cast<SatSystem>('P'), static_cast<int>(i)), "acc")] = d;
         }
         lsq.solve(equ, equ.weightVector().asDiagonal().toDenseMatrix());
         M(k, 0) = lsq.getSolution(Parameter::dX);
@@ -101,9 +101,9 @@ void Calibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std:
 }
 
 
-CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, double g) {
+CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, double g,
+                                     const double rateHz) {
     CalibReport r;
-    r.ok = false;
 
     int nPos[6] = {0, 0, 0, 0, 0, 0};
     int nRot[6] = {0, 0, 0, 0, 0, 0};
@@ -137,7 +137,7 @@ CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, do
         r.nPos[static_cast<int>(fst)] += static_cast<int>(samples.size());
     }
 
-    r.dt = imuMedianDt(seg.pos.front().second);
+    r.dt = 1.0 / rateHz;
 
     solveLinear(raw, f, w, r.calib.accelM, r.calib.accelB, r.accelRms, &r.accelScaleSigma);
     r.accelScaleCounts = r.calib.accelM.diagonal();
@@ -209,13 +209,11 @@ CalibReport Calibrator::calibrate(const CalibSegments &seg, double turnAngle, do
     for (int ax = 0; ax < 3; ++ax)
         r.gyroBiasPhys(ax) = r.calib.gyroScale(ax) != 0.0 ? gyroBias(ax) / r.calib.gyroScale(ax) : 0.0;
 
-    r.ok = true;
     return r;
 }
 
 void Calibrator::applyNominal(CalibReport &r, const ImuScale &scale) {
     if (!scale.known()) {
-        r.ok = false;
         r.errorMsg = I18n::tr("ins.calib.err.no_nominal");
         return;
     }

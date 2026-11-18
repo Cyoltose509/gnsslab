@@ -86,14 +86,6 @@ namespace Geodesy {
     }
 
 
-    inline double normalGravity(const double latDeg, const double h = 0.0) {
-        return NormalGravity::at(latDeg * DEG_TO_RAD, h);
-    }
-
-    inline Eigen::Vector3d earthRateInECEF(const double omega = OMEGA_EARTH) {
-        return {0.0, 0.0, omega};
-    }
-
     inline Eigen::Vector3d transportRateInNav(const double latDeg, const double vNorth, const double vEast,
                                               const double height = 0.0,
                                               const GeodeticFrame &frame = Frame::WGS84) {

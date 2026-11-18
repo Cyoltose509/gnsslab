@@ -34,6 +34,9 @@ namespace Solvers::Charts {
         std::string filterDirectionText;
         Eigen::Vector3d *refECEF = nullptr;
         std::function<void()> onRefChanged;
+        double *planDragX = nullptr;
+        double *planDragY = nullptr;
+        bool *planDragHeld = nullptr;
         bool showRefEnu = true;
 
         /// E-N 平面图口径：动态解画轨迹，拖拽中心只改这张图的显示原点（不改真值对比）。

@@ -51,7 +51,7 @@ bool OSBBias::read(const std::string &path) {
         if (double stddev = 0.0; !(ss >> t0 >> t1 >> unit >> val >> stddev)) continue;
         double meters = val;
         if (unit.empty() || unit[0] == 'n' || unit[0] == 'N') meters = val * 1e-9 * C_MPS;
-        const SatID sat(prn[0], prnNo);
+        const SatID sat(satSystemFrom(prn[0]), prnNo);
         data[{sat, obs, station}] = meters;
         if (obs[0] == 'C') {
             codeStations[sat].insert(station);
@@ -86,7 +86,7 @@ bool OSBBias::covers(const SatID &sat, const std::string &station) const {
     return it != codeStations.end() && (it->second.count("") > 0 || it->second.count(station) > 0);
 }
 
-bool OSBBias::coversSystem(const char sys, const std::string &station) const {
+bool OSBBias::coversSystem(const SatSystem sys, const std::string &station) const {
     const auto it = codeSysStations.find(sys);
     return it != codeSysStations.end() && (it->second.count("") > 0 || it->second.count(station) > 0);
 }
@@ -96,10 +96,10 @@ double OSBBias::codeBias(const FreqCombo &def, const SatID &sat, const std::stri
     return def.c1 * getBias(sat, def.code1, station) + def.c2 * getBias(sat, def.code2, station);
 }
 
-std::string OSBBias::refCodeFor(const std::string &code, const char sys) {
+std::string OSBBias::refCodeFor(const std::string &code, const SatSystem sys) {
     // GLONASS FDMA 的码偏差是逐测站给出的 IF 层偏差，没有 C1W/C2W 参考码；
     // 两频点同值，c1+c2=1，直接组合就是 IF 改正。
-    if (sys == 'R') return {};
+    if (sys == SatSystem::R) return {};
     if (code.size() >= 3 && code[0] == 'C' && (code[1] == '1' || code[1] == '2'))
         return std::string("C") + code[1] + 'W';
     return code;

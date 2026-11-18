@@ -21,7 +21,6 @@
 #include <functional>
 #include <filesystem>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace Tools::Ins {
@@ -42,68 +41,19 @@ namespace Tools::Ins {
                 batchMark = L.size();
             }
         }
-        onBatch(static_cast<long long>(r.getImuLog().size()));
+        if (!stop) onBatch(static_cast<long long>(r.getImuLog().size()));
     }
 
-    /// NovAtel 日志按内容定读取器（二进制/ASC 文本，后缀不作数）；open 成功且 onReader
-    /// 通过后进入 IMU 泵，任一步失败返回 false。
+    /// NovAtel 日志按内容定读取器（二进制/ASC 文本，后缀不作数），open 成功后进入 IMU 泵。
     inline bool pumpImuFile(const std::string &path, const std::atomic<bool> &stop,
-                            const std::function<bool(NovAtel::LogReader &)> &onReader,
                             const std::function<void(const ImuSample &)> &onSample,
                             const std::function<void(long long)> &onBatch) {
         const auto reader = Observer::makeNovAtelReader(path);
-        if (!reader->open(path) || !onReader(*reader)) return false;
+        if (!reader->open(path)) return false;
         pumpImu(*reader, stop, onSample, onBatch);
         return true;
     }
 
-
-    template<class Task>
-    void beginRun(Task &task) {
-        if (task.worker.joinable()) task.worker.join();
-        task.clearError();
-        task.state = Task::State::Running;
-        task.loading = true;
-        task.stop = false;
-        task.hasResult.store(false);
-        task.runFailed.store(false);
-        task.sampleCount.store(0);
-        task.chartDirty.store(false);
-        LOG_INFO << "[" << task.fileName << "] " << I18n::tr("ins.tool.log.start");
-    }
-
-    template<class Task>
-    void endRun(Task &task) {
-        task.loading = false;
-        task.state = Task::State::Done;
-    }
-
-    template<class Task>
-    void abortRun(Task &task, const std::string &msg) {
-        LOG_ERROR << "[" << task.fileName << "] " << msg;
-        task.runFailed.store(true);
-        task.setError(msg);
-        endRun(task);
-    }
-
-    template<class Task>
-    void finishRun(Task &task) {
-        task.chartDirty.store(true);
-        task.hasResult.store(true);
-        endRun(task);
-    }
-
-    template<class Task>
-    bool stoppedAndEnd(Task &task) {
-        if (!task.stop.load()) return false;
-        endRun(task);
-        return true;
-    }
-
-    template<class Task, class Fn>
-    void launchWorker(Task &task, Fn fn) {
-        task.worker = std::thread([fn] { fn(); });
-    }
 
     using UI::kColPass;
     using UI::kColFail;
@@ -111,46 +61,6 @@ namespace Tools::Ins {
     using UI::kColInfo;
 
     void drawAlert(AlertLevel lv, const char *text);
-
-    template<class Task>
-    bool drawResultError(const Task &task) {
-        if (!task.errorFlag()) return false;
-        drawAlert(AlertLevel::Error, task.errorMessage().c_str());
-        return true;
-    }
-
-    template<class Task>
-    void drawRunError(const Task &task) {
-        if (task.errorFlag() && !task.hasResult.load())
-            drawAlert(AlertLevel::Error, task.errorMessage().c_str());
-    }
-
-    template<class Task, class FileTabFn, class ParamTabFn, class StartFn>
-    void renderInsConfig(const char *title, Task &task, const char *startLabel,
-                         FileTabFn fileTab, ParamTabFn paramTab, StartFn onStart) {
-        const std::string childId = std::string(title) + std::to_string(task.cfgIndex);
-        ImGui::BeginChild(childId.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
-        if (ImGui::BeginTabBar("##cfg_tabs")) {
-            if (ImGui::BeginTabItem(I18n::trc("common.file"))) {
-                ImGui::Spacing();
-                fileTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem(I18n::trc("common.params"))) {
-                ImGui::PushItemWidth(260);
-                paramTab();
-                ImGui::PopItemWidth();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-        ImGui::Spacing();
-        if (ImGui::Button(I18n::trc(startLabel), ImVec2(200, 40))) onStart();
-        ImGui::SameLine();
-        task.renderCancelButton();
-        drawRunError(task);
-        ImGui::EndChild();
-    }
 
     void renderInsParams(CalibParams &par);
 
@@ -169,114 +79,6 @@ namespace Tools::Ins {
     void loadInsParams(AlignParams &par);
 
     void loadInsParams(VerifyParams &par);
-
-    enum class ScaleSource { None, Record, Manual, Guess };
-
-    enum class RecordScale { Model, UnknownType, NoType };
-
-    struct RecordScaleInfo {
-        RecordScale kind = RecordScale::NoType;
-        const ImuModel *model = nullptr;
-        int type = -1;
-    };
-
-    inline RecordScaleInfo readRecordScale(const NovAtel::LogReader &r) {
-        if (const ImuModel *m = r.detectedImuModel()) return {RecordScale::Model, m, m->type};
-        if (const int t = r.detectedImuType(); t >= 0) return {RecordScale::UnknownType, nullptr, t};
-        return {RecordScale::NoType, nullptr, -1};
-    }
-
-    struct ScaleResolution {
-        const ImuModel *recordModel = nullptr;
-        int unknownType = -1;
-        int noType = 0;
-        std::string conflict;
-
-        ImuScale scale{};
-        ScaleSource src = ScaleSource::None;
-        std::string modelName;
-        int modelType = -1;
-        std::string note;
-        double guessAccel = 0.0;
-        double guessRate = 0.0;
-
-        [[nodiscard]] bool known() const { return scale.known(); }
-        [[nodiscard]] bool hasRecord() const { return recordModel != nullptr; }
-
-        [[nodiscard]] ImuScale currentScale() const { return recordModel ? recordModel->scale : ImuScale{}; }
-
-        bool observe(const RecordScaleInfo &info);
-
-        bool resolve(ScaleFallback &sf, const std::vector<ImuLog> &staticCandidates, double g);
-
-        [[nodiscard]] std::string failMessage() const;
-
-        [[nodiscard]] std::string describe() const;
-
-        [[nodiscard]] std::string recordLabel() const;
-
-        [[nodiscard]] ScaleNotice notice(bool settled) const;
-
-    private:
-        void adoptManual(const ImuScale &s);
-
-        bool tryGuess(const ImuLog &staticSeg, double g);
-    };
-
-    constexpr std::size_t kScaleProbeSamples = 4000;
-
-    struct ScaleIdentifier {
-        explicit ScaleIdentifier(ScaleFallback &fallback) : sf(fallback) {
-        }
-
-        ScaleFallback &sf;
-        ScaleResolution res;
-        std::vector<ImuLog> candidates;
-        ImuLog probe;
-
-        bool observe(const NovAtel::LogReader &r,
-                     const std::function<void(const std::string &, const ScaleNotice &)> &sink) {
-            if (!res.observe(readRecordScale(r))) return false;
-            if (const std::string label = res.recordLabel(); !label.empty())
-                sink(label, res.notice(false));
-            return true;
-        }
-
-        void probeSample(const ImuSample &s);
-
-        void offerProbe();
-
-        void offerStatic(const ImuLog &seg);
-
-        bool resolve(double g);
-
-        [[nodiscard]] std::string failText() const;
-
-        [[nodiscard]] bool mixedModel() const;
-
-        [[nodiscard]] std::string failureMessage(const std::string &path) const;
-    };
-
-    void keepManualScaleFor(ScaleFallback &sf, const std::string &sig);
-
-    bool drawScaleFallback(ScaleFallback &sf, bool allowSkip);
-
-    template<class Task>
-    bool renderResultPrologue(Task &task, const bool allowSkipScale, const std::function<void()> &restart) {
-        ScaleNotice notice;
-        {
-            std::lock_guard lk(task.resultMutex);
-            notice = task.scaleNotice;
-        }
-        const bool errored = drawResultError(task);
-        if (notice.show && !errored && !task.scaleSf.asked.load(std::memory_order_relaxed))
-            drawAlert(notice.level, notice.text.c_str());
-        if (!task.loading.load() && drawScaleFallback(task.scaleSf, allowSkipScale)) {
-            restart();
-            return true;
-        }
-        return errored && task.runFailed.load();
-    }
 
     constexpr float kChartHeight = 360.0f;
     constexpr float kFileChartH = 220.0f;
@@ -315,8 +117,6 @@ namespace Tools::Ins {
                                                              std::filesystem::path(out).string());
     }
 
-    /// 单位表两列：ui 是界面显示名（中文的给文案 key，纯 ASCII 单位符号直接写原文），
-    /// csv 是导出表头，属于数据契约，不随语言变。
     struct CalibUnit {
         const char *ui;
         const char *csv;
@@ -464,19 +264,10 @@ namespace Tools::Ins {
 
     void drawCompChart(const char *title, const std::vector<double> &t,
                        const std::vector<double> &a, const std::vector<double> &b,
-                       const std::vector<double> &c, bool chartNew);
+                       const std::vector<double> &c, bool chartNew, float h);
 
     void drawScaleBars(const char *title, bool ready, const double v[3], const ImVec4 &fill,
-                       const char *fmt = "%.1f");
-
-    template<class F1, class F2>
-    void twoCol(const F1 &left, const F2 &right) {
-        ImGui::Columns(2, nullptr, false);
-        left();
-        ImGui::NextColumn();
-        right();
-        ImGui::Columns(1);
-    }
+                       float h, const char *fmt = "%.1f");
 
     void vec3Row(const char *label, double x, double y, double z, const char *fmt = "%.3f");
 

@@ -5,7 +5,9 @@
 #include <vector>
 
 #include "core/SatID.h"
+#include "core/ins/InsStruct.h"
 #include "imgui.h"
+#include "solvers/ins/ImuScaleProbe.h"
 
 /// 无状态的界面小工具：字符串输入、系统名、残差显示范围。
 /// Task 的界面骨架（配置页/实时页/取消按钮）是它的成员，实现见 solvers/view/TaskGui.cpp。
@@ -24,6 +26,11 @@ namespace Solvers::Helpers {
 
     PasteResult clipboardXYZButton(const char *id);
 
+    /// 文件页上的 IMU 当量行（解算、标定、对准三处共用同一形态）：加速度/陀螺当量与采样率、
+    /// 从剪贴板获取、自动检测（`detect` 的后台作业由调用方持有）；`id` 区分同屏多组。
+    void renderImuScale(ImuScale &scale, INS::ScaleDetect &detect, const std::string &imuPath,
+                        double gravity, const char *id);
+
     /// 结果页统一的时间游标导航：<< < 滑动条 > >> + 当前历元说明。
     void renderEpochNav(int &selectedEpoch, int epochCount,
                         const char *epochInfo = nullptr, const char *tailText = nullptr);
@@ -41,6 +48,10 @@ namespace Solvers::Helpers {
         for (const auto &[ch, label]: kConstellations)
             if (ch == s) return label;
         return "?";
+    }
+
+    inline const char *systemName(const SatSystem sys) {
+        return systemName(charFrom(sys));
     }
 
     struct RobustResRange {

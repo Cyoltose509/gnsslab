@@ -5,17 +5,15 @@
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiProductSection.h"
 #include "ui/FileDialog.h"
+#include "ui/Splitter.h"
 #include "solvers/common/Core.h"
-#include "io/novatel/AsciiReader.h"
 #include "io/novatel/LogReader.h"
 #include "solver/ins/Aligner.h"
 #include "core/ins/InsMath.h"
 #include "core/Const.h"
-#include "StringUtils.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -31,9 +29,11 @@ namespace Tools::Ins {
     StaticAlignTask::StaticAlignTask() {
         fileName = "static-align";
         nameKey = "gui.menu.tools.ins_align";
+        cfgKey = "ins.align.window_title";
+        startKey = "ins.align.start";
     }
 
-    void StaticAlignTask::startAlign() {
+    void StaticAlignTask::startRun() {
         saveInsParams(par);
         if (alignPath.empty()) {
             setError(I18n::tr("ins.align.err.no_file"));
@@ -41,23 +41,26 @@ namespace Tools::Ins {
         }
 
 
-        keepManualScaleFor(scaleSf, alignPath + "\n" + std::to_string(par.g));
-        beginRun(*this);
+        if (!scale.known()) {
+            setError(I18n::tr("ins.err.scale_missing"));
+            return;
+        }
+        scaleText = scaleDet.text; // 后台线程不读界面状态
+        beginRun();
         {
             std::lock_guard lk(resultMutex);
             series.clear();
             plotPts.clear();
-            sensorModel.clear();
-            scaleNotice = ScaleNotice{};
         }
-        launchWorker(*this, [this] { alignWorker(); });
+        worker = std::thread(&StaticAlignTask::alignWorker, this);
     }
 
     void StaticAlignTask::alignWorker() {
         SiteParams sp;
         sp.latDeg = par.latDeg;
         sp.g = par.g;
-        ScaleIdentifier sen(scaleSf);
+        ImuScale sc = scale;   // 采样率留空时按读到的时标补，跟 INS 解算同一口径
+        const std::string model = scaleText;
         Aligner::AlignStream st;
         st.init(par.win, sp);
 
@@ -72,7 +75,6 @@ namespace Tools::Ins {
             st.step(s, a);
             sumAcc += Eigen::Vector3d(s.ax, s.ay, s.az);
             sumGyr += Eigen::Vector3d(s.gx, s.gy, s.gz);
-            sen.probeSample(s);
             ++count;
             if (st.count < static_cast<std::size_t>(par.win)) return;
             seriesLocal.push_back(a);
@@ -87,35 +89,21 @@ namespace Tools::Ins {
                 const Eigen::Vector3d accm = sumAcc / static_cast<double>(count);
                 const Eigen::Vector3d gyrm = sumGyr / static_cast<double>(count);
                 att = alignDCM(-accm, gyrm, sp).toEuler();
-                alignQ = Aligner::diagnoseMeans(accm, gyrm, sp, sen.res.currentScale());
+                alignQ = Aligner::diagnoseMeans(accm, gyrm, sp, sc);
                 alignQValid = true;
             }
         };
 
 
-        auto onReader = [&](NovAtel::LogReader &r) -> bool {
-            return sen.observe(r, [&](const std::string &label, const ScaleNotice &n) {
-                std::lock_guard lk(resultMutex);
-                sensorModel = label;
-                scaleNotice = n;
-            });
-        };
-        if (!pumpImuFile(alignPath, stop, onReader, onSample, onBatch)) {
-            abortRun(*this, sen.failureMessage(alignPath));
+        if (!pumpImuFile(alignPath, stop, onSample, onBatch)) {
+            abortRun(I18n::tr("ins.err.open_imu", alignPath));
             return;
         }
 
-        if (stoppedAndEnd(*this)) return;
+        if (stoppedAndEnd()) return;
         if (seriesLocal.empty()) {
-            abortRun(*this, I18n::tr("ins.align.err.no_epoch", alignPath));
+            abortRun(I18n::tr("ins.align.err.no_epoch", alignPath));
             return;
-        }
-        sen.offerProbe();
-        sen.resolve(par.g);
-        {
-            std::lock_guard lk(resultMutex);
-            sensorModel = sen.res.describe();
-            scaleNotice = sen.res.notice(true);
         }
 
         Euler a{};
@@ -124,7 +112,7 @@ namespace Tools::Ins {
             const Eigen::Vector3d acc = sumAcc / static_cast<double>(count);
             const Eigen::Vector3d gyr = sumGyr / static_cast<double>(count);
             a = alignDCM(-acc, gyr, sp).toEuler();
-            aq = Aligner::diagnoseMeans(acc, gyr, sp, sen.res.scale);
+            aq = Aligner::diagnoseMeans(acc, gyr, sp, sc);
         }
         double ym, ysd, pm, psd, rm, rsd;
         steadyStats(seriesLocal, ym, ysd, pm, psd, rm, rsd);
@@ -134,7 +122,7 @@ namespace Tools::Ins {
             std::snprintf(ang, sizeof ang, "yaw=%.4f° pitch=%.4f° roll=%.4f°",
                           a.yaw * RAD_TO_DEG, a.pitch * RAD_TO_DEG, a.roll * RAD_TO_DEG);
             LOG_INFO << "[" << fileName << "] " << I18n::tr("ins.align.log.done", seriesLocal.size(),
-                                                           sen.res.describe(), std::string(ang),
+                                                           model, std::string(ang),
                                                            aq.hasScale ? I18n::trc("ins.align.scale_ok")
                                                                        : I18n::trc("ins.align.na"));
         }
@@ -152,25 +140,25 @@ namespace Tools::Ins {
             steadyR = rm;
             steadyRsd = rsd;
         }
-        finishRun(*this);
+        finishRun();
     }
 
-    void StaticAlignTask::renderConfigPanel() {
-        renderInsConfig("ins.align.window_title", *this, "ins.align.start",
-                        [&] {
-                            Solvers::Helpers::fileRow(I18n::trc("ins.align.file_row"), &alignPath, "ins_align",
-                                                      FileDialog::fIns(), nullptr);
-                        },
-                        [&] {
-                            renderInsParams(par);
-                        },
-                        [this] { startAlign(); });
+    void StaticAlignTask::renderFileTab() {
+        Solvers::Helpers::fileRow(I18n::trc("ins.align.file_row"), &alignPath, "ins_align",
+                                  FileDialog::fIns(), nullptr);
+        ImGui::Spacing();
+        ImGui::Separator();
+        Solvers::Helpers::renderImuScale(scale, scaleDet, alignPath, par.g, "align_scale");
+    }
+
+    void StaticAlignTask::renderParamTab() {
+        renderInsParams(par);
     }
 
     void StaticAlignTask::renderResult() {
         const bool running = state == State::Running;
         const bool done = hasResult.load();
-        if (renderResultPrologue(*this, true, [this] { startAlign(); })) return;
+        if (renderResultPrologue()) return;
 
         if (running) {
             ImGui::TextColored(kColInfo, "%s",
@@ -362,23 +350,24 @@ namespace Tools::Ins {
             py.reserve(pts.size());
             pp.reserve(pts.size());
             pr.reserve(pts.size());
-            for (const auto &[tow, roll, pitch, yaw]: pts) {
-                px.push_back(tow);
-                py.push_back(yaw * RAD_TO_DEG);
-                pp.push_back(pitch * RAD_TO_DEG);
-                pr.push_back(roll * RAD_TO_DEG);
+            for (const auto &p: pts) {
+                px.push_back(p.tow);
+                py.push_back(p.att.yaw * RAD_TO_DEG);
+                pp.push_back(p.att.pitch * RAD_TO_DEG);
+                pr.push_back(p.att.roll * RAD_TO_DEG);
             }
         }
         std::vector<double> pt;
         toElapsed(px, pt);
         const bool chartNew = chartDirty.exchange(false);
+        float &attH = UI::splitHeight("ins_align_att_row", kChartHeight);
         auto drawATT = [&](const char *title, const std::vector<double> &y, const ImVec4 &col) {
             if (pt.empty()) {
                 ImGui::TextDisabled("%s", I18n::trc("ins.no_data"));
                 return;
             }
             const int n = static_cast<int>(pt.size());
-            if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kChartHeight))) {
+            if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, attH))) {
                 ImPlot::SetupAxes(I18n::trc("ins.chart.x_time"), I18n::trc("ins.align.att_deg"));
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 fitXToLatest(chartNew, pt.back());
@@ -390,6 +379,7 @@ namespace Tools::Ins {
         drawATT("ins.align.chart.yaw", py, kColX);
         drawATT("ins.align.chart.pitch", pp, kColY);
         drawATT("ins.align.chart.roll", pr, kColZ);
+        if (!pt.empty()) UI::splitHandle("##alignAttGrip", attH, 160.0f, 900.0f);
 
         if (running) {
             if (ImGui::Button(I18n::trc("ins.calib.stop"))) stop = true;
@@ -404,9 +394,9 @@ namespace Tools::Ins {
         if (s.empty()) return;
         exportCSVDialog(*this, "align_series.csv", "align_series.csv", [&](CSV::Writer &w) {
             w.row("tow", "yaw(deg)", "pitch(deg)", "roll(deg)");
-            for (const auto &[tow, roll, pitch, yaw]: s)
-                w.row(CSV::fx(tow, 3), CSV::fx(yaw * RAD_TO_DEG, 6), CSV::fx(pitch * RAD_TO_DEG, 6),
-                      CSV::fx(roll * RAD_TO_DEG, 6));
+            for (const auto &p: s)
+                w.row(CSV::fx(p.tow, 3), CSV::fx(p.att.yaw * RAD_TO_DEG, 6),
+                      CSV::fx(p.att.pitch * RAD_TO_DEG, 6), CSV::fx(p.att.roll * RAD_TO_DEG, 6));
         });
     }
 
@@ -424,23 +414,23 @@ namespace Tools::Ins {
             pm = steadyP;
             rm = steadyR;
             aq = alignQ;
-            model = sensorModel;
+            model = scaleText;
         }
         const auto n = static_cast<double>(s.size());
         double ya = 0, pa = 0, ra = 0;
         for (const auto &p: s) {
-            ya += p.yaw;
-            pa += p.pitch;
-            ra += p.roll;
+            ya += p.att.yaw;
+            pa += p.att.pitch;
+            ra += p.att.roll;
         }
         ya /= n;
         pa /= n;
         ra /= n;
         double yv = 0, pv = 0, rv = 0;
         for (const auto &p: s) {
-            yv += (p.yaw - ya) * (p.yaw - ya);
-            pv += (p.pitch - pa) * (p.pitch - pa);
-            rv += (p.roll - ra) * (p.roll - ra);
+            yv += (p.att.yaw - ya) * (p.att.yaw - ya);
+            pv += (p.att.pitch - pa) * (p.att.pitch - pa);
+            rv += (p.att.roll - ra) * (p.att.roll - ra);
         }
         const double ys = std::sqrt(yv / n), ps = std::sqrt(pv / n), rs = std::sqrt(rv / n);
 
@@ -503,13 +493,13 @@ namespace Tools::Ins {
                 sy = sp = sr = 0;
                 n = 0;
             };
-            for (const auto &[tow, roll, pitch, yaw]: s) {
-                const auto k = static_cast<long long>(std::floor(tow));
+            for (const auto &p: s) {
+                const auto k = static_cast<long long>(std::floor(p.tow));
                 if (n > 0 && k != sec) flush();
                 sec = k;
-                sy += yaw;
-                sp += pitch;
-                sr += roll;
+                sy += p.att.yaw;
+                sp += p.att.pitch;
+                sr += p.att.roll;
                 ++n;
             }
             flush();

@@ -7,9 +7,9 @@
 
 class BinRecordReader {
 public:
-    bool open(const std::string &path, std::size_t stride);
+    void open(const std::string &path, std::size_t stride); // 打不开或长度非法抛异常
 
-    bool next(const double *&rec);
+    bool next(const double *&rec); // 返回 false 只表示读完了；中途读错抛异常
 
     [[nodiscard]] std::size_t count() const { return m_total; }
 
@@ -19,10 +19,6 @@ public:
 
     [[nodiscard]] std::size_t stride() const { return m_stride; }
 
-    [[nodiscard]] bool bad() const { return m_failed; }
-
-    [[nodiscard]] const std::string &error() const { return m_error; }
-
 private:
     bool fill();
 
@@ -30,6 +26,4 @@ private:
     std::vector<double> m_buf;
     std::size_t m_stride = 0;
     std::size_t m_pos = 0, m_filled = 0, m_loaded = 0, m_consumed = 0, m_total = 0;
-    std::string m_error;
-    bool m_failed = false;
 };

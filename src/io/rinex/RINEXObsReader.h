@@ -16,7 +16,7 @@ struct RINEXHeader {
     std::string antType;
     XYZ antennaPosition;
     Eigen::Vector3d antDeltaENU{0, 0, 0};
-    std::map<char, std::vector<std::string> > mapObsTypes;
+    std::map<SatSystem, std::vector<std::string> > mapObsTypes;
 
     std::map<std::string, double> phaseShift;
 
@@ -61,7 +61,7 @@ public:
     void chooseObs(ObsData &obsData);
 
     RINEXHeader rinexHeader;
-    std::map<char, std::set<std::string> > sysTypes;
+    std::map<SatSystem, std::set<std::string> > sysTypes;
     std::map<std::string, int> mGloChan;
     bool isHeaderRead = false;
 
@@ -117,5 +117,5 @@ public:
     void readEpochHead(std::string &line, int &flag, int &numSats) override;
 
 private:
-    std::map<char, std::vector<std::string> > mObsTypes;
+    std::map<SatSystem, std::vector<std::string> > mObsTypes;
 };

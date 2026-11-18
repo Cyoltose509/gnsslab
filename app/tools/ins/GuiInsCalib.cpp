@@ -6,6 +6,7 @@
 
 #include "solvers/view/GuiHelpers.h"
 #include "ui/FileDialog.h"
+#include "ui/Splitter.h"
 #include "solvers/common/Core.h"
 #include "core/PathMemory.h"
 #include "solver/ins/Calibrator.h"
@@ -33,9 +34,11 @@ namespace Tools::Ins {
     SixPosCalibTask::SixPosCalibTask() {
         fileName = "sixpos-calib";
         nameKey = "gui.menu.tools.ins_calib";
+        cfgKey = "ins.calib.window_title";
+        startKey = "ins.calib.start";
     }
 
-    void SixPosCalibTask::startCalib() {
+    void SixPosCalibTask::startRun() {
         {
             const auto &cfg = AppConfig::PathMemory::instance();
             saveInsParams(par);
@@ -50,15 +53,12 @@ namespace Tools::Ins {
             setError(I18n::tr("ins.calib.err.no_file"));
             return;
         }
-        {
-            std::string sig = std::to_string(par.g);
-            for (const auto &p: filePaths) {
-                sig += '\n';
-                sig += p;
-            }
-            keepManualScaleFor(scaleSf, sig);
+        if (!scale.known()) {
+            setError(I18n::tr("ins.err.scale_missing"));
+            return;
         }
-        beginRun(*this);
+        scaleText = scaleDet.text; // 后台线程不读界面状态
+        beginRun();
         accelReady.store(false);
         segStatic.store(0);
         segRot.store(0);
@@ -71,18 +71,17 @@ namespace Tools::Ins {
             accelScaleGp.setZero();
             accelRmsp = 0.0;
             report = CalibReport();
-            scaleNotice = ScaleNotice{};
 
             compSegs.pos.clear();
             compSegs.rot.clear();
             compSel = 0;
         }
-        launchWorker(*this, [this] { calibWorker(); });
+        worker = std::thread(&SixPosCalibTask::calibWorker, this);
     }
 
     void SixPosCalibTask::calibWorker() {
 
-        ScaleIdentifier sen(scaleSf);
+        ImuScale sc = scale;   // 采样率留空时按读到的时标补，跟 INS 解算同一口径
         Calibrator::CalibSegments segs;
         std::vector<std::pair<std::string, std::string> > detSeqLines;
         int dups = 0;
@@ -91,13 +90,8 @@ namespace Tools::Ins {
             out.clear();
             auto onSample = [&](const ImuSample &s) { out.push_back(s); };
             auto onBatch = [&](const long long n) { sampleCount.store(n); };
-            auto onReader = [&](NovAtel::LogReader &r) -> bool {
-                return sen.observe(r, [&](const std::string &, const ScaleNotice &n) {
-                    std::lock_guard lk(resultMutex);
-                    scaleNotice = n;
-                });
-            };
-            if (!pumpImuFile(path, stop, onReader, onSample, onBatch)) return false;
+            if (!pumpImuFile(path, stop, onSample, onBatch))
+                return false;
             return !out.empty();
         };
 
@@ -113,11 +107,6 @@ namespace Tools::Ins {
             }
             ImuLog log;
             if (!parseOne(path, log) || log.empty()) {
-                if (sen.mixedModel()) {
-
-                    abortRun(*this, sen.failureMessage(path));
-                    return;
-                }
                 if (!stop) detSeqLines.emplace_back(name, I18n::tr("ins.calib.err.parse_failed"));
                 continue;
             }
@@ -137,7 +126,6 @@ namespace Tools::Ins {
                 ImuLog sub(log.begin() + i0, log.begin() + i1);
                 if (isStatic) {
                     ++nStatic;
-                    sen.offerStatic(sub);
                     segs.pos.emplace_back(pos, std::move(sub));
                     seq += std::string(seq.empty() ? "" : " ") + Calibrator::posLabel(pos);
                 } else {
@@ -159,25 +147,20 @@ namespace Tools::Ins {
             detectDone.store(true);
         }
 
-        if (stoppedAndEnd(*this)) return;
+        if (stoppedAndEnd()) return;
 
         if (segs.pos.empty() && segs.rot.empty()) {
-            abortRun(*this, I18n::tr("ins.calib.err.no_segment"));
+            abortRun(I18n::tr("ins.calib.err.no_segment"));
             return;
         }
-        if (!sen.resolve(par.g)) {
-
-            abortRun(*this, sen.failText());
+        CalibReport rep = Calibrator::calibrate(segs, par.turnAngleDeg * DEG_TO_RAD, par.g, sc.rateHz);
+        if (!rep.errorMsg.empty()) {
+            abortRun(rep.errorMsg);
             return;
         }
-        CalibReport rep = Calibrator::calibrate(segs, par.turnAngleDeg * DEG_TO_RAD, par.g);
-        if (!rep.ok) {
-            abortRun(*this, rep.errorMsg);
-            return;
-        }
-        Calibrator::applyNominal(rep, sen.res.scale);
-        if (!rep.ok) {
-            abortRun(*this, rep.errorMsg);
+        Calibrator::applyNominal(rep, sc);
+        if (!rep.errorMsg.empty()) {
+            abortRun(rep.errorMsg);
             return;
         }
 
@@ -205,67 +188,65 @@ namespace Tools::Ins {
             std::snprintf(ka, sizeof ka, "[%.2f %.2f %.2f] LSB/g",
                           rep.accelScaleG(0), rep.accelScaleG(1), rep.accelScaleG(2));
             LOG_INFO << "[" << fileName << "] " << I18n::tr("ins.calib.log.done", segStatic.load(),
-                                                           segRot.load(), sen.res.describe(),
+                                                           segRot.load(), scaleText,
                                                            std::string(ka), rep.accelRms);
         }
         {
             std::lock_guard lk(resultMutex);
             report = std::move(rep);
-            scaleNotice = sen.res.notice(true);
         }
-        finishRun(*this);
+        finishRun();
     }
 
-    void SixPosCalibTask::renderConfigPanel() {
-        renderInsConfig("ins.calib.window_title", *this, "ins.calib.start",
-                        [&] {
-                            ImGui::TextUnformatted(I18n::trc("ins.calib.hint.files"));
-                            ImGui::Spacing();
+    void SixPosCalibTask::renderFileTab() {
+        ImGui::TextUnformatted(I18n::trc("ins.calib.hint.files"));
+        ImGui::Spacing();
 
-                            if (ImGui::Button(I18n::trc("common.browse"), ImVec2(140, 0))) {
-                                if (std::vector<std::wstring> wpaths; FileDialog::openMany(
-                                    wpaths, FileDialog::fIns())) {
-                                    for (auto &wp: wpaths) {
-                                        std::string p = Str::wideToACP(wp);
-                                        if (!p.empty() &&
-                                            std::find(filePaths.begin(), filePaths.end(), p) == filePaths.end())
-                                            filePaths.push_back(p);
-                                    }
-                                }
-                            }
-                            ImGui::SameLine();
-                            if (ImGui::Button(I18n::trc("common.clear"), ImVec2(80, 0)))
-                                filePaths.clear();
+        if (ImGui::Button(I18n::trc("common.browse"), ImVec2(140, 0))) {
+            if (std::vector<std::wstring> wpaths; FileDialog::openMany(wpaths, FileDialog::fIns())) {
+                for (auto &wp: wpaths) {
+                    std::string p = Str::wideToACP(wp);
+                    if (!p.empty() && std::find(filePaths.begin(), filePaths.end(), p) == filePaths.end())
+                        filePaths.push_back(p);
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(I18n::trc("common.clear"), ImVec2(80, 0)))
+            filePaths.clear();
 
-                            ImGui::Spacing();
-                            ImGui::Separator();
-                            if (filePaths.empty()) {
-                                ImGui::TextDisabled("%s", I18n::trc("ins.calib.no_files"));
-                            } else {
-                                ImGui::TextUnformatted(
-                                        I18n::tr("ins.calib.selected_files", filePaths.size()).c_str());
-                                for (std::size_t i = 0; i < filePaths.size(); ++i) {
-                                    ImGui::Bullet();
-                                    ImGui::Text("%s", File::baseName(filePaths[i]).c_str());
-                                    ImGui::SameLine();
-                                    if (ImGui::SmallButton(("x##cal" + std::to_string(i)).c_str())) {
-                                        filePaths.erase(filePaths.begin() + i);
-                                        --i;
-                                    }
-                                }
-                            }
-                        },
-                        [&] {
-                            renderInsParams(par);
-                        },
-                        [this] { startCalib(); });
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (filePaths.empty()) {
+            ImGui::TextDisabled("%s", I18n::trc("ins.calib.no_files"));
+        } else {
+            ImGui::TextUnformatted(I18n::tr("ins.calib.selected_files", filePaths.size()).c_str());
+            for (std::size_t i = 0; i < filePaths.size(); ++i) {
+                ImGui::Bullet();
+                ImGui::Text("%s", File::baseName(filePaths[i]).c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton(("x##cal" + std::to_string(i)).c_str())) {
+                    filePaths.erase(filePaths.begin() + i);
+                    --i;
+                }
+            }
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        Solvers::Helpers::renderImuScale(scale, scaleDet,
+                                         filePaths.empty() ? std::string() : filePaths.front(), par.g,
+                                         "calib_scale");
+    }
+
+    void SixPosCalibTask::renderParamTab() {
+        renderInsParams(par);
     }
 
     void SixPosCalibTask::renderResult() {
         const bool running = state == State::Running;
         const bool done = hasResult.load();
         const char *kPending = running ? I18n::trc("ins.chart.computing") : "—";
-        const bool blocked = renderResultPrologue(*this, false, [this] { startCalib(); });
+        const bool blocked = renderResultPrologue();
         const bool detReady = detectDone.load();
         if (detReady) {
             ImGui::Spacing();
@@ -482,11 +463,13 @@ namespace Tools::Ins {
         ImGui::SeparatorText(I18n::trc("ins.calib.sep.scale_consistency"));
         const double scA[3] = {accS(0), accS(1), accS(2)};
         const double scG[3] = {rep.gyroKeff(0), rep.gyroKeff(1), rep.gyroKeff(2)};
-        twoCol([&] {
-            drawScaleBars("ins.calib.chart.acc_scale", aReady, scA, kColZ, "%.1f");
-        }, [&] {
-            drawScaleBars("ins.calib.chart.gyro_keff", hResult, scG, kColZ, "%.0f");
-        });
+        float &scH = UI::splitHeight("ins_calib_scale_row", kChartHeight);
+        ImGui::Columns(2, nullptr, false);
+        drawScaleBars("ins.calib.chart.acc_scale", aReady, scA, kColZ, scH, "%.1f");
+        ImGui::NextColumn();
+        drawScaleBars("ins.calib.chart.gyro_keff", hResult, scG, kColZ, scH, "%.0f");
+        ImGui::Columns(1);
+        UI::splitHandle("##calibScaleGrip", scH, 200.0f, 900.0f);
 
 
         ImGui::Spacing();
@@ -553,11 +536,13 @@ namespace Tools::Ins {
                     }
                     std::vector<double> tel;
                     toElapsed(t, tel);
-                    twoCol(
-                        [&] { drawCompChart("ins.calib.chart.comp_f", tel, fx, fy, fz, chartNew); },
-                        [&] {
-                            drawCompChart("ins.calib.chart.comp_w", tel, gx, gy, gz, chartNew);
-                        });
+                    float &cmH = UI::splitHeight("ins_calib_comp_row", kFileChartH);
+                    ImGui::Columns(2, nullptr, false);
+                    drawCompChart("ins.calib.chart.comp_f", tel, fx, fy, fz, chartNew, cmH);
+                    ImGui::NextColumn();
+                    drawCompChart("ins.calib.chart.comp_w", tel, gx, gy, gz, chartNew, cmH);
+                    ImGui::Columns(1);
+                    UI::splitHandle("##calibCompGrip", cmH, 160.0f, 900.0f);
                 }
             }
         }

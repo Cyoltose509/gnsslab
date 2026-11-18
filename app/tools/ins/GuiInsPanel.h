@@ -9,6 +9,8 @@
 
 
 #include "solvers/common/Task.h"
+#include "solvers/ins/ImuScaleProbe.h"
+#include "solvers/view/GuiHelpers.h"
 #include "core/ins/InsStruct.h"
 #include "solver/ins/Aligner.h"
 #include "solver/ins/Calibrator.h"
@@ -46,50 +48,6 @@ namespace Tools::Ins {
 
     enum class AlertLevel { Error, Warn, Info };
 
-    struct ScaleNotice {
-        bool show = false;
-        AlertLevel level = AlertLevel::Info;
-        std::string text;
-    };
-
-
-    /// 当量兜底对话框的共享状态：工作线程提议、界面线程改并回填，两条线程都读，故三个当量走原子。
-    struct ScaleFallback {
-        std::atomic<bool> asked{false};
-        std::atomic<bool> accepted{false};
-        std::atomic<double> accelMpsPerLsb{0.0};
-        std::atomic<double> gyroDegPerLsb{0.0};
-        std::atomic<double> rateHz{0.0};
-        std::string reason;
-        std::string sig;
-
-
-        void request(const double suggestAccel, const double suggestRate, std::string why = {}) {
-            if (!(accelMpsPerLsb.load(std::memory_order_relaxed) > 0.0))
-                accelMpsPerLsb.store(suggestAccel, std::memory_order_relaxed);
-            if (!(rateHz.load(std::memory_order_relaxed) > 0.0))
-                rateHz.store(suggestRate, std::memory_order_relaxed);
-            reason = std::move(why);
-            asked.store(true, std::memory_order_release);
-        }
-
-        [[nodiscard]] ImuScale scale() const {
-            return {accelMpsPerLsb.load(std::memory_order_relaxed),
-                    gyroDegPerLsb.load(std::memory_order_relaxed) * DEG_TO_RAD,
-                    rateHz.load(std::memory_order_relaxed)};
-        }
-
-        void reset() {
-            accepted.store(false, std::memory_order_relaxed);
-            accelMpsPerLsb.store(0.0, std::memory_order_relaxed);
-            gyroDegPerLsb.store(0.0, std::memory_order_relaxed);
-            rateHz.store(0.0, std::memory_order_relaxed);
-            reason.clear();
-            sig.clear();
-        }
-    };
-
-
     template<class T>
     struct OnlineDecimator {
         std::vector<T> buf;
@@ -122,13 +80,42 @@ namespace Tools::Ins {
         std::atomic<bool> runFailed{false};
     };
 
-    struct SixPosCalibTask : Solvers::Task, InsRunState {
+    /// 标定/对准/校核共用的配置骨架：文件页 + 参数页 + 起算/取消/错误行，各页只补三件差异。
+    struct InsToolTask : Solvers::Task, InsRunState {
+        const char *cfgKey = "";   // 窗口标题 key，同时拼配置页 child id
+        const char *startKey = ""; // 起算按钮文案 key
+
+        void renderConfigPanel() override;
+
+        virtual void renderFileTab() = 0;
+
+        virtual void renderParamTab() = 0;
+
+        virtual void startRun() = 0;
+
+        void beginRun();
+
+        void endRun();
+
+        void abortRun(const std::string &msg);
+
+        void finishRun();
+
+        bool stoppedAndEnd();
+
+        bool drawResultError();
+
+        bool renderResultPrologue();
+    };
+
+    struct SixPosCalibTask : InsToolTask {
         std::vector<std::string> filePaths;
         CalibParams par;
-        ScaleFallback scaleSf;
+        ImuScale scale;
+        Solvers::INS::ScaleDetect scaleDet;
+        std::string scaleText; // 起算那一刻的当量说明，后台线程只读它
 
         CalibReport report;
-        ScaleNotice scaleNotice;
         std::atomic<bool> accelReady{false};
 
         std::atomic<int> segStatic{0};
@@ -152,16 +139,16 @@ namespace Tools::Ins {
 
         Kind kind() const override { return Kind::Tool; }
 
-        void renderConfigPanel() override;
+        void renderFileTab() override;
+
+        void renderParamTab() override;
+
+        void startRun() override;
 
         void renderResult() override;
 
     private:
-        void startCalib();
-
-
         void calibWorker();
-
 
         void exportCalibCSV();
         void exportDetectCSV();
@@ -176,17 +163,16 @@ namespace Tools::Ins {
         bool snapshotReport(CalibReport &r);
     };
 
-    struct StaticAlignTask : Solvers::Task, InsRunState {
+    struct StaticAlignTask : InsToolTask {
         std::string alignPath;
         AlignParams par;
-        ScaleFallback scaleSf;
+        ImuScale scale;
+        Solvers::INS::ScaleDetect scaleDet;
+        std::string scaleText; // 起算那一刻的当量说明，后台线程只读它
 
         Euler att{};
         std::vector<AttitudeSample> series;
         std::vector<AttitudeSample> plotPts;
-
-        std::string sensorModel;
-        ScaleNotice scaleNotice;
 
         double steadyY = 0, steadyYsd = 0, steadyP = 0, steadyPsd = 0, steadyR = 0, steadyRsd = 0;
 
@@ -198,13 +184,15 @@ namespace Tools::Ins {
 
         Kind kind() const override { return Kind::Tool; }
 
-        void renderConfigPanel() override;
+        void renderFileTab() override;
+
+        void renderParamTab() override;
+
+        void startRun() override;
 
         void renderResult() override;
 
     private:
-        void startAlign();
-
         void alignWorker();
 
 
@@ -216,7 +204,7 @@ namespace Tools::Ins {
     };
 
     /// 示例数据验证：拿 IMU 增量跑 src 的机械编排，与参考轨迹逐点比对。
-    struct InsVerifyTask : Solvers::Task, InsRunState {
+    struct InsVerifyTask : InsToolTask {
         std::string imuPath;
         std::string refPath;
         VerifyParams par;
@@ -228,13 +216,15 @@ namespace Tools::Ins {
 
         Kind kind() const override { return Kind::Tool; }
 
-        void renderConfigPanel() override;
+        void renderFileTab() override;
+
+        void renderParamTab() override;
+
+        void startRun() override;
 
         void renderResult() override;
 
     private:
-        void startVerify();
-
         void verifyWorker();
 
         void exportSampleCSV();

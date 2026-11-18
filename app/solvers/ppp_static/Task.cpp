@@ -68,8 +68,8 @@ namespace Solvers::PPPStatic {
         m.num(I18n::trc("param.pos_proc_sigma"), opts.posProcSigma);
         m.num(I18n::trc("param.first_epoch_pos_sigma"), opts.spp.firstEpochPosSigma);
         m.flag(I18n::trc("param.use_cycle_slip"), opts.spp.useCycleSlip);
-        m.flag(I18n::trc("param.use_gf_slip"), opts.spp.useGfCycleSlip);
-        m.num(I18n::trc("param.gf_slip_mult"), opts.spp.gfSlipMult);
+        m.flag(I18n::trc("param.use_gf_slip"), opts.spp.useGFCycleSlip);
+        m.num(I18n::trc("param.gf_slip_mult"), opts.spp.GFSlipMult);
     }
 
     void Task::writeTropoParams(CSV::Meta &m) const {

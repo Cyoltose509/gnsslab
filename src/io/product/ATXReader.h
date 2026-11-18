@@ -34,13 +34,13 @@ public:
 
     [[nodiscard]] Eigen::Vector3d getSatPCO(const SatID &sat, const std::string &band, const CommonTime &t) const;
 
-    [[nodiscard]] Eigen::Vector3d getRcvPCOENU(const std::string &rcvType, char sys,
+    [[nodiscard]] Eigen::Vector3d getRcvPCOENU(const std::string &rcvType, SatSystem sys,
                                                const FreqCombo &def, const CommonTime &t) const;
 
     void applySatPCO(const SatID &sat, Eigen::Vector3d &pTx, const CommonTime &epoch,
                      const FreqCombo &def, const DCM *satBody = nullptr) const;
 
-    [[nodiscard]] double rcvPCVIF(const std::string &rcvType, char sys, const FreqCombo &def,
+    [[nodiscard]] double rcvPCVIF(const std::string &rcvType, SatSystem sys, const FreqCombo &def,
                                   double zenDeg, double azDeg, const CommonTime &t) const;
 
     [[nodiscard]] double satPCVIF(const SatID &sat, const FreqCombo &def, double nadirDeg, const CommonTime &t) const;

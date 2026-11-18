@@ -15,7 +15,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
     const bool anchorTrusted = isSaneECEF(xc);
     if (!anchorTrusted) {
         xyz = xc;
-        computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+        computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
     }
     VariableDataMap csData;
     SolverLSQ solver;
@@ -58,7 +58,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
                 ed.varCoeffData[vdy] = up.y();
                 ed.varCoeffData[vdz] = up.z();
                 ed.weight = 1e4;
-                curEq.obsEquData[EquID(SatID('P', 0), std::string("INIT_UP"))] = ed;
+                curEq.obsEquData[EquID(SatID(static_cast<SatSystem>('P'), 0), std::string("INIT_UP"))] = ed;
             }
             curEq.varSet.insert(vdx);
             curEq.varSet.insert(vdy);
@@ -131,7 +131,7 @@ void PPPStatic::buildEquSys() {
     mSatTropoFixed.clear();
     mSysSeen.clear();
     mCurrentSatSet.clear();
-    mGfEpoch = CycleSlipEpoch{};
+    mGFEpoch = CycleSlipEpoch{};
 
     mEpochTropo.update(prod->tropo, mConfig.tropoMap, mEpochXyz, mCurObs->epoch);
     if (!prod->tro.empty()) {
@@ -154,20 +154,20 @@ void PPPStatic::buildEquSys() {
         if (mSatMap.count(sat)) addSatEquation(sat, tv, false);
 
     {
-        SatIDSet gfExcludeSet;
-        const SatIDSet gfApplySet = mGfEpoch.decide(mGfCommonMode, gfExcludeSet);
-        for (const auto &sat: gfApplySet) {
+        SatIDSet GFExcludeSet;
+        const SatIDSet GFApplySet = mGFEpoch.decide(mGFCommonModeMinSats, GFExcludeSet);
+        for (const auto &sat: GFApplySet) {
             const TypeValueMap &tv = mCurObs->satTypeValueData.at(sat);
             const double map = mSatMap.at(sat);
             resetAmbiguity(sat, tv, map, mSatTropoFixed.at(sat), true);
         }
 
         for (auto &[eid, ed]: curEq.obsEquData)
-            if (gfExcludeSet.count(eid.sat))
+            if (GFExcludeSet.count(eid.sat))
                 ed.weight = 1.0e-20;
         mForceAmbReset = false;
     }
-    for (char sys: mSysSeen)
+    for (SatSystem sys: mSysSeen)
         if (auto it = mCdtParam.find(sys); it != mCdtParam.end())
             curEq.varSet.insert(Variable(mCurObs->station, it->second));
     // 公共钟模型下每颗星都引用 cdt，参考系统本历元未必有星，状态集必须无条件带上它。
@@ -185,9 +185,9 @@ void PPPStatic::decidePrefitGate() {
     if (mProcEpoch <= 1 || mPrefitProbe.empty()) return;
 
     const auto medianBySys = [this] {
-        std::map<char, std::vector<double>> bySys;
+        std::map<SatSystem, std::vector<double>> bySys;
         for (const auto &[sat, r]: mPrefitProbe) bySys[sat.system].push_back(r.code);
-        std::map<char, double> med;
+        std::map<SatSystem, double> med;
         for (auto &[sys, v]: bySys) {
             const auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
             std::nth_element(v.begin(), mid, v.end());
@@ -197,7 +197,7 @@ void PPPStatic::decidePrefitGate() {
     };
 
     // 同系统中位数是公共偏差，扣掉它才不会把钟跳误判成整历元粗差。
-    std::map<char, double> offset = medianBySys();
+    std::map<SatSystem, double> offset = medianBySys();
     const double phaseGate = mKinematic ? kPhasePrefitGateKinematicM : kPhasePrefitGateStaticM;
 
     int pass = 0, codePass = 0, phasePass = 0;
@@ -247,7 +247,7 @@ void PPPStatic::addZTDConstraint() {
         }
     }
     if (ztdSigma > 0.0) {
-        const EquID eid(SatID('T', 0), std::string(src));
+        const EquID eid(SatID(static_cast<SatSystem>('T'), 0), std::string(src));
         EquData ed;
         const double ztdCur = ztdPrior();
         ed.prefit = ztdTarget - ztdCur;

@@ -37,7 +37,7 @@ public:
 
     /// 码偏差是否覆盖了这颗星/这个系统：GLONASS 的标定是逐测站的，站名对不上就交给 IFCB 状态。
     [[nodiscard]] bool osbCovers(const SatID &sat) const { return prod->osb.covers(sat, osbStation()); }
-    [[nodiscard]] bool osbCoversSystem(const char sys) const { return prod->osb.coversSystem(sys, osbStation()); }
+    [[nodiscard]] bool osbCoversSystem(const SatSystem sys) const { return prod->osb.coversSystem(sys, osbStation()); }
     [[nodiscard]] std::string osbStation() const { return mCurObs ? mCurObs->station : std::string(); }
 
     [[nodiscard]] virtual Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const;
@@ -159,11 +159,11 @@ public:
     // ---- 状态回读 ----
     // 两份 map 都是「系统 sys 的钟态先验/估计」：参考系统=绝对钟(cdt1)，其余=相对参考的 ISB(cdt2~4)，
     // 即 Variable(station, mCdtParam[sys]) 的值。物理含义随参数化而异，状态空间语义均匀。
-    std::map<char, double> mClkBase;
-    std::map<char, double> mClkEstimate;
+    std::map<SatSystem, double> mClkBase;
+    std::map<SatSystem, double> mClkEstimate;
     double mZtdBase = 0.0;
     bool mZtdBaseValid = false;
-    std::map<char, double> mCbEstimate; // 每系统 IF 码偏状态估计(m)
+    std::map<SatSystem, double> mCbEstimate; // 每系统 IF 码偏状态估计(m)
     std::map<SatID, double> mIfcbEstimate; // 逐 GLONASS/BDS 星 IFCB 状态估计(m)
     std::map<SatID, double> mAmbEstimate;
 
@@ -177,18 +177,18 @@ public:
     std::map<SatID, PrefitRec> mPrefitProbe; // 本历元预fit 试算结果
     std::set<SatID> mPrefitBad; // 本历元判为粗差、要剔除的星
     std::set<SatID> mPrefitPhaseBad; // 只剔除相位、码仍可用的星（整周跳变）
-    std::set<char> mSysSeen; // 本历元出现过的系统
+    std::set<SatSystem> mSysSeen; // 本历元出现过的系统
     std::set<SatID> mCurrentSatSet; // 本历元参与解算的星
 
     VariableDataMap *mCsData = nullptr; // 本历元待写入的状态量（buildEquSys 的调用方设好）
-    CycleSlipEpoch mGfEpoch; // GF 周跳共模裁决簿记
+    CycleSlipEpoch mGFEpoch; // GF 周跳共模裁决簿记
 
     std::map<SatID, CycleSlip> mSlipDetectors;
     std::set<SatID> mPrevSatSet;
 
 private:
     /// 钟差先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值。
-    [[nodiscard]] double clockPrior(const char sys) const {
+    [[nodiscard]] double clockPrior(const SatSystem sys) const {
         return mFilterInit
                    ? (mClkEstimate.count(sys) ? mClkEstimate.at(sys) : 0.0)
                    : mClkBase.count(sys)

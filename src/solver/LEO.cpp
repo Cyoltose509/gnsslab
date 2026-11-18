@@ -10,7 +10,6 @@
 #include "core/equ/EquStruct.h"
 #include "core/obs/ObsStruct.h"
 #include "core/SatID.h"
-#include "i18n/I18n.h"
 
 void LEO::setAntennaOffset(const AntennaOffset &offset, const std::string &source) {
     prod->recvAnt = offset;
@@ -21,9 +20,10 @@ void LEO::setAntennaOffset(const AntennaOffset &offset, const std::string &sourc
         return s.str();
     };
     const AntennaOffset &a = prod->recvAnt;
-    const std::string unset = I18n::tr("log.leo.antenna_unset");
-    LOG_INFO << I18n::tr("log.leo.antenna", vec(a.comToArp), a.hasArp ? std::string() : unset,
-                         vec(a.pco), a.hasPco ? std::string() : unset, vec(a.total()), prod->recvAntSrc);
+    const char *unset = " (undefined, 0 assumed)";
+    LOG_INFO << "[LEO] antenna correction: COM->ARP = " << vec(a.comToArp) << " m"
+            << (a.hasArp ? "" : unset) << ", ARP->APC = " << vec(a.pco) << " m"
+            << (a.hasPco ? "" : unset) << ", total " << vec(a.total()) << " m <- " << prod->recvAntSrc;
 }
 
 Eigen::Vector3d LEO::recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch,
@@ -172,7 +172,7 @@ bool LEO::processEpoch(ObsData &obs) {
     }
     if (mSppGood) {
         xyz = mReanchorPos;
-        computeElevAzim(satPVTRecTime, xyz, satElevData, &satAzimData);
+        computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
         // 加速度取相邻历元速度的差分。退化几何下速度本身就带百米级误差，差出来的不是加速度，
         // 只在 SPP 锚点可信的连续历元上更新，其余历元沿用上一段的有效值。
         if (ok && isSaneECEF(result.xyz)) {

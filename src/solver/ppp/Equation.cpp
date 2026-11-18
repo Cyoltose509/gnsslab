@@ -60,13 +60,13 @@ void PPPStatic::addSatEquation(const SatID &sat, const TypeValueMap &tv, const b
     const double ztdMean = ztdPrior();
     const double ambMean = mAmbEstimate.count(sat) ? mAmbEstimate.at(sat) : 0.0;
     const bool cbActive = mFilterInit && !osbCoversSystem(sat.system) &&
-                          !((sat.system == 'R' || sat.system == 'C') && !osbCovers(sat));
+                          !((sat.system == SatSystem::R || sat.system == SatSystem::C) && !osbCovers(sat));
     const double cbMean = cbActive
                               ? (mCbEstimate.count(sat.system) ? mCbEstimate.at(sat.system) : 0.0)
                               : 0.0;
     // 逐 GLONASS/BDS 星 IFCB：GLONASS 是 FDMA 逐通道偏差，BDS-3 的 B1I+B2b 配对与精密钟的
     // B1I/B3I 基准差一个不可广播改正的硬件延迟——两者都以逐星状态吸收，不让偏置漏进位置。
-    const double ifcbMean = (sat.system == 'R' || sat.system == 'C') && !osbCovers(sat) && mFilterInit
+    const double ifcbMean = (sat.system == SatSystem::R || sat.system == SatSystem::C) && !osbCovers(sat) && mFilterInit
                                 ? (mIfcbEstimate.count(sat) ? mIfcbEstimate.at(sat) : 0.0)
                                 : 0.0;
 
@@ -135,7 +135,7 @@ void PPPStatic::addObservationEquation(const EquID &eid, double prefit, const Ei
         const Variable vamb = Variable::makeAmbiguity(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vamb] = 1.0;
         curEq.varSet.insert(vamb);
-    } else if ((eid.sat.system == 'R' || eid.sat.system == 'C') && !osbCovers(eid.sat)) {
+    } else if ((eid.sat.system == SatSystem::R || eid.sat.system == SatSystem::C) && !osbCovers(eid.sat)) {
         // 逐 GLONASS/BDS 星 IFCB
         const Variable vifb = Variable::makeIfb(mCurObs->station, eid.sat, "IF");
         ed.varCoeffData[vifb] = 1.0;
@@ -211,14 +211,14 @@ void PPPStatic::detectCycleSlip(const SatID &sat, const TypeValueMap &tv,
     resetAmb = false;
     slipReset = false;
     CycleSlip &det = mSlipDetectors[sat];
-    det.configure(def, mUseGfCycleSlip ? 1.0 : 0.0, mGfSlipMult); // GF 关掉时只吃 MW
+    det.configure(def, mUseGFCycleSlip ? 1.0 : 0.0, mGFSlipMult); // GF 关掉时只吃 MW
     double osbP1 = 0.0, osbP2 = 0.0, osbL1 = 0.0, osbL2 = 0.0;
     prod->osb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, osbStation());
     osbP1 = -osbP1;
     osbP2 = -osbP2;
 
     const CycleSlip::Result r = det.feed(sat, tv, mCurObs, osbP1, osbP2, osbL1, osbL2);
-    mGfEpoch.record(sat, r);
+    mGFEpoch.record(sat, r);
     const bool newArc = mPrevSatSet.find(sat) == mPrevSatSet.end();
     resetAmb = r.gap || newArc || (mUseCycleSlip && r.slip);
     slipReset = mUseCycleSlip && r.slip;

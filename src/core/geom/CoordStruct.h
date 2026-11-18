@@ -59,27 +59,8 @@ namespace Frame {
     inline constexpr GeodeticFrame PZ90{"PZ90", 6378136.0, 298.257839};
 }
 
-/// 正常重力场的定义常数
-struct NormalGravityModel {
-    double gammaE;
-    double k2, k4;
-    double h0, hLat, h2;
-};
 
-namespace NormalGravity {
-    constexpr NormalGravityModel GRS80{
-        9.7803267715,
-        0.0052790414, 0.0000232718,
-        3.087691089e-6, 4.397731e-9, 0.721e-12
-    };
 
-    /// 正常重力 γ(B,h)：B 为大地纬度 (rad)，h 为椭球高 (m)。
-    inline double at(const double latRad, const double hMeters) {
-        const double s2 = std::sin(latRad) * std::sin(latRad);
-        const double gamma = GRS80.gammaE * (1.0 + GRS80.k2 * s2 + GRS80.k4 * s2 * s2);
-        return gamma - (GRS80.h0 - GRS80.hLat * s2) * hMeters + GRS80.h2 * hMeters * hMeters;
-    }
-}
 
 
 class XYZ : public Eigen::Vector3d {

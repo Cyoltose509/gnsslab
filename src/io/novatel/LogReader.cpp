@@ -10,7 +10,6 @@
 
 #include "Log.h"
 #include "MathUtils.h"
-#include "i18n/I18n.h"
 #include "StringUtils.h"
 
 namespace NovAtel {
@@ -43,12 +42,12 @@ namespace NovAtel {
     void LogReader::noteRangeFormat(const bool full) {
         if (full) {
             if (mSeenFullRange.exchange(true)) return;
-            LOG_INFO << I18n::trc("log.novatel.range")
-                    << (mSeenCmpRange ? I18n::trc("log.novatel.range_cmp_pref") : "");
+            LOG_INFO << "observation format: RANGE (unquantized)"
+                    << (mSeenCmpRange ? "; RANGE wins when RANGECMP is also present" : "");
             return;
         }
         if (mSeenCmpRange.exchange(true)) return;
-        LOG_INFO << I18n::trc("log.novatel.rangecmp");
+        LOG_INFO << "observation format: RANGECMP (pseudorange 1/128 m, phase 1/256 cycle)";
     }
 
     bool LogReader::crcExam(const std::vector<std::uint8_t> &message) {
@@ -96,7 +95,7 @@ namespace NovAtel {
 
     namespace {
         struct SignalRef {
-            char sys = 0;
+            SatSystem sys = SatSystem::Unknown;
             int freqIdx = -1;
             int chan = 0;
             int prn = 0;
@@ -110,7 +109,7 @@ namespace NovAtel {
             out.prn = prnRaw;
             switch (sysInt) {
                 case 0:
-                    out.sys = 'G';
+                    out.sys = SatSystem::G;
                     switch (sigType) {
                         case 0: out.freqIdx = 1;
                             break;
@@ -120,7 +119,7 @@ namespace NovAtel {
                     }
                     break;
                 case 1:
-                    out.sys = 'R';
+                    out.sys = SatSystem::R;
                     out.prn = prnRaw - 37;
                     out.chan = gfrq - 7;
                     switch (sigType) {
@@ -135,7 +134,7 @@ namespace NovAtel {
                     }
                     break;
                 case 3:
-                    out.sys = 'E';
+                    out.sys = SatSystem::E;
                     switch (sigType) {
                         case 2: out.freqIdx = 1;
                             break;
@@ -152,7 +151,7 @@ namespace NovAtel {
                     }
                     break;
                 case 4:
-                    out.sys = 'C';
+                    out.sys = SatSystem::C;
                     // NovAtel OEM7 RANGE/RANGECMP 的 BeiDou 信号类型表（docs.novatel.com RANGE.htm）：
                     // 0/4 = B1I 的 D1/D2 电文版（D2 仅 GEO），1/5 = B2I 的 D1/D2，11 = B2b，
                     // 三者同为 1207.14；2/6 = B3I 的 D1/D2(1268.52)；9 = B2a(1176.45)。
@@ -177,7 +176,7 @@ namespace NovAtel {
                 default:
                     return false;
             }
-            out.freqHz = out.sys == 'R'
+            out.freqHz = out.sys == SatSystem::R
                              ? getGlonassFreq(static_cast<char>('0' + out.freqIdx), out.chan)
                              : getFreq(out.sys, out.freqIdx);
             return true;

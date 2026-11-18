@@ -134,16 +134,16 @@ void RINEXObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats,
         } catch (std::exception &e) {
             throw FFStreamError(e.what());
         }
-        // RINEX2 的 GPS 卫星写作 "  1"（系统位空），归一成 'G'
-        if (sat.system == ' ') sat.system = 'G';
+        // RINEX2 的 GPS 卫星写作 "  1"（系统位空），归一成 G
+        if (sat.system == SatSystem::Unknown) sat.system = SatSystem::G;
 
-        if (sat.system == 'R') {
+        if (sat.system == SatSystem::R) {
             if (auto it = mGloChan.find(sat.toString()); it != mGloChan.end()) {
                 sat.chan = it->second;
             }
         }
 
-        if (sat.system != 'G' && sat.system != 'C' && sat.system != 'R' && sat.system != 'E') {
+        if (sat.system != SatSystem::G && sat.system != SatSystem::C && sat.system != SatSystem::R && sat.system != SatSystem::E) {
             continue;
         }
 
@@ -180,13 +180,13 @@ void RINEXObsReader::decodeObsBlock(const SatID &sat, const std::string &buf,
                     typeLLI[obsTypeStr] = lliCh - '0';
             }
 
-            const double freq = sat.system == 'R'
+            const double freq = sat.system == SatSystem::R
                                     ? getGlonassFreq(obsTypeStr[1], sat.chan)
                                     : getFreq(sat.system, obsTypeStr);
             const double wavelength = freq > 0.0 ? C_MPS / freq : 0.0;
             if (wavelength == 0.0) continue;
             // RINEX 的相位偏移头（v3 才有）单位是 cycle
-            const std::string key = std::string(1, sat.system) + obsTypeStr;
+            const std::string key = std::string(1, charFrom(sat.system)) + obsTypeStr;
             if (const auto it = rinexHeader.phaseShift.find(key); it != rinexHeader.phaseShift.end())
                 data = data + it->second;
             data = data * wavelength;
@@ -252,7 +252,7 @@ void RINEXObsReader::chooseObs(ObsData &obsData) {
     if (sysTypes.empty()) return;
 
     for (auto it = obsData.satTypeValueData.begin(); it != obsData.satTypeValueData.end();) {
-        const char sys = it->first.system;
+        const SatSystem sys = it->first.system;
         if (sysTypes.find(sys) == sysTypes.end()) {
             it = obsData.satTypeValueData.erase(it);
             continue;

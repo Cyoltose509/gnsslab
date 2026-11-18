@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "core/ins/InsStruct.h"
+#include "solver/ins/INS.h"
+#include "ImuScaleProbe.h"
 #include "solvers/common/Task.h"
 
 namespace Solvers::INS {
@@ -32,9 +34,7 @@ namespace Solvers::INS {
         /// 与 nav 一一对应的机体系增量的当次采样值（比力与角速度），只供导出 SBET / CSV 用。
         std::vector<InsEpoch> imu;
         std::size_t zuptCount = 0;
-        std::string modelName;
-        std::string scaleNote;
-        ImuScaleSource scaleSource = ImuScaleSource::Record;
+        std::string scaleNote; // 文件页自动检测的结论（型号/反推/失败原因）
         ImuScale scale;
         AlignInfo align;
         /// 静置段估出的加计零偏（机体系，m/s²），已在解算前从比力增量中扣除。
@@ -74,6 +74,13 @@ namespace Solvers::INS {
 
         /// 结果页当前查看的解（0 自由解 / 1 零速修正）。导出主列跟随它，Zupt* 附加列恒为零速修正解。
         int shownSolution = 0;
+        /// 结果页历元选择是否跟随解算尾部；用户拖走游标后停住，属本任务的界面状态。
+        bool followTail = true;
+
+        /// 文件页「自动检测」的进行状态与结论，随结果一起显示在结果页。
+        ScaleDetect scaleDet;
+        /// 起算那一刻的当量说明，读线程只读它（界面状态不进后台线程）。
+        std::string scaleText;
 
         /// 首帧 IMU 的 GPS 周：毫秒级结算里只存周内秒，导出日历/SP3 时靠它补周。
         int navWeek = 0;
@@ -111,11 +118,38 @@ namespace Solvers::INS {
         void onReset() override;
 
     private:
+        /// 自由解与零速修正解：从同一初始状态出发，逐历元各推一路，主列与对照列都靠这一对。
+        ::INS freeIns;
+        ::INS zuptIns;
+
+        /// 读线程解出的当量，解算侧按它换算采样率与判静窗口。
+        ImuScale scale;
+
+        /// 初始位置 (rad, rad, m) 与正常重力：onReset 里算一次，两线程只读。
+        Eigen::Vector3d llh0 = Eigen::Vector3d::Zero();
+        double gravity = 0.0;
+        std::string initialError;
+
+        /// 粗对准与静置标定用的头段；攒完除起算样本外回填队列继续推进。
+        ImuLog alignHead;
+
+        /// 导航起算样本下标：对准段末端，段内的上电沉降不算载体运动。
+        std::size_t solveFrom = 0;
+
         /// 限速喂队列；返回 false 表示已被取消或解算已结束。
         bool feedImu(const ImuSample &s);
 
         /// 从队列取一个样本；队列空且读线程收尾时返回 false。
         bool nextImu(ImuSample &out);
+
+        /// 攒粗对准与静置标定的头段；返回 false 表示已置错。
+        bool prepareAlignHead(const INSConfig &c);
+
+        /// 粗对准（或读手填姿态）→ 两路初始化 → 静置段标定，失败时已置错。
+        bool prepareInitialState(const INSConfig &c);
+
+        /// 逐历元推进两路解算，按批发布给界面。
+        void runSolveLoop();
     };
 
     std::shared_ptr<Task> makeTask(const SolverOptions &cfg);

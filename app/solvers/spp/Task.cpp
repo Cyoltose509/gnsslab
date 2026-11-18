@@ -174,15 +174,15 @@ namespace Solvers::SPP {
             }
 
             std::string sys;
-            for (const char c: opts.systems) sys += c;
+            for (const SatSystem s: opts.systems) sys += charFrom(s);
             LOG_INFO << "[SOLVE] " << I18n::tr("solver.log.start", opts.cutoffDeg,
                                                        sys.empty() ? I18n::tr("common.all") : sys,
                                                        opts.sampleInterval > 0.0
                                                            ? I18n::tr("solver.log.interval", opts.sampleInterval)
                                                            : I18n::tr("solver.log.interval_file"),
                                                        filterLabel(opts.filter));
-            const SolverOptions o = opts;
-            fwdSolver->applyOptions(o);
+            solveOpts = opts;
+            fwdSolver->applyOptions(solveOpts);
             if (!initSolver(*fwdSolver)) {
                 LOG_ERROR << "[SOLVE] " << I18n::tr("solver.log.init_failed");
                 finishSolving();
@@ -209,13 +209,13 @@ namespace Solvers::SPP {
     }
 
     void Task::runForward() {
-        filter.mode = opts.filter;
+        filter.mode = solveOpts.filter;
         solvePhase = filter.solvesForward() ? SolvePhase::Forward : SolvePhase::Scan;
 
         // 惰性历元序列挂在会话的回调上：倒序趟要靠它按索引重放同一批历元。
         const auto source = std::make_shared<ObsFeed>(
             [this](Observer::Item &out) { return nextObs(out); },
-            opts.sampleInterval, maxEpochs, filter.hasBackward());
+            solveOpts.sampleInterval, maxEpochs, filter.hasBackward());
 
         fwdSession = {};
         fwdSession.solver = fwdSolver.get();
@@ -334,7 +334,7 @@ namespace Solvers::SPP {
         };
         const auto makeBackward = [this]() -> std::unique_ptr<::SPP> {
             std::unique_ptr<::SPP> s = makeSolver();
-            s->applyOptions(opts);
+            s->applyOptions(solveOpts);
             return s;
         };
         Filter::Session back = fwdSession;

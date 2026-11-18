@@ -1,11 +1,10 @@
-#include "DragBar.h"
+#include "Splitter.h"
 
 #include <algorithm>
 #include <map>
 #include <string>
 
 #include "imgui.h"
-#include "i18n/I18n.h"
 
 namespace {
     /// 会话内的尺寸记忆：key → 高度。落地在 .cpp 内部，头文件里不放可变 static。
@@ -16,14 +15,14 @@ namespace {
 }
 
 namespace UI {
-    float &dragHeight(const char *key, const float defH) {
+    float &splitHeight(const char *key, const float defH) {
         std::map<std::string, float> &store = heightStore();
         const auto it = store.find(key);
         if (it == store.end()) return store.emplace(key, defH).first->second;
         return it->second;
     }
 
-    void heightGrip(const char *id, float &height, const float minH, const float maxH) {
+    void splitHandle(const char *id, float &height, const float minH, const float maxH) {
         ImGui::InvisibleButton(id, ImVec2(ImGui::GetContentRegionAvail().x, 7.0f));
         if (ImGui::IsItemActive())
             height = std::clamp(height + ImGui::GetIO().MouseDelta.y, minH, std::max(minH, maxH));

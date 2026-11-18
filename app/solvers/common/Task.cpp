@@ -82,7 +82,7 @@ namespace Solvers {
     }
 
     ProductReader::Loaded Task::productsFor(const AppConfig::ProductPaths &d, const std::string &tag,
-                                            const std::set<char> &systems,
+                                            const std::set<SatSystem> &systems,
                                             const std::vector<ProductType> &wanted) {
         const auto &pa = d;
         std::string key = tag + '|' + filePath;
@@ -91,7 +91,7 @@ namespace Solvers {
             key += '|';
             key += *s;
         }
-        for (const char c: systems) key += c;
+        for (const SatSystem sys: systems) key += charFrom(sys);
         key += '|';
         for (const auto id: wanted) key += std::to_string(static_cast<int>(id)) + ',';
         if (!prodCache || key != prodCacheKey) {
@@ -454,8 +454,11 @@ namespace Solvers {
                                                                                  : I18n::trc("common.none"));
         if (truth.fixed.squaredNorm() > 1.0)
             m.xyz(I18n::trc("export.meta.ref_xyz"), truth.fixed.x(), truth.fixed.y(), truth.fixed.z());
-        if (truth.form == RefForm::File && truth.fileReady)
-            m.integer(I18n::trc("export.meta.ref_prn"), truth.sat.id);
+        if (truth.form == RefForm::File) {
+            std::lock_guard lk(truthFileMtx);
+            if (truth.fileReady)
+                m.integer(I18n::trc("export.meta.ref_prn"), truth.sat.id);
+        }
 
         writeCSVParams(m);
         w.blank();

@@ -46,15 +46,15 @@ add_executable(GnssLab WIN32
     io/ProductReader.cpp
     io/ObsDate.cpp
     io/ObsSource.cpp
+    solvers/ins/ImuScaleProbe.cpp
     core/IniFile.cpp
     ui/Gui.cpp
     ui/Markdown.h
     ui/Markdown.cpp
     ui/DatePicker.cpp
-    ui/DragBar.cpp
+    ui/Splitter.cpp
     ui/ParamPage.cpp
     ui/ImGuiLabel.h
-    ui/ImGuiLabel.cpp
     tools/GuiTimeConverter.cpp
     tools/GuiCoordConverter.cpp
     tools/GuiLsqSolver.cpp
@@ -195,6 +195,7 @@ set(CLI_ENGINE
     ${CMAKE_CURRENT_SOURCE_DIR}/solvers/rtk/Pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/io/ObsDate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/io/ObsSource.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/solvers/ins/ImuScaleProbe.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/io/ProductReader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/io/ProductPaths.cpp
     ${CLI_DIR}/TaskViews.cpp

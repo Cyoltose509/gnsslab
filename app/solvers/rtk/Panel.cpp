@@ -72,67 +72,66 @@ namespace Solvers::RTK {
     }
 
     void Task::renderConfigPanel() {
-        auto *self = this;
-        const auto onStart = [self] {
+        const auto onStart = [this] {
             const auto &cfg = AppConfig::PathMemory::instance();
-            cfg.set("rtk_base", self->baseObsPathBuf);
-            cfg.set("rtk_rover", self->view.obsPathBuf);
-            cfg.set("rtk_nav", self->navPathBuf);
-            Helpers::saveSolverParams(Mode::RTK, self->opts);
-            persistBaseCoord(self);
-            RefTruth::persist(self);
+            cfg.set("rtk_base", baseObsPathBuf);
+            cfg.set("rtk_rover", view.obsPathBuf);
+            cfg.set("rtk_nav", navPathBuf);
+            Helpers::saveSolverParams(Mode::RTK, opts);
+            persistBaseCoord(this);
+            RefTruth::persist(this);
 
             if (const std::string inputErr = ObsSource::RTKInputError(
-                    self->baseObsPathBuf, self->view.obsPathBuf, self->navPathBuf);
+                    baseObsPathBuf, view.obsPathBuf, navPathBuf);
                 !inputErr.empty()) {
                 ImGui::TextColored(UI::kColFail, "%s", inputErr.c_str());
             } else {
-                self->isRealtime = false;
-                self->applyObsPath(self->view.obsPathBuf);
-                self->fileName = File::baseName(self->view.obsPathBuf) + " / "
-                                + File::baseName(self->baseObsPathBuf);
-                LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start_file", self->baseObsPathBuf,
-                                                                self->view.obsPathBuf);
-                self->startFile();
+                isRealtime = false;
+                applyObsPath(view.obsPathBuf);
+                fileName = File::baseName(view.obsPathBuf) + " / "
+                                + File::baseName(baseObsPathBuf);
+                LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start_file", baseObsPathBuf,
+                                                                view.obsPathBuf);
+                startFile();
             }
         };
-        const auto fileTab = [self] {
-            Helpers::fileRow(I18n::trc("rtk.base_obs_file"), &self->baseObsPathBuf, "rtk_base", FileDialog::fObs(),
-                             {}, "rtk_base", &self->navPathBuf);
-            Helpers::fileRow(I18n::trc("rtk.rover_obs_file"), &self->view.obsPathBuf, "rtk_rover", FileDialog::fObs(),
-                             {}, "rtk_rover", &self->navPathBuf);
-            Helpers::fileRow(I18n::trc("BroadcastEphemeris"), &self->navPathBuf, "rtk_nav", FileDialog::fRnx(), {}, "rtk_rover");
+        const auto fileTab = [this] {
+            Helpers::fileRow(I18n::trc("rtk.base_obs_file"), &baseObsPathBuf, "rtk_base", FileDialog::fObs(),
+                             {}, "rtk_base", &navPathBuf);
+            Helpers::fileRow(I18n::trc("rtk.rover_obs_file"), &view.obsPathBuf, "rtk_rover", FileDialog::fObs(),
+                             {}, "rtk_rover", &navPathBuf);
+            Helpers::fileRow(I18n::trc("BroadcastEphemeris"), &navPathBuf, "rtk_nav", FileDialog::fRnx(), {}, "rtk_rover");
             ImGui::Separator();
-            renderBaseCoordInput(self);
+            renderBaseCoordInput(this);
             ImGui::Separator();
-            RefTruth::renderRefTruthSection(self);
+            RefTruth::renderRefTruthSection(this);
         };
-        const auto realtimeTab = [self] {
+        const auto realtimeTab = [this] {
             const auto &cfg = AppConfig::PathMemory::instance();
-            self->renderRealtimeConfig({I18n::tr("BaseStation"), I18n::tr("Rover")},
-                [self, &cfg] {
-                    const std::string &bip = self->rtEndpoints[0].ip;
-                    const std::string &bport = self->rtEndpoints[0].port;
-                    const std::string &rip = self->rtEndpoints[1].ip;
-                    const std::string &rport = self->rtEndpoints[1].port;
+            renderRealtimeConfig({I18n::tr("BaseStation"), I18n::tr("Rover")},
+                [this, &cfg] {
+                    const std::string &bip = rtEndpoints[0].ip;
+                    const std::string &bport = rtEndpoints[0].port;
+                    const std::string &rip = rtEndpoints[1].ip;
+                    const std::string &rport = rtEndpoints[1].port;
                     cfg.set("rtk_rt_base_ip", bip);
                     cfg.set("rtk_rt_base_port", bport);
                     cfg.set("rtk_rt_rover_ip", rip);
                     cfg.set("rtk_rt_rover_port", rport);
-                    Helpers::saveSolverParams(Mode::RTK, self->opts);
-                    persistBaseCoord(self);
+                    Helpers::saveSolverParams(Mode::RTK, opts);
+                    persistBaseCoord(this);
 
-                    self->isRealtime = true;
-                    self->mode = Mode::RTK;
-                    self->fileName = bip + ":" + bport + " / " + rip + ":" + rport;
-                    self->filePath = self->fileName;
+                    isRealtime = true;
+                    mode = Mode::RTK;
+                    fileName = bip + ":" + bport + " / " + rip + ":" + rport;
+                    filePath = fileName;
                     LOG_INFO << "[RTK] " << I18n::tr("rtk.log.start_rt", bip + ":" + bport,
                                                                   rip + ":" + rport);
 
-                    self->startRealtime();
+                    startRealtime();
                 },
-                [self] { renderBaseCoordInput(self); });
+                [this] { renderBaseCoordInput(this); });
         };
-        self->renderConfigTabs(UI::idLabel("rtk.cfg_tab", "###rtk_cfg_"), fileTab, onStart, realtimeTab);
+        renderConfigTabs(UI::idLabel("rtk.cfg_tab", "###rtk_cfg_"), fileTab, onStart, realtimeTab);
     }
 }

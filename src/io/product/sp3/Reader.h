@@ -18,7 +18,7 @@ namespace SP3 {
 
         static SatID parseSatId(const std::string &s) {
             if (s.size() < 3) return {};
-            return {s[0], std::stoi(s.substr(1, 2))};
+            return {satSystemFrom(s[0]), std::stoi(s.substr(1, 2))};
         }
 
 

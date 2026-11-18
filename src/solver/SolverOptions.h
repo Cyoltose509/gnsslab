@@ -32,7 +32,7 @@ struct SolverOptions {
     int maxEpochs = 0;
 
     double cutoffDeg = 15.0;
-    std::set<char> systems{'G', 'C'};
+    std::set<SatSystem> systems{SatSystem::G, SatSystem::C};
     double sampleInterval = 0.0;
 
     SPPConfig spp;

@@ -171,10 +171,12 @@ namespace Download::Http {
     bool downloadFile(const std::string &url, const std::string &localPath,
                       const ProgressCb &progress,
                       const LogCb &log, const int stalls,
-                      const int idleSec, const std::atomic<bool> *cancel) {
+                      const int idleSec, const std::atomic<bool> *cancel, bool *cancelled) {
+        if (cancelled) *cancelled = false;
         int stalled = 0;
         for (int attempt = 1; stalled < stalls && attempt <= 1000; ++attempt) {
             if (cancel && cancel->load()) {
+                if (cancelled) *cancelled = true;
                 if (log) log(I18n::tr("dl.http.cancelled"));
                 return false;
             }
@@ -235,6 +237,7 @@ namespace Download::Http {
             const std::string why = cbErr.empty() ? std::string(curl_easy_strerror(r)) : cbErr;
 
             if (cancel && cancel->load()) {
+                if (cancelled) *cancelled = true;
                 if (log) log(I18n::tr("dl.http.cancelled"));
                 return false;
             }

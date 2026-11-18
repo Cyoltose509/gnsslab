@@ -3,7 +3,6 @@
 #include "Products.h"
 
 #include <algorithm>
-#include <cmath>
 #include <vector>
 
 #include <Eigen/Cholesky>
@@ -11,7 +10,6 @@
 #include "core/Const.h"
 #include "core/geom/CoordConvert.h"
 #include "Log.h"
-#include "i18n/I18n.h"
 
 GnssSolver::GnssSolver() : prod(std::make_shared<Products>()) {
 }
@@ -72,7 +70,6 @@ void GnssSolver::trackEpochGap() {
 
 
 void GnssSolver::earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d &recv) {
-    // Sagnac 改正：把发射时刻的卫星 PVT 旋到接收时刻的 ECEF 框架。两站相距千米级时各自旋转的差异在毫米量级。
     dst.clear();
     for (auto const &[sat, pvt]: satPVTTransTime) {
         const double ang = OMEGA_EARTH * (pvt.p - recv).norm() / C_MPS;
@@ -90,12 +87,12 @@ void GnssSolver::earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d 
 
 
 void GnssSolver::computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::Vector3d &recv,
-                                 SatValueMap &elev, SatValueMap *azim) const {
+                                 SatValueMap &elev, SatValueMap &azim) const {
     elev.clear();
-    if (azim) azim->clear();
+    azim.clear();
     for (auto const &[sat, pvt]: src) {
         elev[sat] = Coord::elevation(recv, pvt.p, frame);
-        if (azim) (*azim)[sat] = Coord::azimuth(recv, pvt.p, frame);
+        azim[sat] = Coord::azimuth(recv, pvt.p, frame);
     }
 }
 
@@ -103,7 +100,8 @@ void GnssSolver::computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::V
 bool GnssSolver::ephUnhealthy(const SatID &sat, const Ephemeris *eph, const bool enabled) {
     if (!enabled || !eph || eph->health == 0u) return false;
     if (mHealthWarned.insert(sat).second)
-        LOG_WARN << "[HEALTH] " << I18n::tr("log.unhealthy", sat.toString(), eph->health);
+        LOG_WARN << "[HEALTH] dropped satellite " << sat.toString()
+                << " flagged unhealthy by the broadcast ephemeris (health=" << eph->health << ")";
     return true;
 }
 
@@ -127,15 +125,13 @@ GnssSolver::DopplerResult GnssSolver::estimateVelocity() {
     if (!isSaneECEF(pos)) return out;
 
     const Weight w = dopplerWeight();
-    // 每颗星一行 u·v + δṫ = -λ·D + u·v_sv，u 为接收机指向卫星的单位矢量。
     std::vector<Eigen::Vector4d> rows;
     std::vector<double> obsVal, wts;
     rows.reserve(satPVTRecTime.size());
     for (const auto &[sat, pvt]: satPVTRecTime) {
         const auto it = mCurObs->satTypeValueData.find(sat);
         if (it == mCurObs->satTypeValueData.end() || !wantDopplerSat(sat, it->second)) continue;
-
-        // 第一频点的多普勒；拿不到就不参与（不拿别的频点凑数，波长对不上）。
+        
         double doppler = 0.0;
         bool found = false;
         for (const auto &[k, v]: it->second) {
@@ -152,7 +148,7 @@ GnssSolver::DopplerResult GnssSolver::estimateVelocity() {
         if (rho < 1.0) continue;
         const double wgt = w.weight(satElevData.at(sat)) * kDopplerWeightScale;
         if (!(wgt > 0.0)) continue;
-        const double freqHz = sat.system == 'R' ? getGlonassFreq('1', sat.chan) : getFreq(sat.system, "L1");
+        const double freqHz = sat.system == SatSystem::R ? getGlonassFreq('1', sat.chan) : getFreq(sat.system, "L1");
         if (freqHz <= 0.0) continue;
 
         const Eigen::Vector3d u = (pos - pvt.p) / rho;

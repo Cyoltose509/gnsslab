@@ -8,6 +8,7 @@ set(LIB_SOURCES
         i18n/I18n.cpp
 
         core/Const.h
+        core/SatSystem.h
         core/SatID.h
 
         core/obs/ObsStruct.h

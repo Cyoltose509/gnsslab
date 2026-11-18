@@ -18,7 +18,7 @@
 #include "solvers/view/GuiExport.h"
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiSolverPanel.h"
-#include "ui/DragBar.h"
+#include "ui/Splitter.h"
 #include "ui/GuiColors.h"
 #include "i18n/I18n.h"
 #include "ui/ImGuiLabel.h"
@@ -30,8 +30,6 @@ namespace Solvers::INS {
         constexpr float kSeriesH = 190.0f;
         constexpr float kChartMinH = 90.0f;
         constexpr float kChartMaxH = 1200.0f;
-
-        bool followTail = true;
 
         struct Line {
             const char *name;
@@ -82,7 +80,7 @@ namespace Solvers::INS {
                 ImGui::TextDisabled(I18n::trc("ins.no_data"));
                 return;
             }
-            float &h = UI::dragHeight(key, kSeriesH);
+            float &h = UI::splitHeight(key, kSeriesH);
             if (ImPlot::BeginPlot(title, ImVec2(-1.0f, h))) {
                 ImPlot::SetupAxes("Epoch", ylabel);
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
@@ -95,7 +93,7 @@ namespace Solvers::INS {
                 ImPlot::EndPlot();
             }
             ImGui::PushID(key);
-            UI::heightGrip("##grip", h, kChartMinH, kChartMaxH);
+            UI::splitHandle("##grip", h, kChartMinH, kChartMaxH);
             ImGui::PopID();
         }
 
@@ -104,7 +102,7 @@ namespace Solvers::INS {
                 ImGui::TextDisabled(I18n::trc("ins.no_data"));
                 return;
             }
-            float &h = UI::dragHeight("ins_track", kPlanH);
+            float &h = UI::splitHeight("ins_track", kPlanH);
             if (ImPlot::BeginPlot(UI::idLabel("ins.res.track", "###ins_track"), ImVec2(-1.0f, h), ImPlotFlags_Equal)) {
                 ImPlot::SetupAxes("E (m)", "N (m)");
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
@@ -121,7 +119,7 @@ namespace Solvers::INS {
                 ImPlot::EndPlot();
             }
             ImGui::PushID("ins_track");
-            UI::heightGrip("##grip", h, 160.0f, kChartMaxH);
+            UI::splitHandle("##grip", h, 160.0f, kChartMaxH);
             ImGui::PopID();
         }
 
@@ -175,9 +173,7 @@ namespace Solvers::INS {
             std::size_t total = 0;
             std::size_t zuptCount = 0;
             double t0 = 0.0;
-            std::string modelName;
             std::string scaleNote;
-            ImuScaleSource scaleSource = ImuScaleSource::Record;
             ImuScale scale;
             AlignInfo align;
             Eigen::Vector3d accelBias = Eigen::Vector3d::Zero();
@@ -243,13 +239,12 @@ namespace Solvers::INS {
 
             ImGui::SeparatorText(I18n::trc("param.group.solve"));
             ImGui::Text(I18n::trc("ins.res.imu_summary"),
-                        m.modelName.empty() ? I18n::trc("common.unknown") : m.modelName.c_str(), m.total, sel + 1);
+                        m.scaleNote.empty() ? I18n::trc("common.unknown") : m.scaleNote.c_str(),
+                        m.total, sel + 1);
             ImGui::Text(I18n::trc("ins.res.zupt_count"), m.zuptCount);
             ImGui::Text(I18n::trc("ins.res.scale"),
                         m.scale.accelMpsPerLsb, m.scale.gyroRadPerLsb, m.scale.rateHz);
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(m.scaleSource == ImuScaleSource::Record ? UI::kColInfo : UI::kColWarn,
-                               I18n::trc("ins.res.scale_source"), m.scaleNote.c_str());
             if (m.align.used) {
                 ImGui::Text(I18n::trc("ins.res.init_attitude"),
                             m.align.spanSec, m.align.rollDeg, m.align.pitchDeg, m.align.headingDeg);
@@ -296,9 +291,7 @@ namespace Solvers::INS {
             std::lock_guard lk(resMutex);
             m.total = snap->nav.size();
             m.zuptCount = snap->zuptCount;
-            m.modelName = snap->modelName;
             m.scaleNote = snap->scaleNote;
-            m.scaleSource = snap->scaleSource;
             m.scale = snap->scale;
             m.align = snap->align;
             m.accelBias = snap->accelBias;

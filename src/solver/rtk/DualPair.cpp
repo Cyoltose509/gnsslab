@@ -90,10 +90,10 @@ DualPair::Action DualPair::classify(const CommonTime &baseEpoch, const CommonTim
     return baseEpoch < roverEpoch ? Action::AdvanceBase : Action::AdvanceRover;
 }
 
-EphemerisTable *DualPair::selectEph(const EphPtr &baseEph, const EphPtr &roverEph) {
-    if (baseEph && !baseEph->empty()) return baseEph.get();
-    if (roverEph && !roverEph->empty()) return roverEph.get();
-    return baseEph ? baseEph.get() : roverEph.get();
+DualPair::EphPtr DualPair::selectEph(const EphPtr &baseEph, const EphPtr &roverEph) {
+    if (baseEph && !baseEph->empty()) return baseEph;
+    if (roverEph && !roverEph->empty()) return roverEph;
+    return baseEph ? baseEph : roverEph;
 }
 
 bool DualPair::ensurePrimed() {

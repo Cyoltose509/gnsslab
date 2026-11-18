@@ -7,7 +7,6 @@
 
 #include "Log.h"
 #include "SPP.h"
-#include "i18n/I18n.h"
 
 std::size_t Filter::runForward(const Session &session) {
     clear();
@@ -23,9 +22,10 @@ std::size_t Filter::runForward(const Session &session) {
             try {
                 ok = session.solver->processEpoch(obs);
             } catch (const std::exception &e) {
-                LOG_ERROR << I18n::tr("log.filter.fwd_epoch_error", obs.epoch.m_sod, e.what());
+                LOG_ERROR << "[FILTER] forward epoch failed (sod=" << obs.epoch.m_sod << "): " << e.what();
             } catch (...) {
-                LOG_ERROR << I18n::tr("log.filter.fwd_epoch_unknown", obs.epoch.m_sod);
+                LOG_ERROR << "[FILTER] forward epoch failed with an unknown exception (sod="
+                        << obs.epoch.m_sod << ")";
             }
         }
         Out out;
@@ -57,7 +57,7 @@ std::size_t Filter::runBackward(const Session &session) const {
     if (n == 0) return 0;
     const std::unique_ptr<SPP> bwd = session.make();
     if (!bwd) {
-        LOG_ERROR << I18n::trc("log.filter.bwd_create_fail");
+        LOG_ERROR << "[FILTER] failed to create the backward solver";
         return 0;
     }
     bwd->prod = session.solver->prod;
@@ -70,7 +70,7 @@ std::size_t Filter::runBackward(const Session &session) const {
         try {
             ok = bwd->processEpoch(obs);
         } catch (const std::exception &e) {
-            LOG_ERROR << I18n::tr("log.filter.bwd_epoch_error", i, e.what());
+            LOG_ERROR << "[FILTER] backward epoch failed (idx=" << i << "): " << e.what();
         } catch (...) {
         }
 

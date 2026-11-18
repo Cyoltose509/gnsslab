@@ -24,7 +24,7 @@ namespace Solvers::INS {
         constexpr std::size_t kScaleHeadSamples = 12000;
         /// 攒给粗对准与零偏标定的首批头段时长
         constexpr double kAlignHeadSec = 120.0;
-        /// 段后连续运动够这么长，才算静置结束；否则只是又被搬了一下
+        /// 段后连续运动够这么长，才算静置结束
         constexpr double kRunoffSec = 30.0;
         /// 判出静置段还没到头就再读这么多秒重判
         constexpr double kAlignExtendSec = 60.0;
@@ -109,6 +109,22 @@ namespace Solvers::INS {
         headSamples = 0;
         aligning = false;
         curves = CurveCache{};
+        navWeek = 0;
+        freeIns = ::INS{};
+        zuptIns = ::INS{};
+        scale = ImuScale{};
+        alignHead.clear();
+        solveFrom = 0;
+        // 初始位置与重力只跟配置有关，两个线程起来之前算一次，之后都只读。
+        try {
+            llh0 = initialLLH(opts.ins);
+            gravity = getGravity(llh0[0], llh0[2]);
+            initialError.clear();
+        } catch (const std::exception &ex) {
+            llh0.setZero();
+            gravity = 0.0;
+            initialError = I18n::tr("ins.err.blh_prefix", ex.what());
+        }
     }
 
     bool Task::feedImu(const ImuSample &s) {
@@ -139,31 +155,26 @@ namespace Solvers::INS {
     }
 
     void Task::readBody() {
-        const INSConfig c = opts.ins;
-        Eigen::Vector3d llh;
-        try {
-            llh = initialLLH(c);
-        } catch (const std::exception &ex) {
-            failRead(I18n::tr("ins.err.blh_prefix", ex.what()));
+        if (!initialError.empty()) {
+            failRead(initialError);
             return;
         }
-        const double gravity = NormalGravity::at(llh[0], llh[2]);
-
+        const INSConfig c = opts.ins;
+        if (!c.manual.known()) {
+            failRead(I18n::tr("ins.err.scale_missing"));
+            return;
+        }
         const auto reader = Observer::makeNovAtelReader(c.imuPath);
         if (!reader || !reader->open(c.imuPath)) {
             failRead(I18n::tr("ins.err.open_imu", c.imuPath));
             return;
         }
 
-        // 先攒开头一小段定当量：手填或型号自描述一两帧就够，否则要够反推用的静置样本。
+        // 采样率不在界面上填：拿开头一小段的时间戳间隔算，手填当量时同样按数据走。
         ImuLog head;
         ImuSample sample;
-        const std::size_t cap = c.manual.known() ? 2 : kScaleHeadSamples;
         try {
-            while (head.size() < cap && reader->getNextImu(sample)) {
-                head.push_back(sample);
-                if (c.manual.known() || reader->detectedImuModel()) break;
-            }
+            while (head.size() < kScaleHeadSamples && reader->getNextImu(sample)) head.push_back(sample);
         } catch (const std::exception &ex) {
             failRead(I18n::tr("ins.err.decode", ex.what()));
             return;
@@ -172,22 +183,15 @@ namespace Solvers::INS {
             failRead(I18n::tr("ins.err.no_records"));
             return;
         }
-
-        ::INS ins; // 只用输入准备：解当量
-        ins.gravity = gravity;
-        if (!ins.resolveScale(head, reader->detectedImuModel(), c.manual)) {
-            failRead(ins.scaleError);
-            return;
-        }
+        const ImuScale resolved = c.manual;
         {
             std::lock_guard lk(resMutex);
             if (!result) result = std::make_shared<Result>();
-            result->modelName = ins.scaleName;
-            result->scale = ins.scale;
-            result->scaleSource = ins.scaleSource;
-            result->scaleNote = ins.scaleNote;
+            result->scale = resolved;
+            result->scaleNote = scaleText.empty() ? I18n::tr("ins.scale.manual_note") : scaleText;
         }
-        LOG_INFO << "[INS] " << I18n::tr("ins.log.scale", ins.scaleNote, ins.scale.rateHz);
+        LOG_INFO << "[INS] " << I18n::tr("ins.log.scale", resolved.accelMpsPerLsb, resolved.gyroRadPerLsb,
+                                         resolved.rateHz);
         markNavReady();
 
         for (const auto &s: head)
@@ -207,138 +211,150 @@ namespace Solvers::INS {
 
     void Task::solveBody() {
         const INSConfig c = opts.ins;
-        const auto bail = [this](const std::string &msg) {
-            setError(msg);
-            finishSolving();
-        };
-
-        Eigen::Vector3d llh;
         try {
-            llh = initialLLH(c);
-        } catch (const std::exception &ex) {
-            bail(I18n::tr("ins.err.blh_prefix", ex.what()));
-            return;
+            if (!initialError.empty()) {
+                setError(initialError);
+                finishSolving();
+                return;
+            }
+            if (!waitNavReady()) {
+                LOG_WARN << "[INS] " << I18n::tr("ins.log.cancelled");
+                finishSolving();
+                return;
+            }
+            {
+                std::shared_ptr<Result> res;
+                {
+                    std::lock_guard lk(resMutex);
+                    res = result;
+                }
+                if (!res || !res->scale.known()) {
+                    if (errorMessage().empty()) setError(I18n::tr("ins.err.scale_not_ready"));
+                    finishSolving();
+                    return;
+                }
+                scale = res->scale;
+            }
+            if (!prepareAlignHead(c) || !prepareInitialState(c)) {
+                finishSolving();
+                return;
+            }
+            runSolveLoop();
+        } catch (const std::exception &e) {
+            LOG_ERROR << "[INS] " << I18n::tr("solver.log.thread_error", e.what());
+            setError(e.what());
+        } catch (...) {
+            LOG_ERROR << "[INS] " << I18n::tr("solver.err.thread_unknown");
+            setError(I18n::trc("solver.err.thread_unknown"));
         }
-        const double gravity = NormalGravity::at(llh[0], llh[2]);
+        finishSolving();
+    }
 
-        if (!waitNavReady()) {
-            LOG_WARN << "[INS] " << I18n::tr("ins.log.cancelled");
-            finishSolving();
-            return;
-        }
-        std::shared_ptr<Result> r;
-        {
-            std::lock_guard lk(resMutex);
-            r = result;
-        }
-        if (!r || !r->scale.known()) {
-            if (errorMessage().empty()) setError(I18n::tr("ins.err.scale_not_ready"));
-            finishSolving();
-            return;
-        }
-        const ImuScale scale = r->scale;
-
-        // 攒开头一段做粗对准与零偏标定。静置有多长就攒多长：判出的段后面
-        // 还没出现足够长的连续运动，说明段没到头，接着读再判。
+    bool Task::prepareAlignHead(const INSConfig &c) {
+        // 攒开头一段做粗对准与零偏标定。
         aligning = true;
-        ImuLog head;
         const bool replay = std::filesystem::exists(c.imuPath);
-        const double capSec = c.specifyAttitude ? 2.0 : (replay ? kAlignMaxSec : kAlignHeadSec);
+        const double capSec = c.specifyAttitude ? 2.0 : replay ? kAlignMaxSec : kAlignHeadSec;
         const auto capSamples = static_cast<std::size_t>(capSec * scale.rateHz);
         const auto headSamplesNeed = static_cast<std::size_t>(kAlignHeadSec * scale.rateHz);
         std::size_t alignNeed = std::min(capSamples, headSamplesNeed);
         while (true) {
-            while (head.size() < alignNeed) {
+            while (alignHead.size() < alignNeed) {
                 ImuSample s;
                 if (!nextImu(s)) break;
-                head.push_back(s);
-                headSamples.store(static_cast<int>(head.size()));
+                alignHead.push_back(s);
+                headSamples.store(static_cast<int>(alignHead.size()));
             }
-            if (head.size() < alignNeed || head.size() >= capSamples || !replay) break;
-            const StaticSpan span = Aligner::detectStatic(head, scale);
+            if (alignHead.size() < alignNeed || alignHead.size() >= capSamples || !replay) break;
+            const StaticSpan span = Aligner::detectStatic(alignHead, scale);
             if (span.tailMove >= static_cast<std::size_t>(kRunoffSec * scale.rateHz)) break;
-            alignNeed = std::min(capSamples,
-                                 head.size() + static_cast<std::size_t>(kAlignExtendSec * scale.rateHz));
+            alignNeed = std::min(capSamples, alignHead.size() + static_cast<std::size_t>(kAlignExtendSec * scale.rateHz));
         }
         aligning = false;
 
-        if (head.empty()) {
-            bail(I18n::tr("ins.err.no_records"));
-            return;
+        if (alignHead.empty()) {
+            setError(I18n::tr("ins.err.no_records"));
+            return false;
         }
-        navWeek = head.front().gnssWeek;
-        if (!c.specifyAttitude && head.size() < static_cast<std::size_t>(20.0 * scale.rateHz)) {
-            bail(I18n::tr("ins.err.short_static", head.size()));
-            return;
+        navWeek = alignHead.front().gnssWeek;
+        if (!c.specifyAttitude && alignHead.size() < static_cast<std::size_t>(20.0 * scale.rateHz)) {
+            setError(I18n::tr("ins.err.short_static", alignHead.size()));
+            return false;
         }
+        return true;
+    }
 
-        ::INS free, zupt;
-        zupt.scale = scale;         // 输入准备与判静参数都按采样率换算
-        zupt.gravity = gravity;
+    bool Task::prepareInitialState(const INSConfig &c) {
+        zuptIns.scale = scale; // 输入准备与判静参数都按采样率换算
+        zuptIns.gravity = gravity;
         // ZUPT 是 INS 的开关：zupt 实例打开，free 实例保持自由解作对照。
-        zupt.zuptEnabled = true;
-        zupt.zuptAccelTol = c.zuptAccelTol;
-        zupt.zuptGyroTol = c.zuptGyroTol;
-        zupt.zuptHoldSec = c.zuptHoldSec;
+        zuptIns.zuptEnabled = true;
+        zuptIns.zuptAccelTol = c.zuptAccelTol;
+        zuptIns.zuptGyroTol = c.zuptGyroTol;
+        zuptIns.zuptHoldSec = c.zuptHoldSec;
 
-        InsInit init;
-        init.llh = llh;
-        init.vned = Eigen::Vector3d(c.vN, c.vE, c.vD);
+        NavState x0;
+        x0.llh = llh0;
+        x0.vned = Eigen::Vector3d(c.vN, c.vE, c.vD);
+        Euler rphDeg; // 配置层用度，状态层用四元数，转换只在这一处发生
         if (!c.specifyAttitude) {
-            if (!zupt.align(head, llh[0])) {
-                bail(zupt.alignError);
-                return;
-            }
-            init.rollDeg = zupt.alignAtt.roll * RAD_TO_DEG;
-            init.pitchDeg = zupt.alignAtt.pitch * RAD_TO_DEG;
-            init.headingDeg = zupt.alignAtt.yaw * RAD_TO_DEG;
+            zuptIns.align(alignHead, llh0[0]);
+            rphDeg.roll = zuptIns.alignAtt.roll * RAD_TO_DEG;
+            rphDeg.pitch = zuptIns.alignAtt.pitch * RAD_TO_DEG;
+            rphDeg.yaw = zuptIns.alignAtt.yaw * RAD_TO_DEG;
             {
                 std::lock_guard lk(resMutex);
-                r->align.used = true;
-                r->align.spanSec = static_cast<double>(zupt.alignCount) / scale.rateHz;
-                r->align.rollDeg = init.rollDeg;
-                r->align.pitchDeg = init.pitchDeg;
-                r->align.headingDeg = init.headingDeg;
-                r->align.earthRateErrDeg = zupt.alignEarthRateErrDeg;
-                r->align.gyroSigmaRad = zupt.alignGyroSigmaRad;
-                r->align.yawSpreadDeg = zupt.alignYawSpreadDeg;
-                r->align.headingReliable = zupt.alignHeadingReliable;
+                Result &r = *result;
+                r.align.used = true;
+                r.align.spanSec = static_cast<double>(zuptIns.alignCount) / scale.rateHz;
+                r.align.rollDeg = rphDeg.roll;
+                r.align.pitchDeg = rphDeg.pitch;
+                r.align.headingDeg = rphDeg.yaw;
+                r.align.earthRateErrDeg = zuptIns.alignEarthRateErrDeg;
+                r.align.gyroSigmaRad = zuptIns.alignGyroSigmaRad;
+                r.align.yawSpreadDeg = zuptIns.alignYawSpreadDeg;
+                r.align.headingReliable = zuptIns.alignHeadingReliable;
             }
-            LOG_INFO << "[INS] " << I18n::tr("ins.log.coarse_align", zupt.alignCount / scale.rateHz,
-                                                     init.rollDeg, init.pitchDeg, init.headingDeg,
-                                                     zupt.alignYawSpreadDeg);
+            LOG_INFO << "[INS] " << I18n::tr("ins.log.coarse_align", zuptIns.alignCount / scale.rateHz,
+                                             rphDeg.roll, rphDeg.pitch, rphDeg.yaw,
+                                             zuptIns.alignYawSpreadDeg);
         } else {
-            init.rollDeg = c.rollDeg;
-            init.pitchDeg = c.pitchDeg;
-            init.headingDeg = c.headingDeg;
+            rphDeg.roll = c.rollDeg;
+            rphDeg.pitch = c.pitchDeg;
+            rphDeg.yaw = c.headingDeg;
         }
 
         // 导航从对准段末端起算：段内的上电沉降、搬运不是载体运动，喂进编排只会积出假速度。
-        const std::size_t solveFrom = c.specifyAttitude ? 0 : zupt.alignBegin + zupt.alignCount;
-        if (solveFrom >= head.size()) {
-            bail(I18n::tr("ins.err.short_static", head.size()));
-            return;
+        solveFrom = c.specifyAttitude ? 0 : zuptIns.alignBegin + zuptIns.alignCount;
+        if (solveFrom >= alignHead.size()) {
+            setError(I18n::tr("ins.err.short_static", alignHead.size()));
+            return false;
         }
-        init.t0 = head[solveFrom].tow;
+        x0.t = alignHead[solveFrom].tow;
+        x0.qbn = ATTQuat::fromEuler({rphDeg.roll * DEG_TO_RAD, rphDeg.pitch * DEG_TO_RAD,
+                                     rphDeg.yaw * DEG_TO_RAD});
 
-        free.init(init);
-        zupt.init(init);
+        freeIns.init(x0);
+        zuptIns.init(x0);
         // 静置段标定：加计零偏进转换、参考矢量进判据，全部落在 zupt 实例内。
-        zupt.calibrate(head);
-        if (zupt.biasApplied) {
+        zuptIns.calibrate(alignHead);
+        if (zuptIns.biasApplied) {
             {
                 std::lock_guard lk(resMutex);
-                r->accelBias = zupt.accelBias;
-                r->accelBiasApplied = true;
+                result->accelBias = zuptIns.accelBias;
+                result->accelBiasApplied = true;
             }
             std::ostringstream accelBias, gyroBias;
-            accelBias << zupt.accelBias.transpose();
-            gyroBias << zupt.gyroBiasDiag.transpose();
+            accelBias << zuptIns.accelBias.transpose();
+            gyroBias << zuptIns.gyroBiasDiag.transpose();
             LOG_INFO << "[INS] " << I18n::tr("ins.log.static_bias", accelBias.str(), gyroBias.str());
-        } else if (zupt.alignCount > 1) {
-            LOG_INFO << "[INS] " << I18n::tr("ins.log.bias_too_large", zupt.accelBias.norm());
+        } else if (zuptIns.alignCount > 1) {
+            LOG_INFO << "[INS] " << I18n::tr("ins.log.bias_too_large", zuptIns.accelBias.norm());
         }
+        return true;
+    }
 
+    void Task::runSolveLoop() {
         std::vector<NavState> batchFree, batchZupt;
         std::vector<unsigned char> batchFlag;
         std::vector<InsEpoch> batchImu;
@@ -349,11 +365,11 @@ namespace Solvers::INS {
             if (batchFree.empty()) return;
             {
                 std::lock_guard lk(resMutex);
-                r->nav.insert(r->nav.end(), batchFree.begin(), batchFree.end());
-                r->navZupt.insert(r->navZupt.end(), batchZupt.begin(), batchZupt.end());
-                r->zuptApplied.insert(r->zuptApplied.end(), batchFlag.begin(), batchFlag.end());
-                r->imu.insert(r->imu.end(), batchImu.begin(), batchImu.end());
-                r->zuptCount += batchZuptCount;
+                result->nav.insert(result->nav.end(), batchFree.begin(), batchFree.end());
+                result->navZupt.insert(result->navZupt.end(), batchZupt.begin(), batchZupt.end());
+                result->zuptApplied.insert(result->zuptApplied.end(), batchFlag.begin(), batchFlag.end());
+                result->imu.insert(result->imu.end(), batchImu.begin(), batchImu.end());
+                result->zuptCount += batchZuptCount;
             }
             batchFree.clear();
             batchZupt.clear();
@@ -366,10 +382,10 @@ namespace Solvers::INS {
         {
             std::lock_guard lk(queueMutex);
             const auto from = static_cast<std::ptrdiff_t>(solveFrom + 1);
-            imuQueue.insert(imuQueue.begin(), head.begin() + from, head.end());
+            imuQueue.insert(imuQueue.begin(), alignHead.begin() + from, alignHead.end());
         }
-        zupt.prevRaw = head[solveFrom]; // 转换接续点：首个被转换样本是 head[solveFrom+1]
-        zupt.hasPrevRaw = true;
+        zuptIns.prevRaw = alignHead[solveFrom]; // 转换接续点：首个被转换样本是 alignHead[solveFrom+1]
+        zuptIns.hasPrevRaw = true;
 
         while (true) {
             ImuSample smp;
@@ -377,14 +393,14 @@ namespace Solvers::INS {
             if (stop.load()) break;
             if (maxEpochs > 0 && static_cast<int>(processed) >= maxEpochs) break;
 
-            const InsEpoch e = zupt.toEpoch(smp);
+            const InsEpoch e = zuptIns.toEpoch(smp);
 
-            free.update(e);
-            zupt.update(e);
-            batchFree.push_back(free.s);
-            batchZupt.push_back(zupt.s);
-            batchFlag.push_back(zupt.zuptApplied ? 1 : 0);
-            if (zupt.zuptApplied) ++batchZuptCount;
+            freeIns.update(e);
+            zuptIns.update(e);
+            batchFree.push_back(freeIns.s);
+            batchZupt.push_back(zuptIns.s);
+            batchFlag.push_back(zuptIns.zuptApplied ? 1 : 0);
+            if (zuptIns.zuptApplied) ++batchZuptCount;
             batchImu.push_back(e);
 
             ++processed;
@@ -395,14 +411,13 @@ namespace Solvers::INS {
         std::size_t total = 0, zuptCount = 0;
         {
             std::lock_guard lk(resMutex);
-            total = r->nav.size();
-            zuptCount = r->zuptCount;
+            total = result->nav.size();
+            zuptCount = result->zuptCount;
         }
         LOG_INFO << "[INS] " << I18n::tr("ins.log.done", total, scale.rateHz);
         LOG_INFO << "[INS] " << I18n::tr("ins.log.zupt_stat", total == 0 ? 0.0 : 100.0 * zuptCount / total,
-                                                 zupt.zuptDiag.accDevMax, zupt.zuptDiag.accFail,
-                                                 zupt.zuptDiag.gyrDevMax, zupt.zuptDiag.gyrFail);
-        finishSolving();
+                                         zuptIns.zuptDiag.accDevMax, zuptIns.zuptDiag.accFail,
+                                         zuptIns.zuptDiag.gyrDevMax, zuptIns.zuptDiag.gyrFail);
     }
 
     std::size_t Task::resultEpochCount() const {
@@ -442,10 +457,10 @@ namespace Solvers::INS {
         row.set(F::Vn, s.vned[0]);
         row.set(F::Ve, s.vned[1]);
         row.set(F::Vd, s.vned[2]);
-        const Euler se = s.qbn.toEuler();
-        row.set(F::Roll, se.roll * RAD_TO_DEG);
-        row.set(F::Pitch, se.pitch * RAD_TO_DEG);
-        row.set(F::Heading, se.yaw * RAD_TO_DEG);
+        const auto [roll, pitch, yaw] = s.qbn.toEuler();
+        row.set(F::Roll, roll * RAD_TO_DEG);
+        row.set(F::Pitch, pitch * RAD_TO_DEG);
+        row.set(F::Heading, yaw * RAD_TO_DEG);
         double n = 0.0, e = 0.0;
         Coord::LLHToLocalNE(s.llh[0], s.llh[1], lat0, lon0, n, e);
         row.set(F::E, e);
@@ -458,10 +473,10 @@ namespace Solvers::INS {
             row.set(F::ZuptVn, z.vned[0]);
             row.set(F::ZuptVe, z.vned[1]);
             row.set(F::ZuptVd, z.vned[2]);
-            const Euler za = z.qbn.toEuler();
-            row.set(F::ZuptRoll, za.roll * RAD_TO_DEG);
-            row.set(F::ZuptPitch, za.pitch * RAD_TO_DEG);
-            row.set(F::ZuptHeading, za.yaw * RAD_TO_DEG);
+            const auto [roll, pitch, yaw] = z.qbn.toEuler();
+            row.set(F::ZuptRoll, roll * RAD_TO_DEG);
+            row.set(F::ZuptPitch, pitch * RAD_TO_DEG);
+            row.set(F::ZuptHeading, yaw * RAD_TO_DEG);
             double zn = 0.0, ze = 0.0;
             Coord::LLHToLocalNE(z.llh[0], z.llh[1], lat0, lon0, zn, ze);
             row.set(F::ZuptE, ze);
@@ -470,13 +485,13 @@ namespace Solvers::INS {
         if (i < snap->zuptApplied.size()) row.set(F::ZuptFlag, snap->zuptApplied[i]);
         if (i < snap->imu.size() && snap->imu[i].h > 0.0) {
             // 一次采样的增量除以间隔就是机体系比力与角速度（已扣静置段加计零偏）。
-            const InsEpoch &e = snap->imu[i];
-            row.set(F::Axb, e.dvel[0] / e.h);
-            row.set(F::Ayb, e.dvel[1] / e.h);
-            row.set(F::Azb, e.dvel[2] / e.h);
-            row.set(F::Wxb, e.dtheta[0] / e.h);
-            row.set(F::Wyb, e.dtheta[1] / e.h);
-            row.set(F::Wzb, e.dtheta[2] / e.h);
+            const InsEpoch &e2 = snap->imu[i];
+            row.set(F::Axb, e2.dvel[0] / e2.h);
+            row.set(F::Ayb, e2.dvel[1] / e2.h);
+            row.set(F::Azb, e2.dvel[2] / e2.h);
+            row.set(F::Wxb, e2.dtheta[0] / e2.h);
+            row.set(F::Wyb, e2.dtheta[1] / e2.h);
+            row.set(F::Wzb, e2.dtheta[2] / e2.h);
         }
     }
 

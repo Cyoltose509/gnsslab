@@ -9,9 +9,9 @@
 
 namespace {
     // RINEX2 的两字符类型（C1/L1/P2…）→ RINEX3 的三字符（C1C/L1C/C2W…）
-    std::string toObsType3(const char sys, const std::string &t2) {
+    std::string toObsType3(const SatSystem sys, const std::string &t2) {
         if (t2.size() != 2) return t2;
-        if (sys == 'R') {
+        if (sys == SatSystem::R) {
             // GLONASS：P1/P2 是 G1/G2 上的 P 码
             if (t2 == "C1") return "C1C";
             if (t2 == "P1") return "C1P";
@@ -136,12 +136,12 @@ void RINEX2ObsReader::readSatObs(SatTypeValueMap &stvData, const int numSats,
         }
 
         if (satId.empty()) continue;
-        SatID sat(satId[0], Str::toInt(satId.substr(1, 2)));
-        if (sat.system == 'R') {
+        SatID sat(satSystemFrom(satId[0]), Str::toInt(satId.substr(1, 2)));
+        if (sat.system == SatSystem::R) {
             if (const auto it = mGloChan.find(sat.toString()); it != mGloChan.end())
                 sat.chan = it->second;
         }
-        if (sat.system != 'G' && sat.system != 'C' && sat.system != 'R' && sat.system != 'E') {
+        if (sat.system != SatSystem::G && sat.system != SatSystem::C && sat.system != SatSystem::R && sat.system != SatSystem::E) {
             continue;
         }
         decodeObsBlock(sat, buf, stvData, lliOut);
@@ -163,7 +163,7 @@ void RINEX2ObsReader::afterHeader() {
     for (auto p = "GRECJIS"; *p; ++p) {
         std::vector<std::string> v;
         v.reserve(mTypes2.size());
-        for (const auto &t: mTypes2) v.push_back(toObsType3(*p, t));
-        rinexHeader.mapObsTypes[*p] = std::move(v);
+        for (const auto &t: mTypes2) v.push_back(toObsType3(satSystemFrom(*p), t));
+        rinexHeader.mapObsTypes[satSystemFrom(*p)] = std::move(v);
     }
 }

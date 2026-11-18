@@ -5,6 +5,7 @@
 #include "solvers/view/GuiHelpers.h"
 #include "solvers/view/GuiProductSection.h"
 #include "ui/FileDialog.h"
+#include "ui/Splitter.h"
 #include "solvers/common/Core.h"
 #include "core/Const.h"
 
@@ -21,9 +22,11 @@ namespace Tools::Ins {
     InsVerifyTask::InsVerifyTask() {
         fileName = "ins-verify";
         nameKey = "gui.menu.tools.ins_verify";
+        cfgKey = "ins.verify.window_title";
+        startKey = "ins.verify.start";
     }
 
-    void InsVerifyTask::startVerify() {
+    void InsVerifyTask::startRun() {
         saveInsParams(par);
         if (imuPath.empty()) {
             setError(I18n::tr("ins.verify.err.no_imu"));
@@ -33,13 +36,13 @@ namespace Tools::Ins {
             setError(I18n::tr("ins.verify.err.no_ref"));
             return;
         }
-        beginRun(*this);
+        beginRun();
         {
             std::lock_guard lk(resultMutex);
             report = ::Ins::VerifyReport{};
             reportValid = false;
         }
-        launchWorker(*this, [this] { verifyWorker(); });
+        worker = std::thread(&InsVerifyTask::verifyWorker, this);
     }
 
     void InsVerifyTask::verifyWorker() {
@@ -47,87 +50,79 @@ namespace Tools::Ins {
         opt.startTime = par.startTime;
         opt.init.llh = Eigen::Vector3d(par.latDeg * DEG_TO_RAD, par.lonDeg * DEG_TO_RAD, par.hM);
         opt.init.vned = Eigen::Vector3d(par.vN, par.vE, par.vD);
-        opt.init.rollDeg = par.rollDeg;
-        opt.init.pitchDeg = par.pitchDeg;
-        opt.init.headingDeg = par.headingDeg;
-        ::Ins::Verifier v(imuPath, refPath, opt);
-        if (!v.ready()) {
-            abortRun(*this, v.error());
-            return;
-        }
+        opt.init.qbn = ATTQuat::fromEuler({par.rollDeg * DEG_TO_RAD, par.pitchDeg * DEG_TO_RAD,
+                                           par.headingDeg * DEG_TO_RAD});
+        try {
+            ::Ins::Verifier v(imuPath, refPath, opt);
 
-        // 循环留在界面侧，和标定/对准的 IMU 泵一样：逐条推进、边算边把报告发布出去，
-        // 结果页每帧读 report 快照实时画图。每出 2048 个比对点或首次出点就发布一次。
-        std::size_t lastPub = 0;
-        bool published = false;
-        while (!stop.load() && v.step()) {
-            const std::size_t c = v.report.compared;
-            sampleCount.store(static_cast<long long>(c));
-            if (!published || c - lastPub >= 2048) {
-                lastPub = c;
-                published = true;
-                {
-                    std::lock_guard lk(resultMutex);
-                    report = v.report;
-                    reportValid = true;
+            // 循环留在界面侧，和标定/对准的 IMU 泵一样：逐条推进、边算边把报告发布出去，
+            // 结果页每帧读 report 快照实时画图。每出 2048 个比对点或首次出点就发布一次。
+            std::size_t lastPub = 0;
+            bool published = false;
+            while (!stop.load() && v.step()) {
+                const std::size_t c = v.report.compared;
+                sampleCount.store(static_cast<long long>(c));
+                if (!published || c - lastPub >= 2048) {
+                    lastPub = c;
+                    published = true;
+                    {
+                        std::lock_guard lk(resultMutex);
+                        report = v.report;
+                        reportValid = true;
+                    }
+                    chartDirty.store(true);
                 }
-                chartDirty.store(true);
             }
-        }
-        if (!v.error().empty()) {
-            abortRun(*this, v.error());
-            return;
-        }
-        if (stop.load()) {
-            endRun(*this);
-            return;
-        }
-        v.finish();
-        if (v.report.compared == 0) {
-            abortRun(*this, I18n::tr("ins.verify.err.no_overlap"));
-            return;
-        }
-        // 末批可能不足 2048 点，收尾再发一次完整报告（含 pass 判定）。
-        // 只发一次：report = move(v.report) 会把 series（vector）所有权转移走，
-        // 再 move 一次会把已掏空的 v.report 覆盖回来，导致曲线 series 变空。
-        {
-            std::lock_guard lk(resultMutex);
-            report = std::move(v.report);
-            reportValid = true;
-        }
-        chartDirty.store(true);
+            if (stoppedAndEnd()) return;
+            v.finish();
+            if (v.report.compared == 0) {
+                abortRun(I18n::tr("ins.verify.err.no_overlap"));
+                return;
+            }
+            // 末批可能不足 2048 点，收尾再发一次完整报告（含 pass 判定）。
+            // 只发一次：report = move(v.report) 会把 series（vector）所有权转移走，
+            // 再 move 一次会把已掏空的 v.report 覆盖回来，导致曲线 series 变空。
+            {
+                std::lock_guard lk(resultMutex);
+                report = std::move(v.report);
+                reportValid = true;
+            }
+            chartDirty.store(true);
 
-        char dLat[32], dLon[32], dh[32], dV[32];
-        std::snprintf(dLat, sizeof dLat, "%.2e", report.maxLatDeg);
-        std::snprintf(dLon, sizeof dLon, "%.2e", report.maxLonDeg);
-        std::snprintf(dh, sizeof dh, "%.4f", report.maxHM);
-        std::snprintf(dV, sizeof dV, "%.2e", report.maxV);
-        LOG_INFO << "[" << fileName << "] "
-                 << I18n::tr("ins.verify.log.summary", report.compared, report.imuEpochs, dLat, dLon,
-                             dh, dV, report.pass ? I18n::tr("ins.verify.within_tol")
-                                                 : I18n::tr("ins.verify.over_tol"));
+            char dLat[32], dLon[32], dh[32], dV[32];
+            std::snprintf(dLat, sizeof dLat, "%.2e", report.maxLatDeg);
+            std::snprintf(dLon, sizeof dLon, "%.2e", report.maxLonDeg);
+            std::snprintf(dh, sizeof dh, "%.4f", report.maxHM);
+            std::snprintf(dV, sizeof dV, "%.2e", report.maxV);
+            LOG_INFO << "[" << fileName << "] "
+                     << I18n::tr("ins.verify.log.summary", report.compared, report.imuEpochs, dLat, dLon,
+                                 dh, dV, report.pass ? I18n::tr("ins.verify.within_tol")
+                                                     : I18n::tr("ins.verify.over_tol"));
 
-        finishRun(*this);
+            finishRun();
+        } catch (const std::exception &e) {
+            abortRun(e.what());
+        }
     }
 
-    void InsVerifyTask::renderConfigPanel() {
-        renderInsConfig("ins.verify.window_title", *this, "ins.verify.start",
-                        [&] {
-                            Solvers::Helpers::fileRow(I18n::trc("ins.verify.file_imu"), &imuPath,
-                                                      "ins_verify_imu", FileDialog::fBin(), nullptr);
-                            Solvers::Helpers::fileRow(I18n::trc("ins.verify.file_ref"), &refPath,
-                                                      "ins_verify_ref", FileDialog::fBin(), nullptr);
-                            ImGui::Spacing();
-                            ImGui::TextDisabled("%s", I18n::trc("ins.verify.hint.imu"));
-                            ImGui::TextDisabled("%s", I18n::trc("ins.verify.hint.ref"));
-                        },
-                        [&] { renderInsParams(par); }, [this] { startVerify(); });
+    void InsVerifyTask::renderFileTab() {
+        Solvers::Helpers::fileRow(I18n::trc("ins.verify.file_imu"), &imuPath, "ins_verify_imu",
+                                  FileDialog::fBin(), nullptr);
+        Solvers::Helpers::fileRow(I18n::trc("ins.verify.file_ref"), &refPath, "ins_verify_ref",
+                                  FileDialog::fBin(), nullptr);
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", I18n::trc("ins.verify.hint.imu"));
+        ImGui::TextDisabled("%s", I18n::trc("ins.verify.hint.ref"));
+    }
+
+    void InsVerifyTask::renderParamTab() {
+        renderInsParams(par);
     }
 
     void InsVerifyTask::renderResult() {
         const bool running = state == State::Running;
         const bool done = hasResult.load();
-        if (drawResultError(*this)) {
+        if (drawResultError()) {
             ImGui::Spacing();
             return;
         }
@@ -155,7 +150,7 @@ namespace Tools::Ins {
             std::snprintf(vv, sizeof vv, "%.2e", rep.maxV);
             ImGui::TextColored(kColInfo, "%s",
                                I18n::tr("ins.verify.progress", rep.compared, hm, vv).c_str());
-        } else if (valid) {
+        } else if (done && valid) {
             std::string bad;
             auto mark = [&bad](const bool over, const char *name) {
                 if (!over) return;
@@ -173,6 +168,8 @@ namespace Tools::Ins {
                 ImGui::TextColored(UI::kColPass, "%s", I18n::trc("ins.verify.all_within_tol"));
             else ImGui::TextColored(UI::kColFail, "%s",
                                     I18n::tr("ins.verify.over_items", bad).c_str());
+        } else if (valid && !running) {
+            ImGui::TextDisabled("%s", I18n::trc("gui.tab.stopped"));
         }
 
         if (!valid) {
@@ -316,6 +313,7 @@ namespace Tools::Ins {
             }
         }
         const bool chartNew = chartDirty.exchange(false);
+        float &errH = UI::splitHeight("ins_verify_err_row", kFileChartH);
         auto drawErrPlot = [&](const char *title, const char *yLabel,
                                const std::vector<double> &a, const std::vector<double> &b,
                                const std::vector<double> &c,
@@ -325,7 +323,7 @@ namespace Tools::Ins {
                 return;
             }
             const int n = static_cast<int>(tx.size());
-            if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, kFileChartH))) {
+            if (ImPlot::BeginPlot(I18n::trc(title), ImVec2(-1, errH))) {
                 ImPlot::SetupAxes(I18n::trc("ins.chart.x_time"), I18n::trc(yLabel));
                 ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Horizontal);
                 fitXToLatest(chartNew, tx.back());
@@ -340,6 +338,7 @@ namespace Tools::Ins {
         drawErrPlot("ins.verify.chart.vel", "ins.verify.unit.mps", vn, ve, vd, "vN", "vE", "vD");
         drawErrPlot("ins.verify.chart.att", "ins.verify.unit.deg", dr, dp, dh,
                     "Roll", "Pitch", "Heading");
+        if (!tx.empty()) UI::splitHandle("##verifyErrGrip", errH, 160.0f, 900.0f);
     }
 
     void InsVerifyTask::exportSampleCSV() {

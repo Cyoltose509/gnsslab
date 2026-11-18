@@ -40,8 +40,8 @@ namespace Solvers::RTK {
         /// 配对队列腾出空位时通知读取端。
         std::condition_variable pairSpaceCv;
 
-        /// 滤波方向快照：解算期间界面还能改 opts，一趟解算必须按开始时那一档跑。
-        SolverOptions::FilterMode filterMode = SolverOptions::FilterMode::LSQ;
+        /// 一趟解算的配置快照：解算期间界面还能改 opts，两趟都必须按开始时这一份跑。
+        SolverOptions solveOpts;
 
         /// 要跑倒序趟时前向顺带留下的配对；纯前向档不存，一帧一过。
         std::vector<RTKPair> replay;
@@ -77,7 +77,6 @@ namespace Solvers::RTK {
             opts.cutoffDeg = RTKConfig{}.cutoffElevRad * RAD_TO_DEG;
         }
 
-    public:
         void readBody() override;
 
         void solveBody() override;

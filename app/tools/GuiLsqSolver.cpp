@@ -26,7 +26,6 @@ namespace Tools::LsqSolver {
     static bool s_Solved = false;
 
     static void ResizeMatrices(int newObs, int newUnk) {
-        // 上限 64：法方程矩阵是 m×m 与 n×n，手滑输个 100000 会直接吃掉几十 GB
         newObs = std::clamp(newObs, 1, 64);
         newUnk = std::clamp(newUnk, 1, 64);
 
@@ -97,7 +96,7 @@ namespace Tools::LsqSolver {
 
             VariableSet vars;
             for (int j = 0; j < s_NumUnk; ++j) {
-                Variable v("GUI", SatID('G', j), Parameter(Parameter::Unknown), ObsID("G", "GUI"));
+                Variable v("GUI", SatID(static_cast<SatSystem>('G'), j), Parameter(Parameter::Unknown), ObsID("G", "GUI"));
                 vars.insert(v);
             }
             sys.varSet = vars;
@@ -121,7 +120,7 @@ namespace Tools::LsqSolver {
                 for (int j = 0; j < s_NumUnk; ++j) {
                     data.varCoeffData[varList[j]] = s_H[i * s_NumUnk + j];
                 }
-                sys.obsEquData[EquID(SatID('G', i), "GUI")] = data;
+                sys.obsEquData[EquID(SatID(static_cast<SatSystem>('G'), i), "GUI")] = data;
             }
 
             SolverLSQ solver;
@@ -130,7 +129,6 @@ namespace Tools::LsqSolver {
             s_X = solver.state;
             s_Q = solver.Q;
             s_Sigma0 = solver.sigma0;
-            // 法方程奇异时 LSQ 会推出 inf/nan，界面上得说清楚，别让人当成有效解
             if (!s_X.allFinite() || !s_Q.allFinite() || !std::isfinite(s_Sigma0)) {
                 s_Error = I18n::tr("tool.lsq.err_singular");
                 s_Solved = false;

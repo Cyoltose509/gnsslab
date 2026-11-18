@@ -73,9 +73,7 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
     computeSdVariance();
 
     solve();
-    if (result.stat == 0) return false;
-    mPrevRefSat = mRefSat;
-    return true;
+    return result.stat != 0;
 }
 
 void RTK::publishResult() {
@@ -142,6 +140,7 @@ void RTK::initFilter() {
     xyz = filteredPosition();
     sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
                              static_cast<int>(ekf.currentUnkSet.size()));
+    mPrevRefSat = mRefSat;
     mFilterInit = true;
 }
 
@@ -152,7 +151,7 @@ void RTK::rebaseAmbiguities() {
     std::map<Variable, int> oldIndex;
     for (const auto &v: oldSet) oldIndex[v] = ekf.indexOf(v);
 
-    const auto refChanged = [&](const char sys) {
+    const auto refChanged = [&](const SatSystem sys) {
         const auto n = mRefSat.find(sys), o = mPrevRefSat.find(sys);
         return n != mRefSat.end() && o != mPrevRefSat.end() && n->second != o->second;
     };
@@ -160,7 +159,7 @@ void RTK::rebaseAmbiguities() {
     std::map<Variable, std::pair<int, int> > rowMap;
     //先给所有非模糊度变量和未变系统的模糊度写恒等行
     for (const auto &v: oldSet) {
-        if (v.par != Parameter::ambiguity || !refChanged(v.obsID.satSys[0]))
+        if (v.par != Parameter::ambiguity || !refChanged(v.sat.system))
             rowMap[v] = {oldIndex.at(v), -1};
     }
 
@@ -201,6 +200,7 @@ void RTK::rebaseAmbiguities() {
 
 void RTK::updateFilter() {
     rebaseAmbiguities();
+    mPrevRefSat = mRefSat;
     AmbSeed seed;
     VariableSet varSet;
     collectEpochStates(varSet, seed);
@@ -290,11 +290,11 @@ void RTK::extractAmbiguities(Eigen::VectorXd &b, Eigen::MatrixXd &Qb, std::vecto
 
 void RTK::detectFreqCombinations() {
     mSysCombos.clear();
-    for (char sys: mConfig.enabledSystems) {
-        if (sys == 'R') continue; // GLONASS FDMA 双差模糊度无整数性，整系统不参与
+    for (SatSystem sys: mConfig.enabledSystems) {
+        if (sys == SatSystem::R) continue; // GLONASS FDMA 双差模糊度无整数性，整系统不参与
         SysCombo sc;
-        sc.base = FreqCombo::detect(sys, *mBaseObs, true);
-        sc.rover = FreqCombo::detect(sys, *mCurObs, true);
+        sc.base = FreqCombo::detect(sys, FreqCombo::collectCodes(*mBaseObs, sys), 0, true);
+        sc.rover = FreqCombo::detect(sys, FreqCombo::collectCodes(*mCurObs, sys), 0, true);
         if (!sc.base.code1.empty() && !sc.rover.code1.empty()) sc.ok = true;
         if (!sc.ok) continue;
         mSysCombos[sys] = sc;
@@ -316,8 +316,8 @@ void RTK::prepareGeometry() {
 
     const Eigen::Vector3d &roverRef = isSaneECEF(mRoverApprox) ? mRoverApprox : mBase;
 
-    std::map<char, std::vector<SatID> > cand;
-    for (char sys: mConfig.enabledSystems) {
+    std::map<SatSystem, std::vector<SatID> > cand;
+    for (SatSystem sys: mConfig.enabledSystems) {
         auto itc = mSysCombos.find(sys);
         if (itc == mSysCombos.end() || !itc->second.ok) continue;
         const SysCombo &sc = itc->second;
@@ -344,8 +344,9 @@ void RTK::prepareGeometry() {
     // 基类三表存流动站，基准站另立一套供双差随机模型用
     earthRotation(satPVTRecTime, roverRef);
     earthRotation(satPVTBaseRecTime, mBase);
-    computeElevAzim(satPVTRecTime, roverRef, satElevData, &satAzimData);
-    computeElevAzim(satPVTBaseRecTime, mBase, satBaseElevData, nullptr);
+    computeElevAzim(satPVTRecTime, roverRef, satElevData, satAzimData);
+    SatValueMap baseAzim;
+    computeElevAzim(satPVTBaseRecTime, mBase, satBaseElevData, baseAzim);
 
     // 基准站仰角截止：筛掉低星再按系统选参考星
     for (auto &[sys, part]: cand) {
@@ -427,7 +428,7 @@ void RTK::buildWeightMatrix(const EquSys &eq) {
     };
 
     Eigen::MatrixXd Dv = Eigen::MatrixXd::Zero(m, m);
-    std::map<std::pair<char, std::string>, std::vector<int> > blocks;
+    std::map<std::pair<SatSystem, std::string>, std::vector<int> > blocks;
     for (int i = 0; i < m; ++i)
         blocks[{rows[i].sat.system, rows[i].obsType}].push_back(i);
 
@@ -451,22 +452,22 @@ void RTK::detectSlips() {
         mSlipDetRover.clear();
         return;
     }
-    CycleSlipEpoch gfEpoch;
+    CycleSlipEpoch GFEpoch;
 
     std::set<SatID> fedBase, fedRover; // 已喂入有效观测的检测器
-    const double gfThr = mUseGfCycleSlip ? 1.0 : 0.0; // >0 开启 GF
-    const double gfMult = mGfSlipMult; // GF 周跳阈值倍数
+    const double GFThr = mUseGFCycleSlip ? 1.0 : 0.0; // >0 开启 GF
+    const double GFMult = mGFSlipMult; // GF 周跳阈值倍数
 
     const auto feedSlot = [&](std::map<SatID, CycleSlip> &dets, const FreqCombo &combo,
                               const SatID &sat, const TypeValueMap &tv, const ObsData *obs) {
         CycleSlip &det = dets[sat];
-        det.configure(combo, gfThr, gfMult);
+        det.configure(combo, GFThr, GFMult);
         const CycleSlip::Result r = det.feed(sat, tv, obs);
-        gfEpoch.record(sat, r);
+        GFEpoch.record(sat, r);
         return r.slip;
     };
 
-    for (char sys: mConfig.enabledSystems) {
+    for (SatSystem sys: mConfig.enabledSystems) {
         auto itc = mSysCombos.find(sys);
         if (itc == mSysCombos.end() || !itc->second.ok) continue;
         const SysCombo &sc = itc->second;
@@ -497,10 +498,10 @@ void RTK::detectSlips() {
     };
     feedGap(mSlipDetBase, fedBase);
     feedGap(mSlipDetRover, fedRover);
-    SatIDSet gfExclude;
-    const SatIDSet gfApply = gfEpoch.decide(mGfCommonMode, gfExclude);
-    for (const auto &s: gfApply) mSlipExclude.insert(s);
-    for (const auto &s: gfExclude) mSlipExclude.insert(s);
+    SatIDSet GFExclude;
+    const SatIDSet GFApply = GFEpoch.decide(mGFCommonModeMinSats, GFExclude);
+    for (const auto &s: GFApply) mSlipExclude.insert(s);
+    for (const auto &s: GFExclude) mSlipExclude.insert(s);
 }
 
 
@@ -693,8 +694,8 @@ void RTK::applyOptions(const SolverOptions &o) {
     mConfig.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
     mConfig.enabledSystems = o.systems;
     mUseCycleSlip = mConfig.useCycleSlip;
-    mUseGfCycleSlip = mConfig.useGfCycleSlip;
-    mGfSlipMult = mConfig.gfSlipMult;
+    mUseGFCycleSlip = mConfig.useGFCycleSlip;
+    mGFSlipMult = mConfig.GFSlipMult;
     mUseFilter = o.filter != SolverOptions::FilterMode::LSQ;
     mPosProcSigma = o.posProcSigma;
     if (!mUseFilter) resetFilterState();

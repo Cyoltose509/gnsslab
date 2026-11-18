@@ -41,7 +41,7 @@ namespace QC {
             double f1 = 0, f2 = 0;
         };
 
-        BandsInfo pickBands(const char sys, const TypeValueMap &m) {
+        BandsInfo pickBands(const SatSystem sys, const TypeValueMap &m) {
             std::vector<std::pair<char, std::string> > cand;
             for (char b: {'1', '2', '5', '6', '7', '8'}) {
                 std::string ct = findObsType(m, 'C', b);
@@ -157,7 +157,7 @@ namespace QC {
             ce.overallE = sumE / J;
 
 
-            std::map<char, std::vector<double> > sysEs;
+            std::map<SatSystem, std::vector<double> > sysEs;
             for (const SatID &sat: sats) {
                 sysEs[sat.system].push_back(ce.E[sat]);
             }
@@ -201,8 +201,8 @@ namespace QC {
         std::vector<char> gapOk, slipFlag, outlierFlag, clockJumpFlag;
 
         /// MW 检测状态：均值/方差在线累积，pending 是等待下一点才能定稿的索引。
-        double mwMean = 0, mwVar = 0;
-        int mwCnt = 0;
+        double MWMean = 0, MWVar = 0;
+        int MWCnt = 0;
         int pending = -1;
 
         int slips = 0, outliers = 0, clockJumps = 0;
@@ -253,34 +253,34 @@ namespace QC {
         bool finished = false;
 
         /// 单程 MW 检测的一步：等价于 detectMW 的循环体，next 由调用方提供。
-        static void applyMw(SatStream &s, const int k, const double nextMw, const bool nextOk, const bool hasNext) {
-            const double mw = s.MW[k];
+        static void applyMW(SatStream &s, const int k, const double nextMW, const bool nextOk, const bool hasNext) {
+            const double MW = s.MW[k];
             if (!s.gapOk[k]) {
-                s.mwMean = mw;
-                s.mwVar = 0.0;
-                s.mwCnt = 1;
+                s.MWMean = MW;
+                s.MWVar = 0.0;
+                s.MWCnt = 1;
                 return;
             }
-            const double dev = mw - s.mwMean;
-            if (s.mwVar > 0.0 && std::fabs(dev) >= 4.0 * std::sqrt(s.mwVar) && hasNext && nextOk) {
-                const double meanK = (s.mwCnt * s.mwMean + mw) / (s.mwCnt + 1);
-                const double varK = (s.mwCnt * s.mwVar + dev * dev) / (s.mwCnt + 1);
-                const double devNext = nextMw - meanK;
+            const double dev = MW - s.MWMean;
+            if (s.MWVar > 0.0 && std::fabs(dev) >= 4.0 * std::sqrt(s.MWVar) && hasNext && nextOk) {
+                const double meanK = (s.MWCnt * s.MWMean + MW) / (s.MWCnt + 1);
+                const double varK = (s.MWCnt * s.MWVar + dev * dev) / (s.MWCnt + 1);
+                const double devNext = nextMW - meanK;
                 if (!(varK > 0.0 && std::fabs(devNext) >= 4.0 * std::sqrt(varK))
-                    || std::fabs(nextMw - mw) > 1.0) {
+                    || std::fabs(nextMW - MW) > 1.0) {
                     s.outlierFlag[k] = 1;
                     s.outliers++;
                 } else {
                     markSlip(s, k);
-                    s.mwMean = mw;
-                    s.mwVar = 0.0;
-                    s.mwCnt = 1;
+                    s.MWMean = MW;
+                    s.MWVar = 0.0;
+                    s.MWCnt = 1;
                     return;
                 }
             }
-            s.mwMean = (s.mwCnt * s.mwMean + mw) / (s.mwCnt + 1);
-            s.mwVar = (s.mwCnt * s.mwVar + dev * dev) / (s.mwCnt + 1);
-            s.mwCnt++;
+            s.MWMean = (s.MWCnt * s.MWMean + MW) / (s.MWCnt + 1);
+            s.MWVar = (s.MWCnt * s.MWVar + dev * dev) / (s.MWCnt + 1);
+            s.MWCnt++;
         }
 
 
@@ -545,8 +545,8 @@ namespace QC {
                 s.gapOk[idx] = 0;
 
             if (idx >= 1 && s.gapOk[idx] && s.gapOk[idx - 1]) {
-                constexpr double gfMult = 3.0;
-                if (const double thr = gfMult * (s.lam2 - s.lam1);
+                constexpr double GFMult = 3.0;
+                if (const double thr = GFMult * (s.lam2 - s.lam1);
                     std::fabs(s.LGF[idx] - s.LGF[idx - 1]) > thr
                     && std::fabs(s.PGF[idx] - s.PGF[idx - 1]) <= 0.10) {
                     Impl::markSlip(s, idx);
@@ -555,11 +555,11 @@ namespace QC {
 
             // MW 检测：原算法以 MW[0] 初始化、从 k=1 起判定，所以 index 0 不参与判定。
             if (s.pending >= 1) {
-                Impl::applyMw(s, s.pending, s.MW[idx], s.gapOk[idx] != 0, true);
+                Impl::applyMW(s, s.pending, s.MW[idx], s.gapOk[idx] != 0, true);
             } else if (s.pending < 0) {
-                s.mwMean = s.MW[idx];
-                s.mwVar = 0.0;
-                s.mwCnt = 1;
+                s.MWMean = s.MW[idx];
+                s.MWVar = 0.0;
+                s.MWCnt = 1;
             }
             s.pending = idx;
 
@@ -660,13 +660,13 @@ namespace QC {
             rep.sats[sat] = std::move(q);
         }
 
-        std::map<char, double> sumComp, sumDI1, sumDI2, sumSlipRatio, sumMp1, sumMp2;
-        std::map<char, double> sumSigRho, sumSigPh, sumCnr, sumCnr1, sumCnr2, sumIonoRate, sumIonoRate1,
+        std::map<SatSystem, double> sumComp, sumDI1, sumDI2, sumSlipRatio, sumMp1, sumMp2;
+        std::map<SatSystem, double> sumSigRho, sumSigPh, sumCnr, sumCnr1, sumCnr2, sumIonoRate, sumIonoRate1,
                 sumIonoRate2;
-        std::map<char, int> cnt, sumSlips, sumIono, sumIono1, sumIono2, sumOut, sumClk, cntCnr, cntCnr1,
+        std::map<SatSystem, int> cnt, sumSlips, sumIono, sumIono1, sumIono2, sumOut, sumClk, cntCnr, cntCnr1,
                 cntCnr2, cntIono, cntIono1, cntIono2;
         for (auto &[sat, q]: rep.sats) {
-            const char s = sat.system;
+            const SatSystem s = sat.system;
             sumComp[s] += q.completeness;
             sumDI1[s] += q.di_f1;
             sumDI2[s] += q.di_f2;

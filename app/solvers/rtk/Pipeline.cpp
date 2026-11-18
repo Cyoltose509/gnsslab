@@ -29,7 +29,7 @@ namespace Solvers::RTK {
         int n = 0;
         DualPair::Pair pr;
         while (!shouldStop() && p.next(pr)) {
-            onPair(pr.base, pr.rover, pr.baseEph ? pr.baseEph : pr.roverEph);
+            onPair(pr.base, pr.rover, DualPair::selectEph(pr.baseEph, pr.roverEph));
             ++n;
         }
         return n;

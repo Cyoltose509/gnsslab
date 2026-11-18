@@ -22,7 +22,7 @@ namespace ProductReader {
 
     /// 读哪些项直接决定结果，别为了「看起来统一」把 LEO 的清单并成 PPP 的
     Loaded load(const AppConfig::ProductPaths &d, const std::string &tag,
-                const std::set<char> &systems, const std::vector<ProductType> &wanted);
+                const std::set<SatSystem> &systems, const std::vector<ProductType> &wanted);
 
     /// 产品身份与该次运行实际用的路径，按产品表顺序列出：供「参与文件」这类只读用途遍历
     struct Info {

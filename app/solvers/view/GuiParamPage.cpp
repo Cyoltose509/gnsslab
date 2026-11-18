@@ -141,10 +141,11 @@ namespace {
                 first = false;
                 ImGui::TextUnformatted(name);
                 ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                bool on = o.systems.count(ch) > 0;
+                const SatSystem sys = satSystemFrom(ch);
+                bool on = o.systems.count(sys) > 0;
                 if (ImGui::Checkbox((std::string("##sys_") + name).c_str(), &on)) {
-                    if (on) o.systems.insert(ch);
-                    else o.systems.erase(ch);
+                    if (on) o.systems.insert(sys);
+                    else o.systems.erase(sys);
                 }
             }
         };
@@ -321,17 +322,17 @@ namespace {
         if (rtk) {
             g.fields.push_back(flag("param.use_cycle_slip", "useCycleSlip", &RTKConfig::useCycleSlip,
                                     &SolverOptions::rtk));
-            g.fields.push_back(flag("param.use_gf_slip", "useGfCycleSlip", &RTKConfig::useGfCycleSlip,
+            g.fields.push_back(flag("param.use_gf_slip", "useGFCycleSlip", &RTKConfig::useGFCycleSlip,
                                     &SolverOptions::rtk));
-            g.fields.push_back(field("param.gf_slip_mult", "gfSlipMult", &RTKConfig::gfSlipMult,
+            g.fields.push_back(field("param.gf_slip_mult", "GFSlipMult", &RTKConfig::GFSlipMult,
                                      &SolverOptions::rtk));
             return g;
         }
         g.fields.push_back(flag("param.use_cycle_slip", "useCycleSlip", &SPPConfig::useCycleSlip,
                                 &SolverOptions::spp));
-        g.fields.push_back(flag("param.use_gf_slip", "useGfCycleSlip", &SPPConfig::useGfCycleSlip,
+        g.fields.push_back(flag("param.use_gf_slip", "useGFCycleSlip", &SPPConfig::useGFCycleSlip,
                                 &SolverOptions::spp));
-        g.fields.push_back(field("param.gf_slip_mult", "gfSlipMult", &SPPConfig::gfSlipMult,
+        g.fields.push_back(field("param.gf_slip_mult", "GFSlipMult", &SPPConfig::GFSlipMult,
                                  &SolverOptions::spp));
         return g;
     }
@@ -356,10 +357,12 @@ namespace {
 
     SolverField insScaleField(const char *label, const char *key, double ImuScale::*m,
                               const UI::ParamPage::Range &r = UI::ParamPage::unbounded) {
-        return UI::ParamPage::makeField<UI::ParamPage::kValue, SolverOptions, double>(
+        SolverField f = UI::ParamPage::makeField<UI::ParamPage::kValue, SolverOptions, double>(
             label, key, r,
             [m](SolverOptions &o) -> double & { return o.ins.manual.*m; },
             [m](const SolverOptions &o) -> const double & { return o.ins.manual.*m; });
+        f.show = [](const SolverOptions &) { return false; };   // 只在文件页渲染
+        return f;
     }
 
     using InsMem = double INSConfig::*;

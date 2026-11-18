@@ -21,18 +21,18 @@ namespace {
     struct Entry {
         ProductType type;
         std::string AppConfig::ProductPaths::*path;
-        bool (*read)(Products &, const std::string &, const std::set<char> &, const std::string &tag);
+        bool (*read)(Products &, const std::string &, const std::set<SatSystem> &, const std::string &tag);
         bool multiFile; // 路径串按 kIniListSep 拆成多个文件逐个读
         bool serial; // 独占一趟：与别的项写同一份数据的（星历表、对流层格网）不能并行
     };
 
-    bool readBRDC(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readBRDC(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         RINEXNavStore store;
         store.loadFile(path, p.eph);
         return true;
     }
 
-    bool readSP3(Products &p, const std::string &path, const std::set<char> &, const std::string &tag) {
+    bool readSP3(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &tag) {
         const bool ok = p.sp3.read(path, true);
         // 解继承产品的参考框架：SP3 头写什么就用什么
         p.orbitFrame = p.sp3.frame;
@@ -42,41 +42,41 @@ namespace {
         return ok;
     }
 
-    bool readCLK(Products &p, const std::string &path, const std::set<char> &systems, const std::string &) {
+    bool readCLK(Products &p, const std::string &path, const std::set<SatSystem> &systems, const std::string &) {
         return p.clk.read(path, systems, true);
     }
 
-    bool readOSB(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readOSB(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         return p.osb.read(path);
     }
 
-    bool readATT(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readATT(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         return p.att.read(path);
     }
 
-    bool readERP(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readERP(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         return p.erp.read(path, true);
     }
 
-    bool readATX(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readATX(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         return p.atx.read(path);
     }
 
-    bool readTRO(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readTRO(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         return p.tro.read(path);
     }
 
-    bool readIONEX(Products &p, const std::string &path, const std::set<char> &, const std::string &) {
+    bool readIONEX(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &) {
         return p.ion.read(path);
     }
 
-    bool readVMF3(Products &p, const std::string &path, const std::set<char> &, const std::string &tag) {
+    bool readVMF3(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &tag) {
         if (p.tropo.loadVMF3(splitPaths(path))) return true;
         LOG_WARN << "[" << tag << "] " << I18n::tr("pl.err.vmf3", path);
         return false;
     }
 
-    bool readGPT3(Products &p, const std::string &path, const std::set<char> &, const std::string &tag) {
+    bool readGPT3(Products &p, const std::string &path, const std::set<SatSystem> &, const std::string &tag) {
         if (p.tropo.loadGPT3(path)) return true;
         LOG_WARN << "[" << tag << "] " << I18n::tr("pl.err.gpt3", path);
         return false;
@@ -108,7 +108,7 @@ namespace {
 
     /// 读一个文件并落日志；异常只废本项
     bool readOne(const Entry &e, Products &p, const std::string &tag, const std::string &path,
-                 const std::set<char> &systems) {
+                 const std::set<SatSystem> &systems) {
         bool ok = false;
         try {
             ok = e.read(p, path, systems, tag);
@@ -130,7 +130,7 @@ namespace ProductReader {
     }
 
     Loaded load(const AppConfig::ProductPaths &d, const std::string &tag,
-                const std::set<char> &systems, const std::vector<ProductType> &wanted) {
+                const std::set<SatSystem> &systems, const std::vector<ProductType> &wanted) {
         Loaded out;
         Products &p = *out.prod;
         Jobs jobs;

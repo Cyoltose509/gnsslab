@@ -9,7 +9,7 @@ bool CLKReader::read(const std::string &path) {
     return read(path, {});
 }
 
-bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys) {
+bool CLKReader::read(const std::string &path, const std::set<SatSystem> &allowedSys) {
     return read(path, allowedSys, false);
 }
 
@@ -17,7 +17,7 @@ bool CLKReader::read(const std::string &path, bool append) {
     return read(path, {}, append);
 }
 
-bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys, bool append) {
+bool CLKReader::read(const std::string &path, const std::set<SatSystem> &allowedSys, bool append) {
     bool headerEnd = false;
     std::map<SatID, std::vector<Record> > tmp;
 
@@ -37,7 +37,7 @@ bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys, 
         std::string_view sv(line);
         if (sv.size() < 4) continue;
         if (sv[0] != 'A' || sv[1] != 'S') continue;
-        if (!allowedSys.empty() && !allowedSys.count(sv[3])) continue;
+        if (!allowedSys.empty() && !allowedSys.count(satSystemFrom(sv[3]))) continue;
         const char *p = sv.data() + 2;
         const char *const qe = sv.data() + sv.size();
 
@@ -49,7 +49,7 @@ bool CLKReader::read(const std::string &path, const std::set<char> &allowedSys, 
             prn = prn * 10 + (*p - '0');
             ++p;
         }
-        const SatID sat(sys, prn);
+        const SatID sat(satSystemFrom(sys), prn);
 
         int y, mo, d, h, mi, nfields;
         double s, bias, drift = 0.0;

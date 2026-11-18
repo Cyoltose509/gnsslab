@@ -14,7 +14,7 @@ public:
 
     /// 某卫星/系统在指定测站（或全局）是否有码偏差标定。
     [[nodiscard]] bool covers(const SatID &sat, const std::string &station) const;
-    [[nodiscard]] bool coversSystem(char sys, const std::string &station) const;
+    [[nodiscard]] bool coversSystem(SatSystem sys, const std::string &station) const;
 
     [[nodiscard]] double getBias(const SatID &sat, const std::string &obsCode,
                                  const std::string &station = "") const;
@@ -42,7 +42,7 @@ private:
 
     std::map<Key, double> data;
     std::map<SatID, std::set<std::string> > codeStations;
-    std::map<char, std::set<std::string> > codeSysStations;
+    std::map<SatSystem, std::set<std::string> > codeSysStations;
 
-    static std::string refCodeFor(const std::string &code, char sys);
+    static std::string refCodeFor(const std::string &code, SatSystem sys);
 };

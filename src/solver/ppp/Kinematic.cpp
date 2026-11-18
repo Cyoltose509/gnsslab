@@ -9,12 +9,12 @@
 #include <set>
 
 Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut, double *rmsOut,
-                                          double *pdopOut, char sysOnly) const {
+                                          double *pdopOut, SatSystem sysOnly) const {
     if (!mCurObs) return seedIn;
     const CommonTime epoch = mCurObs->epoch;
     const std::string &station = mCurObs->station;
     const Variable dx(station, Parameter::dX), dy(station, Parameter::dY), dz(station, Parameter::dZ);
-    std::map<char, Variable> cdtVars;
+    std::map<SatSystem, Variable> cdtVars;
     for (const auto &[sys, param] : mCdtParam) cdtVars.try_emplace(sys, station, param);
 
     std::set<SatID> rejected;
@@ -24,7 +24,7 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
     double pdop = 1.0e9;
 
     for (int round = 0; round <= kMaxBaardaRounds; ++round) {
-        std::map<char, double> clk;
+        std::map<SatSystem, double> clk;
         for (const auto &[sys, _] : cdtVars) clk[sys] = 0.0;
         SolverLSQ solver;
         EquSys eq;
@@ -40,7 +40,7 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
             const Eigen::Vector3d recvTide = mApplySolidTide ? computeTideDisplacement(xc, epoch) : Eigen::Vector3d::Zero();
             int nObs = 0;
             for (const auto &[sat, tv] : mCurObs->satTypeValueData) {
-                if (sysOnly && sat.system != sysOnly) continue;
+                if (sysOnly != SatSystem::Unknown && sat.system != sysOnly) continue;
                 if (rejected.count(sat)) continue;
                 const FreqCombo *defp = freqComboFor(sat);
                 if (!defp) continue;
@@ -128,7 +128,7 @@ Eigen::Vector3d PPPKinematic::reanchorSPP(const Eigen::Vector3d &seedIn, int *nO
                 ++i;
             }
         }
-        if (worstSat.system == 0 || worstW <= W_THRESHOLD) break;
+        if (worstSat.system == SatSystem::Unknown || worstW <= W_THRESHOLD) break;
         rejected.insert(worstSat);
     }
 
@@ -155,10 +155,10 @@ Eigen::Vector3d PPPKinematic::predictPosition(const double dt, const CommonTime 
         // 混合星座锚定可能被异质钟基准污染：BDS-3 精密钟以 B1I/B3I 组合为基准，而接收机
         // 跟踪的 B1I+B2b 配对没有 OSB/广播 TGD 可改正，逐星带 ±5-12 m 常偏。锚定只负责给
         // 滤波器一个干净的线性化点，GPS 单系统锚定的后验残差更小时就取 GPS 锚。
-        if (mCdtParam.size() > 1 && mCdtParam.count('G')) {
+        if (mCdtParam.size() > 1 && mCdtParam.count(SatSystem::G)) {
             int nG = 0;
             double rmsG = 1.0e9;
-            const Eigen::Vector3d xcG = reanchorSPP(seed, &nG, &rmsG, nullptr, 'G');
+            const Eigen::Vector3d xcG = reanchorSPP(seed, &nG, &rmsG, nullptr, SatSystem::G);
             if (nG >= 4 && rmsG < rms) {
                 xc = xcG;
                 rms = rmsG;

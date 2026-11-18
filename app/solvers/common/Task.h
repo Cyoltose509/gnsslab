@@ -106,7 +106,7 @@ namespace Solvers {
 
         /// 产品缓存：同一批路径只在首次解算时读盘，改参数重算直接复用
         ProductReader::Loaded productsFor(const AppConfig::ProductPaths &d, const std::string &tag,
-                                          const std::set<char> &systems,
+                                          const std::set<SatSystem> &systems,
                                           const std::vector<ProductType> &wanted);
 
         /// 没有轨道来源（精轨或广播星历）就没有解算输入：置错并返回 false

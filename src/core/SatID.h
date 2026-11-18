@@ -7,27 +7,28 @@
 #include <string>
 
 #include "Exception.h"
+#include "core/SatSystem.h"
 
 /// 卫星标识（系统 + PRN）。GLONASS 的 FDMA 通道号 chan 只是解算时携带的附加信息，
 /// 不参与身份比较——同一颗星在不同历元（头里通道号可能缺失）必须落到同一个键上。
 struct SatID {
-    char system{};
+    SatSystem system{SatSystem::Unknown};
     int id;
     int chan{0};
 
     SatID() : id(-1) {
     }
 
-    SatID(const char sys, const int satID) : system(sys), id(satID) {
+    SatID(const SatSystem sys, const int satID) : system(sys), id(satID) {
     }
 
-    SatID(const char sys, const int satID, const int channel) : system(sys), id(satID), chan(channel) {
+    SatID(const SatSystem sys, const int satID, const int channel) : system(sys), id(satID), chan(channel) {
     }
 
     explicit SatID(const std::string &substr) {
         if (substr.length() != 3)
             throw StringException("SatID must be 3 characters (system + two-digit PRN), got \"" + substr + "\"");
-        system = substr[0];
+        system = satSystemFrom(substr[0]);
         id = std::stoi(substr.substr(1, 2));
     }
 
@@ -47,7 +48,7 @@ struct SatID {
 
     [[nodiscard]] std::string toString() const {
         std::stringstream sstream;
-        sstream << system
+        sstream << charFrom(system)
                 << std::setw(2) << std::setfill('0') << id;
         return sstream.str();
     }
@@ -56,6 +57,6 @@ struct SatID {
 typedef std::set<SatID> SatIDSet;
 
 inline std::ostream &operator<<(std::ostream &os, const SatID &sat_id) {
-    os << sat_id.system << std::setw(2) << std::setfill('0') << sat_id.id;
+    os << charFrom(sat_id.system) << std::setw(2) << std::setfill('0') << sat_id.id;
     return os;
 }

@@ -84,7 +84,7 @@ namespace QC {
         std::vector<double> weights;
         std::map<SatID, std::vector<double> > z;
         std::map<SatID, double> E;
-        std::map<char, double> sysE;
+        std::map<SatSystem, double> sysE;
         double overallE = 0;
     };
 
@@ -95,21 +95,21 @@ namespace QC {
         std::vector<SatID> satOrder;
         std::map<SatID, SatQC> sats;
 
-        std::map<char, double> sysCompleteness;
-        std::map<char, double> sysDI_f1, sysDI_f2;
-        std::map<char, double> sysSlipRatio;
-        std::map<char, double> sysMp1, sysMp2;
-        std::map<char, double> sysSigRho, sysSigPhase;
-        std::map<char, int> sysSlips, sysIonoJumps, sysOutliers, sysClockJumps;
-        std::map<char, double> sysIonoRate;
-        std::map<char, double> sysIonoRate1;
-        std::map<char, double> sysIonoRate2;
-        std::map<char, int> sysIonoJumps1;
-        std::map<char, int> sysIonoJumps2;
+        std::map<SatSystem, double> sysCompleteness;
+        std::map<SatSystem, double> sysDI_f1, sysDI_f2;
+        std::map<SatSystem, double> sysSlipRatio;
+        std::map<SatSystem, double> sysMp1, sysMp2;
+        std::map<SatSystem, double> sysSigRho, sysSigPhase;
+        std::map<SatSystem, int> sysSlips, sysIonoJumps, sysOutliers, sysClockJumps;
+        std::map<SatSystem, double> sysIonoRate;
+        std::map<SatSystem, double> sysIonoRate1;
+        std::map<SatSystem, double> sysIonoRate2;
+        std::map<SatSystem, int> sysIonoJumps1;
+        std::map<SatSystem, int> sysIonoJumps2;
 
-        std::map<char, double> sysCnr;
-        std::map<char, double> sysCnr1;
-        std::map<char, double> sysCnr2;
+        std::map<SatSystem, double> sysCnr;
+        std::map<SatSystem, double> sysCnr1;
+        std::map<SatSystem, double> sysCnr2;
         double overallCnr = 0;
         double overallCnr1 = 0;
         double overallCnr2 = 0;
