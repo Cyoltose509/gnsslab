@@ -14,8 +14,8 @@ set(LIB_SOURCES
         core/obs/ObsStruct.h
         core/obs/FreqCombo.h
         core/obs/FreqCombo.cpp
-        core/obs/CycleSlip.h
-        core/obs/CycleSlip.cpp
+        core/obs/SlipDetector.h
+        core/obs/SlipDetector.cpp
         core/obs/Weight.h
 
         core/geom/CoordStruct.h
@@ -190,7 +190,7 @@ add_dependencies(gnss gen_lang)
 target_compile_definitions(gnss PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 set_source_files_properties(qc/QCProcessor.cpp PROPERTIES COMPILE_FLAGS /bigobj)
-set_source_files_properties(core/obs/CycleSlip.cpp PROPERTIES COMPILE_FLAGS /bigobj)
+set_source_files_properties(core/obs/SlipDetector.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 set_source_files_properties(util/MathUtils.cpp PROPERTIES COMPILE_FLAGS /bigobj)
 
 target_include_directories(gnss PUBLIC

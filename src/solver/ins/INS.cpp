@@ -140,19 +140,6 @@ void INS::calibrate(const ImuLog &head) {
 }
 
 
-InsEpoch INS::makeEpoch(const ImuSample &sm, const ImuSample *prev) const {
-    const double nominalH = 1.0 / scale.rateHz;
-    InsEpoch out;
-    out.t = sm.tow;
-    out.h = prev ? sm.tow - prev->tow : nominalH;
-    if (!validEpochGap(out.h)) out.h = nominalH;
-    out.dtheta = Eigen::Vector3d(sm.gx, sm.gy, sm.gz) * scale.gyroRadPerLsb;
-    out.dvel = Eigen::Vector3d(sm.ax, sm.ay, sm.az) * scale.accelMpsPerLsb -
-               (biasApplied ? accelBias : Eigen::Vector3d::Zero()) * out.h;
-    return out;
-}
-
-
 InsEpoch INS::toEpoch(const ImuSample &sm) {
     InsEpoch out = makeEpoch(sm, hasPrevRaw ? &prevRaw : nullptr);
     prevRaw = sm;
@@ -198,17 +185,26 @@ bool INS::detectStatic(const InsEpoch &e, Eigen::Vector3d &fMean) {
     if (hSum <= 0.0) return false;
     fMean = fSum / hSum;
     const Eigen::Vector3d wMean = wSum / hSum;
+    double fs = 0.0, fs2 = 0.0, ws = 0.0, ws2 = 0.0;
+    for (const InsEpoch &q : winHist) {
+        const double fm = q.dvel.norm() / q.h, wm = q.dtheta.norm() / q.h;
+        fs += fm; fs2 += fm * fm; ws += wm; ws2 += wm * wm;
+    }
+    const double nwin = static_cast<double>(winHist.size());
+    const double fBar = fs / nwin, fStd = std::sqrt(std::max(0.0, fs2 / nwin - fBar * fBar));
+    const double wBar = ws / nwin, wStd = std::sqrt(std::max(0.0, ws2 / nwin - wBar * wBar));
     if (zuptHasRef) {
         const double accDev = (fMean - zuptFRef).norm();
-        const double gyrDev = (wMean - zuptWRef).norm();
+        const double gyrDev = wMean.norm();
         zuptDiag.accDevMax = std::max(zuptDiag.accDevMax, accDev);
         zuptDiag.gyrDevMax = std::max(zuptDiag.gyrDevMax, gyrDev);
         if (accDev >= zuptAccelTol) ++zuptDiag.accFail;
         if (gyrDev >= zuptGyroTol) ++zuptDiag.gyrFail;
-        return accDev < zuptAccelTol && gyrDev < zuptGyroTol;
+        return accDev < zuptAccelTol && gyrDev < zuptGyroTol &&
+               fStd < kZuptAccStdTol && wStd < kZuptGyroStdTol;
     }
-    return std::fabs(e.dvel.norm() / e.h - gravity) < zuptAccelTol &&
-           e.dtheta.norm() / e.h < zuptGyroTol;
+    return std::fabs(fBar - gravity) < zuptAccelTol && wBar < zuptGyroTol &&
+           fStd < kZuptAccStdTol && wStd < kZuptGyroStdTol;
 }
 
 
@@ -309,4 +305,17 @@ void INS::mechanize(const InsEpoch &e) {
     prevDtheta = e.dtheta;
     prevDvel = e.dvel;
     hasPrev = true;
+}
+
+
+InsEpoch INS::makeEpoch(const ImuSample &sm, const ImuSample *prev) const {
+    const double nominalH = 1.0 / scale.rateHz;
+    InsEpoch out;
+    out.t = sm.tow;
+    out.h = prev ? sm.tow - prev->tow : nominalH;
+    if (!validEpochGap(out.h)) out.h = nominalH;
+    out.dtheta = Eigen::Vector3d(sm.gx, sm.gy, sm.gz) * scale.gyroRadPerLsb;
+    out.dvel = Eigen::Vector3d(sm.ax, sm.ay, sm.az) * scale.accelMpsPerLsb -
+               (biasApplied ? accelBias : Eigen::Vector3d::Zero()) * out.h;
+    return out;
 }

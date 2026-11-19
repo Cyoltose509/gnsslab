@@ -232,7 +232,7 @@ void Solvers::Helpers::fileRow(const char *label, std::string *buf, const char *
 }
 
 void Solvers::Helpers::renderProductSection(AppConfig::ProductPaths &p, const char *obsIniKey,
-                                            const bool usesTropo, const bool crossDayHint) {
+                                            const bool usesAtmosphere, const bool crossDayHint) {
     struct SectionMsg {
         std::string msg;
         bool ok = true;
@@ -278,7 +278,7 @@ void Solvers::Helpers::renderProductSection(AppConfig::ProductPaths &p, const ch
     acq.kind = Download::Acquire::Panel::Kind::Products;
     acq.target = &p.files;
     acq.owner = &p;
-    acq.usesTropo = usesTropo;
+    acq.usesAtmosphere = usesAtmosphere;
     if (ImGui::SmallButton(UI::idLabel("common.fetch", "##prod"))) {
         const std::string obsPath = obsIniKey && *obsIniKey
                                         ? AppConfig::PathMemory::instance().get(obsIniKey)

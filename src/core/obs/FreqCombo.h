@@ -36,15 +36,15 @@ public:
 
     [[nodiscard]] double combineCodeFromObs(const std::map<std::string, double> &obs) const;
 
-    [[nodiscard]] double MW_cycle(double P1, double P2, double L1, double L2,
+    [[nodiscard]] double cycleOfMW(double P1, double P2, double L1, double L2,
                                  double osbP1 = 0.0, double osbP2 = 0.0,
                                  double osbL1 = 0.0, double osbL2 = 0.0) const;
 
-    [[nodiscard]] double MW_meter(double P1, double P2, double L1, double L2,
+    [[nodiscard]] double meterOfMW(double P1, double P2, double L1, double L2,
                                  double osbP1 = 0.0, double osbP2 = 0.0,
                                  double osbL1 = 0.0, double osbL2 = 0.0) const;
 
-    [[nodiscard]] static double GF_phase(double L1, double L2);
-    [[nodiscard]] static double GF_code(double P1, double P2);
+    [[nodiscard]] static double phaseGF(double L1, double L2);
+    [[nodiscard]] static double codeGF(double P1, double P2);
     [[nodiscard]] bool available(const TypeValueMap &tv, bool requirePhase = true) const;
 };

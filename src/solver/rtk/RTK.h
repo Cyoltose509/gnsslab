@@ -6,7 +6,7 @@
 #include "core/obs/FreqCombo.h"
 #include "core/geom/EphemerisTable.h"
 #include "core/geom/Ephemeris.h"
-#include "core/obs/CycleSlip.h"
+#include "core/obs/SlipDetector.h"
 #include "GnssSolver.h"
 #include "RTKConfig.h"
 #include "SolverOptions.h"
@@ -32,15 +32,15 @@ public:
     Eigen::Vector3d mBaselineFixed = Eigen::Vector3d::Zero();
     std::set<SatID> mUsedSats;
 
-    void applyOptions(const SolverOptions &o) override;
     bool processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph);
-    void prepareGeometry() override;
-    void publishResult() override;
+    void applyOptions(const SolverOptions &o) override;
     void resetFilterState() override;
+    void prepareGeometry() override;
     void initFilter() override;
     /// 首历元引导：从概略坐标出发迭代解双差方程，把线性化点写进 xyz（滤波档与 LSQ 档共用）。
     bool bootstrapSolution() override;
     void updateFilter() override;
+    void publishResult() override;
 
 private:
     struct SdVar {
@@ -79,19 +79,20 @@ private:
     VariableDataMap mFixedMap;
     EphemerisTable *mEph = nullptr;
     std::set<SatID> mSlipExclude;
-    std::map<SatID, CycleSlip> mSlipDetBase;
-    std::map<SatID, CycleSlip> mSlipDetRover;
+    std::map<SatID, SlipDetector> mSlipDetBase;
+    std::map<SatID, SlipDetector> mSlipDetRover;
 
-    Eigen::Vector3d estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph) const;
+    bool preparePositions(const ObsData &base, const ObsData &rover, const EphemerisTable &eph);
+    [[nodiscard]] Eigen::Vector3d estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph) const;
     void detectFreqCombinations();
     void detectSlips();
 
-    [[nodiscard]] std::optional<SatID> selectRefSatellite(const std::vector<SatID> &candidates) const;
+    [[nodiscard]] std::optional<SatID> selectRefSatellite(const std::vector<SatID> &part) const;
     void computeSdVariance();
-    void buildWeightMatrix(const EquSys &eq);
-    void rebaseAmbiguities();
     void collectEpochStates(VariableSet &varSet, AmbSeed &seed) const;
+    void rebaseAmbiguities();
     void buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed);
+    void buildWeightMatrix(const EquSys &eq);
     void extractAmbiguities(Eigen::VectorXd &b, Eigen::MatrixXd &Qb, std::vector<Variable> &aVars) const;
     bool tryFixAmbiguities(const std::vector<Variable> &aVars, const Eigen::VectorXd &b,
                            const Eigen::MatrixXd &Qb);

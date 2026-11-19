@@ -56,8 +56,6 @@ DualPair::DualPair(Puller basePull, Puller roverPull)
     : mBasePull(std::move(basePull)), mRoverPull(std::move(roverPull)) {
 }
 
-void DualPair::observeBase(const double epochSec) { mBaseIv.observe(epochSec); }
-void DualPair::observeRover(const double epochSec) { mRoverIv.observe(epochSec); }
 
 [[nodiscard]] double DualPair::pairWindow() const {
     return IntervalEstimator::pairWindow(mBaseIv, mRoverIv);
@@ -90,12 +88,6 @@ DualPair::Action DualPair::classify(const CommonTime &baseEpoch, const CommonTim
     return baseEpoch < roverEpoch ? Action::AdvanceBase : Action::AdvanceRover;
 }
 
-DualPair::EphPtr DualPair::selectEph(const EphPtr &baseEph, const EphPtr &roverEph) {
-    if (baseEph && !baseEph->empty()) return baseEph;
-    if (roverEph && !roverEph->empty()) return roverEph;
-    return baseEph ? baseEph : roverEph;
-}
-
 bool DualPair::ensurePrimed() {
     if (!mHaveBase && !stepBase()) return false;
     if (!mHaveRover && !stepRover()) return false;
@@ -125,3 +117,11 @@ bool DualPair::stepRover() {
     mHaveRover = true;
     return true;
 }
+
+DualPair::EphPtr DualPair::selectEph(const EphPtr &baseEph, const EphPtr &roverEph) {
+    if (baseEph && !baseEph->empty()) return baseEph;
+    if (roverEph && !roverEph->empty()) return roverEph;
+    return baseEph ? baseEph : roverEph;
+}
+void DualPair::observeBase(const double epochSec) { mBaseIv.observe(epochSec); }
+void DualPair::observeRover(const double epochSec) { mRoverIv.observe(epochSec); }

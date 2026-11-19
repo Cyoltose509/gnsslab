@@ -30,11 +30,9 @@ namespace Solvers::RTK {
         opts = cfg;
         setupTruth(cfg);
         applyObsPath(cfg.roverPath);
-        // 双站任务展示两个文件名，覆写 applyObsPath 的单文件派生。
         fileName = File::baseName(cfg.roverPath) + " / " + File::baseName(cfg.basePath);
         baseObsPathBuf = cfg.basePath;
         navPathBuf = cfg.navPath;
-        // ini 中的基准坐标优先于 RINEX 表头概略坐标。
         const Eigen::Vector3d cfgBase(cfg.baseCoordX, cfg.baseCoordY, cfg.baseCoordZ);
         useBaseCoord = cfgBase.norm() > 1e3;
         baseXyz = useBaseCoord ? cfgBase : Eigen::Vector3d::Zero();
@@ -57,7 +55,6 @@ namespace Solvers::RTK {
         Epoch data;
         data.getFromObs(rover);
         if (ok) data.getFromRTK(rtk);
-        // 失败也提交空解：倒序趟要按下标回填，epochs 必须与配对序列一一对应。
         const Eigen::Vector3d b = rtk.mBase;
         commitEpoch(std::move(data), [&](int, Epoch &) {
             if (!initializedRefECEF && b.squaredNorm() > 1e12) {
@@ -80,7 +77,6 @@ namespace Solvers::RTK {
 
     void Task::wakeQueues() {
         Solvers::Task::wakeQueues();
-        /// 与配对队列的等待侧共用一把锁后再通知。
         std::lock_guard lk(pairMtx);
         pairCv.notify_all();
         pairSpaceCv.notify_all();
@@ -92,7 +88,6 @@ namespace Solvers::RTK {
 
     void Task::readBody() {
         try {
-            // 双站解算只吃广播星历：与单站走同一个产品入口，读进 rtk.prod->eph
             AppConfig::ProductPaths paths = AppConfig::ProductPaths::of(modeKey(Mode::RTK)).resolved(opts);
             if (!navPathBuf.empty()) paths.nav = navPathBuf;
             rtk.prod = productsFor(paths, "RTK", opts.systems, {ProductType::NAV}).prod;
@@ -152,8 +147,6 @@ namespace Solvers::RTK {
 
     void Task::solveBody() {
         const Clock::Stopwatch total;
-
-        // 快照一份再灌给解算器：解算期间 GUI 理论上还能改 opts，一趟解算的口径必须钉死。
         solveOpts = opts;
         rtk.applyOptions(solveOpts);
         rtk.mBaseUser = useBaseCoord ? baseXyz : Eigen::Vector3d::Zero();
@@ -222,10 +215,8 @@ namespace Solvers::RTK {
         LOG_INFO << "[RTK] " << I18n::tr("rtk.log.backward", n, filterLabel(solveOpts.filter));
         solvePhase = SolvePhase::Backward;
         solveEpoch = 0;
-        // 纯后向档正序没解过，参考点由倒序趟自己重建
         if (!filterSolvesForward(solveOpts.filter)) initializedRefECEF = false;
 
-        // 与 SPP 的倒序趟同理：新解算器不继承前向状态，从末历元重新收敛
         ::RTK bwd;
         bwd.applyOptions(solveOpts);
         bwd.prod = rtk.prod; // 与正序共用同一份星历，不倒空
@@ -247,7 +238,7 @@ namespace Solvers::RTK {
             view.skyTracks.clear();
             view.skyTracksBuilt = 0;
         };
-        const std::size_t step = (std::max)(std::size_t(1), n / 40);
+        const std::size_t step = (std::max)(static_cast<std::size_t>(1), n / 40);
 
         for (std::size_t i = n; i-- > 0;) {
             if (stop.load()) break;
@@ -356,14 +347,12 @@ namespace Solvers::RTK {
             row.set(F::Uf, enu.U());
             row.set(F::Rms3dF, std::sqrt(enu.E() * enu.E() + enu.N() * enu.N() + enu.U() * enu.U()));
         }
-        // 基线列始终相对基准站，与真值无关（REF/偏差/3dRMS 列随真值走，无真值时整体剔除）。
         row.set(F::BaseXf, ep.rtkBaseFloat.x());
         row.set(F::BaseYf, ep.rtkBaseFloat.y());
         row.set(F::BaseZf, ep.rtkBaseFloat.z());
         row.set(F::BaseLenF, ep.rtkBaseFloat.norm());
         const Eigen::Vector3d basePos = xyz - ep.rtkBaseFloat; // 基准站坐标：浮点位置 - 浮点基线
         if (basePos.squaredNorm() > 1.0e12) {
-            // 矢量换站心系只转不挪：给锚点加上矢量再求相对锚点的 ENU。
             const ENU blfEnu = Coord::XYZToENU(xyz, basePos);
             row.set(F::BaseEf, blfEnu.E());
             row.set(F::BaseNf, blfEnu.N());
@@ -387,9 +376,7 @@ namespace Solvers::RTK {
     }
 
     std::vector<Export::Col> Task::exportFields(const Export::Format fmt) const {
-        if (fmt == Export::Format::ORB) return {}; // 根数只有低轨轨道有
         const std::vector<Export::Col> c = Export::floatFixColumns(false, true);
-        // 基线列不受影响；REF/偏差/3dRMS 这些「相对参考」的列没挂真值就剔除。
         return columnsForTruth(c);
     }
 

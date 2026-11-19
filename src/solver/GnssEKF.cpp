@@ -167,7 +167,7 @@ void GnssEKF::measUpdate(EquSys &equSys, const Eigen::MatrixXd *fullWeight) {
     int iobs = 0;
     for (const auto &[eid, ed]: equSys.obsEquData) {
         prefit(iobs) = ed.prefit;
-        for (const auto &[var, coeff]: ed.varCoeffData) {
+        for (const auto &[var, coeff]: ed.varCoefficient) {
             const int idx = currentIndexData.at(var);
             H(iobs, idx) = coeff;
         }
@@ -311,10 +311,10 @@ Eigen::VectorXd GnssEKF::priorInnovationStd(const EquSys &equSys) const {
     int i = 0;
     for (const auto &[eid, ed]: equSys.obsEquData) {
         double v = 0.0;
-        for (const auto &[va, ca]: ed.varCoeffData) {
+        for (const auto &[va, ca]: ed.varCoefficient) {
             const int ia = indexOf(va);
             if (ia < 0 || ia >= dim) continue;
-            for (const auto &[vb, cb]: ed.varCoeffData) {
+            for (const auto &[vb, cb]: ed.varCoefficient) {
                 const int ib = indexOf(vb);
                 if (ib < 0 || ib >= dim) continue;
                 v += ca * cb * kalmanFilter.Dp(ia, ib);

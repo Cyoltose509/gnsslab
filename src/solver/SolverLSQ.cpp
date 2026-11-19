@@ -27,7 +27,7 @@ void SolverLSQ::solve(EquSys &equSys, const Eigen::MatrixXd &W, const bool compu
     for (const auto &[id, data]: equSys.obsEquData) {
         prefit(iobs) = data.prefit;
 
-        for (const auto &[var, value]: data.varCoeffData) {
+        for (const auto &[var, value]: data.varCoefficient) {
             H(iobs, getIndex(var)) = value;
         }
         iobs++;
@@ -64,6 +64,21 @@ void SolverLSQ::computeCovariance() {
     if (!mHasDecomp) return;  // 尚未求解过，无分解可复用
     const int n = static_cast<int>(mLastDecomp.rows());
     Q = mLastDecomp.solve(Eigen::MatrixXd::Identity(n, n));
+}
+
+std::map<SatID, double> SolverLSQ::wTest(const EquSys &eq) const {
+    std::map<SatID, double> out;
+    if (!(sigma0 > 0.0) || Q.rows() <= 0) return out;
+    int iobs = 0;
+    for (const auto &[eid, data]: eq.obsEquData) {
+        if (iobs >= v.size() || iobs >= H.rows()) break;
+        const double invW = data.weight > 0.0 ? 1.0 / data.weight : 0.0;
+        const auto hRow = H.row(iobs);
+        if (const double qvv = invW - (hRow * Q * hRow.transpose())(0, 0); qvv > 0.0)
+            out[eid.sat] = std::abs(v(iobs)) / (sigma0 * std::sqrt(qvv));
+        ++iobs;
+    }
+    return out;
 }
 
 double SolverLSQ::getSolution(const Parameter &type,

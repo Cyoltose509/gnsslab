@@ -133,6 +133,9 @@ namespace Solvers {
     void Epoch::getFromObs(const ObsData &data) {
         week = data.weekSecond.week;
         sow = data.weekSecond.sow;
+        truthSow = sow;
+        rxClockBias = 0.0;
+        rcvClockOffsApplied = data.rcvClockOffsApplied;
         satIds.clear();
         elevations.clear();
         azimuths.clear();
@@ -182,6 +185,13 @@ namespace Solvers {
     void Epoch::getFromSPP(const ::SPP &spp) {
         const auto &result = spp.result;
         const double r = result.xyz.norm();
+        // RCV CLOCK OFFS APPL=0 时时间标记没减钟差，钟差被滤波吸收成几十万米常数；
+        // 解出的位置对应 sow−cdt/C 时刻，真值必须按同一时刻插值。头里没这个字段的
+        // 老 RINEX/实时流回退幅值判据，地面站钟差只有几米、不会误触发。
+        rxClockBias = spp.getClockBias(spp.mClockRefSys);
+        const bool tagUncorrected = rcvClockOffsApplied == 0 ||
+            (rcvClockOffsApplied < 0 && std::fabs(rxClockBias) > kTimeTagBiasMinM);
+        if (tagUncorrected) truthSow = sow - rxClockBias / C_MPS;
         if (const bool posValid = r > 6.35e6 && r < 8.0e6; result.numSats > 0 && posValid) {
             solved = true;
             sppResult = result;
@@ -320,7 +330,7 @@ namespace Solvers {
         ++gen;
         for (int i = 0; i < static_cast<int>(enu_e.size()); i++) {
             const Eigen::Vector3d ref = i < static_cast<int>(refs.size()) && refs[i].squaredNorm() > 1.0
-                                            ? refs[i] : refECEF;
+                                            ? refs[i] : static_cast<const Eigen::Vector3d &>(refECEF);
             const EnuOfEpoch enu = enuFrom(solvedFlags[i] != 0.0, ecef[i], floatEcef[i], ref);
             enu_e[i] = enu.solved[0];
             enu_n[i] = enu.solved[1];
@@ -670,7 +680,7 @@ namespace Solvers {
         if (pos.squaredNorm() <= 1e12) return;
 
         const CommonTime ct = CommonTime(GPS_EPOCH_MJD, 0.0, TimeSystem::GPS)
-                              + (static_cast<double>(ep.week) * 7.0 * SEC_PER_DAY + ep.sow);
+                              + (static_cast<double>(ep.week) * 7.0 * SEC_PER_DAY + ep.truthSow);
         Eigen::Vector3d refPos = Eigen::Vector3d::Zero(), refVel = Eigen::Vector3d::Zero();
         bool haveRef = false;
         if (truth.form == RefForm::File && truth.fileReady) {
@@ -715,12 +725,14 @@ namespace Solvers {
         view.rtnD3.push_back((pos - refPos).norm());
     }
 
-    void Core::refreshTruthAtEpoch(Epoch &ep, const CommonTime &epoch) {
+    void Core::refreshTruthAtEpoch(Epoch &ep) const {
         if (!modeUsesRTN(mode) || truth.form != RefForm::File || !truth.fileReady) return;
         if (ep.sppResult.xyz.squaredNorm() <= 1e12) return;
+        const CommonTime ct = CommonTime(GPS_EPOCH_MJD, 0.0, TimeSystem::GPS)
+                              + (static_cast<double>(ep.week) * 7.0 * SEC_PER_DAY + ep.truthSow);
         try {
-            if (!truth.reader.covers(truth.sat, epoch)) return;
-            const PVT pvt = truth.reader.getPVT(truth.sat, epoch);
+            if (!truth.reader.covers(truth.sat, ct)) return;
+            const PVT pvt = truth.reader.getPVT(truth.sat, ct);
             if (pvt.p.squaredNorm() <= 1e12 || pvt.p.squaredNorm() >= 1e16) return;
             const Eigen::Vector3d rtn = Coord::XYZToRTN(ep.sppResult.xyz, pvt.p, pvt.v);
             ep.refECEF = pvt.p;

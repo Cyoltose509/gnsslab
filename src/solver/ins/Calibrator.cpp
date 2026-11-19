@@ -74,7 +74,7 @@ void Calibrator::solveLinear(const std::vector<Eigen::Vector3d> &raw, const std:
             EquData d;
             d.prefit = raw[i](k);
             d.weight = w[i];
-            d.varCoeffData = {{vSx, f[i](0)}, {vSy, f[i](1)}, {vSz, f[i](2)}, {vB, 1.0}};
+            d.varCoefficient = {{vSx, f[i](0)}, {vSy, f[i](1)}, {vSz, f[i](2)}, {vB, 1.0}};
             equ.obsEquData[EquID(SatID(static_cast<SatSystem>('P'), static_cast<int>(i)), "acc")] = d;
         }
         lsq.solve(equ, equ.weightVector().asDiagonal().toDenseMatrix());

@@ -171,7 +171,6 @@ public:
     VariableSet currentUnkSet;
     VariableIntMap currentIndexData;
 
-    // 以下全部为 σ 口径：使用点平方后进 Dx/Dw 阵（原为方差口径，2026-11 统一转 σ）。
     double ambProcSigma = 1.0E-4;
     double ambInitSigma = 10.0;
     double clockProcSigma = 0.0;

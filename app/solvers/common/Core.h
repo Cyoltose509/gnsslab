@@ -65,6 +65,10 @@ namespace Solvers {
     struct Epoch {
         unsigned int week = 0;
         double sow = 0;
+        double truthSow = 0;
+        double rxClockBias = 0; // 接收机钟差(m)
+        int rcvClockOffsApplied = -1; // RCV CLOCK OFFS APPL：-1 未声明，0 未改钟差，1 已改正
+        static constexpr double kTimeTagBiasMinM = 1.0E5;
         bool solved = false;
 
         int numObs = 0;
@@ -352,7 +356,7 @@ namespace Solvers {
         void applyTruthAtEpoch(Epoch &ep, int index);
 
 
-        void refreshTruthAtEpoch(Epoch &ep, const CommonTime &epoch);
+        void refreshTruthAtEpoch(Epoch &ep) const;
 
 
         [[nodiscard]] bool enPlanStatic() const {

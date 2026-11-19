@@ -125,17 +125,17 @@ double FreqCombo::combineCodeFromObs(const std::map<std::string, double> &obs) c
     return combineCode(obs.at(code1), obs.at(code2));
 }
 
-double FreqCombo::MW_cycle(const double P1, const double P2, const double L1, const double L2,
+double FreqCombo::cycleOfMW(const double P1, const double P2, const double L1, const double L2,
                            const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
     const double oP1 = P1 - osbP1, oP2 = P2 - osbP2;
     const double oL1 = L1 - osbL1, oL2 = L2 - osbL2;
     return mwA1 * oL1 + mwA2 * oL2 + mwB1 * oP1 + mwB2 * oP2;
 }
 
-double FreqCombo::MW_meter(const double P1, const double P2, const double L1, const double L2,
+double FreqCombo::meterOfMW(const double P1, const double P2, const double L1, const double L2,
                            const double osbP1, const double osbP2, const double osbL1, const double osbL2) const {
-    return MW_cycle(P1, P2, L1, L2, osbP1, osbP2, osbL1, osbL2) * lambdaW;
+    return cycleOfMW(P1, P2, L1, L2, osbP1, osbP2, osbL1, osbL2) * lambdaW;
 }
 
-double FreqCombo::GF_phase(const double L1, const double L2) { return L2 - L1; }
-double FreqCombo::GF_code(const double P1, const double P2) { return P2 - P1; }
+double FreqCombo::phaseGF(const double L1, const double L2) { return L2 - L1; }
+double FreqCombo::codeGF(const double P1, const double P2) { return P2 - P1; }

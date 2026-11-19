@@ -20,6 +20,8 @@ struct RINEXHeader {
 
     std::map<std::string, double> phaseShift;
 
+    int rcvClockOffsApplied = -1; // RCV CLOCK OFFS APPL：-1 未声明，0 时间标签未改钟差，1 已改正
+
     RINEXHeader() : version(0) {
     }
 };

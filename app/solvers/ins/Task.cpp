@@ -254,7 +254,7 @@ namespace Solvers::INS {
         // 攒开头一段做粗对准与零偏标定。
         aligning = true;
         const bool replay = std::filesystem::exists(c.imuPath);
-        const double capSec = c.specifyAttitude ? 2.0 : replay ? kAlignMaxSec : kAlignHeadSec;
+        const double capSec = replay ? kAlignMaxSec : kAlignHeadSec;
         const auto capSamples = static_cast<std::size_t>(capSec * scale.rateHz);
         const auto headSamplesNeed = static_cast<std::size_t>(kAlignHeadSec * scale.rateHz);
         std::size_t alignNeed = std::min(capSamples, headSamplesNeed);
@@ -322,10 +322,14 @@ namespace Solvers::INS {
             rphDeg.roll = c.rollDeg;
             rphDeg.pitch = c.pitchDeg;
             rphDeg.yaw = c.headingDeg;
+            // 姿态用指定值，但静止段照检：零偏标定与 ZUPT 基准要靠它，不能因跳过粗对准而丢掉。
+            const StaticSpan span = Aligner::detectStatic(alignHead, scale);
+            zuptIns.alignBegin = span.begin;
+            zuptIns.alignCount = span.size();
         }
 
-        // 导航从对准段末端起算：段内的上电沉降、搬运不是载体运动，喂进编排只会积出假速度。
-        solveFrom = c.specifyAttitude ? 0 : zuptIns.alignBegin + zuptIns.alignCount;
+        // 自动对准的姿态是整段均值，从段末起算；指定姿态对应静置段起点，从段首起算才与真值同刻。
+        solveFrom = c.specifyAttitude ? zuptIns.alignBegin : zuptIns.alignBegin + zuptIns.alignCount;
         if (solveFrom >= alignHead.size()) {
             setError(I18n::tr("ins.err.short_static", alignHead.size()));
             return false;

@@ -1,5 +1,6 @@
 #include "QCProcessor.h"
 #include "core/obs/FreqCombo.h"
+#include "core/obs/SlipDetector.h"
 #include "core/Const.h"
 #include <algorithm>
 #include <deque>
@@ -252,7 +253,7 @@ namespace QC {
         int clockJumpEpochs = 0;
         bool finished = false;
 
-        /// 单程 MW 检测的一步：等价于 detectMW 的循环体，next 由调用方提供。
+        /// 单程 MW 检测的一步：更新弧段统计并判跳，next 由调用方提供。
         static void applyMW(SatStream &s, const int k, const double nextMW, const bool nextOk, const bool hasNext) {
             const double MW = s.MW[k];
             if (!s.gapOk[k]) {
@@ -396,25 +397,16 @@ namespace QC {
         /// 钟跳判定：相邻两历元上「无周跳历史」的卫星码相跳变是否同向共模。
         /// 判为钟跳后把后一历元的周跳/粗差改判为钟跳，并从 slipFlag 里撤回。
         void judgeClockJump(const std::map<SatID, int> &a, const std::map<SatID, int> &b) {
-            constexpr double c = C_MPS;
-            constexpr double xi = 4.0;
-            constexpr double msLo = 1e-7 * c - 3.0 * xi, msHi = 1e-5 * c + 3.0 * xi;
-            constexpr double usThr = 1e-3 * c - 3.0 * xi;
-
-            int nms = 0, nus = 0, totalValid = 0;
+            std::vector<double> codePhaseDiffs;
             for (const auto &[sat, ia]: a) {
                 const auto it = sats.find(sat);
                 if (it == sats.end() || it->second.slipEver) continue;
-                const auto jt = b.find(sat);
-                if (jt == b.end()) continue;
                 const SatStream &s = it->second;
-                const int ib = jt->second;
-                const double dL = std::fabs(s.c1s[ib] - s.c1s[ia] - (s.l1m[ib] - s.l1m[ia]));
-                if (dL > msLo && dL < msHi) nms++;
-                else if (dL > usThr) nus++;
-                totalValid++;
+                if (const auto jt = b.find(sat); jt != b.end())
+                    codePhaseDiffs.push_back(std::fabs((s.c1s[jt->second] - s.l1m[jt->second])
+                                                       - (s.c1s[ia] - s.l1m[ia])));
             }
-            if (const int ns = nms + nus; totalValid < 4 || ns < 4 || ns < 0.6 * totalValid) return;
+            if (!SlipDetector::clockJump(codePhaseDiffs)) return;
 
             for (const auto &[sat, ib]: b) {
                 const auto it = sats.find(sat);
@@ -520,9 +512,9 @@ namespace QC {
             s.l2m.push_back(l2);
             s.l1cyc.push_back(l1 / s.lam1);
             s.l2cyc.push_back(l2 / s.lam2);
-            s.MW.push_back(fc.MW_meter(c1, c2, l1, l2));
-            s.LGF.push_back(FreqCombo::GF_phase(l1, l2));
-            s.PGF.push_back(FreqCombo::GF_code(c1, c2));
+            s.MW.push_back(fc.meterOfMW(c1, c2, l1, l2));
+            s.LGF.push_back(FreqCombo::phaseGF(l1, l2));
+            s.PGF.push_back(FreqCombo::codeGF(c1, c2));
             s.mp1s.push_back(c1 - a * l1 + b * l2);
             s.mp2s.push_back(c2 - c * l1 + e * l2);
             s.ionos.push_back(f2 * f2 / (f1 * f1 - f2 * f2) * (l1 - l2));

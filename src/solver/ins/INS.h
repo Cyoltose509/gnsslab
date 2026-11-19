@@ -11,13 +11,15 @@
 class INS {
 public:
     // 零速修正内参
-    static constexpr double kZuptAttGain = 0.05;            // 静止姿态向重力方向的单历元修正比例
+    static constexpr double kZuptAttGain = 0.0;            // 静止姿态反馈增益；车停在斜坡上时向 -g 拉会引入横滚误差，故关闭
     static constexpr double kZuptAttRateMax = 0.1 * DEG_TO_RAD; // 姿态修正限速 (rad/s)：真实需求只有零偏量级
     static constexpr double kZuptGyroEstTau = 10.0;         // 陀螺零偏一阶滤波时间常数 (s)
     static constexpr double kZuptEstWarmSec = 10.0;         // 零偏估计的静止保持时长：误判静一般 <3 s，真停 >50 s
     static constexpr double kZuptGyroBiasCap = 1e-4;        // 陀螺零偏估计钳位 (rad/s)
     // 静置段标定内参
     static constexpr double kAccBiasApplyTol = 0.05;        // 加计零偏可信阈值 (m/s^2)，超过则不扣
+    static constexpr double kZuptAccStdTol = 0.02;          // 静止判据：比力窗口标准差上限 (m/s^2)
+    static constexpr double kZuptGyroStdTol = 0.002;        // 静止判据：角速度窗口标准差上限 (rad/s)
 
     NavState s;
 

@@ -51,9 +51,10 @@ namespace Solvers::LEO {
         void writeCSVParams(CSV::Meta &m) const override;
     };
 
-    /// LEO 的参数默认值：动态滤波初值，关掉周跳与固体潮，运动阈值放宽到 100 m。
+    /// LEO 的参数默认值：动态滤波初值，低截止角多留星，关掉周跳与固体潮，运动阈值放宽到 100 m。
     inline SolverOptions defaultOptions() {
         SolverOptions o{};
+        o.cutoffDeg = 5.0;
         o.spp.phaseSigma = 0.003;
         o.spp.firstEpochPosSigma = 1.0;
         o.spp.ambProcSigma = std::sqrt(1.0E-7); // 旧方差口径默认值 1e-7 的精确开方（σ 口径）

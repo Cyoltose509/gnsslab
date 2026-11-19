@@ -118,7 +118,7 @@ namespace Tools::LsqSolver {
                 EquData data;
                 data.prefit = s_L[i];
                 for (int j = 0; j < s_NumUnk; ++j) {
-                    data.varCoeffData[varList[j]] = s_H[i * s_NumUnk + j];
+                    data.varCoefficient[varList[j]] = s_H[i * s_NumUnk + j];
                 }
                 sys.obsEquData[EquID(SatID(static_cast<SatSystem>('G'), i), "GUI")] = data;
             }

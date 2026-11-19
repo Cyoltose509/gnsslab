@@ -265,10 +265,11 @@ namespace Download::Acquire {
                 ImGui::TextDisabled("%s", typeLabel(p.singleType));
                 ImGui::SameLine();
             } else {
-                // 首次展开按模式定默认勾选：低轨卫星在大气层外，对流层延迟与映射函数都用不上。
+                // 首次展开按模式定默认勾选：低轨卫星在大气层外，对流层、电离层与映射函数都用不上。
                 if (p.typeOn.size() != static_cast<std::size_t>(kDateTypeCount)) {
                     p.typeOn.assign(kDateTypeCount, 1);
-                    if (!p.usesTropo) {
+                    if (!p.usesAtmosphere) {
+                        p.typeOn[static_cast<int>(ProductType::ION)] = 0;
                         p.typeOn[static_cast<int>(ProductType::TRO)] = 0;
                         p.typeOn[static_cast<int>(ProductType::VMF)] = 0;
                     }

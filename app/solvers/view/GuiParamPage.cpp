@@ -603,9 +603,12 @@ void Solvers::Helpers::renderInsInitialState(SolverOptions &opts) {
         ImGui::PushItemWidth(140);
         for (int i = 0; i < 3; ++i) {
             if (i) ImGui::SameLine();
-            const std::string id = std::string(lab[i]) + "##ins_init_att_" + std::to_string(i);
-            ImGui::InputDouble(id.c_str(), slot[i], 0.0, 0.0, "%.10g");
+            ImGui::InputDouble(UI::idLabel(lab[i], "##ins_init_att_", std::to_string(i)),
+                               slot[i], 0.0, 0.0, "%.10g");
         }
         ImGui::PopItemWidth();
+        ImGui::SameLine();
+        if (const PasteResult p = clipboardXYZButton("ins_init_att"); p.count > 0)
+            for (int i = 0; i < p.count; ++i) *slot[i] = p.xyz[i];
     }
 }

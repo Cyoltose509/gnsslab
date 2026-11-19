@@ -200,7 +200,7 @@ typedef std::map<Variable, int> VariableIntMap;
 class EquID {
 public:
     SatID sat;
-    std::string obsType; // 观测类型（拥有式；勿用 string_view，否则临时串会悬垂）
+    std::string obsType; // 观测类型
 
     EquID() = default;
 
@@ -239,7 +239,8 @@ inline std::ostream &operator<<(std::ostream &os, const EquID &equID) {
 
 struct EquData {
     double prefit = 0.0;
-    std::map<Variable, double> varCoeffData;
+    // 每个未知数前面的系数
+    std::map<Variable, double> varCoefficient;
     double weight = 1.0;
     double varBudget = 0.0;
     bool isPhase = false;

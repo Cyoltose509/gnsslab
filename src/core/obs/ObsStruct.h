@@ -9,9 +9,11 @@
 
 #include "core/SatID.h"
 #include "core/TimeStruct.h"
-#include "core/TimeStruct.h"
 
 typedef std::map<std::string, double> TypeValueMap;
+typedef std::map<SatID, double> SatValueMap;
+typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
+typedef std::map<SatID, std::map<std::string, int> > SatTypeLLIMap;
 
 inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueMap) {
     for (const auto &[type, value]: typeValueMap) {
@@ -21,7 +23,7 @@ inline std::ostream &operator<<(std::ostream &os, const TypeValueMap &typeValueM
     return os;
 }
 
-typedef std::map<SatID, double> SatValueMap;
+
 
 inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap) {
     for (const auto &[sat, value]: satValueMap) {
@@ -32,8 +34,7 @@ inline std::ostream &operator<<(std::ostream &os, const SatValueMap &satValueMap
 }
 
 
-typedef std::map<SatID, TypeValueMap> SatTypeValueMap;
-typedef std::map<SatID, std::map<std::string, int> > SatTypeLLIMap;
+
 
 inline std::ostream &operator<<(std::ostream &os, const SatTypeValueMap &satTypeValueMap) {
     for (const auto &[sat, tv]: satTypeValueMap) {
@@ -51,6 +52,8 @@ struct ObsData {
     std::string station;
 
     CommonTime epoch;
+
+    int rcvClockOffsApplied = -1; // RCV CLOCK OFFS APPL：-1 未声明，0 时间标签未改钟差，1 已改正
 
     WeekSecond weekSecond;
     SatTypeValueMap satTypeValueData;

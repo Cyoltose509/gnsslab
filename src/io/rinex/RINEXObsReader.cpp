@@ -48,6 +48,8 @@ void RINEXObsReader::parseRINEXHeader() {
             const std::string type = Str::strip(Str::sub(line, 20, 20));
             const std::string radome = Str::strip(Str::sub(line, 40, 20));
             if (!type.empty()) rinexHeader.antType = radome.empty() ? type : type + " " + radome;
+        } else if (label == "RCV CLOCK OFFS APPL") {
+            rinexHeader.rcvClockOffsApplied = Str::toInt(Str::strip(Str::sub(line, 0, 60)));
         } else if (label == "GLONASS SLOT / FRQ #") {
             // 两版格式一致：Rnn + 通道号成对出现
             std::istringstream ss(Str::strip(Str::sub(line, 0, 60)));
@@ -109,6 +111,7 @@ ObsData RINEXObsReader::parseRINEXObs() {
     ObsData obsData;
     obsData.station = rinexHeader.station;
     obsData.epoch = currEpoch;
+    obsData.rcvClockOffsApplied = rinexHeader.rcvClockOffsApplied;
     obsData.weekSecond = currEpoch.toWeekSecond();
     obsData.satTypeValueData = std::move(stvData);
     obsData.satTypeLLI = std::move(lliData);

@@ -326,7 +326,7 @@ namespace Solvers::SPP {
                 if (ep.solved) {
                     // 逐历元参考真值随解随填，不必等整趟结束后再补。
                     applyTruthAtEpoch(ep, static_cast<int>(i));
-                    refreshTruthAtEpoch(ep, fwdSession.feed.epoch(i));
+                    refreshTruthAtEpoch(ep);
                 }
             }
             if (i % refreshStep == 0 || i + 1 == m) publish();

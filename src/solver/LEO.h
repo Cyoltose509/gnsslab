@@ -4,6 +4,7 @@
 #include "core/SatID.h"
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <string>
 #include <vector>
 #include <Eigen/Eigen>
@@ -28,6 +29,15 @@ public:
     /// 发布位置至少要 5 颗星：4 星恰好解 XYZ+钟，残差恒为 0 没有冗余；
     /// 再少就是纯状态外推，位置和多普勒速度会一起沿轨道漂，实测能累积到几十公里。
     static constexpr int kMinPublishSats = 5;
+    /// 3 个位置 + 每系统钟之外至少再留 1 颗冗余星，否则残差和 σ 都失去检错能力
+    static constexpr int kMinRedundancy = 1;
+    /// 发布精度的硬上限：σP 到这个量级说明滤波已散，位置再像样也是坏解(m)
+    static constexpr double kMaxSigmaPM = 1.0e4;
+    /// 重捕获且 SPP 几何已经偏弱时，5 星解实测出现 σ 只有 1.8 m 却偏 23 m 的假解
+    static constexpr double kWeakReacqPdop = 2.8;
+    /// 码被抽稀的星载观测（Sentinel-6 每 10 s 一组码）靠相位增量补码的最长跨度(s)；
+    /// 再长相位模糊度可能已变，补出的码会把滤波带偏。
+    static constexpr double kCodeBridgeMaxGapS = 30.0;
 
     LEO() {
         setTropo(false);
@@ -47,22 +57,25 @@ public:
     ~LEO() override = default;
 
 
-    /// 取值编排在 app 层，这里只管接过来用；缺的段落按 0 处理并落日志。
-    void setAntennaOffset(const AntennaOffset &offset, const std::string &source);
-
     bool processEpoch(ObsData &obs) override;
 
     void applyOptions(const SolverOptions &o) override;
 
-    Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const override;
-
-    void buildEquSys() override;
-
-    Eigen::Vector3d recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch,
-                                          const SatID &sat) const override;
+    /// 码被抽稀的星载观测：有相位无码的历元用上一组码加相位增量补码，避免整历元无解。
+    void prepareCode(ObsData &obs);
 
     // 首历元引导
     void bindRefPosition() override;
+
+    Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) override;
+
+    void buildEquSys() override;
+
+    /// 取值编排在 app 层，这里只管接过来用；缺的段落按 0 处理并落日志。
+    void setAntennaOffset(const AntennaOffset &offset, const std::string &source);
+
+    Eigen::Vector3d recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst, const CommonTime &epoch,
+                                          const SatID &sat) const override;
 
 private:
     mutable Eigen::Vector3d mLastGoodAnchor = Eigen::Vector3d::Zero(); // 质量门控重锚定：最近一个可信锚点
@@ -70,6 +83,15 @@ private:
     mutable bool mGeomWeak = false; // 本历元码观测几何不足以定轨
     mutable double mEpochPdop = 0.0; // 本历元 SPP 几何 PDOP
     bool mPrevEpochSolved = true; // 上一历元是否发布了位置解
+
+    // 抽稀码的补码基准：一组双频码与相位、它们的历元，之后每历元用相位增量推进
+    struct CodeRef {
+        CommonTime epoch{};
+        std::string c1, c2, l1, l2;
+        double p1 = 0.0, p2 = 0.0, ph1 = 0.0, ph2 = 0.0;
+        bool valid = false;
+    };
+    std::map<SatID, CodeRef> mCodeRef;
 
     // 线性化点外推用的运动状态：全部由相邻历元解算结果差分得到，不含力模型
     Eigen::Vector3d mPrevVel = Eigen::Vector3d::Zero();

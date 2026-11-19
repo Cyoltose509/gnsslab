@@ -8,6 +8,7 @@
 #include "core/geom/Ephemeris.h"
 #include "core/SatID.h"
 #include "GnssEKF.h"
+#include "SolverLSQ.h"
 #include "SolverOptions.h"
 #include <map>
 #include <memory>
@@ -47,9 +48,11 @@ public:
 
 
     Eigen::Vector3d xyz = Eigen::Vector3d::Zero();
+    Eigen::Vector3d mLastXYZ = Eigen::Vector3d::Zero(); // 上一有效历元解，作 LSQ/滤波共用的迭代起点；reset 不清
     GeodeticFrame frame = Frame::WGS84;
 
     GnssEKF ekf;
+    SolverLSQ lsq;
     EquSys curEq{};
     bool mUseFilter = false;
     bool mFilterInit = false;
@@ -86,10 +89,6 @@ public:
 
     virtual void solve();
 
-
-    [[nodiscard]] Eigen::Matrix3d posCovariance() const;
-
-
     virtual void applyOptions(const SolverOptions &o) = 0;
 
     virtual void prepareGeometry() = 0;
@@ -99,6 +98,7 @@ public:
     virtual void initFilter() = 0;
     virtual void updateFilter() = 0;
 
+    void trackEpochGap();
 
     virtual void estimatePosition();
 
@@ -109,9 +109,9 @@ public:
     void computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::Vector3d &recv,
                          SatValueMap &elev, SatValueMap &azim) const;
 
-    void trackEpochGap();
-
     bool ephUnhealthy(const SatID &sat, const Ephemeris *eph, bool enabled);
+
+    [[nodiscard]] Eigen::Matrix3d posCovariance() const;
 
     void readbackResidual(const EquSys &eq, const Eigen::VectorXd &residual);
 

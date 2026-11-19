@@ -13,29 +13,53 @@
 
 #include "SolverLSQ.h"
 
-Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph) const {
-    if (eph.empty()) return Eigen::Vector3d::Zero();
-    SPP spp = {};
-    spp.prod->eph = eph;
-    spp.setEnabledSystems(mConfig.enabledSystems);
-    spp.setCutoffElevDeg(mConfig.cutoffElevRad * RAD_TO_DEG);
-    ObsData work = obs;
-    work.antennaPosition = Eigen::Vector3d::Zero();
-    try { if (spp.processEpoch(work)) return spp.result.xyz; } catch (...) {
-    }
-    return Eigen::Vector3d::Zero();
-}
 
 bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable &eph) {
     result.reset(); // 早退分支不能留下上一历元的结果
     mWeightReady = false; // 随机模型按本历元卫星集合重算
     if (!mUseFilter && mFilterInit) resetFilterState();
+    if (!preparePositions(base, rover, eph)) return false;
 
+    mBaseObs = &base;
+    mCurObs = &rover;
+    mEph = &eph;
+    detectFreqCombinations();
+    detectSlips();
+
+    prepareGeometry();
+    if (static_cast<int>(mUsedSats.size()) < mConfig.minSats) return false; // 参与双差的星不足，本历元不给解
+    computeSdVariance();
+
+    solve();
+    return result.stat != 0;
+}
+
+void RTK::applyOptions(const SolverOptions &o) {
+    mConfig = o.rtk;
+    mConfig.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
+    mConfig.enabledSystems = o.systems;
+    mUseCycleSlip = mConfig.useCycleSlip;
+    mUseGFCycleSlip = mConfig.useGFCycleSlip;
+    mGFSlipMult = mConfig.GFSlipMult;
+    mUseFilter = o.filter != SolverOptions::FilterMode::LSQ;
+    mPosProcSigma = o.posProcSigma;
+    if (!mUseFilter) resetFilterState();
+}
+
+void RTK::resetFilterState() {
+    ekf.reset();
+    mFilterInit = false;
+    xyz.setZero();
+    mPrevRefSat.clear();
+}
+
+bool RTK::preparePositions(const ObsData &base, const ObsData &rover, const EphemerisTable &eph) {
     if (isSaneECEF(mBaseUser)) {
         mBase = mBaseUser;
     } else if (isSaneECEF(base.antennaPosition)) {
         mBase = base.antennaPosition;
     } else {
+        // 在星历数量变多时重算
         if (const std::size_t es = eph.size(); !isSaneECEF(mBase) || es > mBaseEphSize) {
             if (const Eigen::Vector3d p = estimateApproxPosition(base, eph); isSaneECEF(p)) {
                 mBase = p;
@@ -50,9 +74,10 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
 
     if (isSaneECEF(rover.antennaPosition)) {
         mRoverApprox = rover.antennaPosition;
-    } else if (mUseFilter && mFilterInit && isSaneECEF(xyz)) {
-        mRoverApprox = xyz;
+    } else if (isSaneECEF(mLastXYZ)) {
+        mRoverApprox = mLastXYZ;
     } else {
+        // 在星历数量变多时重算
         if (const std::size_t es = eph.size(); !isSaneECEF(mRoverApprox) || es > mRoverEphSize) {
             if (const Eigen::Vector3d p = estimateApproxPosition(rover, eph); isSaneECEF(p)) {
                 mRoverApprox = p;
@@ -60,232 +85,23 @@ bool RTK::processEpoch(const ObsData &base, const ObsData &rover, EphemerisTable
             }
         }
     }
-
-    mBaseObs = &base;
-    mCurObs = &rover;
-    mEph = &eph;
-
-    detectFreqCombinations();
-    detectSlips();
-
-    prepareGeometry();
-    if (static_cast<int>(mUsedSats.size()) < mConfig.minSats) return false; // 参与双差的星不足，本历元不给解
-    computeSdVariance();
-
-    solve();
-    return result.stat != 0;
+    // 若流动站概略坐标仍不可用，则退回基准站坐标
+    mRoverApprox = isSaneECEF(mRoverApprox) ? mRoverApprox : mBase;
+    return true;
 }
 
-void RTK::publishResult() {
-    if (xyz.norm() < 1.0e6) return;
-
-    result.xyz = xyz;
-    result.blh = Coord::XYZToBLH(xyz, Frame::WGS84);
-    result.xyzFloat = xyz;
-    result.numSats = static_cast<int>(mUsedSats.size());
-    mBaselineFloat = xyz - mBase;
-
-    const Eigen::Matrix3d Q = posCovariance();
-    result.sigmaXYZ = Q.diagonal().array().max(0.0).sqrt().matrix() * sigma0;
-    result.sigmaP = positionSigma(Q, sigma0);
-    result.sigmaPFloat = result.sigmaP;
-    result.ratio = 0.0;
-    result.stat = 2;
-
-    // DOP 与后验残差随浮点解出：残差按观测类型分码/相位两张表
-    geometryDOPs(result, curEq, result.blh);
-    readbackResidual(curEq, ekf.postfitResidual);
-
-    if (mConfig.useAR) {
-        Eigen::VectorXd b;
-        Eigen::MatrixXd Qb;
-        std::vector<Variable> aVars;
-        extractAmbiguities(b, Qb, aVars);
-        if (tryFixAmbiguities(aVars, b, Qb)) {
-            applyFixedSolution(sigma0);
-            return;
-        }
+// SPP 反算概略坐标
+Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisTable &eph) const {
+    if (eph.empty()) return Eigen::Vector3d::Zero();
+    SPP spp = {};
+    spp.prod->eph = eph;
+    spp.setEnabledSystems(mConfig.enabledSystems);
+    spp.setCutoffElevDeg(mConfig.cutoffElevRad * RAD_TO_DEG);
+    ObsData work = obs;
+    work.antennaPosition = Eigen::Vector3d::Zero();
+    try { if (spp.processEpoch(work)) return spp.result.xyz; } catch (...) {
     }
-    result.xyzFixed = result.xyz;
-    result.blhFixed = result.blh;
-}
-
-void RTK::resetFilterState() {
-    ekf.reset();
-    mFilterInit = false;
-    xyz.setZero();
-    mPrevRefSat.clear();
-}
-
-void RTK::initFilter() {
-    if (!bootstrapSolution()) {
-        xyz.setZero();
-        return;
-    }
-
-    ekf.reset();
-    ekf.configure(mPosProcSigma, false, mConfig.ambProcSigma, 0.0);
-    ekf.accProcSigma = 0.0;
-    ekf.ambInitSigma = mConfig.ambInitSigma;
-
-    AmbSeed seed;
-    VariableSet varSet;
-    collectEpochStates(varSet, seed);
-    ekf.timeUpdate(varSet, nullptr);
-    ekf.setBootstrapPosition(xyz, Eigen::Vector3d::Constant(GnssEKF::kBootstrapPosVar));
-    ekf.setBootstrapStates(seed.init);
-
-    buildEquSys(curEq, xyz, false);
-    ekf.measUpdate(curEq, mConfig.fullCovariance ? &mWeightMatrix : nullptr);
-    xyz = filteredPosition();
-    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
-                             static_cast<int>(ekf.currentUnkSet.size()));
-    mPrevRefSat = mRefSat;
-    mFilterInit = true;
-}
-
-void RTK::rebaseAmbiguities() {
-    if (mPrevRefSat.empty() || ekf.currentUnkSet.empty()) return;
-
-    const VariableSet &oldSet = ekf.currentUnkSet;
-    std::map<Variable, int> oldIndex;
-    for (const auto &v: oldSet) oldIndex[v] = ekf.indexOf(v);
-
-    const auto refChanged = [&](const SatSystem sys) {
-        const auto n = mRefSat.find(sys), o = mPrevRefSat.find(sys);
-        return n != mRefSat.end() && o != mPrevRefSat.end() && n->second != o->second;
-    };
-
-    std::map<Variable, std::pair<int, int> > rowMap;
-    //先给所有非模糊度变量和未变系统的模糊度写恒等行
-    for (const auto &v: oldSet) {
-        if (v.par != Parameter::ambiguity || !refChanged(v.sat.system))
-            rowMap[v] = {oldIndex.at(v), -1};
-    }
-
-    bool anyChanged = false;
-    for (const auto &[sys, sats]: mPartSats) {
-        if (!refChanged(sys)) continue;
-        anyChanged = true;
-        const auto b = mRefSat.at(sys);
-        const auto a = mPrevRefSat.at(sys);
-        for (const char *lb: {"L1", "L2"}) {
-            const auto itb = oldIndex.find(Variable::makeAmbiguity(kRover, b, lb));
-            if (itb == oldIndex.end()) continue; // 新参考星上历元无状态：整系统按新弧段重开
-            for (const SatID &sat: sats) {
-                if (sat == b) continue;
-                const Variable vi = Variable::makeAmbiguity(kRover, sat, lb);
-                if (sat == a) {
-                    rowMap[vi] = {-1, itb->second};
-                } else if (const auto iti = oldIndex.find(vi); iti != oldIndex.end()) {
-                    rowMap[vi] = {iti->second, itb->second};
-                }
-            }
-        }
-    }
-    if (!anyChanged) return;
-
-    VariableSet newOrder;
-    Eigen::MatrixXd T = Eigen::MatrixXd::Zero(static_cast<int>(rowMap.size()), static_cast<int>(oldSet.size()));
-    int r = 0;
-    for (const auto &[v, cols]: rowMap) {
-        newOrder.insert(v);
-        const auto [plusCol, minusCol] = cols;
-        if (plusCol >= 0) T(r, plusCol) = 1.0;
-        if (minusCol >= 0) T(r, minusCol) = -1.0;
-        ++r;
-    }
-    ekf.reparameterize(newOrder, T);
-}
-
-void RTK::updateFilter() {
-    rebaseAmbiguities();
-    mPrevRefSat = mRefSat;
-    AmbSeed seed;
-    VariableSet varSet;
-    collectEpochStates(varSet, seed);
-    for (const auto &[v, n]: seed.init) ekf.forceValue(v, n);
-    ekf.timeUpdate(varSet, &seed.novar);
-    const Eigen::Vector3d xPred = predictedPosition();
-    buildEquSys(curEq, xPred, false);
-    // 粗差门限按星成组剔
-    const Eigen::VectorXd sigPred = ekf.priorInnovationStd(curEq);
-    std::set<SatID> bad;
-    int irow = 0;
-    for (const auto &[eid, ed]: curEq.obsEquData) {
-        const double sigObs = std::sqrt(1.0 / ed.weight);
-        if (const double sig = irow < sigPred.size() ? std::hypot(sigPred(irow), sigObs) : sigObs;
-            std::fabs(ed.prefit) > kPrefitGateSigma * sig)
-            bad.insert(eid.sat);
-        ++irow;
-    }
-    if (!bad.empty()) {
-        EquSys gated = curEq;
-        for (auto it = gated.obsEquData.begin(); it != gated.obsEquData.end();)
-            it = bad.count(it->first.sat) ? gated.obsEquData.erase(it) : std::next(it);
-        if (gated.obsEquData.size() >= kGateMinObs) {
-            curEq = std::move(gated);
-            mWeightReady = false; // 行数变了，权阵必须按新行序重建
-            buildWeightMatrix(curEq);
-        }
-    }
-    ekf.measUpdate(curEq, mConfig.fullCovariance ? &mWeightMatrix : nullptr);
-    xyz = filteredPosition();
-    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
-                             static_cast<int>(ekf.currentUnkSet.size()));
-}
-
-void RTK::applyFixedSolution(const double s0) {
-    result.xyz = mBase + mBaselineFixed;
-    result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
-    result.xyzFixed = result.xyz;
-    result.blhFixed = result.blh;
-    result.sigmaXYZ = mBaselineSigmaFixed * s0;
-    Eigen::Matrix3d Qfix = Eigen::Matrix3d::Zero();
-    for (int k = 0; k < 3; ++k) Qfix(k, k) = mBaselineSigmaFixed[k] * mBaselineSigmaFixed[k];
-    result.sigmaP = positionSigma(Qfix, s0);
-    result.sigmaPFixed = result.sigmaP; // 固定 σ 单独留存
-    result.stat = 1; // Fixed
-}
-
-Eigen::Vector3d RTK::filteredPosition() const {
-    return {
-        GnssEKF::getSolution(Parameter::dX, ekf.currentUnkSet, ekf.solution),
-        GnssEKF::getSolution(Parameter::dY, ekf.currentUnkSet, ekf.solution),
-        GnssEKF::getSolution(Parameter::dZ, ekf.currentUnkSet, ekf.solution)
-    };
-}
-
-Eigen::Vector3d RTK::predictedPosition() const {
-    return {
-        ekf.priorOf(Variable(kRover, Parameter::dX)),
-        ekf.priorOf(Variable(kRover, Parameter::dY)),
-        ekf.priorOf(Variable(kRover, Parameter::dZ))
-    };
-}
-
-void RTK::extractAmbiguities(Eigen::VectorXd &b, Eigen::MatrixXd &Qb, std::vector<Variable> &aVars) const {
-    // 只取本历元确实有观测的星：门限剔除后留下的变量没有方程，取整会让 LAMBDA 选错
-    std::set<SatID> used;
-    for (const auto &[eid, ed]: curEq.obsEquData) used.insert(eid.sat);
-
-    aVars.clear();
-    std::vector<int> idx;
-    for (const auto &v: curEq.varSet) {
-        if (v.par != Parameter::ambiguity || !used.count(v.sat)) continue;
-        const int i = ekf.indexOf(v);
-        if (i < 0) continue;
-        aVars.push_back(v);
-        idx.push_back(i);
-    }
-
-    const int M = static_cast<int>(aVars.size());
-    b.resize(M);
-    Qb.resize(M, M);
-    for (int i = 0; i < M; ++i) {
-        b(i) = ekf.solution(idx[i]);
-        for (int j = 0; j < M; ++j) Qb(i, j) = ekf.Q(idx[i], idx[j]);
-    }
+    return Eigen::Vector3d::Zero();
 }
 
 void RTK::detectFreqCombinations() {
@@ -301,6 +117,66 @@ void RTK::detectFreqCombinations() {
     }
 }
 
+// 周跳探测
+void RTK::detectSlips() {
+    mSlipExclude.clear();
+    if (!mUseCycleSlip) {
+        mSlipDetBase.clear();
+        mSlipDetRover.clear();
+        return;
+    }
+    SlipEpoch GFEpoch;
+
+    std::set<SatID> fedBase, fedRover; // 已喂入有效观测的检测器
+
+    const auto feedSlot = [&](std::map<SatID, SlipDetector> &dets, const FreqCombo &combo,
+                              const SatID &sat, const TypeValueMap &tv, const ObsData *obs) {
+        SlipDetector &det = dets[sat];
+        det.configure(combo, mUseGFCycleSlip, mGFSlipMult);
+        const SlipDetector::Result r = det.phaseCycle(sat, tv, obs);
+        GFEpoch.record(sat, r);
+        return r.slip;
+    };
+
+    for (SatSystem sys: mConfig.enabledSystems) {
+        auto itc = mSysCombos.find(sys);
+        if (itc == mSysCombos.end() || !itc->second.ok) continue;
+        const SysCombo &sc = itc->second;
+
+        for (const auto &[sat, tvb]: mBaseObs->satTypeValueData) {
+            if (sat.system != sys) continue;
+            const bool baseOk = sc.base.available(tvb); // 基准站该星有可用频点观测
+            auto itr = mCurObs->satTypeValueData.find(sat);
+            const bool roverOk = itr != mCurObs->satTypeValueData.end() && sc.rover.available(itr->second); // 流动站该星有可用频点观测
+            if (!baseOk && !roverOk) continue;
+
+            bool slip = false;
+            if (baseOk) {
+                if (feedSlot(mSlipDetBase, sc.base, sat, tvb, mBaseObs)) slip = true;
+                fedBase.insert(sat);
+            }
+            if (roverOk) {
+                if (feedSlot(mSlipDetRover, sc.rover, sat, itr->second, mCurObs)) slip = true;
+                fedRover.insert(sat);
+            }
+            // 任一端报跳就必须在双差里剔掉它
+            if (baseOk && roverOk && slip) mSlipExclude.insert(sat);
+        }
+    }
+
+    // 断流即清弧段
+    auto clearIdle = [&](std::map<SatID, SlipDetector> &m, const std::set<SatID> &fed) {
+        for (auto &[sat, det]: m)
+            if (!fed.count(sat)) det.setCycleGap();
+    };
+    clearIdle(mSlipDetBase, fedBase);
+    clearIdle(mSlipDetRover, fedRover);
+    std::set<SatID> GFExclude;
+    const std::set<SatID> GFApply = GFEpoch.decide(mGFCommonModeMinSats, GFExclude);
+    for (const auto &s: GFApply) mSlipExclude.insert(s);
+    for (const auto &s: GFExclude) mSlipExclude.insert(s);
+}
+
 //构建双差几何、选参考星、记录参与卫星
 void RTK::prepareGeometry() {
     mUsedSats.clear();
@@ -314,9 +190,8 @@ void RTK::prepareGeometry() {
     mPartSats.clear();
     mRefSat.clear();
 
-    const Eigen::Vector3d &roverRef = isSaneECEF(mRoverApprox) ? mRoverApprox : mBase;
 
-    std::map<SatSystem, std::vector<SatID> > cand;
+    std::map<SatSystem, std::vector<SatID> > candidates;
     for (SatSystem sys: mConfig.enabledSystems) {
         auto itc = mSysCombos.find(sys);
         if (itc == mSysCombos.end() || !itc->second.ok) continue;
@@ -326,30 +201,31 @@ void RTK::prepareGeometry() {
             if (sat.system != sys) continue;
             auto itr = mCurObs->satTypeValueData.find(sat);
             if (itr == mCurObs->satTypeValueData.end()) continue;
-            if (const TypeValueMap &tvr = itr->second; !sc.base.available(tvb) || !sc.rover.available(tvr)) continue;
-            if (mSlipExclude.count(sat)) continue; // 周跳剔除：不参与本历元双差
+            if (const TypeValueMap &tvr = itr->second;
+                !sc.base.available(tvb) || !sc.rover.available(tvr))
+                continue;
+            if (mSlipExclude.count(sat)) continue; // 周跳剔除
 
             Ephemeris *e = mEph->find(sat, mBaseObs->epoch);
             if (!e) continue;
-            if (ephUnhealthy(sat, e, mConfig.useHealth)) continue;
+            if (ephUnhealthy(sat, e, mConfig.useHealth)) continue; // 剔除不健康的卫星
 
-            // 发射时刻（用基准站 L1 伪距做传播时延修正）
+            // 发射时刻
             CommonTime t_emit = mBaseObs->epoch;
             t_emit.m_sod -= tvb.at(sc.base.code1) / C_MPS;
             satPVTTransTime[sat] = e->getPVT(t_emit, &sc.base);
-            cand[sys].push_back(sat);
+            candidates[sys].push_back(sat);
         }
     }
-
-    // 基类三表存流动站，基准站另立一套供双差随机模型用
-    earthRotation(satPVTRecTime, roverRef);
+    SatValueMap baseAzim; // 没有用，用局部变量装
+    // 先前没施加地球自转改正导致固定率下降
+    earthRotation(satPVTRecTime, mRoverApprox);
     earthRotation(satPVTBaseRecTime, mBase);
-    computeElevAzim(satPVTRecTime, roverRef, satElevData, satAzimData);
-    SatValueMap baseAzim;
+    computeElevAzim(satPVTRecTime, mRoverApprox, satElevData, satAzimData);
     computeElevAzim(satPVTBaseRecTime, mBase, satBaseElevData, baseAzim);
 
     // 基准站仰角截止：筛掉低星再按系统选参考星
-    for (auto &[sys, part]: cand) {
+    for (auto &[sys, part]: candidates) {
         for (auto it = part.begin(); it != part.end();) {
             if (satBaseElevData.at(*it) >= mConfig.cutoffElevRad) {
                 ++it;
@@ -375,6 +251,21 @@ void RTK::prepareGeometry() {
         for (auto &sat: vec) mUsedSats.insert(sat);
 }
 
+std::optional<SatID> RTK::selectRefSatellite(const std::vector<SatID> &part) const {
+    std::vector<SatID> candidates;
+    for (const SatID &s: part) {
+        if (mConfig.excludeGeoRef && mEph) {
+            if (const Ephemeris *e = mEph->find(s, mBaseObs->epoch); e && e->isGEO()) continue;
+        }
+        candidates.push_back(s);
+    }
+    if (candidates.empty()) return std::nullopt;
+    return *std::max_element(candidates.begin(), candidates.end(),
+                             [&](const SatID &a, const SatID &b) {
+                                 return satElevData.at(a) < satElevData.at(b);
+                             });
+}
+
 // 站间单差方差
 void RTK::computeSdVariance() {
     for (const auto &[sys, vec]: mPartSats) {
@@ -390,136 +281,45 @@ void RTK::computeSdVariance() {
     }
 }
 
-std::optional<SatID> RTK::selectRefSatellite(const std::vector<SatID> &candidates) const {
-    std::vector<SatID> cands;
-    for (const SatID &s: candidates) {
-        if (mConfig.excludeGeoRef && mEph) {
-            if (const Ephemeris *e = mEph->find(s, mBaseObs->epoch); e && e->isGEO()) continue;
-        }
-        cands.push_back(s);
-    }
-    if (cands.empty()) return std::nullopt;
-    return *std::max_element(cands.begin(), cands.end(),
-                             [&](const SatID &a, const SatID &b) {
-                                 return satElevData.at(a) < satElevData.at(b);
-                             });
-}
-
-void RTK::buildWeightMatrix(const EquSys &eq) {
-    if (!mConfig.fullCovariance || mWeightReady) return;
-    const int m = static_cast<int>(eq.obsEquData.size());
-    mWeightMatrix = Eigen::MatrixXd::Zero(m, m);
-    if (m == 0) {
-        mWeightReady = true;
+void RTK::initFilter() {
+    if (!bootstrapSolution()) {
+        xyz.setZero();
         return;
     }
 
-    std::vector<EquID> rows(m);
-    int k = 0;
-    for (const auto &[eid, ed]: eq.obsEquData) rows[k++] = eid;
+    ekf.reset();
+    ekf.configure(mPosProcSigma, false, mConfig.ambProcSigma, 0.0);
+    ekf.accProcSigma = 0.0;
+    ekf.ambInitSigma = mConfig.ambInitSigma;
 
-    auto selfVar = [&](const EquID &eid) -> double {
-        const auto &[phase, code] = mSdVar.at(eid.sat);
-        return eq.obsEquData.at(eid).isPhase ? phase : code;
-    };
-    auto refVar = [&](const EquID &eid) -> double {
-        const auto &[phase, code] = mSdVar.at(mRefSat.at(eid.sat.system));
-        return eq.obsEquData.at(eid).isPhase ? phase : code;
-    };
+    AmbSeed seed;
+    VariableSet varSet;
+    collectEpochStates(varSet, seed);
+    ekf.timeUpdate(varSet, nullptr);
+    ekf.setBootstrapPosition(xyz, Eigen::Vector3d::Constant(GnssEKF::kBootstrapPosVar));
+    ekf.setBootstrapStates(seed.init);
 
-    Eigen::MatrixXd Dv = Eigen::MatrixXd::Zero(m, m);
-    std::map<std::pair<SatSystem, std::string>, std::vector<int> > blocks;
-    for (int i = 0; i < m; ++i)
-        blocks[{rows[i].sat.system, rows[i].obsType}].push_back(i);
-
-    for (auto &[_, idx]: blocks) {
-        const double b = refVar(rows[idx[0]]);
-        for (int a = 0; a < static_cast<int>(idx.size()); ++a) {
-            const double va = selfVar(rows[idx[a]]);
-            for (int c = 0; c < static_cast<int>(idx.size()); ++c)
-                Dv(idx[a], idx[c]) = a == c ? va + b : b;
-        }
-    }
-    mWeightMatrix = Dv.inverse();
-    mWeightReady = true;
-}
-
-// 周跳探测
-void RTK::detectSlips() {
-    mSlipExclude.clear();
-    if (!mUseCycleSlip) {
-        mSlipDetBase.clear();
-        mSlipDetRover.clear();
-        return;
-    }
-    CycleSlipEpoch GFEpoch;
-
-    std::set<SatID> fedBase, fedRover; // 已喂入有效观测的检测器
-    const double GFThr = mUseGFCycleSlip ? 1.0 : 0.0; // >0 开启 GF
-    const double GFMult = mGFSlipMult; // GF 周跳阈值倍数
-
-    const auto feedSlot = [&](std::map<SatID, CycleSlip> &dets, const FreqCombo &combo,
-                              const SatID &sat, const TypeValueMap &tv, const ObsData *obs) {
-        CycleSlip &det = dets[sat];
-        det.configure(combo, GFThr, GFMult);
-        const CycleSlip::Result r = det.feed(sat, tv, obs);
-        GFEpoch.record(sat, r);
-        return r.slip;
-    };
-
-    for (SatSystem sys: mConfig.enabledSystems) {
-        auto itc = mSysCombos.find(sys);
-        if (itc == mSysCombos.end() || !itc->second.ok) continue;
-        const SysCombo &sc = itc->second;
-
-        for (const auto &[sat, tvb]: mBaseObs->satTypeValueData) {
-            if (sat.system != sys) continue;
-            const bool baseOk = sc.base.available(tvb);
-            auto itr = mCurObs->satTypeValueData.find(sat);
-            const bool roverOk = itr != mCurObs->satTypeValueData.end() && sc.rover.available(itr->second);
-            if (!baseOk && !roverOk) continue;
-
-            bool slip = false;
-            if (baseOk) {
-                if (feedSlot(mSlipDetBase, sc.base, sat, tvb, mBaseObs)) slip = true;
-                fedBase.insert(sat);
-            }
-            if (roverOk) {
-                if (feedSlot(mSlipDetRover, sc.rover, sat, itr->second, mCurObs)) slip = true;
-                fedRover.insert(sat);
-            }
-            if (baseOk && roverOk && slip) mSlipExclude.insert(sat);
-        }
-    }
-
-    auto feedGap = [&](std::map<SatID, CycleSlip> &m, const std::set<SatID> &fed) {
-        for (auto &[sat, det]: m)
-            if (!fed.count(sat)) det.feedGap();
-    };
-    feedGap(mSlipDetBase, fedBase);
-    feedGap(mSlipDetRover, fedRover);
-    SatIDSet GFExclude;
-    const SatIDSet GFApply = GFEpoch.decide(mGFCommonModeMinSats, GFExclude);
-    for (const auto &s: GFApply) mSlipExclude.insert(s);
-    for (const auto &s: GFExclude) mSlipExclude.insert(s);
+    buildEquSys(curEq, xyz, false);
+    ekf.measUpdate(curEq, mConfig.fullCovariance ? &mWeightMatrix : nullptr);
+    xyz = filteredPosition();
+    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(), static_cast<int>(ekf.currentUnkSet.size()));
+    mPrevRefSat = mRefSat;
+    mFilterInit = true;
 }
 
 
+// 首历元迭代最小二乘 无滤波时总是执行
 bool RTK::bootstrapSolution() {
-    Eigen::Vector3d roverPos = isSaneECEF(mRoverApprox) ? mRoverApprox : mBase;
-    SolverLSQ solver;
+    Eigen::Vector3d roverPos = mRoverApprox;
     for (int iter = 0; iter < mConfig.maxIterFloat; ++iter) {
         buildEquSys(curEq, roverPos, false);
         if (curEq.obsEquData.size() < 4) return false;
-        if (mConfig.fullCovariance)
-            solver.solve(curEq, mWeightMatrix, false);
-        else
-            solver.solve(curEq, curEq.weightVector().asDiagonal().toDenseMatrix(), false);
-        const auto dx = Eigen::Vector3d(solver.getSolution(Parameter::dX),
-                                        solver.getSolution(Parameter::dY),
-                                        solver.getSolution(Parameter::dZ));
-        roverPos += dx;
-        if (dx.norm() < mConfig.convEps) break;
+        lsq.solve(curEq, mConfig.fullCovariance ? mWeightMatrix : curEq.weightVector().asDiagonal().toDenseMatrix(), false);
+        const auto dX = Eigen::Vector3d(lsq.getSolution(Parameter::dX),
+                                        lsq.getSolution(Parameter::dY),
+                                        lsq.getSolution(Parameter::dZ));
+        roverPos += dX;
+        if (dX.norm() < mConfig.convEps) break;
     }
     xyz = roverPos;
     return true;
@@ -570,6 +370,99 @@ void RTK::collectEpochStates(VariableSet &varSet, AmbSeed &seed) const {
             }
         }
     }
+}
+
+void RTK::rebaseAmbiguities() {
+    if (mPrevRefSat.empty() || ekf.currentUnkSet.empty()) return;
+
+    const VariableSet &oldSet = ekf.currentUnkSet;
+    std::map<Variable, int> oldIndex;
+    for (const auto &v: oldSet) oldIndex[v] = ekf.indexOf(v);
+
+    const auto refChanged = [&](const SatSystem sys) {
+        const auto n = mRefSat.find(sys), o = mPrevRefSat.find(sys);
+        return n != mRefSat.end() && o != mPrevRefSat.end() && n->second != o->second;
+    };
+
+    // pair 第一个值代表正值位，第二个值代表负值位，-1代表无值
+    std::map<Variable, std::pair<int, int> > rowMap;
+    //先给所有非模糊度变量和未变系统的模糊度写恒等行
+    for (const auto &v: oldSet) {
+        if (v.par != Parameter::ambiguity || !refChanged(v.sat.system))
+            rowMap[v] = {oldIndex.at(v), -1};
+    }
+
+    bool anyChanged = false;
+    for (const auto &[sys, sats]: mPartSats) {
+        if (!refChanged(sys)) continue;
+        anyChanged = true;
+        const auto b = mRefSat.at(sys);
+        const auto a = mPrevRefSat.at(sys);
+        for (const char *lb: {"L1", "L2"}) {
+            const auto itb = oldIndex.find(Variable::makeAmbiguity(kRover, b, lb));
+            if (itb == oldIndex.end()) continue; // 新参考星上历元无状态：整系统按新弧段重开
+            for (const SatID &sat: sats) {
+                if (sat == b) continue;
+                const Variable vi = Variable::makeAmbiguity(kRover, sat, lb);
+                if (sat == a) {
+                    rowMap[vi] = {-1, itb->second};
+                } else if (const auto iti = oldIndex.find(vi); iti != oldIndex.end()) {
+                    rowMap[vi] = {iti->second, itb->second};
+                }
+            }
+        }
+    }
+    if (!anyChanged) return;
+
+    VariableSet newOrder;
+    // 将 rowMap 映射成 T 矩阵
+    Eigen::MatrixXd T = Eigen::MatrixXd::Zero(static_cast<int>(rowMap.size()), static_cast<int>(oldSet.size()));
+    int r = 0;
+    for (const auto &[v, cols]: rowMap) {
+        newOrder.insert(v);
+        const auto [plusCol, minusCol] = cols;
+        if (plusCol >= 0) T(r, plusCol) = 1.0;
+        if (minusCol >= 0) T(r, minusCol) = -1.0;
+        ++r;
+    }
+    ekf.reparameterize(newOrder, T);
+}
+
+void RTK::updateFilter() {
+    rebaseAmbiguities();
+    mPrevRefSat = mRefSat;
+    AmbSeed seed;
+    VariableSet varSet;
+    collectEpochStates(varSet, seed);
+    for (const auto &[v, n]: seed.init) ekf.forceValue(v, n);
+    ekf.timeUpdate(varSet, &seed.novar);
+    const Eigen::Vector3d xPred = predictedPosition();
+    buildEquSys(curEq, xPred, false);
+    // 粗差门限按星成组剔
+    const Eigen::VectorXd sigPred = ekf.priorInnovationStd(curEq);
+    std::set<SatID> bad;
+    int irow = 0;
+    for (const auto &[eid, ed]: curEq.obsEquData) {
+        const double sigObs = std::sqrt(1.0 / ed.weight);
+        if (const double sig = irow < sigPred.size() ? std::hypot(sigPred(irow), sigObs) : sigObs;
+            std::fabs(ed.prefit) > kPrefitGateSigma * sig)
+            bad.insert(eid.sat);
+        ++irow;
+    }
+    if (!bad.empty()) {
+        EquSys gated = curEq;
+        for (auto it = gated.obsEquData.begin(); it != gated.obsEquData.end();)
+            it = bad.count(it->first.sat) ? gated.obsEquData.erase(it) : std::next(it);
+        if (gated.obsEquData.size() >= kGateMinObs) {
+            curEq = std::move(gated);
+            mWeightReady = false; // 行数变了，权阵必须按新行序重建
+            buildWeightMatrix(curEq);
+        }
+    }
+    ekf.measUpdate(curEq, mConfig.fullCovariance ? &mWeightMatrix : nullptr);
+    xyz = filteredPosition();
+    sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
+                             static_cast<int>(ekf.currentUnkSet.size()));
 }
 
 void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, const bool fixed) {
@@ -624,9 +517,9 @@ void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, const bool fi
                 ed.isPhase = isPhase;
                 ed.prefit = dd - ddGeom;
                 ed.weight = 1.0 / variance;
-                ed.varCoeffData[dx] = ddLos.x();
-                ed.varCoeffData[dy] = ddLos.y();
-                ed.varCoeffData[dz] = ddLos.z();
+                ed.varCoefficient[dx] = ddLos.x();
+                ed.varCoefficient[dy] = ddLos.y();
+                ed.varCoefficient[dz] = ddLos.z();
                 return eq.obsEquData[EquID(sat, label)] = ed;
             };
             add("C1", sc.base.code1, sc.rover.code1, rvCode + svCode, false);
@@ -637,16 +530,109 @@ void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, const bool fi
                 phase1.prefit += sc.base.lambda1 * mFixedMap.at(amb1);
                 phase2.prefit += sc.base.lambda2 * mFixedMap.at(amb2);
             } else {
-                phase1.varCoeffData[amb1] = -sc.base.lambda1;
+                phase1.varCoefficient[amb1] = -sc.base.lambda1;
                 if (ekf.currentUnkSet.count(amb1))
                     phase1.prefit += sc.base.lambda1 * ekf.priorOf(amb1);
-                phase2.varCoeffData[amb2] = -sc.base.lambda2;
+                phase2.varCoefficient[amb2] = -sc.base.lambda2;
                 if (ekf.currentUnkSet.count(amb2))
                     phase2.prefit += sc.base.lambda2 * ekf.priorOf(amb2);
             }
         }
     }
     buildWeightMatrix(eq);
+}
+
+void RTK::buildWeightMatrix(const EquSys &eq) {
+    if (!mConfig.fullCovariance || mWeightReady) return;
+    const int m = static_cast<int>(eq.obsEquData.size());
+    mWeightMatrix = Eigen::MatrixXd::Zero(m, m);
+    mWeightReady = true;
+    if (m == 0) return;
+
+    std::map<std::pair<SatSystem, std::string>, std::vector<int> > groups;
+    std::vector<SatID> rowSat(m);
+    int row = 0;
+    for (const auto &[eid, ed]: eq.obsEquData) {
+        rowSat[row] = eid.sat;
+        // 建立该系统该观测类型的方程索引
+        groups[{eid.sat.system, eid.obsType}].push_back(row++);
+    }
+
+    for (const auto &[group, idx]: groups) {
+        const bool isPhase = group.second[0] == 'L';
+        const auto &[phaseRef, codeRef] = mSdVar.at(mRefSat.at(group.first));
+        const double refVar = isPhase ? phaseRef : codeRef;
+        const int n = static_cast<int>(idx.size());
+
+        Eigen::VectorXd satVars(n);
+        Eigen::VectorXi ii(n);
+        for (int a = 0; a < n; ++a) {
+            const auto &[phaseSat, codeSat] = mSdVar.at(rowSat[idx[a]]);
+            satVars(a) = isPhase ? phaseSat : codeSat;
+            ii(a) = idx[a];
+        }
+        mWeightMatrix(ii, ii) = satVars.asDiagonal().toDenseMatrix() + refVar * Eigen::MatrixXd::Ones(n, n);
+    }
+    mWeightMatrix = mWeightMatrix.inverse();
+}
+
+
+void RTK::publishResult() {
+    if (xyz.norm() < 1.0e6) return;
+
+    result.xyz = xyz;
+    result.blh = Coord::XYZToBLH(xyz, Frame::WGS84);
+    result.xyzFloat = xyz;
+    result.numSats = static_cast<int>(mUsedSats.size());
+    mBaselineFloat = xyz - mBase;
+
+    const Eigen::Matrix3d Q = posCovariance();
+    result.sigmaXYZ = Q.diagonal().array().max(0.0).sqrt().matrix() * sigma0;
+    result.sigmaP = positionSigma(Q, sigma0);
+    result.sigmaPFloat = result.sigmaP;
+    result.ratio = 0.0;
+    result.stat = 2;
+
+    // DOP 与后验残差随浮点解出：残差按观测类型分码/相位两张表
+    geometryDOPs(result, curEq, result.blh);
+    readbackResidual(curEq, ekf.postfitResidual);
+
+    if (mConfig.useAR) {
+        Eigen::VectorXd b;
+        Eigen::MatrixXd Qb;
+        std::vector<Variable> aVars;
+        extractAmbiguities(b, Qb, aVars);
+        if (tryFixAmbiguities(aVars, b, Qb)) {
+            applyFixedSolution(sigma0);
+            return;
+        }
+    }
+    result.xyzFixed = result.xyz;
+    result.blhFixed = result.blh;
+}
+
+void RTK::extractAmbiguities(Eigen::VectorXd &b, Eigen::MatrixXd &Qb, std::vector<Variable> &aVars) const {
+    // 只取本历元确实有观测的星：门限剔除后留下的变量没有方程，取整会让 LAMBDA 选错
+    std::set<SatID> used;
+    for (const auto &[eid, ed]: curEq.obsEquData) used.insert(eid.sat);
+
+    aVars.clear();
+    std::vector<int> idx;
+    for (const auto &v: curEq.varSet) {
+        if (v.par != Parameter::ambiguity || !used.count(v.sat)) continue;
+        const int i = ekf.indexOf(v);
+        if (i < 0) continue;
+        aVars.push_back(v);
+        idx.push_back(i);
+    }
+
+    const int M = static_cast<int>(aVars.size());
+    b.resize(M);
+    Qb.resize(M, M);
+    for (int i = 0; i < M; ++i) {
+        b(i) = ekf.solution(idx[i]);
+        for (int j = 0; j < M; ++j) Qb(i, j) = ekf.Q(idx[i], idx[j]);
+    }
 }
 
 
@@ -660,43 +646,55 @@ bool RTK::tryFixAmbiguities(const std::vector<Variable> &aVars, const Eigen::Vec
     result.ratio = ratio;
     if (!fixed) return false;
 
-    VariableDataMap fixedMap;
+    mFixedMap.clear();
     for (int i = 0; i < M; ++i)
-        fixedMap[aVars[i]] = z(i);
-    mFixedMap = std::move(fixedMap);
+        mFixedMap[aVars[i]] = z(i);
 
     EquSys eqFix;
-    SolverLSQ solverFix;
     Eigen::Vector3d roverPos = mBase + mBaselineFloat; // 从浮点基线起步
     mWeightReady = false; // 固定解重新建一次，确保 P 与方程行序严格对齐
     for (int iter = 0; iter < mConfig.maxIterFix; ++iter) {
         buildEquSys(eqFix, roverPos, true);
-        if (mConfig.fullCovariance)
-            solverFix.solve(eqFix, mWeightMatrix, false);
-        else
-            solverFix.solve(eqFix, eqFix.weightVector().asDiagonal().toDenseMatrix(), false);
-        auto dx = Eigen::Vector3d(solverFix.getSolution(Parameter::dX),
-                                  solverFix.getSolution(Parameter::dY),
-                                  solverFix.getSolution(Parameter::dZ));
-        roverPos += dx;
-        if (dx.norm() < mConfig.convEps) break;
+        lsq.solve(eqFix, mConfig.fullCovariance ? mWeightMatrix : eqFix.weightVector().asDiagonal().toDenseMatrix(), false);
+        auto dX = Eigen::Vector3d(lsq.getSolution(Parameter::dX),
+                                  lsq.getSolution(Parameter::dY),
+                                  lsq.getSolution(Parameter::dZ));
+        roverPos += dX;
+        if (dX.norm() < mConfig.convEps) break;
     }
-    solverFix.computeCovariance(); // 用最终迭代分解补算协方差
+    lsq.computeCovariance(); // 用最终迭代分解补算协方差
     mBaselineFixed = roverPos - mBase;
-    mBaselineSigmaFixed = Eigen::Vector3d(std::sqrt(solverFix.Q(0, 0)),
-                                          std::sqrt(solverFix.Q(1, 1)),
-                                          std::sqrt(solverFix.Q(2, 2)));
+    mBaselineSigmaFixed = Eigen::Vector3d(std::sqrt(lsq.Q(0, 0)),
+                                          std::sqrt(lsq.Q(1, 1)),
+                                          std::sqrt(lsq.Q(2, 2)));
     return true;
 }
 
-void RTK::applyOptions(const SolverOptions &o) {
-    mConfig = o.rtk;
-    mConfig.cutoffElevRad = o.cutoffDeg * DEG_TO_RAD;
-    mConfig.enabledSystems = o.systems;
-    mUseCycleSlip = mConfig.useCycleSlip;
-    mUseGFCycleSlip = mConfig.useGFCycleSlip;
-    mGFSlipMult = mConfig.GFSlipMult;
-    mUseFilter = o.filter != SolverOptions::FilterMode::LSQ;
-    mPosProcSigma = o.posProcSigma;
-    if (!mUseFilter) resetFilterState();
+void RTK::applyFixedSolution(const double s0) {
+    result.xyz = mBase + mBaselineFixed;
+    result.blh = Coord::XYZToBLH(result.xyz, Frame::WGS84);
+    result.xyzFixed = result.xyz;
+    result.blhFixed = result.blh;
+    result.sigmaXYZ = mBaselineSigmaFixed * s0;
+    Eigen::Matrix3d Qfix = Eigen::Matrix3d::Zero();
+    for (int k = 0; k < 3; ++k) Qfix(k, k) = mBaselineSigmaFixed[k] * mBaselineSigmaFixed[k];
+    result.sigmaP = positionSigma(Qfix, s0);
+    result.sigmaPFixed = result.sigmaP; // 固定 σ 单独留存
+    result.stat = 1; // Fixed
+}
+
+Eigen::Vector3d RTK::filteredPosition() const {
+    return {
+        GnssEKF::getSolution(Parameter::dX, ekf.currentUnkSet, ekf.solution),
+        GnssEKF::getSolution(Parameter::dY, ekf.currentUnkSet, ekf.solution),
+        GnssEKF::getSolution(Parameter::dZ, ekf.currentUnkSet, ekf.solution)
+    };
+}
+
+Eigen::Vector3d RTK::predictedPosition() const {
+    return {
+        ekf.priorOf(Variable(kRover, Parameter::dX)),
+        ekf.priorOf(Variable(kRover, Parameter::dY)),
+        ekf.priorOf(Variable(kRover, Parameter::dZ))
+    };
 }

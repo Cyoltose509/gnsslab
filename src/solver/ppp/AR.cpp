@@ -58,7 +58,7 @@ bool PPPStatic::tryFixAmbiguities() {
         prod->osb.biases(def, sat, osbP1, osbP2, osbL1, osbL2, mCurObs->station);
         const double L1m = tv.at(def.phase1), L2m = tv.at(def.phase2);
         const double C1m = tv.at(def.code1), C2m = tv.at(def.code2);
-        const double NwInst = def.MW_cycle(C1m, C2m, L1m, L2m, osbP1, osbP2, osbL1, osbL2);
+        const double NwInst = def.cycleOfMW(C1m, C2m, L1m, L2m, osbP1, osbP2, osbL1, osbL2);
         const double a1 = 1.0 / lam1, a2 = -1.0 / lam2;
         const double r = f1 / f2 * (f1 / f2);
         const double K = -(a1 + a2);

@@ -2,7 +2,7 @@
 
 #include "SPP.h"
 #include "GnssEKF.h"
-#include "core/obs/CycleSlip.h"
+#include "core/obs/SlipDetector.h"
 #include <Eigen/Eigen>
 #include <map>
 #include <set>
@@ -14,6 +14,8 @@ public:
     /// 相位预fit 粗差门限(m)：静态站历元间位置不变，运动学/LEO 含运动预测误差
     static constexpr double kPhasePrefitGateStaticM = 5.0;
     static constexpr double kPhasePrefitGateKinematicM = 30.0;
+    /// 相位 prefit 到这个量级说明模糊度状态已被清零（IF 整周尺度），必须断弧重建；普通粗差远小于它。
+    static constexpr double kAmbLostPrefitM = 1.0e5;
 
     PPPStatic() {
         mRequirePhaseForIF = true;
@@ -40,33 +42,33 @@ public:
     [[nodiscard]] bool osbCoversSystem(const SatSystem sys) const { return prod->osb.coversSystem(sys, osbStation()); }
     [[nodiscard]] std::string osbStation() const { return mCurObs ? mCurObs->station : std::string(); }
 
-    [[nodiscard]] virtual Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const;
+    [[nodiscard]] virtual Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch);
 
     [[nodiscard]] virtual Eigen::Vector3d recvAntennaOffsetECEF(const Eigen::Vector3d &xyzEst,
                                                                 const CommonTime &epoch,
                                                                 const SatID &sat) const;
 
-    void buildEquSys() override;
-
-    void addSatEquation(const SatID &sat, const TypeValueMap &tv, bool probe) override;
+    void solve() override;
 
     /// 首历元锚定参考位置：把观测文件头/接收机自报的近似坐标收进 mRefPos 当作起算点。
     virtual void bindRefPosition();
 
-    /// 首历元引导：开相位前先用码方程迭代出线性化点，写进 xyz。
-    bool bootstrapSolution() override;
+    void resetFilterState() override;
 
     void initFilter() override;
 
+    /// 首历元引导：开相位前先用码方程迭代出线性化点，写进 xyz。
+    bool bootstrapSolution() override;
+
     void updateFilter() override;
-
-    void computeSatPos() override;
-
-    void solve() override;
 
     void publishResult() override;
 
-    void resetFilterState() override;
+    void computeSatPos() override;
+
+    void buildEquSys() override;
+
+    void addSatEquation(const SatID &sat, const TypeValueMap &tv, bool probe) override;
 
     /// 固体潮 + 极潮位移：重锚定那段独立做 SPP 时也要扣
     [[nodiscard]] Eigen::Vector3d computeTideDisplacement(const Eigen::Vector3d &xyzEst, const CommonTime &epoch) const;
@@ -181,10 +183,13 @@ public:
     std::set<SatID> mCurrentSatSet; // 本历元参与解算的星
 
     VariableDataMap *mCsData = nullptr; // 本历元待写入的状态量（buildEquSys 的调用方设好）
-    CycleSlipEpoch mGFEpoch; // GF 周跳共模裁决簿记
+    SlipEpoch mGFEpoch; // GF 周跳共模裁决簿记
 
-    std::map<SatID, CycleSlip> mSlipDetectors;
+    std::map<SatID, SlipDetector> mSlipDetectors;
     std::set<SatID> mPrevSatSet;
+    std::map<SatID, double> mPrevCodePhase;
+    std::map<SatID, double> mCurCodePhase;
+    std::set<SatID> mSlipEverSats;
 
 private:
     /// 钟差先验均值：EKF 已初始化取估计值，否则取 SPP 引导基值。

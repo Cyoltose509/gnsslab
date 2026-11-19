@@ -30,8 +30,8 @@ namespace Download::Acquire {
         float height = 280.0f;      // 文件列表高度
 
         std::vector<std::uint8_t> typeOn;  // 产品类型多选
-        /// 该模式是否用得上对流层产品：低轨卫星在大气层外，默认不勾「对流层」。
-        bool usesTropo = true;
+        /// 该模式是否用得上大气产品：低轨卫星在大气层外，默认不勾对流层与电离层。
+        bool usesAtmosphere = true;
         char nameFind[40] = {};            // 文件名关键字
         int stateFilter = 0;               // 本地状态
 

@@ -22,13 +22,13 @@ class SPP : public GnssSolver {
 public:
     ~SPP() override = default;
 
-    void applyOptions(const SolverOptions &o) override;
-
     virtual bool processEpoch(ObsData &obsData);
 
-    virtual void computeSatPos();
+    void applyOptions(const SolverOptions &o) override;
 
     void prepareGeometry() override;
+
+    virtual void computeSatPos();
 
     [[nodiscard]] bool tropoGridReady() const { return prod->tropo.readyFor(mConfig.tropoMap); }
 
@@ -48,29 +48,29 @@ public:
         return it != rClockBias.end() ? it->second : 0.0;
     }
 
-    void publishResult() override;
-
     void resetFilterState() override;
 
     void initFilter() override;
 
     void updateFilter() override;
 
-    bool bootstrapSolution() override;
-
     void filterEpoch();
+
+    bool bootstrapSolution() override;
 
     DopplerResult estimateVelocity() override;
 
     [[nodiscard]] Weight dopplerWeight() const override;
 
+    [[nodiscard]] bool wantDopplerSat(const SatID &sat, const TypeValueMap &tv) const override;
+
+    [[nodiscard]] Eigen::Vector3d currentEstimatedPosition() const;
+
     void selectClockModel(const std::set<SatSystem> &active);
     void addClockTerms(EquData &ed, const SatID &sat) const;
     void collectClockStates(EquSys &eq);
 
-    [[nodiscard]] bool wantDopplerSat(const SatID &sat, const TypeValueMap &tv) const override;
-
-    [[nodiscard]] Eigen::Vector3d currentEstimatedPosition() const;
+    void publishResult() override;
 
     [[nodiscard]] const FreqCombo *freqComboFor(const SatID &sat) const {
         if (sat.system == SatSystem::R) {
@@ -108,7 +108,6 @@ public:
 private:
 
     TropoSite mTropoSite;
-    Eigen::Vector3d mLastXyz{0, 0, 0};
 
     [[nodiscard]] Eigen::Vector3d estimateRoughPosition() const;
 

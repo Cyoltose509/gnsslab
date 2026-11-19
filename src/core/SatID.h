@@ -54,7 +54,6 @@ struct SatID {
     }
 };
 
-typedef std::set<SatID> SatIDSet;
 
 inline std::ostream &operator<<(std::ostream &os, const SatID &sat_id) {
     os << charFrom(sat_id.system) << std::setw(2) << std::setfill('0') << sat_id.id;

@@ -22,10 +22,10 @@ public:
 
     bool processEpoch(ObsData &obs) override;
 
-    Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) const override;
+    Eigen::Vector3d predictPosition(double dt, const CommonTime &epoch) override;
 
     Eigen::Vector3d reanchorSPP(const Eigen::Vector3d &seedIn, int *nOut = nullptr, double *rmsOut = nullptr,
-                                double *pdopOut = nullptr, SatSystem sysOnly = SatSystem::Unknown) const;
+                                double *pdopOut = nullptr, SatSystem sysOnly = SatSystem::Unknown);
 
     mutable Eigen::Vector3d mReanchorPos = Eigen::Vector3d::Zero();
     Eigen::Vector3d mMotionRefPos = Eigen::Vector3d::Zero();

@@ -18,7 +18,6 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
         computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
     }
     VariableDataMap csData;
-    SolverLSQ solver;
     const int maxIter = mConfig.maxReanchorIter > 0 ? mConfig.maxReanchorIter : 8;
     for (int it = 0; it < maxIter; ++it) {
         mEpochXyz = xc;
@@ -27,11 +26,11 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
         for (auto it2 = curEq.obsEquData.begin(); it2 != curEq.obsEquData.end();) {
             if (it2->second.isPhase) it2 = curEq.obsEquData.erase(it2);
             else {
-                for (auto vit = it2->second.varCoeffData.begin();
-                     vit != it2->second.varCoeffData.end();) {
+                for (auto vit = it2->second.varCoefficient.begin();
+                     vit != it2->second.varCoefficient.end();) {
                     if (vit->first.par == Parameter::codeBias &&
                         osbCoversSystem(vit->first.sat.system))
-                        vit = it2->second.varCoeffData.erase(vit);
+                        vit = it2->second.varCoefficient.erase(vit);
                     else
                         ++vit;
                 }
@@ -40,7 +39,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
         }
         curEq.varSet.clear();
         for (const auto &[eid, ed]: curEq.obsEquData)
-            for (const auto &[v, c]: ed.varCoeffData) curEq.varSet.insert(v);
+            for (const auto &[v, c]: ed.varCoefficient) curEq.varSet.insert(v);
         {
             const auto blhAnchor = Coord::XYZToBLH(xc, Frame::WGS84); // B/L 为弧度
             const double cB = std::cos(blhAnchor.B()), sB = std::sin(blhAnchor.B());
@@ -54,9 +53,9 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
             if (mPinInitHeight && anchorTrusted) {
                 EquData ed;
                 ed.prefit = 0.0;
-                ed.varCoeffData[vdx] = up.x();
-                ed.varCoeffData[vdy] = up.y();
-                ed.varCoeffData[vdz] = up.z();
+                ed.varCoefficient[vdx] = up.x();
+                ed.varCoefficient[vdy] = up.y();
+                ed.varCoefficient[vdz] = up.z();
                 ed.weight = 1e4;
                 curEq.obsEquData[EquID(SatID(static_cast<SatSystem>('P'), 0), std::string("INIT_UP"))] = ed;
             }
@@ -73,13 +72,13 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
         }
         if (nRealSat < 4) return {mRefPos, false};
         try {
-            solver.solve(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
+            lsq.solve(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
         } catch (...) {
             return {mRefPos, false};
         }
-        const double dx = solver.getSolution(Parameter::dX);
-        const double dy = solver.getSolution(Parameter::dY);
-        const double dz = solver.getSolution(Parameter::dZ);
+        const double dx = lsq.getSolution(Parameter::dX);
+        const double dy = lsq.getSolution(Parameter::dY);
+        const double dz = lsq.getSolution(Parameter::dZ);
         if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz)) return {mRefPos, false};
         const Eigen::Vector3d d(dx, dy, dz);
         xc += d;
@@ -88,10 +87,10 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
     for (const auto &[sys, par]: mCdtParam) {
         // 配置滤掉的系统不在 varSet 里，getSolution 会抛异常。
         if (!curEq.varSet.count(Variable(mCurObs->station, par))) continue;
-        try { mClkBase[sys] = solver.getSolution(par); } catch (...) { mClkBase[sys] = 0.0; }
+        try { mClkBase[sys] = lsq.getSolution(par); } catch (...) { mClkBase[sys] = 0.0; }
     }
     try {
-        mZtdBase = solver.getSolution(Parameter::ztd);
+        mZtdBase = lsq.getSolution(Parameter::ztd);
         mZtdBaseValid = std::isfinite(mZtdBase);
     } catch (...) {
         mZtdBaseValid = false;
@@ -131,7 +130,8 @@ void PPPStatic::buildEquSys() {
     mSatTropoFixed.clear();
     mSysSeen.clear();
     mCurrentSatSet.clear();
-    mGFEpoch = CycleSlipEpoch{};
+    mGFEpoch = SlipEpoch{};
+    mCurCodePhase.clear();
 
     mEpochTropo.update(prod->tropo, mConfig.tropoMap, mEpochXyz, mCurObs->epoch);
     if (!prod->tro.empty()) {
@@ -154,8 +154,8 @@ void PPPStatic::buildEquSys() {
         if (mSatMap.count(sat)) addSatEquation(sat, tv, false);
 
     {
-        SatIDSet GFExcludeSet;
-        const SatIDSet GFApplySet = mGFEpoch.decide(mGFCommonModeMinSats, GFExcludeSet);
+        std::set<SatID> GFExcludeSet;
+        const std::set<SatID> GFApplySet = mGFEpoch.decide(mGFCommonModeMinSats, GFExcludeSet);
         for (const auto &sat: GFApplySet) {
             const TypeValueMap &tv = mCurObs->satTypeValueData.at(sat);
             const double map = mSatMap.at(sat);
@@ -232,7 +232,7 @@ void PPPStatic::addZTDConstraint() {
     curEq.varSet.insert(vztd);
     for (auto &[eid, ed]: curEq.obsEquData) {
         const double map = mSatMap.count(eid.sat) ? mSatMap.at(eid.sat) : 1.0;
-        ed.varCoeffData[vztd] = map;
+        ed.varCoefficient[vztd] = map;
     }
 
     const double zwd = mEpochTropo.zwdResolved();
@@ -251,7 +251,7 @@ void PPPStatic::addZTDConstraint() {
         EquData ed;
         const double ztdCur = ztdPrior();
         ed.prefit = ztdTarget - ztdCur;
-        ed.varCoeffData[vztd] = 1.0;
+        ed.varCoefficient[vztd] = 1.0;
         ed.weight = 1.0 / (ztdSigma * ztdSigma);
         curEq.obsEquData[eid] = ed;
     }

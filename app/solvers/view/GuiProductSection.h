@@ -21,8 +21,8 @@ namespace Solvers::Helpers {
                  std::string *autoNavBuf = nullptr,
                  ProductType obsType = ProductType::OBS);
 
-    /// 产品文件清单与产品一致性提示。`usesTropo` 为假时「获取」列表默认不勾对流层产品。
+    /// 产品文件清单与产品一致性提示。`usesAtmosphere` 为假时「获取」列表默认不勾大气产品（对流层、电离层）。
     /// `crossDayHint` 为真时（低轨跨日弧）在清单上方给出「建议选择 ±1 日产品」的提示。
-    void renderProductSection(AppConfig::ProductPaths &p, const char *obsIniKey, bool usesTropo,
+    void renderProductSection(AppConfig::ProductPaths &p, const char *obsIniKey, bool usesAtmosphere,
                              bool crossDayHint = false);
 }

@@ -15,23 +15,6 @@ GnssSolver::GnssSolver() : prod(std::make_shared<Products>()) {
 }
 
 
-void GnssSolver::estimatePosition() {
-    if (mFilterInit) updateFilter();
-    else initFilter();
-    publishResult();
-}
-
-
-Eigen::Matrix3d GnssSolver::posCovariance() const {
-    const auto &id = ekf.posIdx;
-    if (id[0] < 0 || id[1] < 0 || id[2] < 0 || ekf.Q.rows() <= id[2])
-        return Eigen::Matrix3d::Identity() * 1.0e12;
-    Eigen::Matrix3d Q = Eigen::Matrix3d::Zero();
-    for (int a = 0; a < 3; ++a)
-        for (int b = 0; b < 3; ++b)
-            Q(a, b) = ekf.Q(id[a], id[b]);
-    return Q;
-}
 
 
 void GnssSolver::solve() {
@@ -40,6 +23,7 @@ void GnssSolver::solve() {
     estimatePosition();
     // 冻结历元不发布速度，也不推进「上一成功历元」；结果清零与几何刷新归 publishResult。
     if (mFilterFrozen) return;
+    if (isSaneECEF(xyz)) mLastXYZ = xyz; // 迭代起点与滤波状态解耦：reset 不碰它
     mLastEpochTime = mCurObs->epoch;
     mHasLastEpoch = true;
     mGapThisEpoch = false;
@@ -67,54 +51,10 @@ void GnssSolver::trackEpochGap() {
         } else if (mNominalInterval < 0.0 && gap >= 1.0 && gap <= kMaxMotionGapS) mNominalInterval = gap;
     }
 }
-
-
-void GnssSolver::earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d &recv) {
-    dst.clear();
-    for (auto const &[sat, pvt]: satPVTTransTime) {
-        const double ang = OMEGA_EARTH * (pvt.p - recv).norm() / C_MPS;
-        const double c = std::cos(ang), s = std::sin(ang);
-        Eigen::Matrix3d rot;
-        rot <<  c, s, 0,
-               -s, c, 0,
-                0, 0, 1;
-        PVT out = pvt;
-        out.p = rot * pvt.p;
-        out.v = rot * pvt.v;
-        dst[sat] = out;
-    }
-}
-
-
-void GnssSolver::computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::Vector3d &recv,
-                                 SatValueMap &elev, SatValueMap &azim) const {
-    elev.clear();
-    azim.clear();
-    for (auto const &[sat, pvt]: src) {
-        elev[sat] = Coord::elevation(recv, pvt.p, frame);
-        azim[sat] = Coord::azimuth(recv, pvt.p, frame);
-    }
-}
-
-
-bool GnssSolver::ephUnhealthy(const SatID &sat, const Ephemeris *eph, const bool enabled) {
-    if (!enabled || !eph || eph->health == 0u) return false;
-    if (mHealthWarned.insert(sat).second)
-        LOG_WARN << "[HEALTH] dropped satellite " << sat.toString()
-                << " flagged unhealthy by the broadcast ephemeris (health=" << eph->health << ")";
-    return true;
-}
-
-void GnssSolver::readbackResidual(const EquSys &eq, const Eigen::VectorXd &residual) {
-    int iobs = 0;
-    for (const auto &[eid, ed]: eq.obsEquData) {
-        if (iobs >= residual.size()) break;
-        if (ed.isPhase)
-            result.postResPhase.set(eid.sat, residual(iobs));
-        else
-            result.postRes.set(eid.sat, residual(iobs));
-        ++iobs;
-    }
+void GnssSolver::estimatePosition() {
+    if (mFilterInit) updateFilter();
+    else initFilter();
+    publishResult();
 }
 
 
@@ -194,4 +134,65 @@ GnssSolver::DopplerResult GnssSolver::estimateVelocity() {
     result.sigmaVel = out.sigma;
     result.sigmaV = out.sigma.norm();
     return out;
+}
+
+
+void GnssSolver::earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d &recv) {
+    dst.clear();
+    for (auto const &[sat, pvt]: satPVTTransTime) {
+        const double ang = OMEGA_EARTH * (pvt.p - recv).norm() / C_MPS;
+        const double c = std::cos(ang), s = std::sin(ang);
+        Eigen::Matrix3d rot;
+        rot <<  c, s, 0,
+               -s, c, 0,
+                0, 0, 1;
+        PVT out = pvt;
+        out.p = rot * pvt.p;
+        out.v = rot * pvt.v;
+        dst[sat] = out;
+    }
+}
+
+
+void GnssSolver::computeElevAzim(const std::map<SatID, PVT> &src, const Eigen::Vector3d &recv,
+                                 SatValueMap &elev, SatValueMap &azim) const {
+    elev.clear();
+    azim.clear();
+    for (auto const &[sat, pvt]: src) {
+        elev[sat] = Coord::elevation(recv, pvt.p, frame);
+        azim[sat] = Coord::azimuth(recv, pvt.p, frame);
+    }
+}
+
+
+bool GnssSolver::ephUnhealthy(const SatID &sat, const Ephemeris *eph, const bool enabled) {
+    if (!enabled || !eph || eph->health == 0u) return false;
+    if (mHealthWarned.insert(sat).second)
+        LOG_WARN << "[HEALTH] dropped satellite " << sat.toString()
+                << " flagged unhealthy by the broadcast ephemeris (health=" << eph->health << ")";
+    return true;
+}
+
+
+Eigen::Matrix3d GnssSolver::posCovariance() const {
+    const auto &id = ekf.posIdx;
+    if (id[0] < 0 || id[1] < 0 || id[2] < 0 || ekf.Q.rows() <= id[2])
+        return Eigen::Matrix3d::Identity() * 1.0e12;
+    Eigen::Matrix3d Q = Eigen::Matrix3d::Zero();
+    for (int a = 0; a < 3; ++a)
+        for (int b = 0; b < 3; ++b)
+            Q(a, b) = ekf.Q(id[a], id[b]);
+    return Q;
+}
+
+void GnssSolver::readbackResidual(const EquSys &eq, const Eigen::VectorXd &residual) {
+    int iobs = 0;
+    for (const auto &[eid, ed]: eq.obsEquData) {
+        if (iobs >= residual.size()) break;
+        if (ed.isPhase)
+            result.postResPhase.set(eid.sat, residual(iobs));
+        else
+            result.postRes.set(eid.sat, residual(iobs));
+        ++iobs;
+    }
 }

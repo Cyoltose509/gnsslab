@@ -32,7 +32,7 @@ namespace Solvers::PPPStatic {
     };
 
     inline SolverOptions defaultOptions() {
-        SolverOptions o{};
+        SolverOptions o = SPP::defaultOptions();
         o.posProcSigma = 0.0;
         return o;
     }

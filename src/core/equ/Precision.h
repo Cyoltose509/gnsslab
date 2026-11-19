@@ -17,7 +17,7 @@ inline bool geometryDOPs(Result &result, const EquSys &eq, const Eigen::Vector3d
     for (const auto &[eid, ed]: eq.obsEquData) {
         if (ed.isPhase) continue;
         Eigen::Vector4d h = Eigen::Vector4d::Zero();
-        for (const auto &[var, coeff]: ed.varCoeffData) {
+        for (const auto &[var, coeff]: ed.varCoefficient) {
             if (const auto pt = var.par; pt == Parameter::dX) h[0] = coeff;
             else if (pt == Parameter::dY) h[1] = coeff;
             else if (pt == Parameter::dZ) h[2] = coeff;

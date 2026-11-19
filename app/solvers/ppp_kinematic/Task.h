@@ -19,7 +19,7 @@ namespace Solvers::PPPKinematic {
     };
 
     inline SolverOptions defaultOptions() {
-        SolverOptions o{};
+        SolverOptions o = PPPStatic::defaultOptions();
         o.posProcSigma = 10.0;
         o.spp.codeSigma = 0.1;
         o.spp.phaseSigma = 0.003;
