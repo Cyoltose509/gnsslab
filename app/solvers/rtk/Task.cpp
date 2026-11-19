@@ -4,7 +4,6 @@
 #include "FileUtils.h"
 
 #include <algorithm>
-#include <cmath>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -13,8 +12,6 @@
 
 #include "Decimator.h"
 #include "Log.h"
-#include "Observer.h"
-#include "StringUtils.h"
 #include "download/local/ProductType.h"
 #include "io/ProductPaths.h"
 #include "io/ProductReader.h"
@@ -307,7 +304,7 @@ namespace Solvers::RTK {
         }
         if (!any) return;
 
-        // 基线是相对基准站的：位置挪了，基线跟着挪，否则导出时基准站坐标会漂
+        // 基线是相对基准站的
         Eigen::Vector3d basePos = Eigen::Vector3d::Zero();
         if (dst.rtkFloatXyz.squaredNorm() > 1e12) basePos = dst.rtkFloatXyz - dst.rtkBaseFloat;
         dst.sppResult.xyz = fused;

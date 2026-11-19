@@ -292,16 +292,17 @@ void RTK::initFilter() {
     ekf.accProcSigma = 0.0;
     ekf.ambInitSigma = mConfig.ambInitSigma;
 
-    AmbSeed seed;
+    std::vector<AmbReset> resets;
     VariableSet varSet;
-    collectEpochStates(varSet, seed);
-    ekf.timeUpdate(varSet, nullptr);
-    ekf.setBootstrapPosition(xyz, Eigen::Vector3d::Constant(GnssEKF::kBootstrapPosVar));
-    ekf.setBootstrapStates(seed.init);
-
+    collectEpochStates(varSet, resets);
+    ekf.timeUpdate(varSet, {});
+    ekf.setPosition(xyz, GnssEKF::kInitPosVar);
+    std::map<Variable, double> ambInit;
+    for (const auto &r: resets) ambInit[r.var] = r.initValue;
+    ekf.setStates(ambInit);
     buildEquSys(curEq, xyz, false);
-    ekf.measUpdate(curEq, mConfig.fullCovariance ? &mWeightMatrix : nullptr);
-    xyz = filteredPosition();
+    ekf.measUpdate(curEq, mConfig.fullCovariance ? mWeightMatrix : curEq.weightVector().asDiagonal().toDenseMatrix());
+    xyz = getEKFPosition();
     sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(), static_cast<int>(ekf.currentUnkSet.size()));
     mPrevRefSat = mRefSat;
     mFilterInit = true;
@@ -327,7 +328,7 @@ bool RTK::bootstrapSolution() {
 
 
 // 时间更新的状态集合按参与双差的星收集；新弧段/周跳的模糊度初值在收集时一并反算
-void RTK::collectEpochStates(VariableSet &varSet, AmbSeed &seed) const {
+void RTK::collectEpochStates(VariableSet &varSet, std::vector<AmbReset> &resets) const {
     static const char *ambLabels[2] = {"L1", "L2"};
     varSet.insert(Variable(kRover, Parameter::dX));
     varSet.insert(Variable(kRover, Parameter::dY));
@@ -337,10 +338,12 @@ void RTK::collectEpochStates(VariableSet &varSet, AmbSeed &seed) const {
         const SysCombo &sc = mSysCombos.at(sys);
         const TypeValueMap &tvbRef = mBaseObs->satTypeValueData.at(ref);
         const TypeValueMap &tvrRef = mCurObs->satTypeValueData.at(ref);
+        // 参考星→基站观测值
         const double refB[4] = {
             tvbRef.at(sc.base.phase1), tvbRef.at(sc.base.phase2),
             tvbRef.at(sc.base.code1), tvbRef.at(sc.base.code2)
         };
+        // 参考星→流动站观测值
         const double refR[4] = {
             tvrRef.at(sc.rover.phase1), tvrRef.at(sc.rover.phase2),
             tvrRef.at(sc.rover.code1), tvrRef.at(sc.rover.code2)
@@ -349,10 +352,12 @@ void RTK::collectEpochStates(VariableSet &varSet, AmbSeed &seed) const {
             if (sat == ref) continue;
             const TypeValueMap &tvb = mBaseObs->satTypeValueData.at(sat);
             const TypeValueMap &tvr = mCurObs->satTypeValueData.at(sat);
+            // 当前卫星→基站观测值
             const double obsB[4] = {
                 tvb.at(sc.base.phase1), tvb.at(sc.base.phase2),
                 tvb.at(sc.base.code1), tvb.at(sc.base.code2)
             };
+            // 当前卫星→流动站观测值
             const double obsR[4] = {
                 tvr.at(sc.rover.phase1), tvr.at(sc.rover.phase2),
                 tvr.at(sc.rover.code1), tvr.at(sc.rover.code2)
@@ -362,17 +367,17 @@ void RTK::collectEpochStates(VariableSet &varSet, AmbSeed &seed) const {
                 varSet.insert(amb);
                 const double lam = f == 0 ? sc.base.lambda1 : sc.base.lambda2;
                 if (ekf.currentUnkSet.count(amb) || !(lam > 0.0)) continue;
-                // 新弧段初值：站星双差的「相位减码」再除波长
+                // 只要状态里没有这个模糊度，它必定是新弧段、周跳、或参考星切换——这三种情况都要求立刻给一个可靠初值
                 const double sdSat = (obsR[f] - obsB[f] - (obsR[f + 2] - obsB[f + 2])) / lam;
                 const double sdRef = (refR[f] - refB[f] - (refR[f + 2] - refB[f + 2])) / lam;
-                seed.init[amb] = -(sdSat - sdRef);
-                seed.novar[amb] = 2.0;
+                resets.push_back({amb, AmbReset::Kind::Slip, -(sdSat - sdRef)});
             }
         }
     }
 }
 
 void RTK::rebaseAmbiguities() {
+    // 参考星变更时，模糊度状态需要重新参数化，旧参考星的模糊度状态被新参考星的模糊度状态替代
     if (mPrevRefSat.empty() || ekf.currentUnkSet.empty()) return;
 
     const VariableSet &oldSet = ekf.currentUnkSet;
@@ -431,20 +436,23 @@ void RTK::rebaseAmbiguities() {
 void RTK::updateFilter() {
     rebaseAmbiguities();
     mPrevRefSat = mRefSat;
-    AmbSeed seed;
+    std::vector<AmbReset> resets;
     VariableSet varSet;
-    collectEpochStates(varSet, seed);
-    for (const auto &[v, n]: seed.init) ekf.forceValue(v, n);
-    ekf.timeUpdate(varSet, &seed.novar);
-    const Eigen::Vector3d xPred = predictedPosition();
+    collectEpochStates(varSet, resets);
+    ekf.timeUpdate(varSet, resets);
+    const Eigen::Vector3d xPred = {
+        ekf.getMinus(Variable(kRover, Parameter::dX)),
+        ekf.getMinus(Variable(kRover, Parameter::dY)),
+        ekf.getMinus(Variable(kRover, Parameter::dZ))
+    };
     buildEquSys(curEq, xPred, false);
     // 粗差门限按星成组剔
-    const Eigen::VectorXd sigPred = ekf.priorInnovationStd(curEq);
+    const Eigen::VectorXd residuals = ekf.getMinusResiduals(curEq);
     std::set<SatID> bad;
     int irow = 0;
     for (const auto &[eid, ed]: curEq.obsEquData) {
         const double sigObs = std::sqrt(1.0 / ed.weight);
-        if (const double sig = irow < sigPred.size() ? std::hypot(sigPred(irow), sigObs) : sigObs;
+        if (const double sig = irow < residuals.size() ? std::hypot(residuals(irow), sigObs) : sigObs;
             std::fabs(ed.prefit) > kPrefitGateSigma * sig)
             bad.insert(eid.sat);
         ++irow;
@@ -459,8 +467,8 @@ void RTK::updateFilter() {
             buildWeightMatrix(curEq);
         }
     }
-    ekf.measUpdate(curEq, mConfig.fullCovariance ? &mWeightMatrix : nullptr);
-    xyz = filteredPosition();
+    ekf.measUpdate(curEq, mConfig.fullCovariance ? mWeightMatrix : curEq.weightVector().asDiagonal().toDenseMatrix());
+    xyz = getEKFPosition();
     sigma0 = posteriorSigma0(ekf.postfitResidual, curEq.weightVector(),
                              static_cast<int>(ekf.currentUnkSet.size()));
 }
@@ -532,10 +540,10 @@ void RTK::buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, const bool fi
             } else {
                 phase1.varCoefficient[amb1] = -sc.base.lambda1;
                 if (ekf.currentUnkSet.count(amb1))
-                    phase1.prefit += sc.base.lambda1 * ekf.priorOf(amb1);
+                    phase1.prefit += sc.base.lambda1 * ekf.getMinus(amb1);
                 phase2.varCoefficient[amb2] = -sc.base.lambda2;
                 if (ekf.currentUnkSet.count(amb2))
-                    phase2.prefit += sc.base.lambda2 * ekf.priorOf(amb2);
+                    phase2.prefit += sc.base.lambda2 * ekf.getMinus(amb2);
             }
         }
     }
@@ -683,18 +691,10 @@ void RTK::applyFixedSolution(const double s0) {
     result.stat = 1; // Fixed
 }
 
-Eigen::Vector3d RTK::filteredPosition() const {
+Eigen::Vector3d RTK::getEKFPosition() const {
     return {
         GnssEKF::getSolution(Parameter::dX, ekf.currentUnkSet, ekf.solution),
         GnssEKF::getSolution(Parameter::dY, ekf.currentUnkSet, ekf.solution),
         GnssEKF::getSolution(Parameter::dZ, ekf.currentUnkSet, ekf.solution)
-    };
-}
-
-Eigen::Vector3d RTK::predictedPosition() const {
-    return {
-        ekf.priorOf(Variable(kRover, Parameter::dX)),
-        ekf.priorOf(Variable(kRover, Parameter::dY)),
-        ekf.priorOf(Variable(kRover, Parameter::dZ))
     };
 }

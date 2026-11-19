@@ -16,12 +16,12 @@ bool PPPKinematic::processEpoch(ObsData &obs) {
         if (isSaneECEF(mReanchorPos) && isSaneECEF(result.xyz)) {
             if ((result.xyz - mReanchorPos).norm() > mDivergeJumpThresh) {
                 // 重锚定的初值必须取本历元的可信锚点：已经发散的 result.xyz 作初值时
-                // SPP 会收敛到另一个错解，再 setBootstrapPosition 就把位置状态永久写坏。
+                // SPP 会收敛到另一个错解，再 setPosition 就把位置状态永久写坏。
                 const Eigen::Vector3d seed = isSaneECEF(mReanchorPos) ? mReanchorPos : result.xyz;
                 const Eigen::Vector3d fresh = reanchorSPP(seed);
                 result.xyz = fresh;
                 result.xyzFloat = fresh; // 浮点解同源，否则 CSV 里两套位置打架
-                ekf.setBootstrapPosition(fresh, GnssEKF::kBootstrapPosVar);
+                ekf.setPosition(fresh, GnssEKF::kInitPosVar);
                 mForceAmbReset = true;
                 ++mDivergeRecovers;
                 diverged = true;

@@ -56,7 +56,7 @@ bool LEO::processEpoch(ObsData &obs) {
             if (const double thr = 0.5 * kAccelEnvelope * g * g + kSppFailJumpM;
                 isSaneECEF(pred) && (result.xyz - pred).norm() > thr) {
                 result.xyz = Eigen::Vector3d::Zero();
-                ekf.setBootstrapPosition(pred, GnssEKF::kBootstrapPosVar);
+                ekf.setPosition(pred, GnssEKF::kInitPosVar);
                 return false;
             }
         }

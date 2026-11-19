@@ -48,7 +48,7 @@ public:
 
 
     Eigen::Vector3d xyz = Eigen::Vector3d::Zero();
-    Eigen::Vector3d mLastXYZ = Eigen::Vector3d::Zero(); // 上一有效历元解，作 LSQ/滤波共用的迭代起点；reset 不清
+    Eigen::Vector3d mLastXYZ = Eigen::Vector3d::Zero();
     GeodeticFrame frame = Frame::WGS84;
 
     GnssEKF ekf;
@@ -68,6 +68,7 @@ public:
 
     int mDirection = 1;
     bool mFilterFrozen = false;
+    bool mTrackEpochGap = false; // 跨历元断档判定只对 PPP 系有意义
     bool mGapThisEpoch = false;
     bool mForceAmbReset = false;
     double mNominalInterval = -1.0;
@@ -78,13 +79,10 @@ public:
     bool mHasLastObs = false;
 
 
-    // ---- 周跳探测：开关与裁决口径共用，检测器容器和喂入调度留子类 ----
-    // PPP 逐星在 prepareSatellite 里 feed（MW 跳即时重开模糊度），GF 跳攒到历元末 decide；
-    // RTK 两站各一份检测器、历元前独立跑一趟，才赶得在选参考星之前出剔除集。
     bool mUseCycleSlip = true;
     bool mUseGFCycleSlip = true;
-    double mGFSlipMult = 3.0; // GF 周跳阈值倍数（×单周跳阶跃）
-    int mGFCommonModeMinSats = 2; // 本历元 GF 判跳星数达此值即判为共模误差，全部软排除而不重置模糊度
+    double mGFSlipMult = 3.0;
+    int mGFCommonModeMinSats = 2;
 
 
     virtual void solve();

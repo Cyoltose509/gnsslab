@@ -110,10 +110,10 @@ void SPP::filterEpoch() {
         curEq.varSet.insert(Variable(mCurObs->station, Parameter::dVY));
         curEq.varSet.insert(Variable(mCurObs->station, Parameter::dVZ));
     }
-    ekf.timeUpdate(curEq.varSet, nullptr);
+    ekf.timeUpdate(curEq.varSet, {});
     if (boot) {
         // 状态存绝对 ECEF 坐标与绝对钟差，与 PPP 同口径。
-        ekf.setBootstrapPosition(xyz, Eigen::Vector3d::Constant(GnssEKF::kBootstrapPosVar));
+        ekf.setPosition(xyz, GnssEKF::kInitPosVar);
         std::map<Variable, double> clk;
         if (mCommonClockActive) {
             // 公共钟参数化：参考系统存绝对钟差，其余槽位存相对参考系统的 ISB。
@@ -127,9 +127,9 @@ void SPP::filterEpoch() {
                 if (const auto it = mCdtParam.find(sys); it != mCdtParam.end())
                     clk[Variable(mCurObs->station, it->second)] = rClockBias[sys];
         }
-        ekf.setBootstrapStates(clk);
+        ekf.setStates(clk);
     }
-    ekf.measUpdate(curEq);
+    ekf.measUpdate(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
     xyz = currentEstimatedPosition();
     mFilterInit = true;
 
@@ -518,7 +518,7 @@ SPP::DopplerResult SPP::estimateVelocity() {
     result.vel = velPost;
     result.sigmaVel = sigmaVelPost;
     result.sigmaV = sigmaVelPost.norm();
-    if (!ekf.velocityCoupled) return v;
+    if (!ekf.mCVModel) return v;
     xyz = currentEstimatedPosition();
     result.xyz = xyz;
     result.xyzFloat = xyz;

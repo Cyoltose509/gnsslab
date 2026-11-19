@@ -73,8 +73,9 @@ void PPPStatic::addSatEquation(const SatID &sat, const TypeValueMap &tv, const b
     const double phasePrefit = L_IF - (rho - dts - rel) - ambMean - clkMean - ztdMean * mapW - tropoFixed - windup_m;
 
     if (probe) {
-        mPrefitProbe[sat] = PrefitRec{codePrefit, phasePrefit,
-                                      mCsData && mCsData->count(vamb) > 0};
+        const bool freshAmb = std::any_of(mAmbResets.begin(), mAmbResets.end(),
+                                          [&](const AmbReset &r) { return r.var == vamb; });
+        mPrefitProbe[sat] = PrefitRec{codePrefit, phasePrefit, freshAmb};
         return;
     }
 
@@ -202,9 +203,9 @@ void PPPStatic::resetAmbiguity(const SatID &sat, const TypeValueMap &tv,
                                const double map, const double tropoFixed,
                                const bool isSlipReset) {
     const Variable vamb = Variable::makeAmbiguity(mCurObs->station, sat, "IF");
-    (*mCsData)[vamb] = isSlipReset ? 2.0 : 1.0;
-    mAmbEstimate[sat] = computeIfAmbiguity(sat, tv, map, tropoFixed);
-    if (isSlipReset) ekf.forceValue(vamb, mAmbEstimate[sat]);
+    const double amb = computeIfAmbiguity(sat, tv, map, tropoFixed);
+    mAmbEstimate[sat] = amb;
+    mAmbResets.push_back({vamb, isSlipReset ? AmbReset::Kind::Slip : AmbReset::Kind::NewArc, amb});
 }
 
 double PPPStatic::computeIfAmbiguity(const SatID &sat, const TypeValueMap &tv,

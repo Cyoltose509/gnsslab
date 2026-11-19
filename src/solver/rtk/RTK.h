@@ -47,11 +47,6 @@ private:
         double phase = 0.0, code = 0.0;
     };
 
-    struct AmbSeed {
-        std::map<Variable, double> init;
-        VariableDataMap novar;
-    };
-
     struct SysCombo {
         FreqCombo base, rover;
         bool ok = false;
@@ -89,7 +84,7 @@ private:
 
     [[nodiscard]] std::optional<SatID> selectRefSatellite(const std::vector<SatID> &part) const;
     void computeSdVariance();
-    void collectEpochStates(VariableSet &varSet, AmbSeed &seed) const;
+    void collectEpochStates(VariableSet &varSet, std::vector<AmbReset> &resets) const;
     void rebaseAmbiguities();
     void buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed);
     void buildWeightMatrix(const EquSys &eq);
@@ -97,6 +92,5 @@ private:
     bool tryFixAmbiguities(const std::vector<Variable> &aVars, const Eigen::VectorXd &b,
                            const Eigen::MatrixXd &Qb);
     void applyFixedSolution(double s0);
-    [[nodiscard]] Eigen::Vector3d filteredPosition() const;
-    [[nodiscard]] Eigen::Vector3d predictedPosition() const;
+    [[nodiscard]] Eigen::Vector3d getEKFPosition() const;
 };

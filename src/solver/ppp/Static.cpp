@@ -93,7 +93,6 @@ void PPPStatic::initFilter() {
         return;
     }
     mEpochXyz = xyz;
-    mCsData = &mEpochStates;
     buildEquSys();
     mFilterFrozen = static_cast<int>(curEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
     if (mFilterFrozen) return;
@@ -110,8 +109,8 @@ void PPPStatic::initFilter() {
     ekf.ztdInitValue = mConfig.ztdInitValue;
     ekf.codeBiasProcSigma = mConfig.codeBiasProcSigma;
     ekf.codeBiasInitSigma = mConfig.codeBiasInitSigma;
-    ekf.timeUpdate(curEq.varSet, &mEpochStates);
-    ekf.setBootstrapPosition(xyz, Eigen::Vector3d(fpvVar, fpvVar, fpvVar));
+    ekf.timeUpdate(curEq.varSet, mAmbResets);
+    ekf.setPosition(xyz, fpvVar);
     {
         std::map<Variable, double> bootVals;
         std::map<Variable, double> bootVars;
@@ -132,10 +131,10 @@ void PPPStatic::initFilter() {
             bootVars[Variable(mCurObs->station, Parameter::ztd)] =
                     mConfig.ztdInitSigma * mConfig.ztdInitSigma;
         }
-        if (!bootVals.empty()) ekf.setBootstrapStates(bootVals, &bootVars);
+        if (!bootVals.empty()) ekf.setStates(bootVals, &bootVars);
     }
-    ekf.setBootstrapAmbiguity(mCurObs->station, mAmbEstimate, nullptr);
-    ekf.measUpdate(curEq);
+    ekf.setAmbiguity(mCurObs->station, mAmbEstimate, nullptr);
+    ekf.measUpdate(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
     mFilterInit = true;
 }
 
@@ -151,12 +150,11 @@ void PPPStatic::updateFilter() {
     const double dt = mHasLastEpoch ? mCurObs->epoch - mLastEpochTime : 0.0;
     const Eigen::Vector3d xyzEst = predictPosition(dt, mCurObs->epoch);
     mEpochXyz = xyzEst;
-    mCsData = &mEpochStates;
     buildEquSys();
     mFilterFrozen = static_cast<int>(curEq.obsEquData.size()) / 2 < mConfig.minSatsForUpdate;
     if (!mFilterFrozen) {
         const VariableSet prevUnk = ekf.currentUnkSet;
-        ekf.timeUpdate(curEq.varSet, &mEpochStates);
+        ekf.timeUpdate(curEq.varSet, mAmbResets);
         // 系统断档期间钟状态会被移出状态集，再出现时若从 0 起步，高权重相位方程
         // 会把钟拽到错误基准，污染观测时间标记。重新入集时沿用上次的钟估计。
         for (const auto &[sys, par]: mCdtParam) {
@@ -164,7 +162,7 @@ void PPPStatic::updateFilter() {
             if (it == mClkEstimate.end()) continue;
             const Variable vclk(mCurObs->station, par);
             if (ekf.currentUnkSet.count(vclk) && !prevUnk.count(vclk))
-                ekf.setBootstrapStates({{vclk, it->second}}, nullptr);
+                ekf.setStates({{vclk, it->second}}, nullptr);
         }
         {
             std::vector<double> codePhaseDiffs;
@@ -239,10 +237,10 @@ void PPPStatic::updateFilter() {
                 }
             }
         }
-        ekf.setBootstrapPosition(xyzEst, 0.0);
-        ekf.setBootstrapAmbiguity(mCurObs->station, mAmbEstimate, &mEpochStates);
+        ekf.setPosition(xyzEst, 0.0);
+        ekf.setAmbiguity(mCurObs->station, mAmbEstimate, &mAmbResets);
         ekf.savePrior();
-        ekf.measUpdate(curEq);
+        ekf.measUpdate(curEq, curEq.weightVector().asDiagonal().toDenseMatrix());
     }
     mPrevCodePhase = std::move(mCurCodePhase);
     mCurCodePhase.clear();

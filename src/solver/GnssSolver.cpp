@@ -15,13 +15,10 @@ GnssSolver::GnssSolver() : prod(std::make_shared<Products>()) {
 }
 
 
-
-
 void GnssSolver::solve() {
     result.reset();
-    trackEpochGap();
+    if (mTrackEpochGap) trackEpochGap();
     estimatePosition();
-    // 冻结历元不发布速度，也不推进「上一成功历元」；结果清零与几何刷新归 publishResult。
     if (mFilterFrozen) return;
     if (isSaneECEF(xyz)) mLastXYZ = xyz; // 迭代起点与滤波状态解耦：reset 不碰它
     mLastEpochTime = mCurObs->epoch;
@@ -51,6 +48,7 @@ void GnssSolver::trackEpochGap() {
         } else if (mNominalInterval < 0.0 && gap >= 1.0 && gap <= kMaxMotionGapS) mNominalInterval = gap;
     }
 }
+
 void GnssSolver::estimatePosition() {
     if (mFilterInit) updateFilter();
     else initFilter();
@@ -71,7 +69,7 @@ GnssSolver::DopplerResult GnssSolver::estimateVelocity() {
     for (const auto &[sat, pvt]: satPVTRecTime) {
         const auto it = mCurObs->satTypeValueData.find(sat);
         if (it == mCurObs->satTypeValueData.end() || !wantDopplerSat(sat, it->second)) continue;
-        
+
         double doppler = 0.0;
         bool found = false;
         for (const auto &[k, v]: it->second) {
@@ -143,8 +141,8 @@ void GnssSolver::earthRotation(std::map<SatID, PVT> &dst, const Eigen::Vector3d 
         const double ang = OMEGA_EARTH * (pvt.p - recv).norm() / C_MPS;
         const double c = std::cos(ang), s = std::sin(ang);
         Eigen::Matrix3d rot;
-        rot <<  c, s, 0,
-               -s, c, 0,
+        rot << c, s, 0,
+                -s, c, 0,
                 0, 0, 1;
         PVT out = pvt;
         out.p = rot * pvt.p;

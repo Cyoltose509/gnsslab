@@ -5,9 +5,120 @@
 #include "Log.h"
 #include "GnssEKF.h"
 
-void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
+GnssEKF::GnssEKF() {
+    firstTime = true;
+}
+
+void GnssEKF::configure(const double posSigma, const bool hasTropo, const double ambSigma, const double clockSigma) {
+    posProcSigma = posSigma;
+    useTropo = hasTropo;
+    ambProcSigma = ambSigma;
+    clockProcSigma = clockSigma;
+}
+
+void GnssEKF::reset() {
+    firstTime = true;
+    motionDt = 0.0;
+    mCVModel = false;
+    solution = Eigen::VectorXd();
+    Q = Eigen::MatrixXd();
+    postfitResidual = Eigen::VectorXd();
+    currentUnkSet.clear();
+    currentIndexData.clear();
+    posIdx = {-1, -1, -1};
+    velIdx = {-1, -1, -1};
+    Xhat = Eigen::VectorXd();
+    Dx = Eigen::MatrixXd();
+    oldUnkSet.clear();
+    oldIndexData.clear();
+    kalmanFilter = SolverKalman{};
+    savedXminus = Eigen::VectorXd();
+    savedDp = Eigen::MatrixXd();
+    hasSaved = false;
+}
+
+void GnssEKF::createIndex(const VariableSet &varSet) {
+    // 建立索引
+    currentIndexData.clear();
+    posIdx = {-1, -1, -1};
+    velIdx = {-1, -1, -1};
+    int index = 0;
+    for (const auto &var: varSet) {
+        if (const int p = var.par.name(); p >= Parameter::dX && p <= Parameter::dZ) posIdx[p - Parameter::dX] = index;
+        else if (p >= Parameter::dVX && p <= Parameter::dVZ) velIdx[p - Parameter::dVX] = index;
+        currentIndexData[var] = index++;
+    }
+}
+
+int GnssEKF::indexOf(const Variable &v) const {
+    const auto it = currentIndexData.find(v);
+    return it == currentIndexData.end() ? -1 : it->second;
+}
+
+void GnssEKF::setPosition(const Eigen::Vector3d &p, const double posVar) {
+    if (currentUnkSet.empty()) return; // timeUpdate 尚未建索引时无效
+    for (int k = 0; k < 3; ++k) {
+        const int idx = posIdx[k];
+        if (idx < 0) continue;
+        Xhat(idx) = p[k];
+        kalmanFilter.Xhat(idx) = p[k];
+        kalmanFilter.Xminus(idx) = p[k];
+        if (posVar > 0.0) {
+            kalmanFilter.Dp(idx, idx) = posVar;
+            kalmanFilter.Dx(idx, idx) = posVar;
+            Dx(idx, idx) = posVar;
+        }
+    }
+}
+
+void GnssEKF::setStates(const std::map<Variable, double> &values,
+                        const std::map<Variable, double> *vars) {
+    if (currentUnkSet.empty()) return;
+    for (const auto &[var, value]: values) {
+        if (const int idx = indexOf(var); idx >= 0) {
+            kalmanFilter.Xhat(idx) = value;
+            kalmanFilter.Xminus(idx) = value;
+            double v = -1.0;
+            if (vars) {
+                if (const auto vit = vars->find(var); vit != vars->end()) v = vit->second;
+            }
+            if (v > 0.0) {
+                kalmanFilter.Dp(idx, idx) = v;
+                kalmanFilter.Dx(idx, idx) = v;
+                Dx(idx, idx) = v;
+            }
+        }
+    }
+}
+
+void GnssEKF::setAmbiguity(const std::string &station, const std::map<SatID, double> &amb,
+                           const std::vector<AmbReset> *resets) {
+    if (currentUnkSet.empty()) return;
+    for (const auto &[sat, value]: amb) {
+        const Variable vamb = Variable::makeAmbiguity(station, sat, "IF");
+        if (resets && std::none_of(resets->begin(), resets->end(),
+                                   [&](const AmbReset &r) { return r.var == vamb; })) continue;
+        if (const int idx = indexOf(vamb); idx >= 0) {
+            kalmanFilter.Xhat(idx) = value;
+            kalmanFilter.Xminus(idx) = value;
+        }
+    }
+}
+
+void GnssEKF::shiftState(const Variable &var, const double delta) {
+    if (currentUnkSet.empty()) return;
+    const int idx = indexOf(var);
+    if (idx < 0) return;
+    kalmanFilter.Xhat(idx) += delta;
+    kalmanFilter.Xminus(idx) += delta;
+}
+
+void GnssEKF::timeUpdate(const VariableSet &varSet, const std::vector<AmbReset> &resets) {
     currentUnkSet = varSet;
     const int n = static_cast<int>(currentUnkSet.size());
+
+    std::map<Variable, AmbReset> resetMap;
+    for (const auto &r: resets) resetMap[r.var] = r;
 
     createIndex(currentUnkSet);
     const auto [init, proc] = varianceTables();
@@ -23,42 +134,45 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
         firstTime = false;
     } else {
         // 新旧变量映射
-        Eigen::VectorXd currentState = Eigen::VectorXd::Zero(n);
-        Eigen::MatrixXd currentCov = Eigen::MatrixXd::Zero(n, n);
+        Eigen::VectorXd newXhat = Eigen::VectorXd::Zero(n);
+        Eigen::MatrixXd newDx = Eigen::MatrixXd::Zero(n, n);
 
         for (const auto &[var, ci]: currentIndexData) {
-            // 周跳软重置(slip)：值用调用方估的初值，方差放到 ambInitSigma 让本历元相位重新定住它
-            if (const auto p = var.par; csData && p == Parameter::ambiguity && (*csData)[var] >= 2.0 && mForceValue.count(var)) {
-                currentState(ci) = mForceValue[var];
-                currentCov(ci, ci) = ambInitSigma * ambInitSigma;
-                continue;
+            // 周跳软重置：值用指令里的初值
+            if (var.par == Parameter::ambiguity) {
+                if (const auto it = resetMap.find(var);
+                    it != resetMap.end() && it->second.kind == AmbReset::Kind::Slip) {
+                    newXhat(ci) = it->second.initValue;
+                    newDx(ci, ci) = ambInitSigma * ambInitSigma;
+                    continue;
+                }
             }
             if (oldUnkSet.find(var) != oldUnkSet.end()) {
                 const int oi = oldIndexData[var];
-                currentState(ci) = solution(oi);
-                currentCov(ci, ci) = Q(oi, oi);
+                newXhat(ci) = solution(oi);
                 for (const auto &[v2, c2]: currentIndexData) {
                     if (oldUnkSet.find(v2) != oldUnkSet.end()) {
                         const int o2 = oldIndexData[v2];
-                        currentCov(ci, c2) = Q(oi, o2);
+                        newDx(ci, c2) = Q(oi, o2);
                     }
                 }
             } else {
-                currentState(ci) = var.par == Parameter::ztd ? ztdInitValue : 0.0;
-                currentCov(ci, ci) = init[static_cast<int>(var.par.name())];
+                newXhat(ci) = var.par == Parameter::ztd ? ztdInitValue : 0.0;
+                newDx(ci, ci) = init[static_cast<int>(var.par.name())];
             }
         }
-        Xhat = currentState;
-        Dx = currentCov;
+        Xhat = newXhat;
+        Dx = newDx;
     }
 
     Eigen::MatrixXd Phi = Eigen::MatrixXd::Identity(n, n);
     Eigen::MatrixXd Dw = Eigen::MatrixXd::Zero(n, n);
 
+    // 速度耦合模型：CV 模型，位置状态被速度预测耦合
     const bool cvModel = accProcSigma > 0.0 && motionDt > 0.0 &&
                          posIdx[0] >= 0 && posIdx[1] >= 0 && posIdx[2] >= 0 &&
                          velIdx[0] >= 0 && velIdx[1] >= 0 && velIdx[2] >= 0;
-    velocityCoupled = cvModel;
+    mCVModel = cvModel;
     if (cvModel) {
         const double acc = accProcSigma;
         const double dt = motionDt;
@@ -80,44 +194,24 @@ void GnssEKF::timeUpdate(const VariableSet &varSet, VariableDataMap *csData) {
             throw InvalidRequest("GnssEKF::timeUpdate: variance table missing parameter type");
         double q = proc[p];
         if (p >= Parameter::dX && p <= Parameter::dVZ && cvModel) {
-            q = Dw(ii, ii);
+            q = Dw(ii, ii); // 用 CV 噪声
         } else if (var.par.isClock() && q == 0.0) {
             for (int j = 0; j < n; ++j) {
                 Dx(ii, j) = 0.0;
                 Dx(j, ii) = 0.0;
             }
             Dx(ii, ii) = init[p];
-        } else if (p == Parameter::ambiguity && csData && (*csData)[var] > 0.5) {
+        } else if (p == Parameter::ambiguity && resetMap.count(var)) {
             q = init[p];
         }
-        Dw(ii, ii) = q;
+        Dw(ii, ii) = q; // 其他噪声
     }
 
     kalmanFilter.reset(Xhat, Dx);
     kalmanFilter.predict(Phi, Dw);
 }
 
-void GnssEKF::reparameterize(const VariableSet &newOrder, const Eigen::MatrixXd &T) {
-    if (const int n = static_cast<int>(solution.size()); n <= 0 || T.cols() != n || T.rows() != static_cast<int>(newOrder.size())) return;
-
-    const Eigen::VectorXd xNew = T * solution;
-    const Eigen::MatrixXd pNew = T * Q * T.transpose();
-
-    currentUnkSet = newOrder;
-    createIndex(currentUnkSet);
-    solution = xNew;
-    Q = pNew;
-    Xhat = xNew;
-    Dx = pNew;
-    kalmanFilter.Xhat = xNew;
-    kalmanFilter.Dx = pNew;
-    kalmanFilter.Xminus = xNew;
-    kalmanFilter.Dp = pNew;
-    oldUnkSet = currentUnkSet;
-    oldIndexData = currentIndexData;
-    mForceValue.clear();
-}
-
+/// 按当前 σ 配置一次列出全部参数类型的初始方差与过程噪声方差
 GnssEKF::VarianceTable GnssEKF::varianceTables() const {
     VarianceTable v{};
     v.init.fill(kVarianceUnset);
@@ -157,7 +251,7 @@ GnssEKF::VarianceTable GnssEKF::varianceTables() const {
     return v;
 }
 
-void GnssEKF::measUpdate(EquSys &equSys, const Eigen::MatrixXd *fullWeight) {
+void GnssEKF::measUpdate(EquSys &equSys, const Eigen::MatrixXd &W) {
     const auto numObs = static_cast<int>(equSys.obsEquData.size());
     const auto numUnk = static_cast<int>(currentUnkSet.size());
 
@@ -174,8 +268,6 @@ void GnssEKF::measUpdate(EquSys &equSys, const Eigen::MatrixXd *fullWeight) {
         iobs++;
     }
 
-    // 满阵权由调用方给（双差站间相关），缺省按方程标量权取对角。
-    const Eigen::MatrixXd W = fullWeight ? *fullWeight : equSys.weightVector().asDiagonal().toDenseMatrix();
     if (const int rc = kalmanFilter.correct(prefit, H, W); rc != 0) {
         std::cerr << "correct skipped: singular geometry (rc=" << rc << ")\n";
         return;
@@ -194,8 +286,7 @@ void GnssEKF::measUpdate(EquSys &equSys, const Eigen::MatrixXd *fullWeight) {
             const int idx = posIdx[k];
             if (idx < 0) continue;
             const double fl = useVecFloor ? posFloorSigmaVec[k] : posFloorSigma;
-            const double flVar = fl * fl;
-            if (fl > 0.0 && Dx(idx, idx) < flVar) {
+            if (const double flVar = fl * fl; fl > 0.0 && Dx(idx, idx) < flVar) {
                 const double add = flVar - Dx(idx, idx);
                 Dx(idx, idx) += add;
                 kalmanFilter.Dx(idx, idx) += add;
@@ -217,8 +308,6 @@ void GnssEKF::updateVelocity(const Eigen::Vector3d &vel, const Eigen::Vector3d &
     Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
     double chi2 = 0.0;
     for (int k = 0; k < 3; ++k) {
-        // 多普勒解的 σ 由后验残差估，数据好时会低到 1e-4 m/s，当成无穷权会把位置拽走；
-        // 一是给 σ 下限，二是按新息算 χ²，超门限就把量测方差等比放大（软门限，不硬丢历元）。
         const double s = (std::max)(sigma[k], kMinVeloSigma);
         const double sSq = s * s;
         H(k, velIdx[k]) = 1.0;
@@ -227,10 +316,7 @@ void GnssEKF::updateVelocity(const Eigen::Vector3d &vel, const Eigen::Vector3d &
         W(k, k) = 1.0 / sSq;
     }
     if (chi2 > kVeloGate * kVeloGate) W /= chi2 / (kVeloGate * kVeloGate);
-    // postfitResidual 的语义是位置观测的后验残差（readback 与 sigma0 都读它），速度更新后还原
     const Eigen::VectorXd posPostfit = postfitResidual;
-    // 序贯更新：correct() 以 Xminus/Dp 为先验，速度量测必须接在位置后验之后，
-    // 否则会把位置量测重新拉回预测值（同一历元内位置更新被撤销）。
     kalmanFilter.Xminus = kalmanFilter.Xhat;
     kalmanFilter.Dp = kalmanFilter.Dx;
     if (kalmanFilter.correct(z, H, W) != 0) return;
@@ -241,30 +327,30 @@ void GnssEKF::updateVelocity(const Eigen::Vector3d &vel, const Eigen::Vector3d &
     Dx = kalmanFilter.Dx;
 }
 
-bool GnssEKF::posteriorVelocity(const std::string &station, Eigen::Vector3d &vel,
-                                Eigen::Vector3d &sigma) const {
-    const Variable vx(station, Parameter::dVX), vy(station, Parameter::dVY), vz(station, Parameter::dVZ);
-    const Variable *vars[3] = {&vx, &vy, &vz};
-    for (int k = 0; k < 3; ++k) {
-        const int idx = indexOf(*vars[k]);
-        if (idx < 0 || idx >= solution.size()) return false;
-        vel[k] = solution(idx);
-        sigma[k] = std::sqrt((std::max)(Q(idx, idx), 0.0));
-    }
-    return true;
+void GnssEKF::savePrior() {
+    savedXminus = kalmanFilter.Xminus;
+    savedDp = kalmanFilter.Dp;
+    hasSaved = true;
 }
 
-void GnssEKF::createIndex(const VariableSet &varSet) {
-    currentIndexData.clear();
-    posIdx = {-1, -1, -1};
-    velIdx = {-1, -1, -1};
-    int index = 0;
-    for (const auto &var: varSet) {
-        const int p = var.par.name();
-        if (p >= Parameter::dX && p <= Parameter::dZ) posIdx[p - Parameter::dX] = index;
-        else if (p >= Parameter::dVX && p <= Parameter::dVZ) velIdx[p - Parameter::dVX] = index;
-        currentIndexData[var] = index++;
-    }
+void GnssEKF::reparameterize(const VariableSet &newOrder, const Eigen::MatrixXd &T) {
+    if (const int n = static_cast<int>(solution.size()); n <= 0 || T.cols() != n || T.rows() != static_cast<int>(newOrder.size())) return;
+
+    const Eigen::VectorXd xNew = T * solution;
+    const Eigen::MatrixXd pNew = T * Q * T.transpose();
+
+    currentUnkSet = newOrder;
+    createIndex(currentUnkSet);
+    solution = xNew;
+    Q = pNew;
+    Xhat = xNew;
+    Dx = pNew;
+    kalmanFilter.Xhat = xNew;
+    kalmanFilter.Dx = pNew;
+    kalmanFilter.Xminus = xNew;
+    kalmanFilter.Dp = pNew;
+    oldUnkSet = currentUnkSet;
+    oldIndexData = currentIndexData;
 }
 
 double GnssEKF::getSolution(const Parameter &type,
@@ -298,15 +384,30 @@ double GnssEKF::getSolution(const Variable &var) const {
     return solution(idx);
 }
 
-double GnssEKF::priorOf(const Variable &var) const {
+// 获取先验状态分量
+double GnssEKF::getMinus(const Variable &var) const {
     const int idx = indexOf(var);
     if (idx < 0 || idx >= kalmanFilter.Xminus.size()) return 0.0;
     return kalmanFilter.Xminus(idx);
 }
 
-Eigen::VectorXd GnssEKF::priorInnovationStd(const EquSys &equSys) const {
+bool GnssEKF::posteriorVelocity(const std::string &station, Eigen::Vector3d &vel,
+                                Eigen::Vector3d &sigma) const {
+    const Variable vx(station, Parameter::dVX), vy(station, Parameter::dVY), vz(station, Parameter::dVZ);
+    const Variable *vars[3] = {&vx, &vy, &vz};
+    for (int k = 0; k < 3; ++k) {
+        const int idx = indexOf(*vars[k]);
+        if (idx < 0 || idx >= solution.size()) return false;
+        vel[k] = solution(idx);
+        sigma[k] = std::sqrt((std::max)(Q(idx, idx), 0.0));
+    }
+    return true;
+}
+
+// 获取先验残差
+Eigen::VectorXd GnssEKF::getMinusResiduals(const EquSys &equSys) const {
     const int n = static_cast<int>(equSys.obsEquData.size());
-    Eigen::VectorXd out = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd residuals = Eigen::VectorXd::Zero(n);
     const int dim = static_cast<int>(kalmanFilter.Dp.rows());
     int i = 0;
     for (const auto &[eid, ed]: equSys.obsEquData) {
@@ -320,7 +421,7 @@ Eigen::VectorXd GnssEKF::priorInnovationStd(const EquSys &equSys) const {
                 v += ca * cb * kalmanFilter.Dp(ia, ib);
             }
         }
-        out(i++) = std::sqrt((std::max)(v, 0.0));
+        residuals(i++) = std::sqrt((std::max)(v, 0.0));
     }
-    return out;
+    return residuals;
 }

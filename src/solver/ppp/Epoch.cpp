@@ -17,11 +17,9 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
         xyz = xc;
         computeElevAzim(satPVTRecTime, xyz, satElevData, satAzimData);
     }
-    VariableDataMap csData;
     const int maxIter = mConfig.maxReanchorIter > 0 ? mConfig.maxReanchorIter : 8;
     for (int it = 0; it < maxIter; ++it) {
         mEpochXyz = xc;
-        mCsData = &csData;
         buildEquSys();
         for (auto it2 = curEq.obsEquData.begin(); it2 != curEq.obsEquData.end();) {
             if (it2->second.isPhase) it2 = curEq.obsEquData.erase(it2);
@@ -102,7 +100,7 @@ std::pair<Eigen::Vector3d, bool> PPPStatic::estimateInitialPosition() {
 void PPPStatic::buildEquSys() {
     curEq.reset();
     curEq.station = mCurObs->station;
-    mCsData->clear();
+    mAmbResets.clear();
 
     if (!mWeightInit) {
         const double minSin = mConfig.sinElevFloor(); // 0 = 跟随截止角

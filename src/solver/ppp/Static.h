@@ -6,6 +6,7 @@
 #include <Eigen/Eigen>
 #include <map>
 #include <set>
+#include <vector>
 
 class PPPStatic : public SPP {
 public:
@@ -19,6 +20,7 @@ public:
 
     PPPStatic() {
         mRequirePhaseForIF = true;
+        mTrackEpochGap = true;
     }
 
     ~PPPStatic() override;
@@ -152,7 +154,7 @@ public:
                                 const Weight &w, bool hasAmb, double elev);
 
     // ---- 滤波器与权重 ----
-    VariableDataMap mEpochStates; // 本历元新增状态量，随 initFilter/updateFilter 走
+    std::vector<AmbReset> mAmbResets; // 本历元模糊度重置指令，随 buildEquSys 生成、timeUpdate 消费
 
     Weight mWeightCode;
     Weight mWeightPhase;
@@ -182,7 +184,6 @@ public:
     std::set<SatSystem> mSysSeen; // 本历元出现过的系统
     std::set<SatID> mCurrentSatSet; // 本历元参与解算的星
 
-    VariableDataMap *mCsData = nullptr; // 本历元待写入的状态量（buildEquSys 的调用方设好）
     SlipEpoch mGFEpoch; // GF 周跳共模裁决簿记
 
     std::map<SatID, SlipDetector> mSlipDetectors;
