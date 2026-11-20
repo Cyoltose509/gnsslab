@@ -37,7 +37,6 @@ public:
     void resetFilterState() override;
     void prepareGeometry() override;
     void initFilter() override;
-    /// 首历元引导：从概略坐标出发迭代解双差方程，把线性化点写进 xyz（滤波档与 LSQ 档共用）。
     bool bootstrapSolution() override;
     void updateFilter() override;
     void publishResult() override;
@@ -84,7 +83,7 @@ private:
 
     [[nodiscard]] std::optional<SatID> selectRefSatellite(const std::vector<SatID> &part) const;
     void computeSdVariance();
-    void collectEpochStates(VariableSet &varSet, std::vector<AmbReset> &resets) const;
+    void collectFilterVariables(VariableSet &varSet, std::vector<AmbReset> &resets) const;
     void rebaseAmbiguities();
     void buildEquSys(EquSys &eq, const Eigen::Vector3d &roverPos, bool fixed);
     void buildWeightMatrix(const EquSys &eq);

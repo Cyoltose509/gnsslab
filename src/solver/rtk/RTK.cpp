@@ -108,6 +108,7 @@ void RTK::detectFreqCombinations() {
     mSysCombos.clear();
     for (SatSystem sys: mConfig.enabledSystems) {
         if (sys == SatSystem::R) continue; // GLONASS FDMA 双差模糊度无整数性，整系统不参与
+        // 收集双频，用于 MW & GF 周跳探测
         SysCombo sc;
         sc.base = FreqCombo::detect(sys, FreqCombo::collectCodes(*mBaseObs, sys), 0, true);
         sc.rover = FreqCombo::detect(sys, FreqCombo::collectCodes(*mCurObs, sys), 0, true);
@@ -252,6 +253,7 @@ void RTK::prepareGeometry() {
 }
 
 std::optional<SatID> RTK::selectRefSatellite(const std::vector<SatID> &part) const {
+    // 按系统在各自内部选高度角最高的星作参考
     std::vector<SatID> candidates;
     for (const SatID &s: part) {
         if (mConfig.excludeGeoRef && mEph) {
@@ -288,13 +290,14 @@ void RTK::initFilter() {
     }
 
     ekf.reset();
+    // 理想状态下模糊度应该是常数模型，σ=0 才对，过程噪声本来是给漏检周跳和大气残差兜底的权宜之计
     ekf.configure(mPosProcSigma, false, mConfig.ambProcSigma, 0.0);
     ekf.accProcSigma = 0.0;
     ekf.ambInitSigma = mConfig.ambInitSigma;
 
     std::vector<AmbReset> resets;
     VariableSet varSet;
-    collectEpochStates(varSet, resets);
+    collectFilterVariables(varSet, resets);
     ekf.timeUpdate(varSet, {});
     ekf.setPosition(xyz, GnssEKF::kInitPosVar);
     std::map<Variable, double> ambInit;
@@ -327,9 +330,10 @@ bool RTK::bootstrapSolution() {
 }
 
 
-// 时间更新的状态集合按参与双差的星收集；新弧段/周跳的模糊度初值在收集时一并反算
-void RTK::collectEpochStates(VariableSet &varSet, std::vector<AmbReset> &resets) const {
+void RTK::collectFilterVariables(VariableSet &varSet, std::vector<AmbReset> &resets) const {
     static const char *ambLabels[2] = {"L1", "L2"};
+    // 3+2K 未知数，4K 方程数
+    // 3 个流动站坐标 dX/dY/dZ
     varSet.insert(Variable(kRover, Parameter::dX));
     varSet.insert(Variable(kRover, Parameter::dY));
     varSet.insert(Variable(kRover, Parameter::dZ));
@@ -350,23 +354,25 @@ void RTK::collectEpochStates(VariableSet &varSet, std::vector<AmbReset> &resets)
         };
         for (const SatID &sat: vec) {
             if (sat == ref) continue;
-            const TypeValueMap &tvb = mBaseObs->satTypeValueData.at(sat);
-            const TypeValueMap &tvr = mCurObs->satTypeValueData.at(sat);
-            // 当前卫星→基站观测值
-            const double obsB[4] = {
-                tvb.at(sc.base.phase1), tvb.at(sc.base.phase2),
-                tvb.at(sc.base.code1), tvb.at(sc.base.code2)
-            };
-            // 当前卫星→流动站观测值
-            const double obsR[4] = {
-                tvr.at(sc.rover.phase1), tvr.at(sc.rover.phase2),
-                tvr.at(sc.rover.code1), tvr.at(sc.rover.code2)
-            };
             for (int f = 0; f < 2; ++f) {
+                //  每颗非参考星 L1/L2 各一个模糊度
                 const Variable amb = Variable::makeAmbiguity(kRover, sat, ambLabels[f]);
                 varSet.insert(amb);
                 const double lam = f == 0 ? sc.base.lambda1 : sc.base.lambda2;
                 if (ekf.currentUnkSet.count(amb) || !(lam > 0.0)) continue;
+
+                const TypeValueMap &tvb = mBaseObs->satTypeValueData.at(sat);
+                const TypeValueMap &tvr = mCurObs->satTypeValueData.at(sat);
+                // 当前卫星→基站观测值
+                const double obsB[4] = {
+                    tvb.at(sc.base.phase1), tvb.at(sc.base.phase2),
+                    tvb.at(sc.base.code1), tvb.at(sc.base.code2)
+                };
+                // 当前卫星→流动站观测值
+                const double obsR[4] = {
+                    tvr.at(sc.rover.phase1), tvr.at(sc.rover.phase2),
+                    tvr.at(sc.rover.code1), tvr.at(sc.rover.code2)
+                };
                 // 只要状态里没有这个模糊度，它必定是新弧段、周跳、或参考星切换——这三种情况都要求立刻给一个可靠初值
                 const double sdSat = (obsR[f] - obsB[f] - (obsR[f + 2] - obsB[f + 2])) / lam;
                 const double sdRef = (refR[f] - refB[f] - (refR[f + 2] - refB[f + 2])) / lam;
@@ -438,7 +444,7 @@ void RTK::updateFilter() {
     mPrevRefSat = mRefSat;
     std::vector<AmbReset> resets;
     VariableSet varSet;
-    collectEpochStates(varSet, resets);
+    collectFilterVariables(varSet, resets);
     ekf.timeUpdate(varSet, resets);
     const Eigen::Vector3d xPred = {
         ekf.getMinus(Variable(kRover, Parameter::dX)),
@@ -446,7 +452,7 @@ void RTK::updateFilter() {
         ekf.getMinus(Variable(kRover, Parameter::dZ))
     };
     buildEquSys(curEq, xPred, false);
-    // 粗差门限按星成组剔
+    // 粗差门限按星成组剔（同星四个观测共享几何误差，删单条会破坏双差结构）
     const Eigen::VectorXd residuals = ekf.getMinusResiduals(curEq);
     std::set<SatID> bad;
     int irow = 0;
@@ -631,15 +637,15 @@ void RTK::extractAmbiguities(Eigen::VectorXd &b, Eigen::MatrixXd &Qb, std::vecto
         const int i = ekf.indexOf(v);
         if (i < 0) continue;
         aVars.push_back(v);
-        idx.push_back(i);
+        idx.push_back(i);// 记录索引
     }
 
     const int M = static_cast<int>(aVars.size());
     b.resize(M);
     Qb.resize(M, M);
     for (int i = 0; i < M; ++i) {
-        b(i) = ekf.solution(idx[i]);
-        for (int j = 0; j < M; ++j) Qb(i, j) = ekf.Q(idx[i], idx[j]);
+        b(i) = ekf.solution(idx[i]); // 提取模糊度浮点解
+        for (int j = 0; j < M; ++j) Qb(i, j) = ekf.Q(idx[i], idx[j]); // 提取模糊度协方差
     }
 }
 
