@@ -104,6 +104,7 @@ Eigen::Vector3d RTK::estimateApproxPosition(const ObsData &obs, const EphemerisT
     return Eigen::Vector3d::Zero();
 }
 
+
 void RTK::detectFreqCombinations() {
     mSysCombos.clear();
     for (SatSystem sys: mConfig.enabledSystems) {

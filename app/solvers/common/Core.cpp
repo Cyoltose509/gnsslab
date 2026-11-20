@@ -42,7 +42,7 @@ namespace Solvers {
         /// 无解格子的 ECEF 是零向量，真实地心距远大于 1e6 m。
         constexpr double kSmoothMinNorm2 = 1e12;
 
-        /// E-N 平面图散点：静态解取 ENU 误差，动态解取相对 planOrigin 的轨迹（中心由用户拖）。
+        /// E-N 平面图散点：同源时取 ENU 误差（拖中心即改参考真值），SP3 真值时取相对 planOrigin 的轨迹。
         void rebuildPlan(PlotSeries &s) {
             s.planE.clear();
             s.planN.clear();

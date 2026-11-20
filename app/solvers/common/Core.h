@@ -359,8 +359,9 @@ namespace Solvers {
         void refreshTruthAtEpoch(Epoch &ep) const;
 
 
+        /// 平面图中心与参考真值同源：仅逐历元 SP3 真值时分离（画轨迹、中心可独立拖）。
         [[nodiscard]] bool enPlanStatic() const {
-            return mode == Mode::PPPStatic || truth.form == RefForm::Fixed;
+            return truth.form != RefForm::File;
         }
 
         [[nodiscard]] bool truthReady() const {

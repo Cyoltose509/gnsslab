@@ -388,11 +388,9 @@ namespace Solvers::RefTruth {
                     task->truth.sp3Path.clear();
             }
         }
-        void renderXYZRow(Task *task) {
+        void renderXYZRow(Task *task, bool allowFetch) {
             // truth 只在界面线程改（获取结果也先落 pending 再在这里套用），读它不必加锁。
             Eigen::Vector3d disp = task->truth.fixed;
-            const auto [fetching, pct, totalBytes, gotBytes,
-                status, current, level] = fetchUIState(task);
 
             ImGui::PushItemWidth(170);
             bool changed = false;
@@ -410,14 +408,18 @@ namespace Solvers::RefTruth {
                 task->truth.fixed = disp;
             }
 
-            ImGui::SameLine();
-            if (ImGui::Button(UI::idLabel(fetching ? "ref.pause" : "ref.fetch_online", "##ref_fetch"))) startXYZFetch(task);
-            if (fetching)
-                Download::Widgets::renderProgress("ref.downloading", current,
-                                                  pct >= 0 ? pct / 100.0 : -1.0, gotBytes, totalBytes);
+            if (allowFetch) {
+                const auto [fetching, pct, totalBytes, gotBytes,
+                    status, current, level] = fetchUIState(task);
+                ImGui::SameLine();
+                if (ImGui::Button(UI::idLabel(fetching ? "ref.pause" : "ref.fetch_online", "##ref_fetch"))) startXYZFetch(task);
+                if (fetching)
+                    Download::Widgets::renderProgress("ref.downloading", current,
+                                                      pct >= 0 ? pct / 100.0 : -1.0, gotBytes, totalBytes);
 
-            if (!status.empty())
-                ImGui::TextColored(statusColor(level), "%s", status.c_str());
+                if (!status.empty())
+                    ImGui::TextColored(statusColor(level), "%s", status.c_str());
+            }
         }
         void applyPending(Task *task) {
             Task::RefFetchResult r;
@@ -461,11 +463,11 @@ namespace Solvers::RefTruth {
 
     }
 
-    void renderRefTruthSection(Task *task) {
+    void renderRefTruthSection(Task *task, bool realtime) {
         applyPending(task);
 
         const bool fixedOk = modeAllowsRefFixed(task->mode);
-        const bool fileOk = modeAllowsRefFile(task->mode);
+        const bool fileOk = !realtime && modeAllowsRefFile(task->mode);
         if (!fixedOk && !fileOk) return;
 
         if (!fileOk && task->truth.form == RefForm::File) task->truth.form = RefForm::Fixed;
@@ -492,7 +494,7 @@ namespace Solvers::RefTruth {
         if (task->truth.form == RefForm::File) {
             renderSP3Row(task);
         } else {
-            renderXYZRow(task);
+            renderXYZRow(task, !realtime);
         }
     }
 

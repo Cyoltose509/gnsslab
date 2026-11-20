@@ -58,8 +58,10 @@ namespace Solvers::SPP {
                     pm.set("spp_rt_ip", ip);
                     pm.set("spp_rt_port", port);
                     Helpers::saveSolverParams(Mode::SPP, self->opts);
+                    RefTruth::persist(self);
                     self->startRealtime();
-                });
+                },
+                [self] { RefTruth::renderRefTruthSection(self, true); });
         };
         self->renderConfigTabs(UI::idLabel("spp.cfg_tab", "###spp_cfg_"), fileTab, onStart, realtimeTab);
     }

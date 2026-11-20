@@ -2,6 +2,7 @@
 #include "FileUtils.h"
 #include "Task.h"
 
+#include <iomanip>
 #include <sstream>
 #include <string>
 
@@ -40,7 +41,8 @@ namespace Solvers::RTK {
             const auto &cfg = AppConfig::PathMemory::instance();
             cfg.set("rtk_base_manual", task->useBaseCoord ? "1" : "0");
             std::stringstream ss;
-            ss << task->baseXyz.x() << ',' << task->baseXyz.y() << ',' << task->baseXyz.z();
+            ss << std::setprecision(17) << task->baseXyz.x() << ','
+               << task->baseXyz.y() << ',' << task->baseXyz.z();
             cfg.set("rtk_base_xyz", ss.str());
         }
     }
@@ -120,6 +122,7 @@ namespace Solvers::RTK {
                     cfg.set("rtk_rt_rover_port", rport);
                     Helpers::saveSolverParams(Mode::RTK, opts);
                     persistBaseCoord(this);
+                    RefTruth::persist(this);
 
                     isRealtime = true;
                     mode = Mode::RTK;
@@ -130,7 +133,11 @@ namespace Solvers::RTK {
 
                     startRealtime();
                 },
-                [this] { renderBaseCoordInput(this); });
+                [this] {
+                    renderBaseCoordInput(this);
+                    ImGui::Separator();
+                    RefTruth::renderRefTruthSection(this, true);
+                });
         };
         renderConfigTabs(UI::idLabel("rtk.cfg_tab", "###rtk_cfg_"), fileTab, onStart, realtimeTab);
     }
